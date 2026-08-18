@@ -1,0 +1,48 @@
+{
+  "name": "head-agent-core",
+  "version": "0.3.0-alpha.8",
+  "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
+  "author": {
+    "name": "ccolt"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "head-agent",
+    "codex",
+    "opencode",
+    "coordination",
+    "continuity"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "HEAD Agent Core",
+    "shortDescription": "HEAD-owned coordination and continuity",
+    "longDescription": "A provider-neutral HEAD core with explicit authority boundaries, deterministic Context Capsules, contract-bound Runs, evidence-linked Result Packets, and review-gated Execution Lineage.",
+    "developerName": "ccolt",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Skills",
+      "MCP Tools",
+      "Project Initialization",
+      "Context Continuity",
+      "Context Compilation",
+      "Execution Lineage Contracts",
+      "Fresh HEAD Review Projection",
+      "Review-driven Plan Generations",
+      "Repository World Model",
+      "Git Decision Evidence",
+      "External Runtime State Evidence"
+    ],
+    "defaultPrompt": [
+      "Initialize this project for HEAD coordination.",
+      "Compile the minimum sufficient context for this task.",
+      "Create a verifiable whole-plan execution lineage.",
+      "Run one accepted Execution Contract and review its Result Packet.",
+      "Inspect task-relevant Git decision evidence without promoting it to canon.",
+      "Inspect external runtime observations without granting runtime control authority.",
+      "Inspect the current HEAD session and Context Capsule."
+    ],
+    "brandColor": "#234E70"
+  }
+}

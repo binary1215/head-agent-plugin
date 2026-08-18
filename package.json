@@ -1,0 +1,11 @@
+{
+  "name": "@local/head-agent-core-plugin",
+  "version": "0.3.0-alpha.8",
+  "private": true,
+  "type": "module",
+  "description": "HEAD Agent Core plugin distribution",
+  "scripts": {
+    "test": "node --test --test-isolation=none test/*.test.mjs",
+    "check": "npm test"
+  }
+}

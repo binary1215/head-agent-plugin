@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "contextCompiler": {
+    "purpose": "Compile minimum sufficient, evidence-linked context for one task without replacing HEAD authority.",
+    "types": ["Snapshot", "Evidence", "Claim", "Decision", "Unknown", "ContextCapsule"],
+    "authority": "Materialized context is derived and rebuildable; canonical sources and user-owned decisions remain authoritative.",
+    "failurePolicy": "Fail closed on canon drift; harness adapters may fail open to normal agent operation when compilation is unavailable."
+  },
+  "executionLineage": {
+    "purpose": "Connect whole-plan authority, bounded execution, evidence-linked results, and HEAD review without relying on provider conversation state.",
+    "types": ["WholePlanSnapshot", "ExecutionContract", "ResultPacket", "ReviewDecision", "LineageLink"],
+    "identity": "Artifacts use content-derived identifiers, digest verification, and typed parent relationships.",
+    "status": "Contract-bound Runs, evidence-linked Result Packets, deterministic Fresh HEAD review projections, ReviewDecision-linked plan generations, and authority-free knowledge proposals are active; provider runtime hydration and authorized promotion are deferred."
+  },
+  "worldModel": {
+    "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
+    "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
+    "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
+    "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, all reachable Git commit-message decision evidence, current Git refs, canonical HEAD lifecycle state, point-in-time host-exported external runtime observations, and bounded semantic/history/runtime traversal are active; AST-accurate analysis, structured Git decision inference, live runtime probing/control, and the optional GraphDB adapter are deferred."
+  },
+  "roles": {
+    "head": "Owns whole-outcome understanding, strategy, integration, and completion judgment.",
+    "developer": "Owns one bounded, independently consumable implementation result.",
+    "coder": "Implements a fully decided Run contract without changing observable behavior.",
+    "reviewer": "Evaluates consequential decisions before implementation without choosing the final direction."
+  },
+  "invariants": [
+    "The user retains material product, policy, architecture, cost, workflow, and external-action authority.",
+    "Canonical project state outranks conversation summaries and transient logs.",
+    "A project identifier maps to one canonical project root.",
+    "Managed files are never overwritten after user modification.",
+    "Capability does not imply authorization.",
+    "Runtime-specific sessions remain distinct from HEAD session and Run identifiers."
+  ],
+  "activeCapabilities": [
+    "project initialization",
+    "Codex instruction projection",
+    "OpenCode configuration projection",
+    "Session and Run checkpoints",
+    "deterministic Context Capsule compilation",
+    "content-derived Execution Lineage contracts",
+    "contract-bound Run lifecycle",
+    "Result Packet and ReviewDecision gate",
+    "deterministic Fresh HEAD review projection",
+    "ReviewDecision-linked plan generations",
+    "authority-free knowledge proposals and HEAD recommendations",
+    "incremental local Repository World Model",
+    "replaceable WorldModelStoreAdapter contract",
+    "heuristic evidence-linked semantic call graph and bounded traversal",
+    "versioned GitHistoryAdapter and all-reachable commit-message decision evidence",
+    "versioned RuntimeStateAdapter and host-exported point-in-time runtime evidence",
+    "history-and-runtime-aware minimum-sufficient Context Capsules",
+    "freshness-gated repository Context Compiler candidates",
+    "read-only MCP inspection"
+  ],
+  "deferredCapabilities": [
+    "automatic provider runtime hydration from Fresh HEAD review",
+    "authorized knowledge promotion into project canon",
+    "AST-accurate semantic call graph",
+    "live runtime-state probing and streaming",
+    "structured Git decision inference and supersession",
+    "GraphDB World Model store adapter",
+    "worker process launch",
+    "live caller fencing",
+    "role messaging",
+    "service installation",
+    "Herdr integration"
+  ]
+}
