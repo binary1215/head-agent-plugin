@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import path from "node:path";
+import { extractSemanticSourceFacts } from "./source-analysis.mjs";
 
-export const SEMANTIC_GRAPH_VERSION = "0.1.0";
+export const SEMANTIC_GRAPH_VERSION = "0.2.0";
 
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
@@ -21,12 +22,6 @@ function identity(prefix, value) {
   return `${prefix}-${digest(canonicalJson(value)).slice(0, 24)}`;
 }
 
-function lineAt(text, index) {
-  let line = 1;
-  for (let position = 0; position < index; position += 1) if (text.charCodeAt(position) === 10) line += 1;
-  return line;
-}
-
 function repositoryModule(filesByPath, fromPath, specifier, language) {
   if (language === "python" && !specifier.startsWith(".")) {
     const pythonBase = specifier.replaceAll(".", "/");
@@ -40,61 +35,6 @@ function repositoryModule(filesByPath, fromPath, specifier, language) {
     : [base, ...[".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx", ".py"].map((extension) => `${base}${extension}`),
       ...["index.js", "index.jsx", "index.mjs", "index.mts", "index.ts", "index.tsx", "__init__.py"].map((name) => `${base}/${name}`)];
   return candidates.find((candidate) => filesByPath.has(candidate)) || null;
-}
-
-function importBindings(text, language) {
-  const bindings = [];
-  const add = (local, imported, specifier, namespace = false) => {
-    if (local && specifier) bindings.push({ local, imported, specifier, namespace });
-  };
-  if (["javascript", "typescript"].includes(language)) {
-    for (const match of text.matchAll(/\bimport\s+([^;\n]+?)\s+from\s+["']([^"']+)["']/g)) {
-      const clause = match[1].trim();
-      const specifier = match[2];
-      const namespace = clause.match(/^\*\s+as\s+([A-Za-z_$][\w$]*)$/);
-      if (namespace) add(namespace[1], "*", specifier, true);
-      const named = clause.match(/\{([^}]+)\}/);
-      if (named) for (const item of named[1].split(",")) {
-        const parts = item.trim().split(/\s+as\s+/);
-        if (parts[0]) add(parts[1] || parts[0], parts[0], specifier);
-      }
-      const defaultBinding = clause.split(",")[0].trim();
-      if (/^[A-Za-z_$][\w$]*$/.test(defaultBinding)) add(defaultBinding, "default", specifier);
-    }
-    for (const match of text.matchAll(/\b(?:const|let|var)\s+\{([^}]+)\}\s*=\s*require\s*\(\s*["']([^"']+)["']\s*\)/g)) {
-      for (const item of match[1].split(",")) {
-        const parts = item.trim().split(/\s*:\s*/);
-        if (parts[0]) add(parts[1] || parts[0], parts[0], match[2]);
-      }
-    }
-    for (const match of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*["']([^"']+)["']\s*\)/g)) {
-      add(match[1], "*", match[2], true);
-    }
-  } else if (language === "python") {
-    for (const match of text.matchAll(/^\s*from\s+([.A-Za-z_][\w.]*)\s+import\s+([^#\n]+)/gm)) {
-      for (const item of match[2].split(",")) {
-        const parts = item.trim().split(/\s+as\s+/);
-        if (parts[0]) add(parts[1] || parts[0], parts[0], match[1]);
-      }
-    }
-    for (const match of text.matchAll(/^\s*import\s+([A-Za-z_][\w.]*)(?:\s+as\s+([A-Za-z_][\w]*))?/gm)) {
-      add(match[2] || match[1].split(".")[0], "*", match[1], true);
-    }
-  }
-  return bindings.sort((left, right) => left.local.localeCompare(right.local) || left.specifier.localeCompare(right.specifier));
-}
-
-function callsIn(text, language) {
-  if (!["javascript", "typescript", "python"].includes(language)) return [];
-  const excluded = new Set(["if", "for", "while", "switch", "catch", "function", "return", "typeof", "new", "class", "def", "with", "assert", "lambda"]);
-  const calls = [];
-  for (const match of text.matchAll(/\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\(/g)) {
-    const callee = match[1];
-    const prefix = text.slice(Math.max(0, (match.index || 0) - 24), match.index || 0);
-    if (excluded.has(callee) || /\b(?:function|class|def|new)\s*$/.test(prefix)) continue;
-    calls.push({ callee, line: lineAt(text, match.index || 0) });
-  }
-  return calls;
 }
 
 function nearestCaller(symbols, line) {
@@ -172,10 +112,11 @@ export function buildSemanticGraph({ files, sources }) {
   };
 
   for (const file of files) {
-    const source = sources.get(file.path);
-    if (!source) continue;
+    const source = sources?.get?.(file.path) || null;
+    const semanticFacts = file.semanticFacts || (source ? extractSemanticSourceFacts(source.content, file.language) : null);
+    if (!semanticFacts) continue;
     const fromNode = nodeByFile.get(file.path);
-    const bindings = importBindings(source.content, file.language);
+    const bindings = semanticFacts.bindings;
     const dependencyTargets = new Map();
     for (const dependency of file.dependencies) {
       if (dependency.kind !== "module") continue;
@@ -191,7 +132,7 @@ export function buildSemanticGraph({ files, sources }) {
     }
     const bindingByLocal = new Map(bindings.map((binding) => [binding.local, binding]));
     const localSymbols = symbolNodesByFile.get(file.path) || [];
-    for (const call of callsIn(source.content, file.language)) {
+    for (const call of semanticFacts.calls) {
       const parts = call.callee.split(".");
       const base = parts[0];
       const member = parts[1] || null;

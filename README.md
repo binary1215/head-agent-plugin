@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.11` adds the provider-neutral `ComputeAdapter` and WorkerProtocol baseline with a deterministic JavaScript reference backend, canonical request/result digests, bounded resources, cancellation, authority-escalation rejection, and backend conformance reports. The Go worker remains deferred until operation-specific fixtures and benchmarks exist.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.12` routes deterministic repository scanning and source-fact extraction through the provider-neutral `ComputeAdapter`. A tracked corpus, failure cases, canonical-result validation, and cross-adapter conformance now establish the semantic gate that a future Go worker must match; the worker itself remains deferred.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 
@@ -18,6 +18,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Deterministic Fresh HEAD review projections that omit executor transcripts and provider session state.
 - ReviewDecision-linked plan generations and non-authoritative knowledge-promotion proposals.
 - Incremental Repository World Model with digest verification, file-level freshness, a heuristic evidence-linked file/symbol/import/call graph, and Context Compiler integration.
+- Versioned `repository.scan.v1` operation with relative-path-only semantic output, strict limits and result validation, a JavaScript reference implementation, conformance coverage, and a repeatable benchmark corpus.
 - Content-addressed temporal provenance GraphSnapshot with stable Repository/File/Symbol/Test identities, immutable revisions, zero-or-more SourceSnapshot and Revision parents, and provenance-complete typed edges.
 - Explicit `.head/context/product-model.json` canon with stable product keys and validated FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision relationships.
 - Canon-projected immutable product revisions and bounded Product Context retrieval without granting the derived graph instruction or promotion authority.
@@ -36,7 +37,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 
 ## What is intentionally deferred
 
-Automatic Feature discovery, onboarding candidate sets and ReviewDecision promotion, Feature-to-code/test mapping candidates, ChangeSet and conformance projection, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, built-in compute operations and the Go worker backend, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and authorized candidate-knowledge promotion are not active yet. Native worker process launch, binary selection/integrity verification, live caller fencing, role messaging, service installation, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+Automatic Feature discovery, onboarding candidate sets and ReviewDecision promotion, Feature-to-code/test mapping candidates, ChangeSet and conformance projection, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal and the Go worker backend, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and authorized candidate-knowledge promotion are not active yet. Native worker process launch, binary selection/integrity verification, live caller fencing, role messaging, service installation, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
 
 ## Use from source
 

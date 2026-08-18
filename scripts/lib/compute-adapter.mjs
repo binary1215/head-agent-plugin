@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
-export const COMPUTE_ADAPTER_CONTRACT_VERSION = "0.1.0";
-export const WORKER_PROTOCOL_VERSION = "0.1.0";
+export const COMPUTE_ADAPTER_CONTRACT_VERSION = "0.2.0";
+export const WORKER_PROTOCOL_VERSION = "0.2.0";
 
 export const DEFAULT_COMPUTE_LIMITS = Object.freeze({
   timeoutMs: 30_000,
@@ -9,6 +9,7 @@ export const DEFAULT_COMPUTE_LIMITS = Object.freeze({
   maxOutputBytes: 32 * 1024 * 1024,
   maxFiles: 20_000,
   maxFileBytes: 512 * 1024,
+  maxTotalBytes: 256 * 1024 * 1024,
 });
 
 const HARD_LIMITS = Object.freeze({
@@ -17,6 +18,7 @@ const HARD_LIMITS = Object.freeze({
   maxOutputBytes: { min: 2_048, max: 64 * 1024 * 1024 },
   maxFiles: { min: 1, max: 100_000 },
   maxFileBytes: { min: 1, max: 16 * 1024 * 1024 },
+  maxTotalBytes: { min: 1, max: 1024 * 1024 * 1024 },
 });
 
 const OPERATION_PATTERN = /^[a-z][a-z0-9.-]{2,127}\.v[1-9][0-9]*$/;
@@ -115,6 +117,7 @@ export function normalizeComputeLimits(limits = {}) {
     maxOutputBytes: normalizeInteger(limits.maxOutputBytes, DEFAULT_COMPUTE_LIMITS.maxOutputBytes, "maxOutputBytes"),
     maxFiles: normalizeInteger(limits.maxFiles, DEFAULT_COMPUTE_LIMITS.maxFiles, "maxFiles"),
     maxFileBytes: normalizeInteger(limits.maxFileBytes, DEFAULT_COMPUTE_LIMITS.maxFileBytes, "maxFileBytes"),
+    maxTotalBytes: normalizeInteger(limits.maxTotalBytes, DEFAULT_COMPUTE_LIMITS.maxTotalBytes, "maxTotalBytes"),
   };
 }
 

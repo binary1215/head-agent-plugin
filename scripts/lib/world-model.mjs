@@ -12,6 +12,17 @@ import {
 import { buildSemanticGraph, querySemanticGraph, SEMANTIC_GRAPH_VERSION, verifySemanticGraph } from "./semantic-graph.mjs";
 import { normalizeProductModelDocument, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
 import {
+  buildRepositoryScanInput,
+  createRepositoryScanReferenceAdapter,
+  executeRepositoryScan,
+  managedRootFilesForProject,
+  REPOSITORY_SCAN_DEFAULTS,
+  REPOSITORY_SCAN_EXCLUDED_DIRECTORIES,
+  REPOSITORY_SCAN_VERSION,
+  scanRepositoryReference,
+  validateRepositoryScanResult,
+} from "./repository-scan.mjs";
+import {
   buildTemporalProvenanceGraph,
   queryTemporalProvenanceGraph,
   TEMPORAL_PROVENANCE_VERSION,
@@ -30,22 +41,8 @@ import {
   WORLD_MODEL_STORAGE_CONTRACT,
 } from "./world-model-store.mjs";
 
-export const WORLD_MODEL_VERSION = "0.5.1";
+export const WORLD_MODEL_VERSION = "0.5.2";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
-
-const EXCLUDED_DIRECTORIES = new Set([
-  ".git", ".head", ".hg", ".svn", ".venv", "venv", "node_modules", "vendor",
-  "dist", "build", "coverage", ".next", ".nuxt", ".cache", "target", "out",
-]);
-const TEXT_EXTENSIONS = new Set([
-  ".c", ".cc", ".cpp", ".cs", ".css", ".go", ".h", ".hpp", ".html", ".java",
-  ".js", ".jsx", ".json", ".kt", ".kts", ".md", ".mjs", ".mts", ".php", ".ps1",
-  ".py", ".rb", ".rs", ".sh", ".sql", ".svelte", ".toml", ".ts", ".tsx", ".txt",
-  ".vue", ".xml", ".yaml", ".yml",
-]);
-const MAX_FILE_BYTES = 512 * 1024;
-const MAX_FILES = 20_000;
-const MAX_SYMBOLS_PER_FILE = 200;
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
   const error = new Error(message);
@@ -73,100 +70,6 @@ function readyProject(root) {
     fail(`Project must be ready to build a World Model; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   }
   return inspected;
-}
-
-function normalizedPath(root, file) {
-  return path.relative(root, file).replaceAll("\\", "/");
-}
-
-function languageFor(extension, base) {
-  if (base === "Dockerfile") return "dockerfile";
-  const languages = {
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".ts": "typescript",
-    ".tsx": "typescript", ".mts": "typescript", ".py": "python", ".go": "go", ".rs": "rust",
-    ".java": "java", ".kt": "kotlin", ".kts": "kotlin", ".cs": "csharp", ".rb": "ruby",
-    ".php": "php", ".md": "markdown", ".json": "json", ".yaml": "yaml", ".yml": "yaml",
-    ".toml": "toml", ".html": "html", ".css": "css", ".sql": "sql", ".ps1": "powershell",
-    ".sh": "shell", ".vue": "vue", ".svelte": "svelte",
-  };
-  return languages[extension] || extension.slice(1) || "text";
-}
-
-function classificationFor(relative, extension) {
-  const segments = relative.toLowerCase().split("/");
-  const base = segments.at(-1);
-  if (segments.some((item) => item === "test" || item === "tests" || item === "__tests__") || /(?:^|[._-])(test|spec)\./.test(base)) return "test";
-  if (extension === ".md" || segments.includes("docs")) return "documentation";
-  if ([".json", ".yaml", ".yml", ".toml"].includes(extension) || base.startsWith(".")) return "configuration";
-  return "source";
-}
-
-function lineAt(text, index) {
-  let line = 1;
-  for (let position = 0; position < index; position += 1) if (text.charCodeAt(position) === 10) line += 1;
-  return line;
-}
-
-function regexSymbols(text, expressions) {
-  const symbols = [];
-  for (const [kind, expression] of expressions) {
-    for (const match of text.matchAll(expression)) {
-      symbols.push({ name: match[1], kind, line: lineAt(text, match.index || 0) });
-      if (symbols.length >= MAX_SYMBOLS_PER_FILE) return symbols;
-    }
-  }
-  return symbols.sort((left, right) => left.line - right.line || left.name.localeCompare(right.name));
-}
-
-function symbolsFor(text, language) {
-  if (["javascript", "typescript"].includes(language)) {
-    return regexSymbols(text, [
-      ["function", /\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g],
-      ["class", /\b(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/g],
-      ["binding", /\b(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/g],
-    ]);
-  }
-  if (language === "python") {
-    return regexSymbols(text, [
-      ["function", /^\s*(?:async\s+)?def\s+([A-Za-z_][\w]*)/gm],
-      ["class", /^\s*class\s+([A-Za-z_][\w]*)/gm],
-    ]);
-  }
-  if (language === "markdown") {
-    return regexSymbols(text, [["heading", /^#{1,6}\s+(.+?)\s*$/gm]]);
-  }
-  return [];
-}
-
-function dependenciesFor(text, language, base) {
-  const dependencies = [];
-  const seen = new Set();
-  const add = (specifier, kind, line = 1) => {
-    if (!specifier || seen.has(`${kind}:${specifier}`)) return;
-    seen.add(`${kind}:${specifier}`);
-    dependencies.push({ specifier, kind, line });
-  };
-  if (["javascript", "typescript"].includes(language)) {
-    for (const match of text.matchAll(/\b(?:from\s+|import\s*\(|require\s*\()\s*["']([^"']+)["']/g)) add(match[1], "module", lineAt(text, match.index || 0));
-  } else if (language === "python") {
-    for (const match of text.matchAll(/^\s*(?:from|import)\s+([A-Za-z_][\w.]*)/gm)) add(match[1], "module", lineAt(text, match.index || 0));
-  }
-  if (base === "package.json") {
-    try {
-      const parsed = JSON.parse(text);
-      for (const section of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
-        for (const name of Object.keys(parsed[section] || {})) add(name, section, 1);
-      }
-    } catch {}
-  }
-  return dependencies.sort((left, right) => left.kind.localeCompare(right.kind) || left.specifier.localeCompare(right.specifier));
-}
-
-function managedRootFiles(project) {
-  const values = [];
-  if (project.integrations?.codex?.status === "managed") values.push("AGENTS.md");
-  if (project.integrations?.opencode?.status === "managed") values.push("opencode.json");
-  return new Set(values);
 }
 
 function gitReferenceState(gitPath) {
@@ -266,51 +169,6 @@ function runtimeStateFor(state) {
   });
 }
 
-function scanRepository(project) {
-  const root = project.projectRoot;
-  const managed = managedRootFiles(project);
-  const files = [];
-  const sources = new Map();
-  const skipped = { excludedDirectory: 0, managedProjection: 0, unsupportedType: 0, tooLarge: 0, symlink: 0 };
-  const stack = [root];
-  while (stack.length) {
-    const directory = stack.pop();
-    const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      const absolute = path.join(directory, entry.name);
-      const relative = normalizedPath(root, absolute);
-      if (entry.isSymbolicLink()) { skipped.symlink += 1; continue; }
-      if (entry.isDirectory()) {
-        if (EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase())) skipped.excludedDirectory += 1;
-        else stack.push(absolute);
-        continue;
-      }
-      if (!entry.isFile()) { skipped.unsupportedType += 1; continue; }
-      if (managed.has(relative)) { skipped.managedProjection += 1; continue; }
-      const base = entry.name;
-      const extension = path.extname(base).toLowerCase();
-      if (!TEXT_EXTENSIONS.has(extension) && base !== "Dockerfile") { skipped.unsupportedType += 1; continue; }
-      const stat = fs.statSync(absolute);
-      if (stat.size > MAX_FILE_BYTES) { skipped.tooLarge += 1; continue; }
-      if (files.length >= MAX_FILES) fail(`Repository index exceeds ${MAX_FILES} files.`, "WORLD_MODEL_FILE_LIMIT");
-      const content = fs.readFileSync(absolute, "utf8");
-      const language = languageFor(extension, base);
-      sources.set(relative, { content, language });
-      files.push({
-        path: relative,
-        digest: digest(content),
-        freshness: "active",
-        bytes: stat.size,
-        classification: classificationFor(relative, extension),
-        language,
-        symbols: symbolsFor(content, language),
-        dependencies: dependenciesFor(content, language, base),
-      });
-    }
-  }
-  return { files: files.sort((left, right) => left.path.localeCompare(right.path)), skipped, sources };
-}
-
 function verifiedSnapshot(snapshot, expectedId = "") {
   if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) fail("World Model snapshot is invalid.", "INVALID_WORLD_MODEL");
   const recordedHash = snapshot.worldModelHash;
@@ -322,6 +180,13 @@ function verifiedSnapshot(snapshot, expectedId = "") {
   if (recordedHash !== actualHash || recordedId !== `world-model-${actualHash.slice(0, 24)}` || (expectedId && recordedId !== expectedId)) {
     fail("World Model snapshot digest verification failed.", "WORLD_MODEL_DIGEST_MISMATCH");
   }
+  if (snapshot.repositoryScan) validateRepositoryScanResult({
+    schemaVersion: 1,
+    kind: "RepositoryScanResult",
+    ...snapshot.repositoryScan,
+    files: snapshot.files,
+    skipped: snapshot.skipped,
+  });
   if (snapshot.semanticGraph) verifySemanticGraph(snapshot.semanticGraph);
   if (snapshot.productModel) {
     const normalizedProductModel = normalizeProductModelDocument({
@@ -362,6 +227,7 @@ function changesBetween(previous, current) {
 function indexerState() {
   return {
     worldModelVersion: WORLD_MODEL_VERSION,
+    repositoryScanVersion: REPOSITORY_SCAN_VERSION,
     semanticGraphVersion: SEMANTIC_GRAPH_VERSION,
     productModelVersion: PRODUCT_MODEL_VERSION,
     temporalProvenanceVersion: TEMPORAL_PROVENANCE_VERSION,
@@ -374,7 +240,7 @@ function indexerState() {
 
 function sourceDigestFor(files, productModel, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
   return digest(canonicalJson({
-    files: files.map((item) => ({ path: item.path, digest: item.digest })),
+    files,
     productModel: { productModelId: productModel.productModelId, productModelHash: productModel.productModelHash },
     git,
     runtimeState,
@@ -411,7 +277,11 @@ export function readWorldModel({ root = ".", storeAdapter = null } = {}) {
 export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStateAdapter = null } = {}) {
   const stored = readWorldModel({ root, storeAdapter });
   const inspected = readyProject(root);
-  const scan = scanRepository(inspected.project);
+  const scanInput = buildRepositoryScanInput({
+    projectRoot: inspected.project.projectRoot,
+    managedRootFiles: managedRootFilesForProject(inspected.project),
+  });
+  const scan = scanRepositoryReference(scanInput);
   const productCanon = readProductModelCanon({ projectRoot: inspected.project.projectRoot });
   const git = gitHeadState(inspected.project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
@@ -475,19 +345,25 @@ export async function buildWorldModel({
   storeAdapter = null,
   gitHistoryAdapter = null,
   runtimeStateAdapter = null,
+  computeAdapter = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
 } = {}) {
   const inspected = readyProject(root);
   const project = inspected.project;
-  const scan = scanRepository(project);
+  const repositoryScanExecution = await executeRepositoryScan({
+    adapter: computeAdapter || createRepositoryScanReferenceAdapter(),
+    projectRoot: project.projectRoot,
+    managedRootFiles: managedRootFilesForProject(project),
+  });
+  const scan = validateRepositoryScanResult(repositoryScanExecution.result);
   const productCanon = readProductModelCanon({ projectRoot: project.projectRoot });
   const git = gitHeadState(project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
   const indexer = indexerState();
   const externalRuntimeResult = buildExternalRuntimeState({ projectRoot: project.projectRoot, adapter: runtimeStateAdapter });
   const externalRuntimeState = externalRuntimeResult.runtimeState;
-  const semanticGraph = buildSemanticGraph({ files: scan.files, sources: scan.sources });
+  const semanticGraph = buildSemanticGraph({ files: scan.files });
   const temporalProvenanceGraph = buildTemporalProvenanceGraph({
     projectId: project.projectId,
     files: scan.files,
@@ -523,13 +399,16 @@ export async function buildWorldModel({
     sourceDigest,
     indexer,
     rules: {
-      maxFileBytes: MAX_FILE_BYTES,
-      maxFiles: MAX_FILES,
-      excludedDirectories: [...EXCLUDED_DIRECTORIES].sort(),
-      managedRootProjectionsExcluded: [...managedRootFiles(project)].sort(),
+      maxFileBytes: REPOSITORY_SCAN_DEFAULTS.maxFileBytes,
+      maxFiles: REPOSITORY_SCAN_DEFAULTS.maxFiles,
+      maxTotalBytes: REPOSITORY_SCAN_DEFAULTS.maxTotalBytes,
+      maxSymbolsPerFile: REPOSITORY_SCAN_DEFAULTS.maxSymbolsPerFile,
+      excludedDirectories: REPOSITORY_SCAN_EXCLUDED_DIRECTORIES,
+      managedRootProjectionsExcluded: managedRootFilesForProject(project),
     },
     coverage: {
       files: "supported-text-files-within-rules",
+      repositoryScan: "compute-adapter-validated-relative-path-digest-and-source-facts",
       symbols: "heuristic-javascript-typescript-python-markdown-with-content-derived-identities",
       dependencies: "heuristic-module-resolution-and-package-manifests",
       semanticGraph: "heuristic-file-symbol-import-call-graph-with-evidence-locations",
@@ -545,6 +424,16 @@ export async function buildWorldModel({
     externalRuntimeState,
     productModel: productCanon.model,
     productModelSource: { status: productCanon.status, relativePath: productCanon.relativePath, evidenceId: productCanon.evidenceId },
+    repositoryScan: {
+      scanId: scan.scanId,
+      scanHash: scan.scanHash,
+      protocol: scan.protocol,
+      sourceAnalysisVersion: scan.sourceAnalysisVersion,
+      authority: scan.authority,
+      instructionAuthority: false,
+      promotionAuthority: false,
+      summary: scan.summary,
+    },
     files: scan.files,
     semanticGraph,
     temporalProvenanceGraph,
@@ -572,7 +461,12 @@ export async function buildWorldModel({
   const worldModelHash = digest(canonicalJson(payload));
   const worldModelId = `world-model-${worldModelHash.slice(0, 24)}`;
   const snapshot = { ...payload, worldModelId, worldModelHash };
-  if (!persist) return { status: "preview", snapshot };
+  if (!persist) return {
+    status: "preview",
+    snapshot,
+    sourceAdapters: { compute: repositoryScanExecution.diagnostics },
+    sourceDiagnostics: { compute: repositoryScanExecution.diagnostics },
+  };
 
   const adapter = createWorldModelStoreAdapter({ projectRoot: project.projectRoot, adapter: storeAdapter });
   let previous = null;
@@ -611,6 +505,13 @@ export async function buildWorldModel({
     worldModelHash,
     previousWorldModelId: changed ? previous?.worldModelId || null : previousPointer?.previousWorldModelId || null,
     sourceAdapters: {
+      compute: {
+        backend: repositoryScanExecution.diagnostics.backend,
+        adapterName: repositoryScanExecution.diagnostics.adapterName,
+        executionMode: repositoryScanExecution.diagnostics.executionMode,
+        requestId: repositoryScanExecution.request.requestId,
+        resultDigest: repositoryScanExecution.response.resultDigest,
+      },
       runtimeState: externalRuntimeResult.adapter,
     },
     tiers: {
@@ -631,8 +532,16 @@ export async function buildWorldModel({
     pointer,
     snapshot,
     storeAdapter: adapter.describe(),
-    sourceAdapters: { gitHistory: gitHistoryResult.adapter, runtimeState: externalRuntimeResult.adapter },
-    sourceDiagnostics: { gitHistory: gitHistoryResult.diagnostics, runtimeState: externalRuntimeResult.diagnostics },
+    sourceAdapters: {
+      compute: pointer.sourceAdapters.compute,
+      gitHistory: gitHistoryResult.adapter,
+      runtimeState: externalRuntimeResult.adapter,
+    },
+    sourceDiagnostics: {
+      compute: repositoryScanExecution.diagnostics,
+      gitHistory: gitHistoryResult.diagnostics,
+      runtimeState: externalRuntimeResult.diagnostics,
+    },
   };
 }
 

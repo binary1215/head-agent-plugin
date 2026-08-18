@@ -41,7 +41,7 @@ node scripts/head.mjs world-history <project> --query <decision-terms> --limit 2
 node scripts/head.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
 ```
 
-`world-index` scans and materializes a deterministic snapshot. Repeating it without repository changes returns the same World Model ID. `world-status` recomputes source digests and returns `current` or `stale` plus file-level `active`, `stale`, `removed`, and `unindexed` states.
+`world-index` invokes the validated `repository.scan.v1` operation and materializes a deterministic snapshot. Repeating it without repository changes returns the same World Model ID. `world-status` recomputes the same reference scan and source digests and returns `current` or `stale` plus file-level `active`, `stale`, `removed`, and `unindexed` states.
 
 Repository file changes, current Git refs, semantic HEAD lifecycle state, and indexer protocol versions all participate in the source digest. Volatile timestamps and physical store identity are excluded.
 
@@ -49,7 +49,9 @@ The read-only MCP tool `head_world_model` exposes the same digest and freshness 
 
 ## Temporal provenance graph
 
-World Model version `0.5.1` includes a separate `GraphSnapshot` built by temporal provenance protocol `0.2.0`. It leaves the older heuristic import/call graph intact while adding stable Product/Repository/File/Symbol/Test logical identities, immutable Product/File/Symbol/Test revisions, and explicit zero-or-more SourceSnapshot and Revision parents. Product entities come only from the validated user-owned `.head/context/product-model.json` canon and are projected with `authorityClass: canon-projected`; the graph itself still has no canonical or promotion authority. Every node and edge carries typed provenance, freshness, producer version, evidence identities, and instruction/promotion authority flags. Heuristic Symbol projections use numeric confidence.
+World Model version `0.5.2` includes repository scan protocol `0.1.0`, source-analysis protocol `0.1.0`, semantic graph protocol `0.2.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.2.0`. It leaves the heuristic import/call graph intact while adding stable Product/Repository/File/Symbol/Test logical identities, immutable Product/File/Symbol/Test revisions, and explicit zero-or-more SourceSnapshot and Revision parents. Product entities come only from the validated user-owned `.head/context/product-model.json` canon and are projected with `authorityClass: canon-projected`; the graph itself still has no canonical or promotion authority. Every node and edge carries typed provenance, freshness, producer version, evidence identities, and instruction/promotion authority flags. Heuristic Symbol projections use numeric confidence.
+
+The repository scan is the first built-in `ComputeAdapter` operation. Its semantic output contains only normalized relative paths and deterministic source facts. The scan root is operational input and is excluded from the repository-scan result; backend identity, execution mode, timing, and process details remain pointer diagnostics outside World Model identity. The World Model continues to record its separately validated canonical project root. A candidate backend must produce a byte-equivalent canonical response on the tracked corpus before it can replace the JavaScript reference implementation.
 
 The temporal graph consumes no Git state. A project without `.git` constructs and queries the same temporal identities from the same project ID, source scan, explicit parent sets, and producer version. Optional Git history remains a separate World Model evidence plane. See [`temporal-provenance.md`](temporal-provenance.md) for identity, ancestry, validation, and bounded traversal contracts.
 
@@ -78,6 +80,7 @@ The adapter descriptor and physical source path live only in the World Model poi
 
 - supported text files up to 512 KiB;
 - deterministic path and content digests;
+- validated `repository.scan.v1` output with maximum file, per-file byte, total-byte, input, output, and timeout bounds;
 - source, test, documentation, and configuration classification;
 - heuristic JavaScript/TypeScript, Python, and Markdown symbols;
 - JavaScript/TypeScript/Python module references, local module resolution, and package manifest dependencies;
@@ -123,5 +126,6 @@ This prevents a stale index from silently directing execution while still allowi
 - automatic parent inference, merge, and conflict resolution;
 - the replaceable `GraphProjectionAdapter` contract;
 - the optional GraphDB storage adapter and remote graph expansion.
+- the Go repository-scan backend, native process supervision, binary integrity selection, and disclosed JavaScript fallback.
 
 Future stores must implement the versioned adapter contract and preserve the same content-addressed snapshot, digest verification, freshness, coverage, and rebuildability semantics. A remote graph store may accelerate traversal but cannot become the sole authority or alter semantic identity.
