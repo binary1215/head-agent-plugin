@@ -32,8 +32,11 @@ GraphDB is not required and no remote database is queried or mutated. A future G
 node scripts/head.mjs world-index <project>
 node scripts/head.mjs world-index <project> --git-log <host-exported-log-file>
 node scripts/head.mjs world-index <project> --runtime-state <host-exported-json-file>
+node scripts/head.mjs world-index <project> --parent-snapshot <source-snapshot-id,source-snapshot-id>
+node scripts/head.mjs world-index <project> --revision-parents <logical-entity-to-parent-revisions.json>
 node scripts/head.mjs world-status <project>
 node scripts/head.mjs world-query <project> --query <symbol-or-path> --depth 1 --limit 100
+node scripts/head.mjs world-temporal <project> --query <path-or-symbol> --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
 node scripts/head.mjs world-history <project> --query <decision-terms> --limit 20
 node scripts/head.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
 ```
@@ -42,7 +45,13 @@ node scripts/head.mjs world-runtime <project> --runtime codex --state active --k
 
 Repository file changes, current Git refs, semantic HEAD lifecycle state, and indexer protocol versions all participate in the source digest. Volatile timestamps and physical store identity are excluded.
 
-The read-only MCP tool `head_world_model` exposes the same digest and freshness verification. `head_world_query` returns a bounded zero-to-three-hop semantic neighborhood and rejects a stale index. `head_git_history` performs a bounded query over verified current Git evidence. `head_runtime_state` performs a bounded query over verified point-in-time runtime observations. All reject a stale index.
+The read-only MCP tool `head_world_model` exposes the same digest and freshness verification. `head_world_query` returns a bounded zero-to-three-hop heuristic semantic neighborhood. `head_temporal_graph` returns a deterministic allowlisted temporal traversal with graph/query/result digests. `head_git_history` performs a bounded query over verified current Git evidence. `head_runtime_state` performs a bounded query over verified point-in-time runtime observations. All reject a stale index.
+
+## Temporal provenance graph
+
+World Model version `0.5.0` includes a separate `GraphSnapshot` built by temporal provenance protocol `0.1.0`. It leaves the older heuristic import/call graph intact while adding stable Repository/File/Symbol/Test logical identities, immutable File/Symbol/Test revisions, and explicit zero-or-more SourceSnapshot and Revision parents. Every node and edge carries typed provenance, freshness, producer version, evidence identities, and instruction/promotion authority flags. Heuristic Symbol projections use numeric confidence.
+
+The temporal graph consumes no Git state. A project without `.git` constructs and queries the same temporal identities from the same project ID, source scan, explicit parent sets, and producer version. Optional Git history remains a separate World Model evidence plane. See [`temporal-provenance.md`](temporal-provenance.md) for identity, ancestry, validation, and bounded traversal contracts.
 
 ## Git decision evidence
 
@@ -74,6 +83,10 @@ The adapter descriptor and physical source path live only in the World Model poi
 - JavaScript/TypeScript/Python module references, local module resolution, and package manifest dependencies;
 - content-derived File, Symbol, and ExternalDependency nodes;
 - evidence-linked `DECLARES`, `IMPORTS`, and resolvable `CALLS` edges;
+- stable temporal Repository/File/Symbol/Test logical entities and immutable File/Symbol/Test revisions;
+- zero-or-more SourceSnapshot and Revision parents with no automatic merge claim;
+- provenance-complete `CONTAINS`, `HAS_REVISION`, `CURRENT_REVISION`, `PARENT_OF`, `DECLARES`, and `REFERENCES` edges;
+- deterministic bounded temporal traversal with kind/relation/authority/freshness allowlists, confidence policy, inclusion/exclusion reasons, and graph/query/result digests;
 - file digest and line provenance, heuristic confidence, unresolved counts, and bounded traversal;
 - local `.git/HEAD` and in-repository ref resolution without following external gitdir pointers;
 - content-addressed all-reachable Git commit-message evidence through replaceable CLI and host-export adapters;
@@ -81,14 +94,14 @@ The adapter descriptor and physical source path live only in the World Model poi
 - semantic HEAD lifecycle state including current plan, active Run/contract, pending review, and required plan action;
 - added, changed, and removed path calculation;
 - file-level freshness;
-- Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, bounded semantic relationships, semantic graph ID, and World Model ID.
+- Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, bounded semantic and temporal relationships, GraphSnapshot/TraversalQuery/result digests, and World Model ID.
 
 Managed root projections and these directories are excluded: `.head`, `.git`, VCS metadata, dependency/vendor directories, generated build outputs, caches, coverage outputs, and virtual environments. Symlinks and unsupported/binary or oversized files are skipped and counted.
 
 ## Context Compiler behavior
 
 - no World Model: Capsule coverage remains `curated-head-canon-only`;
-- current World Model: task-relevant repository files, bounded semantic relationships, history-class-eligible Git evidence, and runtime observations compete within the normal context budget;
+- current World Model: task-relevant repository files, bounded semantic and temporal relationships, history-class-eligible Git evidence, and runtime observations compete within the normal context budget;
 - stale World Model: repository candidates are excluded and Capsule coverage explicitly records the stale exclusion;
 - every repository candidate, semantic node, and edge remains `evidence-not-instruction`.
 
@@ -102,6 +115,9 @@ This prevents a stale index from silently directing execution while still allowi
 - generated/vendor source classification beyond the current exclusion rules;
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
+- Feature/Capability/ChangeSet, conformance, candidate, lineage, and document-projection graph planes;
+- automatic parent inference, merge, and conflict resolution;
+- the replaceable `GraphProjectionAdapter` contract;
 - the optional GraphDB storage adapter and remote graph expansion.
 
 Future stores must implement the versioned adapter contract and preserve the same content-addressed snapshot, digest verification, freshness, coverage, and rebuildability semantics. A remote graph store may accelerate traversal but cannot become the sole authority or alter semantic identity.

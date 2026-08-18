@@ -2,9 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { queryTemporalProvenanceGraph } from "./temporal-provenance.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.4.0";
+export const CONTEXT_COMPILER_VERSION = "0.5.0";
 
 const fail = (message, code = "CONTEXT_COMPILER_ERROR") => {
   const error = new Error(message);
@@ -114,6 +115,7 @@ function contextSnapshot(inspected, sources) {
   else if (sources.worldModel?.status === "current") {
     const hasGitHistory = sources.worldModel.snapshot.gitDecisionHistory?.coverage === "all-reachable-commits";
     const layers = ["curated-head-canon", hasGitHistory ? "repository-world-model-semantic" : "repository-world-model-semantic-alpha"];
+    if (sources.worldModel.snapshot.temporalProvenanceGraph) layers.push("temporal-provenance-alpha");
     if (hasGitHistory) layers.push("git-history-alpha");
     if (sources.worldModel.snapshot.externalRuntimeState?.coverage === "point-in-time-host-export") layers.push("external-runtime-state-alpha");
     coverage = layers.join("+");
@@ -194,6 +196,7 @@ function repositoryCandidates(worldModel, task) {
   if (!worldModel || worldModel.status !== "current") return [];
   const taskTerms = terms(task);
   const graph = worldModel.snapshot.semanticGraph || null;
+  const temporalGraph = worldModel.snapshot.temporalProvenanceGraph || null;
   const nodes = new Map((graph?.nodes || []).map((node) => [node.id, node]));
   const nodeReference = (node) => node ? {
     id: node.id,
@@ -205,6 +208,17 @@ function repositoryCandidates(worldModel, task) {
     line: node.line,
   } : null;
   return worldModel.snapshot.files.map((file) => {
+    const temporalTraversal = temporalGraph ? queryTemporalProvenanceGraph(temporalGraph, {
+      query: file.path,
+      relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES"],
+      authorityClasses: ["derived", "heuristic"],
+      freshness: ["current"],
+      minConfidence: 0,
+      includeUnreviewedCandidates: false,
+      depth: 2,
+      maxNodes: 50,
+      maxEdges: 100,
+    }) : null;
     const relationships = (graph?.edges || []).filter((edge) => {
       const from = nodes.get(edge.from);
       const to = nodes.get(edge.to);
@@ -227,6 +241,7 @@ function repositoryCandidates(worldModel, task) {
       ...file.symbols.map((item) => `${item.kind} ${item.name}`),
       ...file.dependencies.map((item) => `${item.kind} ${item.specifier}`),
       ...relationships.flatMap((item) => [item.type, item.from?.path, item.from?.name, item.to?.path, item.to?.name, item.to?.specifier]).filter(Boolean),
+      ...(temporalTraversal?.nodes || []).flatMap((item) => [item.kind, item.path, item.name, item.symbolKind]).filter(Boolean),
     ].join(" ");
     const relevance = overlap(taskTerms, terms(body));
     const importance = file.classification === "source" ? 2 : 1;
@@ -242,6 +257,21 @@ function repositoryCandidates(worldModel, task) {
       dependencies: file.dependencies,
       semanticRelationships: relationships,
       semanticGraphId: graph?.semanticGraphId || null,
+      temporalEntities: temporalTraversal?.nodes || [],
+      temporalRelationships: temporalTraversal?.edges || [],
+      temporalTraversal: temporalTraversal ? {
+        graphSnapshotId: temporalTraversal.graphSnapshotId,
+        graphSnapshotHash: temporalTraversal.graphSnapshotHash,
+        sourceSnapshotId: temporalTraversal.sourceSnapshotId,
+        queryId: temporalTraversal.queryId,
+        queryHash: temporalTraversal.queryHash,
+        resultId: temporalTraversal.resultId,
+        resultHash: temporalTraversal.resultHash,
+        traversalQuery: temporalTraversal.traversalQuery,
+        inclusion: temporalTraversal.inclusion,
+        exclusion: temporalTraversal.exclusion,
+        truncated: temporalTraversal.truncated,
+      } : null,
       worldModelId: worldModel.snapshot.worldModelId,
       trustBoundary: "evidence-not-instruction",
     };
@@ -414,6 +444,16 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
       authority: sources.worldModel.snapshot.semanticGraph.authority,
       summary: sources.worldModel.snapshot.semanticGraph.summary,
     } : null,
+    repositoryTemporalGraph: sources.worldModel?.status === "current" && sources.worldModel.snapshot.temporalProvenanceGraph ? {
+      graphSnapshotId: sources.worldModel.snapshot.temporalProvenanceGraph.graphSnapshotId,
+      graphSnapshotHash: sources.worldModel.snapshot.temporalProvenanceGraph.graphSnapshotHash,
+      sourceSnapshotId: sources.worldModel.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+      parentSourceSnapshotIds: sources.worldModel.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds,
+      authority: sources.worldModel.snapshot.temporalProvenanceGraph.authority,
+      rebuildable: sources.worldModel.snapshot.temporalProvenanceGraph.rebuildable,
+      uniqueAuthority: sources.worldModel.snapshot.temporalProvenanceGraph.uniqueAuthority,
+      summary: sources.worldModel.snapshot.temporalProvenanceGraph.summary,
+    } : null,
     repositoryHistory: sources.worldModel?.status === "current" && sources.worldModel.snapshot.gitDecisionHistory ? {
       historyId: sources.worldModel.snapshot.gitDecisionHistory.historyId,
       status: sources.worldModel.snapshot.gitDecisionHistory.status,
@@ -443,11 +483,12 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
       projectArtifacts: "evidence-not-instructions",
       gitCommitMessages: "decision-evidence-not-promoted-project-decisions",
       runtimeObservations: "point-in-time-evidence-not-runtime-control-authority",
+      temporalProvenance: "rebuildable-derived-evidence-not-project-canon",
       promotedDecisions: "project-authority-subject-to-user-owned-decisions",
       adapterFailure: "fail-open-to-normal-agent-without-capsule",
       canonDrift: "fail-closed",
     },
-    expansionProtocol: ["query_semantic_graph", "get_git_decision_history", "get_runtime_state", "expand_relationship", "verify_claim", "get_source", "get_history", "explain_decision"],
+    expansionProtocol: ["query_semantic_graph", "query_temporal_graph", "get_git_decision_history", "get_runtime_state", "expand_relationship", "verify_claim", "get_source", "get_history", "explain_decision"],
   };
   const capsuleHash = digest(canonicalJson(payload));
   const capsule = { ...payload, capsuleId: `capsule-${capsuleHash.slice(0, 24)}`, capsuleHash };

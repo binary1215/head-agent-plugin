@@ -27,7 +27,7 @@ Canonical sources and promoted knowledge
 
 HEAD owns the whole outcome and determines whether the compiled world is sufficient. The compiler ranks and packages evidence; it does not decide material product, policy, architecture, cost, workflow, or external action.
 
-The executor may request narrow expansion through `expand_relationship`, `verify_claim`, `get_source`, `get_history`, or `explain_decision`. Discoveries return as candidate knowledge. They become persistent only after evidence verification and appropriate authority approval.
+The executor may request narrow expansion through `query_semantic_graph`, `query_temporal_graph`, `expand_relationship`, `verify_claim`, `get_source`, `get_history`, or `explain_decision`. Temporal expansion must preserve its relation, authority, freshness, confidence, depth, node, and edge bounds and record graph/query/result digests. Discoveries return as candidate knowledge. They become persistent only after evidence verification and appropriate authority approval.
 
 ## Failure policy
 
@@ -38,4 +38,4 @@ The executor may request narrow expansion through `expand_relationship`, `verify
 
 ## Current coverage
 
-Version 0.2 compiles curated `.head/` canon only. The seeded `Unknown` makes the absence of a full repository index visible. Filesystem/VCS events, incremental world-model materialization, history tiers, graph expansion, and knowledge promotion services remain later layers.
+Compiler version `0.5.0` always compiles curated `.head/` canon and, when a verified current World Model exists, allows repository files, bounded heuristic semantic relations, bounded temporal provenance traversals, history-eligible optional Git evidence, and strict runtime observations to compete under the same context budget. Each selected temporal expansion records its GraphSnapshot, SourceSnapshot, query, and result identities plus inclusion and exclusion reasons. A missing index remains visible through the seeded `Unknown`; a stale index is excluded rather than silently consumed. Feature/Capability/ChangeSet projection, candidate promotion, document projection, AST-accurate analysis, and GraphDB acceleration remain later layers.

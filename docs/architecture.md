@@ -17,6 +17,7 @@ The plugin is organized as a thin Codex distribution around a provider-neutral c
        -> scripts/lib/run-lineage contract-bound Run state transitions
        -> scripts/lib/world-model incremental repository view
             -> scripts/lib/semantic-graph evidence-linked semantic projection
+            -> scripts/lib/temporal-provenance immutable revision DAG and bounded traversal
             -> scripts/lib/git-history replaceable Git evidence source
             -> scripts/lib/runtime-state replaceable runtime evidence source
             -> scripts/lib/world-model-store replaceable storage contract
@@ -75,6 +76,8 @@ The World Model materializes supported repository files, heuristic symbols, depe
 `WorldModelStoreAdapter` separates physical persistence from semantic snapshot identity. The snapshot contains only the invariant rebuildable-storage contract; the pointer records the active adapter descriptor. The local JSON adapter is active, and an in-memory conformance test proves that the same canonical inputs produce the same World Model ID through a different adapter. A future GraphDB adapter must implement the same interface and can accelerate traversal, but cannot own unique authority.
 
 The semantic graph uses content-derived node and edge identities, file digest and line evidence, explicit heuristic confidence, and `evidence-not-instruction` trust boundaries. It currently covers file containment, module imports, and resolvable JavaScript/TypeScript/Python calls.
+
+The temporal provenance graph is a separate verified projection so existing heuristic semantic identities are not silently redefined. It separates stable Repository/File/Symbol/Test logical identities from immutable File/Symbol/Test revisions, supports explicit zero-or-more SourceSnapshot and Revision parents, and validates provenance-complete typed edges. Its bounded `TraversalQuery` fixes relation, kind, authority, freshness, confidence, depth, node, edge, and ordering policy and returns graph/query/result digests. It consumes no Git objects and requires no GraphDB. Automatic merge, Feature/Capability/ChangeSet projection, candidate promotion, document projection, and the `GraphProjectionAdapter` remain deferred.
 
 `GitHistoryAdapter` separately supplies rebuildable, content-addressed commit evidence. The default asynchronous Git CLI adapter may fail open with explicit coverage when process launch is unavailable; a byte-preserving host-export adapter provides the same semantic input in constrained runtimes. Current refs validate reachability, and commit messages remain evidence rather than instructions or promoted decisions.
 

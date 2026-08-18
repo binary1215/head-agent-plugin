@@ -17,7 +17,15 @@
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, all reachable Git commit-message decision evidence, current Git refs, canonical HEAD lifecycle state, point-in-time host-exported external runtime observations, and bounded semantic/history/runtime traversal are active; AST-accurate analysis, structured Git decision inference, live runtime probing/control, and the optional GraphDB adapter are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, a Git-independent temporal File/Symbol/Test revision GraphSnapshot, all reachable Git commit-message decision evidence, current Git refs, canonical HEAD lifecycle state, point-in-time host-exported external runtime observations, and bounded semantic/temporal/history/runtime traversal are active; Feature/Capability/ChangeSet projection, AST-accurate analysis, structured Git decision inference, live runtime probing/control, document projections, and the optional GraphDB adapter are deferred."
+  },
+  "temporalProvenance": {
+    "purpose": "Connect stable repository entities to immutable content-derived revisions and explicit multiple-parent ancestry without requiring Git or GraphDB.",
+    "types": ["Repository", "File", "FileRevision", "Symbol", "SymbolRevision", "Test", "TestRevision", "SourceSnapshot", "SourceSnapshotReference", "RevisionReference"],
+    "relations": ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES"],
+    "identity": "Logical identities exclude line locations, Git objects, GraphDB records, provider sessions, and document page IDs; revisions and graph/query/result artifacts are digest-verifiable.",
+    "authority": "Rebuildable derived evidence only with no instruction, promotion, canonical, or unique authority.",
+    "status": "Zero-or-more SourceSnapshot and Revision parents plus deterministic bounded traversal are active; automatic merge, conflict resolution, candidate promotion, and remote GraphProjectionAdapter backends are deferred."
   },
   "roles": {
     "head": "Owns whole-outcome understanding, strategy, integration, and completion judgment.",
@@ -48,6 +56,9 @@
     "incremental local Repository World Model",
     "replaceable WorldModelStoreAdapter contract",
     "heuristic evidence-linked semantic call graph and bounded traversal",
+    "Git-independent temporal File, Symbol, and Test revision GraphSnapshot",
+    "multiple-parent SourceSnapshot and Revision DAG",
+    "deterministic allowlisted temporal traversal with graph, query, and result digests",
     "versioned GitHistoryAdapter and all-reachable commit-message decision evidence",
     "versioned RuntimeStateAdapter and host-exported point-in-time runtime evidence",
     "history-and-runtime-aware minimum-sufficient Context Capsules",
@@ -60,6 +71,10 @@
     "AST-accurate semantic call graph",
     "live runtime-state probing and streaming",
     "structured Git decision inference and supersession",
+    "Feature, Capability, ChangeSet, conformance, and candidate graph projection",
+    "automatic merge and conflict resolution",
+    "Markdown, Obsidian, and Notion projection adapters",
+    "replaceable GraphProjectionAdapter contract",
     "GraphDB World Model store adapter",
     "worker process launch",
     "live caller fencing",

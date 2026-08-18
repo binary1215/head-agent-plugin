@@ -8,7 +8,7 @@ import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSn
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "./lib/run-lineage.mjs";
-import { buildWorldModel, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState } from "./lib/world-model.mjs";
+import { buildWorldModel, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -32,9 +32,10 @@ export function usage() {
       "head init <project> [--runtime codex,opencode]",
       "head status <project>",
       "head doctor <project>",
-      "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>]",
+      "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>] [--parent-snapshot <id,id>] [--revision-parents <json-file>]",
       "head world-status <project>",
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
+      "head world-temporal <project> --query <text> [--kind <kind,kind>] [--relations <type,type>] [--depth <0-3>] [--limit <1-500>] [--edge-limit <0-1000>] [--min-confidence <0-1>]",
       "head world-history <project> [--query <text>] [--limit <1-500>]",
       "head world-runtime <project> [--query <text>] [--runtime <name>] [--state <state>] [--kind <kind>] [--limit <1-500>]",
       "head checkpoint <project> --summary <text> [--next <text>]",
@@ -60,6 +61,11 @@ function inputJson(options, label) {
   catch (error) { throw new Error(`${label} input is invalid JSON: ${error.message}`); }
 }
 
+function readJsonFile(file, label) {
+  try { return JSON.parse(fs.readFileSync(path.resolve(file), "utf8")); }
+  catch (error) { throw new Error(`${label} is invalid JSON: ${error.message}`); }
+}
+
 export function runCommand(argv = process.argv.slice(2)) {
   const { command, root, options } = parse(argv);
   if (command === "help" || command === "--help" || command === "-h") return usage();
@@ -70,6 +76,8 @@ export function runCommand(argv = process.argv.slice(2)) {
     persist: true,
     gitHistoryAdapter: options["git-log"] ? new GitLogFileHistoryAdapter({ file: options["git-log"] }) : null,
     runtimeStateAdapter: options["runtime-state"] ? new RuntimeStateFileAdapter({ file: options["runtime-state"] }) : null,
+    parentSourceSnapshotIds: options["parent-snapshot"] ? options["parent-snapshot"].split(",").map((item) => item.trim()).filter(Boolean) : [],
+    revisionParentIds: options["revision-parents"] ? readJsonFile(options["revision-parents"], "Revision parent map") : {},
   });
   if (command === "world-status") return inspectWorldModel({ root });
   if (command === "world-query") return queryWorldModel({
@@ -77,6 +85,16 @@ export function runCommand(argv = process.argv.slice(2)) {
     query: options.query,
     depth: options.depth == null ? 1 : Number(options.depth),
     maxResults: options.limit == null ? 100 : Number(options.limit),
+  });
+  if (command === "world-temporal") return queryWorldTemporalGraph({
+    root,
+    query: options.query,
+    kinds: options.kind ? options.kind.split(",").map((item) => item.trim()).filter(Boolean) : null,
+    relations: options.relations ? options.relations.split(",").map((item) => item.trim()).filter(Boolean) : null,
+    minConfidence: options["min-confidence"] == null ? 0 : Number(options["min-confidence"]),
+    depth: options.depth == null ? 1 : Number(options.depth),
+    maxNodes: options.limit == null ? 100 : Number(options.limit),
+    maxEdges: options["edge-limit"] == null ? 200 : Number(options["edge-limit"]),
   });
   if (command === "world-history") return queryWorldHistory({
     root,

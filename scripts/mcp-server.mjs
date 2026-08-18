@@ -6,7 +6,7 @@ import { coreContract, inspectProject } from "./lib/head-core.mjs";
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
-import { inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState } from "./lib/world-model.mjs";
+import { inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 
 const protocolVersion = "2024-11-05";
 export const tools = [
@@ -115,6 +115,25 @@ export const tools = [
     }
   },
   {
+    name: "head_temporal_graph",
+    description: "Run a deterministic allowlisted traversal over the current rebuildable temporal provenance GraphSnapshot without granting canon or promotion authority.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        query: { type: "string", minLength: 1 },
+        kinds: { type: "array", items: { type: "string" }, uniqueItems: true },
+        relation_types: { type: "array", items: { type: "string" }, uniqueItems: true },
+        depth: { type: "integer", minimum: 0, maximum: 3, default: 1 },
+        node_limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+        edge_limit: { type: "integer", minimum: 0, maximum: 1000, default: 200 },
+        min_confidence: { type: "number", minimum: 0, maximum: 1, default: 0 }
+      },
+      required: ["project_root", "query"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "head_runtime_state",
     description: "Read bounded point-in-time external runtime observations from the current digest-verified World Model as evidence without granting runtime control authority.",
     inputSchema: {
@@ -139,7 +158,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
   if (request.method === "initialize") {
-    return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.8" } });
+    return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.9" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -174,16 +193,27 @@ export async function dispatch(request) {
                         query: args.query || "",
                         limit: args.limit ?? 50,
                       })
-                      : name === "head_runtime_state"
-                        ? queryWorldRuntimeState({
+                      : name === "head_temporal_graph"
+                        ? queryWorldTemporalGraph({
                           root: args.project_root,
-                          query: args.query || "",
-                          runtime: args.runtime || "",
-                          state: args.state || "",
-                          kind: args.kind || "",
-                          limit: args.limit ?? 50,
+                          query: args.query,
+                          kinds: args.kinds || null,
+                          relations: args.relation_types || null,
+                          minConfidence: args.min_confidence ?? 0,
+                          depth: args.depth ?? 1,
+                          maxNodes: args.node_limit ?? 100,
+                          maxEdges: args.edge_limit ?? 200,
                         })
-                      : (() => { throw new Error(`Unknown tool: ${name}`); })();
+                        : name === "head_runtime_state"
+                          ? queryWorldRuntimeState({
+                            root: args.project_root,
+                            query: args.query || "",
+                            runtime: args.runtime || "",
+                            state: args.state || "",
+                            kind: args.kind || "",
+                            limit: args.limit ?? 50,
+                          })
+                          : (() => { throw new Error(`Unknown tool: ${name}`); })();
     return success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
   } catch (error) {
     return failure(id, error.message);

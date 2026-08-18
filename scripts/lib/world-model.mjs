@@ -11,6 +11,12 @@ import {
 } from "./git-history.mjs";
 import { buildSemanticGraph, querySemanticGraph, SEMANTIC_GRAPH_VERSION, verifySemanticGraph } from "./semantic-graph.mjs";
 import {
+  buildTemporalProvenanceGraph,
+  queryTemporalProvenanceGraph,
+  TEMPORAL_PROVENANCE_VERSION,
+  verifyTemporalProvenanceGraph,
+} from "./temporal-provenance.mjs";
+import {
   buildExternalRuntimeState,
   EXTERNAL_RUNTIME_STATE_VERSION,
   queryExternalRuntimeState,
@@ -23,7 +29,7 @@ import {
   WORLD_MODEL_STORAGE_CONTRACT,
 } from "./world-model-store.mjs";
 
-export const WORLD_MODEL_VERSION = "0.4.0";
+export const WORLD_MODEL_VERSION = "0.5.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 
 const EXCLUDED_DIRECTORIES = new Set([
@@ -316,6 +322,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
     fail("World Model snapshot digest verification failed.", "WORLD_MODEL_DIGEST_MISMATCH");
   }
   if (snapshot.semanticGraph) verifySemanticGraph(snapshot.semanticGraph);
+  if (snapshot.temporalProvenanceGraph) verifyTemporalProvenanceGraph(snapshot.temporalProvenanceGraph);
   if (snapshot.gitDecisionHistory) verifyGitDecisionHistory(snapshot.gitDecisionHistory);
   if (snapshot.externalRuntimeState) verifyExternalRuntimeState(snapshot.externalRuntimeState);
   return snapshot;
@@ -335,6 +342,7 @@ function indexerState() {
   return {
     worldModelVersion: WORLD_MODEL_VERSION,
     semanticGraphVersion: SEMANTIC_GRAPH_VERSION,
+    temporalProvenanceVersion: TEMPORAL_PROVENANCE_VERSION,
     gitDecisionHistoryVersion: GIT_DECISION_HISTORY_VERSION,
     gitHistoryAdapterVersion: GIT_HISTORY_ADAPTER_VERSION,
     externalRuntimeStateVersion: EXTERNAL_RUNTIME_STATE_VERSION,
@@ -342,13 +350,14 @@ function indexerState() {
   };
 }
 
-function sourceDigestFor(files, git, runtimeState, externalRuntimeState, indexer) {
+function sourceDigestFor(files, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
   return digest(canonicalJson({
     files: files.map((item) => ({ path: item.path, digest: item.digest })),
     git,
     runtimeState,
     externalRuntimeState: externalRuntimeState.runtimeStateHash,
     indexer,
+    temporalParents: { parentSourceSnapshotIds, revisionParentIds },
   }));
 }
 
@@ -385,7 +394,21 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   const selectedRuntimeAdapter = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer.sourceAdapters?.runtimeState);
   const externalRuntimeResult = buildExternalRuntimeState({ projectRoot: inspected.project.projectRoot, adapter: selectedRuntimeAdapter });
   const externalRuntimeState = externalRuntimeResult.runtimeState;
-  const currentSourceDigest = sourceDigestFor(scan.files, git, runtimeState, externalRuntimeState, indexerState());
+  const currentTemporalProvenanceGraph = buildTemporalProvenanceGraph({
+    projectId: inspected.project.projectId,
+    files: scan.files,
+    parentSourceSnapshotIds: stored.snapshot.temporalProvenanceGraph?.parentSourceSnapshotIds || [],
+    revisionParentIds: stored.snapshot.temporalProvenanceGraph?.revisionParentIds || {},
+  });
+  const currentSourceDigest = sourceDigestFor(
+    scan.files,
+    git,
+    runtimeState,
+    externalRuntimeState,
+    indexerState(),
+    stored.snapshot.temporalProvenanceGraph?.parentSourceSnapshotIds || [],
+    stored.snapshot.temporalProvenanceGraph?.revisionParentIds || {},
+  );
   const current = { files: scan.files };
   const currentByPath = new Map(scan.files.map((item) => [item.path, item.digest]));
   const storedByPath = new Map(stored.snapshot.files.map((item) => [item.path, item.digest]));
@@ -410,6 +433,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
       gitHistoryChanged: git.referencesDigest !== stored.snapshot.git?.referencesDigest,
       runtimeStateChanged: canonicalJson(runtimeState) !== canonicalJson(stored.snapshot.runtimeState),
       externalRuntimeStateChanged: externalRuntimeState.runtimeStateHash !== stored.snapshot.externalRuntimeState?.runtimeStateHash,
+      temporalProvenanceChanged: currentTemporalProvenanceGraph.graphSnapshotHash !== stored.snapshot.temporalProvenanceGraph?.graphSnapshotHash,
     },
     fileFreshness,
     sourceAdapters: { runtimeState: externalRuntimeResult.adapter },
@@ -417,7 +441,15 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   };
 }
 
-export async function buildWorldModel({ root = ".", persist = true, storeAdapter = null, gitHistoryAdapter = null, runtimeStateAdapter = null } = {}) {
+export async function buildWorldModel({
+  root = ".",
+  persist = true,
+  storeAdapter = null,
+  gitHistoryAdapter = null,
+  runtimeStateAdapter = null,
+  parentSourceSnapshotIds = [],
+  revisionParentIds = {},
+} = {}) {
   const inspected = readyProject(root);
   const project = inspected.project;
   const scan = scanRepository(project);
@@ -426,8 +458,22 @@ export async function buildWorldModel({ root = ".", persist = true, storeAdapter
   const indexer = indexerState();
   const externalRuntimeResult = buildExternalRuntimeState({ projectRoot: project.projectRoot, adapter: runtimeStateAdapter });
   const externalRuntimeState = externalRuntimeResult.runtimeState;
-  const sourceDigest = sourceDigestFor(scan.files, git, runtimeState, externalRuntimeState, indexer);
   const semanticGraph = buildSemanticGraph({ files: scan.files, sources: scan.sources });
+  const temporalProvenanceGraph = buildTemporalProvenanceGraph({
+    projectId: project.projectId,
+    files: scan.files,
+    parentSourceSnapshotIds,
+    revisionParentIds,
+  });
+  const sourceDigest = sourceDigestFor(
+    scan.files,
+    git,
+    runtimeState,
+    externalRuntimeState,
+    indexer,
+    temporalProvenanceGraph.parentSourceSnapshotIds,
+    temporalProvenanceGraph.revisionParentIds,
+  );
   const gitHistoryResult = await buildGitDecisionHistory({
     projectRoot: project.projectRoot,
     adapter: gitHistoryAdapter,
@@ -455,6 +501,7 @@ export async function buildWorldModel({ root = ".", persist = true, storeAdapter
       symbols: "heuristic-javascript-typescript-python-markdown-with-content-derived-identities",
       dependencies: "heuristic-module-resolution-and-package-manifests",
       semanticGraph: "heuristic-file-symbol-import-call-graph-with-evidence-locations",
+      temporalProvenanceGraph: "content-addressed-file-symbol-test-revisions-with-multiple-parent-dag",
       gitHistory: gitDecisionHistory.coverage,
       runtimeState: "canonical-head-lifecycle-state",
       externalRuntimeState: externalRuntimeState.coverage,
@@ -465,6 +512,7 @@ export async function buildWorldModel({ root = ".", persist = true, storeAdapter
     externalRuntimeState,
     files: scan.files,
     semanticGraph,
+    temporalProvenanceGraph,
     skipped: scan.skipped,
     summary: {
       fileCount: scan.files.length,
@@ -473,6 +521,9 @@ export async function buildWorldModel({ root = ".", persist = true, storeAdapter
       semanticNodeCount: semanticGraph.summary.nodeCount,
       semanticEdgeCount: semanticGraph.summary.edgeCount,
       callEdgeCount: semanticGraph.summary.callEdgeCount,
+      temporalNodeCount: temporalProvenanceGraph.summary.nodeCount,
+      temporalEdgeCount: temporalProvenanceGraph.summary.edgeCount,
+      sourceSnapshotId: temporalProvenanceGraph.sourceSnapshotId,
       gitCommitCount: gitDecisionHistory.summary.commitCount,
       runtimeObservationCount: externalRuntimeState.summary.observationCount,
     },
@@ -507,6 +558,7 @@ export async function buildWorldModel({ root = ".", persist = true, storeAdapter
     gitHistoryChanged: changed && previous?.gitDecisionHistory?.historyHash !== snapshot.gitDecisionHistory.historyHash,
     runtimeStateChanged: changed && canonicalJson(previous?.runtimeState || null) !== canonicalJson(snapshot.runtimeState),
     externalRuntimeStateChanged: changed && previous?.externalRuntimeState?.runtimeStateHash !== snapshot.externalRuntimeState.runtimeStateHash,
+    temporalProvenanceChanged: changed && previous?.temporalProvenanceGraph?.graphSnapshotHash !== snapshot.temporalProvenanceGraph.graphSnapshotHash,
   };
   const pointer = {
     schemaVersion: SCHEMA_VERSION,
@@ -550,6 +602,41 @@ export function queryWorldModel({ root = ".", query, depth = 1, maxResults = 100
     status: "current",
     worldModelId: inspected.snapshot.worldModelId,
     ...querySemanticGraph(inspected.snapshot.semanticGraph, { query, depth, maxResults }),
+  };
+}
+
+export function queryWorldTemporalGraph({
+  root = ".",
+  query,
+  kinds = null,
+  relations = null,
+  authorityClasses = ["derived", "heuristic"],
+  freshness = ["current"],
+  minConfidence = 0,
+  includeUnreviewedCandidates = false,
+  depth = 1,
+  maxNodes = 100,
+  maxEdges = 200,
+  storeAdapter = null,
+} = {}) {
+  const inspected = inspectWorldModel({ root, storeAdapter });
+  if (inspected.status !== "current") fail("Repository World Model is stale and cannot answer temporal provenance queries.", "WORLD_MODEL_STALE");
+  if (!inspected.snapshot.temporalProvenanceGraph) fail("Repository World Model has no temporal provenance graph.", "TEMPORAL_PROVENANCE_NOT_BUILT");
+  return {
+    status: "current",
+    worldModelId: inspected.snapshot.worldModelId,
+    ...queryTemporalProvenanceGraph(inspected.snapshot.temporalProvenanceGraph, {
+      query,
+      kinds,
+      relations,
+      authorityClasses,
+      freshness,
+      minConfidence,
+      includeUnreviewedCandidates,
+      depth,
+      maxNodes,
+      maxEdges,
+    }),
   };
 }
 
