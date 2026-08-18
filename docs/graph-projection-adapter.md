@@ -4,7 +4,7 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this boundary.
 
 ## Purpose
 
-`GraphProjectionAdapter` version `0.1.0` separates the semantic temporal `GraphSnapshot` from the backend used to materialize and traverse it. The embedded, digest-verified GraphSnapshot in the World Model remains the recoverable source for rebuilding a projection. Neither the local adapter nor a future GraphDB adapter is canon, instruction authority, promotion authority, or unique authority.
+`GraphProjectionAdapter` version `0.1.0` separates the semantic temporal `GraphSnapshot` from the backend used to materialize and traverse it. The embedded, digest-verified GraphSnapshot in the World Model remains the recoverable source for rebuilding a projection. Neither the local adapter nor the ArcadeDB adapter is canon, instruction authority, promotion authority, or unique authority.
 
 The contract exists alongside `WorldModelStoreAdapter` rather than replacing it:
 
@@ -14,7 +14,7 @@ canon + executable state + verified lineage
        -> GraphProjectionAdapter
             -> local JSON projection
             -> in-memory conformance projection
-            -> future GraphDB projection
+            -> activated ArcadeDB HTTP projection + local mirror
 ```
 
 Backend identity, filesystem locations, remote record IDs, and operational timing are excluded from `GraphSnapshot`, `TraversalQuery`, `TemporalTraversalResult`, Context Capsule, and World Model semantic identities.
@@ -33,7 +33,7 @@ listSnapshotIds
 query
 ```
 
-The initial synchronous interface is the local conformance baseline. An external GraphDB transport is not implemented yet; it must preserve this semantic behavior or introduce a separately versioned asynchronous host boundary without changing graph/query/result identities.
+The host-facing contract remains synchronous. `ArcadeDbHttpTransport` uses an exact-child Node bridge for the asynchronous HTTP request and exchanges bounded JSON over standard input/output. Credential values are resolved from the named environment variables only inside that child, never placed in command arguments, request artifacts, activation receipts, descriptors, or semantic identities.
 
 Every descriptor must declare:
 
@@ -75,23 +75,43 @@ Temporal queries first compute the deterministic reference contract from the emb
 
 The reference comparison intentionally favors correctness over acceleration in this first slice. Future GraphDB or compute-backed traversal may optimize validation only after conformance proves the same deterministic output.
 
+## ArcadeDB activation and materialization
+
+Onboarding persists only the ArcadeDB endpoint, database, and environment-style username/password reference names. Selection alone is pending configuration and does not activate remote I/O. With both referenced environment variables available, activation is explicit:
+
+```powershell
+node scripts/head.mjs world-graph-remote-activate C:\path\to\project
+node scripts/head.mjs world-graph-remote-status C:\path\to\project
+```
+
+Activation creates the `HeadAgentGraphSnapshot` and `HeadAgentGraphPointer` document schema, writes and re-reads the current immutable GraphSnapshot, compares two bounded traversal fixtures against the local reference adapter, persists the digest-verified conformance report, and only then advances a content-addressed local activation pointer. The activation receipt records the current storage-selection, graph, and conformance identities and explicitly records that credential values and server record identities are not persisted or semantic.
+
+The initial remote representation stores the complete canonical GraphSnapshot as an immutable ArcadeDB document plus a project-scoped current pointer. Query execution reloads that document and runs the deterministic reference traversal locally, then the common adapter boundary independently compares the result with the embedded graph result. This proves remote durability and adapter-neutral identity without claiming that server-side vertex/edge traversal is active. Native ArcadeDB node/edge projection and server-side bounded traversal remain a later optimization.
+
+After activation, the default adapter mirrors every successful remote snapshot and pointer into the local JSON projection. Connection/timeout or missing-environment-reference failure may select the local mirror only before any remote content has been observed or mutated in that operation. Authentication failure, rejected requests, stale pointers, missing records, digest mismatch, content conflict, semantic query divergence, or failure after a remote observation/mutation fail closed. If local progress occurs during a remote outage, a later stale remote pointer also fails closed until explicit activation repairs and re-verifies the projection.
+
 ## Active adapters and surfaces
 
 - `LocalJsonGraphProjectionAdapter`: durable dependency-free baseline;
 - `InMemoryGraphProjectionAdapter`: non-durable conformance implementation;
+- `ArcadeDbGraphProjectionAdapter`: authenticated ArcadeDB HTTP/JSON durable projection with immutable snapshot insertion and verified pointer upsert;
+- `ActivatedArcadeDbGraphProjectionAdapter`: remote-first adapter with a complete local mirror and narrowly classified pre-observation availability fallback;
 - `verifyGraphProjectionAdapterConformance`: content-derived report naming both authority-bounded adapters and proving adapter-neutral semantics over one GraphSnapshot and one-to-64 named bounded query fixtures;
 - `world-graph-status`: read and verify projection state;
+- `world-graph-remote-activate` and `world-graph-remote-status`: explicit activation and read-only remote status;
 - `head_graph_projection_status`: read-only MCP equivalent;
+- `head_graphdb_projection_status`: read-only MCP remote activation/status equivalent;
 - `world-temporal`, MCP temporal traversal, and Context Compiler temporal expansion use the adapter boundary while preserving result identity.
 - the separate [`DocumentProjectionAdapter`](document-projection-adapter.md) consumes the verified GraphSnapshot for deterministic Markdown without changing graph identity.
 
 ## Deferred
 
-- authenticated GraphDB transport and server-side traversal;
-- asynchronous remote adapter lifecycle and retry policy;
+- ArcadeDB vertex/edge topology projection and server-side bounded traversal;
+- non-ArcadeDB GraphDB transports;
+- asynchronous pooled remote transport, retry/backoff, and transport amortization;
 - remote pointer compare-and-swap and transaction receipts;
 - compute-backed graph construction or traversal;
 - GraphDB-specific indexes, migrations, and operational observability;
-- Obsidian/Notion document adapters and temporal projection of document-review artifacts.
+- Obsidian/Notion document adapters.
 
-No remote endpoint was queried or mutated by this implementation.
+Automated tests use an in-memory transport and do not require or mutate a user GraphDB. The activation command is the sole explicit remote mutation surface.

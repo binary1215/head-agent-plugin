@@ -91,7 +91,7 @@ A project whose Product Canon already contains approved entities skips candidate
 
 ## Storage selection
 
-Local materialization is complete and is the default. A future GraphDB adapter can be selected without making it a prerequisite:
+Local materialization is complete and is the default. ArcadeDB can be selected without making it a prerequisite:
 
 ```json
 {
@@ -108,7 +108,9 @@ Local materialization is complete and is the default. A future GraphDB adapter c
 }
 ```
 
-Only endpoint, database, and environment-style secret-reference names are persisted. Embedded URL credentials, password/token fields, and credential values are rejected. Until a GraphDB adapter passes conformance, the selection records `pending-unverified-adapter` and onboarding continues through local JSON with explicit disclosure.
+Only endpoint, database, and environment-style secret-reference names are persisted. Embedded URL credentials, password/token fields, and credential values are rejected. The immutable selection records its status at selection time as `pending-unverified-adapter`, and onboarding continues through local JSON with explicit disclosure.
+
+After the first current GraphSnapshot exists, export both referenced environment variables and explicitly activate the remote projection with `world-graph-remote-activate`. Activation writes and re-reads the snapshot, proves bounded traversal equality against the local adapter, and persists a separate content-addressed activation receipt. `world-graph-remote-status` and `head_graphdb_projection_status` report that operational state without exposing values. A failed activation leaves the local path complete and does not create an active receipt.
 
 ## Batch review
 
@@ -188,7 +190,7 @@ It covers existing code, a new-project brief, empty evidence, revision, rejectio
 
 ## Explicitly deferred
 
-- a verified remote GraphDB adapter;
+- ArcadeDB server-side vertex/edge traversal and non-ArcadeDB transports;
 - dedicated imported-backlog connectors beyond an explicit structured brief;
 - general relationship promotion beyond the separate Feature/code/test mapping review scope;
 - automatic semantic promotion, document synchronization, and merge/conflict resolution.

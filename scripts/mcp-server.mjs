@@ -13,6 +13,7 @@ import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
 import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
 import { inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision } from "./lib/document-change-review.mjs";
+import { inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
 
 const protocolVersion = "2024-11-05";
 export const tools = [
@@ -191,6 +192,16 @@ export const tools = [
     }
   },
   {
+    name: "head_graphdb_projection_status",
+    description: "Read the privacy-safe ArcadeDB projection activation, current semantic binding, and disclosed local fallback state without exposing credentials or granting the remote backend authority.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "head_markdown_projection_status",
     description: "Read and verify the deterministic Markdown projection, published-view drift, and current GraphSnapshot binding without treating generated documents as canon.",
     inputSchema: {
@@ -349,7 +360,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.26" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.27" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -389,6 +400,8 @@ export async function dispatch(request) {
                       ? readRefreshTriggerDelivery({ root: args.project_root, triggerDeliveryId: args.trigger_delivery_id })
                   : name === "head_graph_projection_status"
                     ? inspectWorldGraphProjection({ root: args.project_root })
+                  : name === "head_graphdb_projection_status"
+                    ? inspectArcadeDbGraphProjectionStatus({ root: args.project_root })
                   : name === "head_markdown_projection_status"
                     ? inspectWorldMarkdownProjection({ root: args.project_root })
                   : name === "head_post_refresh_projection_status"

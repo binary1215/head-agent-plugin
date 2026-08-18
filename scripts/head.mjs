@@ -16,6 +16,7 @@ import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncr
 import { inspectRefreshTriggers, processRefreshTriggerBatch, readRefreshTriggerDelivery, runFileSystemRefreshWatcher } from "./lib/refresh-trigger.mjs";
 import { inspectPostRefreshProjectionPolicy, setPostRefreshProjectionPolicy } from "./lib/post-refresh-projection.mjs";
 import { applyDocumentChangeReview, inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision, reviewDocumentChanges } from "./lib/document-change-review.mjs";
+import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -67,6 +68,8 @@ export function usage() {
       "head world-refresh-trigger-status <project>",
       "head world-refresh-trigger-read <project> --delivery <refresh-trigger-delivery-id>",
       "head world-graph-status <project>",
+      "head world-graph-remote-activate <project>",
+      "head world-graph-remote-status <project>",
       "head world-docs-build <project>",
       "head world-docs-status <project>",
       "head world-docs-capture <project>",
@@ -172,6 +175,8 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "world-refresh-trigger-status") return inspectRefreshTriggers({ root });
   if (command === "world-refresh-trigger-read") return readRefreshTriggerDelivery({ root, triggerDeliveryId: options.delivery });
   if (command === "world-graph-status") return inspectWorldGraphProjection({ root });
+  if (command === "world-graph-remote-activate") return activateArcadeDbGraphProjection({ root });
+  if (command === "world-graph-remote-status") return inspectArcadeDbGraphProjectionStatus({ root });
   if (command === "world-docs-build") return materializeWorldMarkdownProjection({ root });
   if (command === "world-docs-status") return inspectWorldMarkdownProjection({ root });
   if (command === "world-docs-capture") return captureWorldMarkdownChanges({ root, persist: true });

@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.26` projects immutable document candidates, explicit reviews, Product Model revision receipts, and application receipts into a later audit GraphSnapshot. Candidate surfaces remain hidden by default and all graph records remain non-authoritative derived evidence. Acceptance still requires a complete user-supplied Product Model; neither path depends on Git or GraphDB.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.27` adds explicit conformance-gated ArcadeDB GraphProjection activation with environment-only credential resolution, immutable remote snapshots, a verified current pointer, and a complete local mirror. GraphDB remains optional and non-authoritative; server-side topology traversal is still deferred.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 
@@ -11,7 +11,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Safe Codex and OpenCode projections that preserve existing `AGENTS.md` and `opencode.json` files.
 - `.head/` project, Session, Run, and managed-file canon with digest drift detection.
 - Immutable project-scoped HEAD Session records and a digest-verified onboarding state pointer with deterministic migration for older initialized projects.
-- Local-default, privacy-safe onboarding storage selection; GraphDB configuration stores only endpoint, database, and secret-reference names and continues locally while the remote adapter is pending.
+- Local-default, privacy-safe onboarding storage selection; GraphDB configuration stores only endpoint, database, and secret-reference names and continues locally until explicit conformance-gated activation.
 - Bounded evidence-linked FeatureGroup, Capability, and Feature candidate inference from repository evidence or a structured new-project brief.
 - Batch onboarding ReviewDecisions for accept-all, dependency-complete selection, revision, or rejection; candidates remain immutable and non-authoritative.
 - Review-gated Product Canon revisions with previous/next hashes, stale-source rejection, rollback on failed promotion, and a verified child GraphSnapshot before onboarding becomes ready.
@@ -40,7 +40,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Conformance-ready Go `repository.scan.v1` covering bounded file discovery, hashing, classification, heuristic symbols, dependencies, import bindings, and calls without changing canonical scan identity.
 - Deterministic `TraversalQuery` results with relation/kind/authority/freshness allowlists, confidence policy, bounded depth and size, inclusion/exclusion reasons, and graph/query/result digests.
 - Versioned `WorldModelStoreAdapter` contract whose storage identity is excluded from content-derived World Model identity; local JSON is the active adapter.
-- Versioned `GraphProjectionAdapter` contract with local JSON materialization, in-memory conformance, backend-neutral traversal identity, disclosed embedded-graph fallback, and stale/tamper/authority rejection.
+- Versioned `GraphProjectionAdapter` contract with local JSON, in-memory, and activated ArcadeDB HTTP implementations; remote snapshots and pointers are verified against the embedded graph, every successful write is locally mirrored, availability fallback is disclosed, and stale/tamper/auth/authority/divergence failures close the operation.
 - Versioned `DocumentProjectionAdapter` contract with deterministic graph-to-Markdown rendering, content-derived projection identity, local/in-memory conformance, explicit generation, and stale/tamper/authority rejection.
 - Published Markdown drift protection that never overwrites user edits and captures added/modified/removed pages as immutable, non-authoritative `DocumentChangeCandidateSet` evidence.
 - Explicit document-change ReviewDecisions that never infer canon from prose, plus review-gated acceptance of a complete structured Product Model, verified child GraphSnapshot rebuild, deterministic Markdown reconciliation, and immutable application receipts.
@@ -56,7 +56,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 
 ## What is intentionally deferred
 
-Dedicated imported-backlog connectors, inferred commit-to-ChangeSet matching, conformance projection, general relationship promotion beyond Feature mapping and Change impact, automatic ChangeSet ancestry inference, automatic merge and conflict resolution, background watcher service installation, provider-specific CI webhooks, Obsidian/Notion projection adapters, projection of document-review artifacts into later temporal GraphSnapshots, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional remote GraphDB implementation, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+Dedicated imported-backlog connectors, inferred commit-to-ChangeSet matching, conformance projection, general relationship promotion beyond Feature mapping and Change impact, automatic ChangeSet ancestry inference, automatic merge and conflict resolution, background watcher service installation, provider-specific CI webhooks, Obsidian/Notion projection adapters, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, ArcadeDB vertex/edge projection and server-side traversal, non-ArcadeDB transports, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
 
 ## Use from source
 
@@ -83,6 +83,8 @@ node .\scripts\head.mjs world-refresh-watch C:\path\to\project --debounce-ms 350
 node .\scripts\head.mjs world-refresh-trigger-status C:\path\to\project
 node .\scripts\head.mjs world-refresh-trigger-read C:\path\to\project --delivery refresh-trigger-delivery-<24-hex>
 node .\scripts\head.mjs world-graph-status C:\path\to\project
+node .\scripts\head.mjs world-graph-remote-activate C:\path\to\project
+node .\scripts\head.mjs world-graph-remote-status C:\path\to\project
 node .\scripts\head.mjs world-docs-build C:\path\to\project
 node .\scripts\head.mjs world-docs-status C:\path\to\project
 node .\scripts\head.mjs world-docs-capture C:\path\to\project

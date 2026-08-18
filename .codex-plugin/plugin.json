@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.26",
+  "version": "0.3.0-alpha.27",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -58,6 +58,9 @@
       "Temporal Provenance Graph",
       "Replaceable GraphProjectionAdapter Contract",
       "Local JSON and In-memory Graph Projection",
+      "Conformance-gated ArcadeDB Graph Projection",
+      "Environment-only GraphDB Credential Resolution",
+      "Remote Graph Snapshot Local Mirroring",
       "Replaceable DocumentProjectionAdapter Contract",
       "Deterministic Markdown Knowledge Projection",
       "Document Change Candidate Capture",
