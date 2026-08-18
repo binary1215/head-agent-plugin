@@ -19,6 +19,7 @@ import {
   loadChangeSetProjection,
   VCS_EVIDENCE_VERSION,
 } from "./change-set-projection.mjs";
+import { DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION, loadDocumentChangeProjection } from "./document-change-projection.mjs";
 import {
   buildRepositoryScanInput,
   createRepositoryScanComputeAdapter,
@@ -62,7 +63,7 @@ import {
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
-export const WORLD_MODEL_VERSION = "0.9.0";
+export const WORLD_MODEL_VERSION = "0.10.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
@@ -259,6 +260,18 @@ function verifiedSnapshot(snapshot, expectedId = "") {
       || canonicalJson(changeProjection.vcsEvidenceIds) !== canonicalJson(graphChangeProjection?.vcsEvidenceIds)) {
       fail("World Model ChangeSet projection and temporal graph disagree.", "CHANGE_SET_TEMPORAL_IDENTITY_MISMATCH");
     }
+    const documentChangeProjection = snapshot.documentChangeProjection;
+    const graphDocumentChangeProjection = snapshot.temporalProvenanceGraph?.documentChangeProjection;
+    if (!documentChangeProjection || documentChangeProjection.authority !== "derived-projection-manifest-not-document-authority"
+      || documentChangeProjection.instructionAuthority !== false || documentChangeProjection.promotionAuthority !== false
+      || documentChangeProjection.projectionInputId !== graphDocumentChangeProjection?.projectionInputId
+      || documentChangeProjection.projectionInputHash !== graphDocumentChangeProjection?.projectionInputHash
+      || canonicalJson(documentChangeProjection.candidateSetIds) !== canonicalJson(graphDocumentChangeProjection?.candidateSetIds)
+      || canonicalJson(documentChangeProjection.reviewDecisionIds) !== canonicalJson(graphDocumentChangeProjection?.reviewDecisionIds)
+      || canonicalJson(documentChangeProjection.productModelRevisionIds) !== canonicalJson(graphDocumentChangeProjection?.productModelRevisionIds)
+      || canonicalJson(documentChangeProjection.applicationReceiptIds) !== canonicalJson(graphDocumentChangeProjection?.applicationReceiptIds)) {
+      fail("World Model document-change projection and temporal graph disagree.", "DOCUMENT_CHANGE_TEMPORAL_IDENTITY_MISMATCH");
+    }
   }
   if (snapshot.productModel && snapshot.temporalProvenanceGraph
     && (snapshot.productModel.productModelId !== snapshot.temporalProvenanceGraph.productModelId
@@ -339,6 +352,7 @@ function indexerState() {
     featureMappingVersion: FEATURE_MAPPING_VERSION,
     changeSetVersion: CHANGE_SET_VERSION,
     changeSetProjectionVersion: CHANGE_SET_PROJECTION_VERSION,
+    documentChangeGraphProjectionVersion: DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION,
     vcsEvidenceVersion: VCS_EVIDENCE_VERSION,
     temporalProvenanceVersion: TEMPORAL_PROVENANCE_VERSION,
     graphProjectionAdapterVersion: GRAPH_PROJECTION_ADAPTER_VERSION,
@@ -349,7 +363,7 @@ function indexerState() {
   };
 }
 
-function sourceDigestFor(files, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
+function sourceDigestFor(files, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
   return digest(canonicalJson({
     files,
     productModel: { productModelId: productModel.productModelId, productModelHash: productModel.productModelHash },
@@ -364,6 +378,10 @@ function sourceDigestFor(files, productModel, onboardingProjection, featureMappi
     changeSetProjection: {
       projectionInputId: changeSetProjection.projectionInputId,
       projectionInputHash: changeSetProjection.projectionInputHash,
+    },
+    documentChangeProjection: {
+      projectionInputId: documentChangeProjection.projectionInputId,
+      projectionInputHash: documentChangeProjection.projectionInputHash,
     },
     git,
     runtimeState,
@@ -450,6 +468,10 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   });
+  const documentChangeProjection = loadDocumentChangeProjection({
+    projectRoot: inspected.project.projectRoot,
+    projectId: inspected.project.projectId,
+  });
   const git = gitHeadState(inspected.project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
   const selectedRuntimeAdapter = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer.sourceAdapters?.runtimeState);
@@ -463,6 +485,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     onboardingProjection,
     featureMappingProjection,
     changeSetProjection,
+    documentChangeProjection,
     parentSourceSnapshotIds: stored.snapshot.temporalProvenanceGraph?.parentSourceSnapshotIds || [],
     revisionParentIds: stored.snapshot.temporalProvenanceGraph?.revisionParentIds || {},
   });
@@ -472,6 +495,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     onboardingProjection,
     featureMappingProjection,
     changeSetProjection,
+    documentChangeProjection,
     git,
     runtimeState,
     externalRuntimeState,
@@ -507,6 +531,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
       onboardingProjectionChanged: onboardingProjection.projectionInputHash !== stored.snapshot.onboardingProjection?.projectionInputHash,
       featureMappingProjectionChanged: featureMappingProjection.projectionInputHash !== stored.snapshot.featureMappingProjection?.projectionInputHash,
       changeSetProjectionChanged: changeSetProjection.projectionInputHash !== stored.snapshot.changeSetProjection?.projectionInputHash,
+      documentChangeProjectionChanged: documentChangeProjection.projectionInputHash !== stored.snapshot.documentChangeProjection?.projectionInputHash,
       temporalProvenanceChanged: currentTemporalProvenanceGraph.graphSnapshotHash !== stored.snapshot.temporalProvenanceGraph?.graphSnapshotHash,
     },
     fileFreshness,
@@ -526,6 +551,7 @@ async function buildWorldModelLocked({
   onboardingProjectionInput = null,
   featureMappingProjectionInput = null,
   changeSetProjectionInput = null,
+  documentChangeProjectionInput = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
   repositoryScanExecution = null,
@@ -559,6 +585,10 @@ async function buildWorldModelLocked({
     projectRoot: project.projectRoot,
     projectId: project.projectId,
   });
+  const documentChangeProjection = documentChangeProjectionInput || loadDocumentChangeProjection({
+    projectRoot: project.projectRoot,
+    projectId: project.projectId,
+  });
   const git = gitHeadState(project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
   const indexer = indexerState();
@@ -573,6 +603,7 @@ async function buildWorldModelLocked({
     onboardingProjection,
     featureMappingProjection,
     changeSetProjection,
+    documentChangeProjection,
     parentSourceSnapshotIds,
     revisionParentIds,
   });
@@ -582,6 +613,7 @@ async function buildWorldModelLocked({
     onboardingProjection,
     featureMappingProjection,
     changeSetProjection,
+    documentChangeProjection,
     git,
     runtimeState,
     externalRuntimeState,
@@ -624,6 +656,7 @@ async function buildWorldModelLocked({
       onboardingProjection: "immutable-candidates-evidence-unknowns-reviews-and-product-model-revision-receipts-projected-without-authority-escalation",
       featureMappingProjection: "immutable-feature-mapping-candidates-and-explicit-review-decisions-with-separate-reviewed-relationship-promotion",
       changeSetProjection: "reviewed-provider-neutral-changesets-with-review-gated-feature-impact-and-optional-vcs-evidence-relations",
+      documentChangeProjection: "immutable-document-edit-candidates-reviews-product-revisions-and-application-receipts-projected-as-non-authoritative-audit-lineage",
       gitHistory: gitDecisionHistory.coverage,
       runtimeState: "canonical-head-lifecycle-state",
       externalRuntimeState: externalRuntimeState.coverage,
@@ -661,6 +694,17 @@ async function buildWorldModelLocked({
       reviewDecisionIds: changeSetProjection.reviewDecisions.map((item) => item.reviewDecisionId),
       vcsEvidenceIds: changeSetProjection.vcsEvidence.map((item) => item.vcsEvidenceId),
       authority: "derived-projection-manifest-not-change-lineage-authority",
+      instructionAuthority: false,
+      promotionAuthority: false,
+    },
+    documentChangeProjection: {
+      projectionInputId: documentChangeProjection.projectionInputId,
+      projectionInputHash: documentChangeProjection.projectionInputHash,
+      candidateSetIds: documentChangeProjection.candidateSets.map((item) => item.candidateSetId),
+      reviewDecisionIds: documentChangeProjection.reviewDecisions.map((item) => item.reviewDecisionId),
+      productModelRevisionIds: documentChangeProjection.productModelRevisions.map((item) => `document-product-model-revision-${item.revisionHash.slice(0, 24)}`),
+      applicationReceiptIds: documentChangeProjection.applicationReceipts.map((item) => item.applicationReceiptId),
+      authority: "derived-projection-manifest-not-document-authority",
       instructionAuthority: false,
       promotionAuthority: false,
     },
@@ -711,6 +755,11 @@ async function buildWorldModelLocked({
       changeImpactCandidateCount: temporalProvenanceGraph.summary.changeImpactCandidateCount,
       changeImpactReviewDecisionCount: temporalProvenanceGraph.summary.changeImpactReviewDecisionCount,
       reviewedImpactCount: temporalProvenanceGraph.summary.reviewedImpactCount,
+      documentChangeCandidateSetCount: temporalProvenanceGraph.summary.documentChangeCandidateSetCount,
+      documentChangeCandidateCount: temporalProvenanceGraph.summary.documentChangeCandidateCount,
+      documentChangeReviewDecisionCount: temporalProvenanceGraph.summary.documentChangeReviewDecisionCount,
+      documentChangeProductModelRevisionCount: temporalProvenanceGraph.summary.documentChangeProductModelRevisionCount,
+      documentChangeApplicationCount: temporalProvenanceGraph.summary.documentChangeApplicationCount,
       gitCommitCount: gitDecisionHistory.summary.commitCount,
       runtimeObservationCount: externalRuntimeState.summary.observationCount,
     },
@@ -938,7 +987,10 @@ export function inspectWorldMarkdownProjection({ root = ".", storeAdapter = null
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: documentProjectionAdapter,
   });
-  const status = inspected.status !== "current" && projection.status === "current" ? "source-stale" : projection.status;
+  const documentOnlyDriftKeys = new Set(["documentChangeProjectionChanged", "temporalProvenanceChanged"]);
+  const hasNonDocumentDrift = Object.entries(inspected.changes || {}).some(([key, value]) => !documentOnlyDriftKeys.has(key)
+    && (Array.isArray(value) ? value.length > 0 : value === true));
+  const status = inspected.status !== "current" && hasNonDocumentDrift && projection.status === "current" ? "source-stale" : projection.status;
   return {
     status,
     worldModelStatus: inspected.status,
@@ -951,7 +1003,12 @@ export function inspectWorldMarkdownProjection({ root = ".", storeAdapter = null
 
 export function captureWorldMarkdownChanges({ root = ".", storeAdapter = null, documentProjectionAdapter = null, persist = true } = {}) {
   const inspected = inspectWorldModel({ root, storeAdapter });
-  if (inspected.status !== "current") fail("Repository World Model is stale and cannot anchor document change candidates.", "WORLD_MODEL_STALE");
+  const documentOnlyDriftKeys = new Set(["documentChangeProjectionChanged", "temporalProvenanceChanged"]);
+  const nonDocumentDrift = Object.entries(inspected.changes || {}).some(([key, value]) => !documentOnlyDriftKeys.has(key)
+    && (Array.isArray(value) ? value.length > 0 : value === true));
+  if (inspected.status !== "current" && (!inspected.changes?.documentChangeProjectionChanged || nonDocumentDrift)) {
+    fail("Repository World Model has non-document drift and cannot anchor document change candidates.", "WORLD_MODEL_STALE");
+  }
   const captured = captureDocumentChangeCandidates({
     projectRoot: inspected.snapshot.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,

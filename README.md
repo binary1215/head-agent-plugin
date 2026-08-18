@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.25` adds explicit review and application of edited Markdown candidates. Acceptance requires a complete user-supplied Product Model and rebuilds a verified child GraphSnapshot before reconciling the derived Markdown view; rejection reconciles the view without changing Product Canon. Neither path depends on Git or GraphDB.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.26` projects immutable document candidates, explicit reviews, Product Model revision receipts, and application receipts into a later audit GraphSnapshot. Candidate surfaces remain hidden by default and all graph records remain non-authoritative derived evidence. Acceptance still requires a complete user-supplied Product Model; neither path depends on Git or GraphDB.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 

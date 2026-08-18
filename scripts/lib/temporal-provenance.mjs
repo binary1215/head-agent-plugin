@@ -2,9 +2,10 @@ import crypto from "node:crypto";
 import { verifyOnboardingGraphProjectionInput } from "./onboarding-projection.mjs";
 import { verifyFeatureMappingProjectionInput } from "./feature-mapping-projection.mjs";
 import { verifyChangeSetProjectionInput } from "./change-set-projection.mjs";
+import { verifyDocumentChangeProjectionInput } from "./document-change-projection.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.6.0";
+export const TEMPORAL_PROVENANCE_VERSION = "0.7.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -37,10 +38,11 @@ const TEMPORAL_RELATION_TYPES_V05 = Object.freeze([
   "IMPACTS",
   "SUPERSEDES",
 ]);
-export const TEMPORAL_RELATION_TYPES = Object.freeze([
+const TEMPORAL_RELATION_TYPES_V06 = Object.freeze([
   ...TEMPORAL_RELATION_TYPES_V05,
   "MATERIALIZED_AS",
 ]);
+export const TEMPORAL_RELATION_TYPES = Object.freeze([...TEMPORAL_RELATION_TYPES_V06]);
 
 const TEMPORAL_NODE_KINDS_V02 = Object.freeze([
   "Repository",
@@ -98,10 +100,19 @@ const TEMPORAL_NODE_KINDS_V05 = Object.freeze([
   "ReviewedImpact",
   "ChangeProductReference",
 ]);
-export const TEMPORAL_NODE_KINDS = Object.freeze([
+const TEMPORAL_NODE_KINDS_V06 = Object.freeze([
   ...TEMPORAL_NODE_KINDS_V05,
   "VcsEvidence",
   "GitCommit",
+]);
+export const TEMPORAL_NODE_KINDS = Object.freeze([
+  ...TEMPORAL_NODE_KINDS_V06,
+  "DocumentChangeCandidateSet",
+  "DocumentChangeCandidate",
+  "DocumentChangeReviewDecision",
+  "DocumentChangeApplication",
+  "DocumentProductModelRevision",
+  "DocumentProjectionReference",
 ]);
 
 const PRODUCER = "head-agent-core-temporal-provenance";
@@ -1154,6 +1165,174 @@ function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, no
   };
 }
 
+function documentChangeProjectionDescriptor(projection) {
+  if (!projection) return {
+    status: "not-provided", projectionInputId: null, projectionInputHash: null,
+    candidateSetIds: [], reviewDecisionIds: [], productModelRevisionIds: [], applicationReceiptIds: [],
+  };
+  return {
+    status: "projected",
+    projectionInputId: projection.projectionInputId,
+    projectionInputHash: projection.projectionInputHash,
+    candidateSetIds: projection.candidateSets.map((item) => item.candidateSetId),
+    reviewDecisionIds: projection.reviewDecisions.map((item) => item.reviewDecisionId),
+    productModelRevisionIds: projection.productModelRevisions.map((item) => `document-product-model-revision-${item.revisionHash.slice(0, 24)}`),
+    applicationReceiptIds: projection.applicationReceipts.map((item) => item.applicationReceiptId),
+  };
+}
+
+function appendDocumentChangeProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+  const empty = {
+    documentChangeCandidateSetCount: 0,
+    documentChangeCandidateCount: 0,
+    documentChangeReviewDecisionCount: 0,
+    documentChangeProductModelRevisionCount: 0,
+    documentChangeApplicationCount: 0,
+    documentProjectionReferenceCount: 0,
+  };
+  if (!projection) return empty;
+  verifyDocumentChangeProjectionInput(projection);
+  const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
+  const pushNode = (node) => {
+    const existing = nodeById.get(node.nodeId);
+    if (existing) return existing;
+    nodeById.set(node.nodeId, node);
+    nodes.push(node);
+    return node;
+  };
+  const references = new Map();
+  const ensureProjectionReference = ({ documentProjectionId, documentProjectionHash, graphSnapshotId, graphSnapshotHash, referencedSourceSnapshotId }) => {
+    const nodeId = identity("document-projection-reference", { projectId, documentProjectionId, documentProjectionHash, graphSnapshotId, graphSnapshotHash, referencedSourceSnapshotId });
+    if (!references.has(nodeId)) references.set(nodeId, pushNode({
+      nodeId,
+      kind: "DocumentProjectionReference",
+      projectId,
+      documentProjectionId,
+      documentProjectionHash,
+      graphSnapshotId,
+      graphSnapshotHash,
+      referencedSourceSnapshotId,
+      ...nodeMetadata({ evidenceIds: [documentProjectionId, graphSnapshotId], sourceSnapshotId, origin: "document-projection-lineage-reference", freshness: "historical" }),
+    }));
+    return nodeId;
+  };
+  const candidateById = new Map();
+  for (const set of projection.candidateSets) {
+    const evidenceIds = [set.candidateSetId, set.documentProjectionId, set.graphSnapshotId].sort();
+    const referenceId = ensureProjectionReference({
+      documentProjectionId: set.documentProjectionId,
+      documentProjectionHash: set.documentProjectionHash,
+      graphSnapshotId: set.graphSnapshotId,
+      graphSnapshotHash: set.graphSnapshotHash,
+      referencedSourceSnapshotId: set.sourceSnapshotId,
+    });
+    pushNode({
+      nodeId: set.candidateSetId,
+      kind: "DocumentChangeCandidateSet",
+      projectId,
+      candidateSetHash: set.candidateSetHash,
+      documentProjectionId: set.documentProjectionId,
+      graphSnapshotId: set.graphSnapshotId,
+      referencedSourceSnapshotId: set.sourceSnapshotId,
+      candidateIds: set.candidates.map((candidate) => candidate.candidateId),
+      sourceAuthority: set.authority,
+      ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "document-projection-edit-candidate-set", freshness: "historical" }),
+    });
+    edges.push(edgeRecord({ type: "PROPOSES_FROM", from: set.candidateSetId, to: referenceId, sourceSnapshotId, evidenceIds, origin: "document-projection-edit-candidate-set", freshness: "historical" }));
+    for (const candidate of set.candidates) {
+      candidateById.set(candidate.candidateId, candidate);
+      pushNode({
+        nodeId: candidate.candidateId,
+        kind: "DocumentChangeCandidate",
+        candidateSetId: set.candidateSetId,
+        relativePath: candidate.relativePath,
+        changeType: candidate.changeType,
+        baseContentHash: candidate.baseContentHash,
+        proposedContentHash: candidate.proposedContentHash,
+        sourceAuthority: candidate.authority,
+        ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "document-projection-edit-candidate", freshness: "historical" }),
+      });
+      edges.push(edgeRecord({ type: "CONTAINS", from: set.candidateSetId, to: candidate.candidateId, sourceSnapshotId, evidenceIds, origin: "document-projection-edit-candidate", freshness: "historical" }));
+    }
+  }
+  const revisionByProductModelId = new Map(projection.productModelRevisions.map((revision) => [revision.productModelId, revision]));
+  for (const review of projection.reviewDecisions) {
+    const evidenceIds = [review.reviewDecisionId, review.candidateSetId].sort();
+    pushNode({
+      nodeId: review.reviewDecisionId,
+      kind: "DocumentChangeReviewDecision",
+      projectId,
+      reviewDecisionHash: review.reviewDecisionHash,
+      candidateSetId: review.candidateSetId,
+      disposition: review.disposition,
+      acceptedCandidateIds: review.acceptedCandidateIds,
+      rejectedCandidateIds: review.rejectedCandidateIds,
+      rationale: review.rationale,
+      resultingProductModelId: review.resultingProductModelId,
+      sourceAuthority: review.authority,
+      sourcePromotionAuthority: review.promotionAuthority,
+      ...nodeMetadata({ evidenceIds, sourceSnapshotId, authorityClass: "reviewed", origin: "explicit-user-document-change-review", freshness: "historical" }),
+    });
+    edges.push(edgeRecord({ type: "REVIEWED_BY", from: review.candidateSetId, to: review.reviewDecisionId, sourceSnapshotId, evidenceIds, origin: "explicit-user-document-change-review", authorityClass: "reviewed", freshness: "historical" }));
+    for (const candidateId of review.acceptedCandidateIds) edges.push(edgeRecord({ type: "ACCEPTED_BY", from: candidateId, to: review.reviewDecisionId, sourceSnapshotId, evidenceIds, origin: "explicit-user-document-change-review", authorityClass: "reviewed", freshness: "historical" }));
+    for (const candidateId of review.rejectedCandidateIds) edges.push(edgeRecord({ type: "REJECTED_BY", from: candidateId, to: review.reviewDecisionId, sourceSnapshotId, evidenceIds, origin: "explicit-user-document-change-review", authorityClass: "reviewed", freshness: "historical" }));
+    const revision = revisionByProductModelId.get(review.resultingProductModelId);
+    if (revision) {
+      const revisionEvidence = [review.reviewDecisionId, revision.productModelId].sort();
+      const revisionNodeId = `document-product-model-revision-${revision.revisionHash.slice(0, 24)}`;
+      pushNode({
+        nodeId: revisionNodeId,
+        kind: "DocumentProductModelRevision",
+        projectId,
+        productModelHash: revision.productModelHash,
+        revisionHash: revision.revisionHash,
+        sourceAuthority: revision.authority,
+        ...nodeMetadata({ evidenceIds: revisionEvidence, sourceSnapshotId, authorityClass: "reviewed", origin: "explicit-user-document-change-review", freshness: "historical" }),
+      });
+      edges.push(edgeRecord({ type: "PRODUCES", from: review.reviewDecisionId, to: revisionNodeId, sourceSnapshotId, evidenceIds: revisionEvidence, origin: "explicit-user-document-change-review", authorityClass: "reviewed", freshness: "historical" }));
+      for (const candidateId of review.acceptedCandidateIds) edges.push(edgeRecord({ type: "PROMOTED_FROM", from: revisionNodeId, to: candidateId, sourceSnapshotId, evidenceIds: revisionEvidence, origin: "explicit-user-document-change-review", authorityClass: "reviewed", freshness: "historical" }));
+    }
+  }
+  for (const receipt of projection.applicationReceipts) {
+    const evidenceIds = [receipt.applicationReceiptId, receipt.reviewDecisionId].sort();
+    pushNode({
+      nodeId: receipt.applicationReceiptId,
+      kind: "DocumentChangeApplication",
+      projectId,
+      applicationReceiptHash: receipt.applicationReceiptHash,
+      reviewDecisionId: receipt.reviewDecisionId,
+      candidateSetId: receipt.candidateSetId,
+      disposition: receipt.disposition,
+      previousProductModelId: receipt.previousProductModelId,
+      resultingProductModelId: receipt.resultingProductModelId,
+      beforeWorldModelId: receipt.before.worldModelId,
+      beforeGraphSnapshotId: receipt.before.graphSnapshotId,
+      afterWorldModelId: receipt.after.worldModelId,
+      afterGraphSnapshotId: receipt.after.graphSnapshotId,
+      canonChanged: receipt.canonChanged,
+      sourceAuthority: receipt.authority,
+      ...nodeMetadata({ evidenceIds, sourceSnapshotId, authorityClass: "reviewed", origin: "document-change-application-receipt", freshness: "historical" }),
+    });
+    const referenceId = ensureProjectionReference({
+      documentProjectionId: receipt.after.documentProjectionId,
+      documentProjectionHash: receipt.after.documentProjectionHash,
+      graphSnapshotId: receipt.after.graphSnapshotId,
+      graphSnapshotHash: receipt.after.graphSnapshotHash,
+      referencedSourceSnapshotId: receipt.after.sourceSnapshotId,
+    });
+    edges.push(edgeRecord({ type: "PRODUCES", from: receipt.reviewDecisionId, to: receipt.applicationReceiptId, sourceSnapshotId, evidenceIds, origin: "document-change-application-receipt", authorityClass: "reviewed", freshness: "historical" }));
+    edges.push(edgeRecord({ type: "PRODUCES", from: receipt.applicationReceiptId, to: referenceId, sourceSnapshotId, evidenceIds, origin: "document-change-application-receipt", authorityClass: "reviewed", freshness: "historical" }));
+  }
+  return {
+    documentChangeCandidateSetCount: projection.candidateSets.length,
+    documentChangeCandidateCount: projection.candidateSets.reduce((count, item) => count + item.candidates.length, 0),
+    documentChangeReviewDecisionCount: projection.reviewDecisions.length,
+    documentChangeProductModelRevisionCount: projection.productModelRevisions.length,
+    documentChangeApplicationCount: projection.applicationReceipts.length,
+    documentProjectionReferenceCount: references.size,
+  };
+}
+
 export function buildTemporalProvenanceGraph({
   projectId,
   files,
@@ -1162,6 +1341,7 @@ export function buildTemporalProvenanceGraph({
   onboardingProjection = null,
   featureMappingProjection = null,
   changeSetProjection = null,
+  documentChangeProjection = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
 } = {}) {
@@ -1171,8 +1351,12 @@ export function buildTemporalProvenanceGraph({
   const selectedOnboardingProjection = onboardingProjection ? verifyOnboardingGraphProjectionInput(onboardingProjection) : null;
   const selectedFeatureMappingProjection = featureMappingProjection ? verifyFeatureMappingProjectionInput(featureMappingProjection) : null;
   const selectedChangeSetProjection = changeSetProjection ? verifyChangeSetProjectionInput(changeSetProjection) : null;
+  const selectedDocumentChangeProjection = documentChangeProjection ? verifyDocumentChangeProjectionInput(documentChangeProjection) : null;
   if (selectedChangeSetProjection && selectedChangeSetProjection.projectId !== projectId) {
     fail("ChangeSet projection input does not match the temporal graph scope.", "CHANGE_SET_TEMPORAL_SCOPE_MISMATCH");
+  }
+  if (selectedDocumentChangeProjection && selectedDocumentChangeProjection.projectId !== projectId) {
+    fail("Document-change projection input does not match the temporal graph scope.", "DOCUMENT_CHANGE_TEMPORAL_SCOPE_MISMATCH");
   }
   if (selectedOnboardingProjection && (selectedOnboardingProjection.projectId !== projectId
     || selectedOnboardingProjection.currentProductModelId !== selectedProductModel.productModelId)) {
@@ -1514,6 +1698,13 @@ export function buildTemporalProvenanceGraph({
     nodes,
     edges,
   });
+  const documentChangeSummary = appendDocumentChangeProjection({
+    projectId,
+    sourceSnapshotId,
+    projection: selectedDocumentChangeProjection,
+    nodes,
+    edges,
+  });
 
   const uniqueEdges = new Map();
   for (const edge of edges) {
@@ -1549,6 +1740,7 @@ export function buildTemporalProvenanceGraph({
     ...onboardingSummary,
     ...featureMappingSummary,
     ...changeSetSummary,
+    ...documentChangeSummary,
   };
   const payload = {
     kind: "GraphSnapshot",
@@ -1562,6 +1754,7 @@ export function buildTemporalProvenanceGraph({
     onboardingProjection: onboardingProjectionDescriptor(selectedOnboardingProjection),
     featureMappingProjection: featureMappingProjectionDescriptor(selectedFeatureMappingProjection),
     changeSetProjection: changeSetProjectionDescriptor(selectedChangeSetProjection),
+    documentChangeProjection: documentChangeProjectionDescriptor(selectedDocumentChangeProjection),
     sourceSnapshotId,
     parentSourceSnapshotIds: parents,
     revisionParentIds: revisionParents,
@@ -1703,6 +1896,19 @@ function expectedNodeId(node) {
   if (node.kind === "ChangeProductReference") return node.referencedNodeId;
   if (node.kind === "VcsEvidence") return `vcs-evidence-${String(node.vcsEvidenceHash || "").slice(0, 24)}`;
   if (node.kind === "GitCommit") return `git-commit-observation-${String(node.gitCommitObservationHash || "").slice(0, 24)}`;
+  if (node.kind === "DocumentChangeCandidateSet") return node.nodeId;
+  if (node.kind === "DocumentChangeCandidate") return node.nodeId;
+  if (node.kind === "DocumentChangeReviewDecision") return `document-change-review-decision-${String(node.reviewDecisionHash || "").slice(0, 24)}`;
+  if (node.kind === "DocumentChangeApplication") return `document-change-application-${String(node.applicationReceiptHash || "").slice(0, 24)}`;
+  if (node.kind === "DocumentProductModelRevision") return `document-product-model-revision-${String(node.revisionHash || "").slice(0, 24)}`;
+  if (node.kind === "DocumentProjectionReference") return identity("document-projection-reference", {
+    projectId: node.projectId,
+    documentProjectionId: node.documentProjectionId,
+    documentProjectionHash: node.documentProjectionHash,
+    graphSnapshotId: node.graphSnapshotId,
+    graphSnapshotHash: node.graphSnapshotHash,
+    referencedSourceSnapshotId: node.referencedSourceSnapshotId,
+  });
   return "";
 }
 
@@ -1714,7 +1920,8 @@ function validEndpointKinds(type, fromKind, toKind) {
     || (fromKind === "FeatureGroup" && ["FeatureGroup", "Feature"].includes(toKind))
     || (fromKind === "OnboardingCandidateSet" && ["OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown"].includes(toKind))
     || (fromKind === "FeatureMappingCandidateSet" && ["FeatureMappingCandidate", "FeatureMappingEvidence", "FeatureMappingUnknown"].includes(toKind))
-    || (fromKind === "ChangeImpactCandidateSet" && ["ChangeImpactCandidate", "ChangeImpactUnknown"].includes(toKind));
+    || (fromKind === "ChangeImpactCandidateSet" && ["ChangeImpactCandidate", "ChangeImpactUnknown"].includes(toKind))
+    || (fromKind === "DocumentChangeCandidateSet" && toKind === "DocumentChangeCandidate");
   if (["HAS_REVISION", "CURRENT_REVISION"].includes(type)) return (fromKind === "File" && toKind === "FileRevision")
     || (fromKind === "Symbol" && toKind === "SymbolRevision") || (fromKind === "Test" && toKind === "TestRevision")
     || productKinds.some((kind) => fromKind === kind && toKind === `${kind}Revision`);
@@ -1728,7 +1935,8 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "REALIZES") return fromKind === "Feature" && toKind === "Capability";
   if (type === "GOVERNED_BY") return fromKind === "Feature" && ["Requirement", "Constraint", "Decision"].includes(toKind);
   if (type === "PROPOSES_FROM") return (fromKind === "OnboardingCandidateSet" && ["SourceSnapshot", "SourceSnapshotReference"].includes(toKind))
-    || (fromKind === "FeatureMappingCandidate" && ["File", "Symbol", "Feature", "Capability", "MappingEndpointReference"].includes(toKind));
+    || (fromKind === "FeatureMappingCandidate" && ["File", "Symbol", "Feature", "Capability", "MappingEndpointReference"].includes(toKind))
+    || (fromKind === "DocumentChangeCandidateSet" && toKind === "DocumentProjectionReference");
   if (type === "PROPOSES_TO") return (fromKind === "OnboardingProductCandidate" && toKind === "ProductConceptReference")
     || (fromKind === "FeatureMappingCandidate" && ["Feature", "Capability", "Test", "MappingEndpointReference"].includes(toKind))
     || (fromKind === "ChangeImpactCandidate" && ["Feature", "Capability", "ChangeProductReference"].includes(toKind));
@@ -1739,16 +1947,21 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "REVIEWED_BY") return (fromKind === "OnboardingCandidateSet" && toKind === "OnboardingReviewDecision")
     || (fromKind === "FeatureMappingCandidateSet" && toKind === "FeatureMappingReviewDecision")
     || (fromKind === "ChangeSet" && toKind === "ExecutionLineageReference")
-    || (fromKind === "ChangeImpactCandidateSet" && toKind === "ChangeImpactReviewDecision");
+    || (fromKind === "ChangeImpactCandidateSet" && toKind === "ChangeImpactReviewDecision")
+    || (fromKind === "DocumentChangeCandidateSet" && toKind === "DocumentChangeReviewDecision");
   if (["ACCEPTED_BY", "REJECTED_BY"].includes(type)) return (fromKind === "OnboardingProductCandidate" && toKind === "OnboardingReviewDecision")
     || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingReviewDecision")
-    || (fromKind === "ChangeImpactCandidate" && toKind === "ChangeImpactReviewDecision");
+    || (fromKind === "ChangeImpactCandidate" && toKind === "ChangeImpactReviewDecision")
+    || (fromKind === "DocumentChangeCandidate" && toKind === "DocumentChangeReviewDecision");
   if (type === "PROMOTED_FROM") return (fromKind === "ProductModelRevision" && toKind === "OnboardingProductCandidate")
     || (fromKind === "ReviewedRelationship" && toKind === "FeatureMappingCandidate")
-    || (fromKind === "ReviewedImpact" && toKind === "ChangeImpactCandidate");
+    || (fromKind === "ReviewedImpact" && toKind === "ChangeImpactCandidate")
+    || (fromKind === "DocumentProductModelRevision" && toKind === "DocumentChangeCandidate");
   if (type === "PRODUCES") return (fromKind === "OnboardingReviewDecision" && toKind === "ProductModelRevision")
     || (fromKind === "FeatureMappingReviewDecision" && toKind === "ReviewedRelationship")
-    || (fromKind === "ChangeImpactReviewDecision" && toKind === "ReviewedImpact");
+    || (fromKind === "ChangeImpactReviewDecision" && toKind === "ReviewedImpact")
+    || (fromKind === "DocumentChangeReviewDecision" && ["DocumentProductModelRevision", "DocumentChangeApplication"].includes(toKind))
+    || (fromKind === "DocumentChangeApplication" && toKind === "DocumentProjectionReference");
   if (type === "IMPLEMENTS") return ["File", "Symbol"].includes(fromKind) && ["Feature", "Capability"].includes(toKind);
   if (type === "VERIFIED_BY") return ["Feature", "Capability"].includes(fromKind) && toKind === "Test";
   if (type === "CHANGES") return fromKind === "ChangeSet" && toKind === "ChangeRevisionReference";
@@ -1765,8 +1978,9 @@ export function verifyTemporalProvenanceGraph(graph) {
   const legacyV03 = graphVersion === "0.3.0";
   const legacyV04 = graphVersion === "0.4.0";
   const legacyV05 = graphVersion === "0.5.0";
+  const legacyV06 = graphVersion === "0.6.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
+    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
@@ -1788,8 +2002,8 @@ export function verifyTemporalProvenanceGraph(graph) {
   if (canonicalJson(graph.revisionParentIds) !== canonicalJson(normalizeRevisionParentIds(graph.revisionParentIds))) {
     fail("Revision parents must be normalized.", "INVALID_REVISION_PARENT_SET");
   }
-  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : legacyV05 ? TEMPORAL_RELATION_TYPES_V05 : TEMPORAL_RELATION_TYPES;
-  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : legacyV05 ? TEMPORAL_NODE_KINDS_V05 : TEMPORAL_NODE_KINDS;
+  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : legacyV05 ? TEMPORAL_RELATION_TYPES_V05 : legacyV06 ? TEMPORAL_RELATION_TYPES_V06 : TEMPORAL_RELATION_TYPES;
+  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : legacyV05 ? TEMPORAL_NODE_KINDS_V05 : legacyV06 ? TEMPORAL_NODE_KINDS_V06 : TEMPORAL_NODE_KINDS;
   if (canonicalJson(graph.relationTypes) !== canonicalJson([...expectedRelationTypes])
     || canonicalJson(graph.nodeKinds) !== canonicalJson([...expectedNodeKinds])) {
     fail("Temporal graph vocabulary does not match the implemented allowlist.", "TEMPORAL_VOCABULARY_MISMATCH");
@@ -2305,6 +2519,59 @@ export function verifyTemporalProvenanceGraph(graph) {
       fail(`Git commit observation is not referenced by VCS evidence: ${commit.nodeId}`, "VCS_EVIDENCE_TEMPORAL_RELATION_MISSING");
     }
   }
+  const documentDescriptor = graphVersion === TEMPORAL_PROVENANCE_VERSION ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
+  if (!documentDescriptor || !["not-provided", "projected"].includes(documentDescriptor.status)) {
+    fail("Temporal graph document-change projection descriptor is invalid.", "INVALID_DOCUMENT_CHANGE_TEMPORAL_PROJECTION");
+  }
+  for (const field of ["candidateSetIds", "reviewDecisionIds", "productModelRevisionIds", "applicationReceiptIds"]) {
+    if (!Array.isArray(documentDescriptor[field]) || canonicalJson(documentDescriptor[field]) !== canonicalJson([...new Set(documentDescriptor[field])].sort())) {
+      fail(`Temporal graph document-change ${field} must be sorted and unique.`, "INVALID_DOCUMENT_CHANGE_TEMPORAL_PROJECTION");
+    }
+  }
+  if (documentDescriptor.status === "projected"
+    && (!/^document-change-projection-[a-f0-9]{24}$/.test(documentDescriptor.projectionInputId || "") || !/^[a-f0-9]{64}$/.test(documentDescriptor.projectionInputHash || ""))) {
+    fail("Temporal graph document-change projection identity is invalid.", "INVALID_DOCUMENT_CHANGE_TEMPORAL_PROJECTION");
+  }
+  const documentCandidateSets = graph.nodes.filter((node) => node.kind === "DocumentChangeCandidateSet");
+  const documentCandidates = graph.nodes.filter((node) => node.kind === "DocumentChangeCandidate");
+  const documentReviews = graph.nodes.filter((node) => node.kind === "DocumentChangeReviewDecision");
+  const documentRevisions = graph.nodes.filter((node) => node.kind === "DocumentProductModelRevision");
+  const documentApplications = graph.nodes.filter((node) => node.kind === "DocumentChangeApplication");
+  const documentReferences = graph.nodes.filter((node) => node.kind === "DocumentProjectionReference");
+  if (canonicalJson(idsOf(documentCandidateSets)) !== canonicalJson(documentDescriptor.candidateSetIds)
+    || canonicalJson(idsOf(documentReviews)) !== canonicalJson(documentDescriptor.reviewDecisionIds)
+    || canonicalJson(idsOf(documentRevisions)) !== canonicalJson(documentDescriptor.productModelRevisionIds)
+    || canonicalJson(idsOf(documentApplications)) !== canonicalJson(documentDescriptor.applicationReceiptIds)) {
+    fail(`Temporal graph document-change artifact sets do not match the projection descriptor: ${canonicalJson({
+      actual: { candidateSetIds: idsOf(documentCandidateSets), reviewDecisionIds: idsOf(documentReviews), productModelRevisionIds: idsOf(documentRevisions), applicationReceiptIds: idsOf(documentApplications) },
+      expected: documentDescriptor,
+    })}`, "DOCUMENT_CHANGE_TEMPORAL_SET_MISMATCH");
+  }
+  const documentCandidateIds = new Set(idsOf(documentCandidates));
+  for (const set of documentCandidateSets) {
+    if (!/^[a-f0-9]{64}$/.test(set.candidateSetHash || "") || set.candidateIds.some((id) => !documentCandidateIds.has(id) || !hasEdge("CONTAINS", set.nodeId, id))
+      || !graph.edges.some((edge) => edge.type === "PROPOSES_FROM" && edge.from === set.nodeId && nodes.get(edge.to)?.kind === "DocumentProjectionReference")) {
+      fail(`Document-change candidate set projection is incomplete: ${set.nodeId}`, "DOCUMENT_CHANGE_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  for (const review of documentReviews) {
+    if (!documentDescriptor.candidateSetIds.includes(review.candidateSetId) || !hasEdge("REVIEWED_BY", review.candidateSetId, review.nodeId)) {
+      fail(`Document-change review projection is incomplete: ${review.nodeId}`, "DOCUMENT_CHANGE_TEMPORAL_RELATION_MISSING");
+    }
+    for (const id of review.acceptedCandidateIds) if (!documentCandidateIds.has(id) || !hasEdge("ACCEPTED_BY", id, review.nodeId)) fail(`Document-change acceptance relation is missing: ${id}`, "DOCUMENT_CHANGE_TEMPORAL_RELATION_MISSING");
+    for (const id of review.rejectedCandidateIds) if (!documentCandidateIds.has(id) || !hasEdge("REJECTED_BY", id, review.nodeId)) fail(`Document-change rejection relation is missing: ${id}`, "DOCUMENT_CHANGE_TEMPORAL_RELATION_MISSING");
+  }
+  for (const application of documentApplications) {
+    if (!documentDescriptor.reviewDecisionIds.includes(application.reviewDecisionId)
+      || !hasEdge("PRODUCES", application.reviewDecisionId, application.nodeId)
+      || !graph.edges.some((edge) => edge.type === "PRODUCES" && edge.from === application.nodeId && nodes.get(edge.to)?.kind === "DocumentProjectionReference")) {
+      fail(`Document-change application projection is incomplete: ${application.nodeId}`, "DOCUMENT_CHANGE_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  for (const reference of documentReferences) if (!/^document-projection-[a-f0-9]{24}$/.test(reference.documentProjectionId || "")
+    || !/^graph-snapshot-[a-f0-9]{24}$/.test(reference.graphSnapshotId || "") || !/^source-snapshot-[a-f0-9]{24}$/.test(reference.referencedSourceSnapshotId || "")) {
+    fail(`DocumentProjectionReference is invalid: ${reference.nodeId}`, "INVALID_DOCUMENT_CHANGE_TEMPORAL_NODE");
+  }
   const productLogical = new Map();
   for (const kind of Object.keys(PRODUCT_DEFINITIONS)) {
     for (const node of graph.nodes.filter((candidate) => candidate.kind === kind)) productLogical.set(`${kind}:${node.key}`, node.nodeId);
@@ -2427,6 +2694,14 @@ export function verifyTemporalProvenanceGraph(graph) {
     vcsEvidenceCount: vcsEvidenceNodes.length,
     gitCommitObservationCount: gitCommitNodes.length,
   });
+  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+    documentChangeCandidateSetCount: documentCandidateSets.length,
+    documentChangeCandidateCount: documentCandidates.length,
+    documentChangeReviewDecisionCount: documentReviews.length,
+    documentChangeProductModelRevisionCount: documentRevisions.length,
+    documentChangeApplicationCount: documentApplications.length,
+    documentProjectionReferenceCount: documentReferences.length,
+  });
   if (canonicalJson(summary) !== canonicalJson(graph.summary)) fail("Temporal graph summary does not match its contents.", "TEMPORAL_SUMMARY_MISMATCH");
   return graph;
 }
@@ -2443,7 +2718,7 @@ function searchable(node) {
     node.key, node.logicalEntityId, node.fileId, node.fileRevisionId, node.referencedSourceSnapshotId, node.referencedRevisionId,
     node.productKind, node.inputMode, node.sourceKind, node.disposition, node.statement, node.explanation, node.rationale,
     node.changeSetId, node.changeId, node.targetNodeId, node.targetKind, node.resultPacketId, node.executionReviewDecisionId,
-    node.vcsKind, node.objectId, node.subject, node.body, node.authorName, node.gitHistoryId,
+    node.vcsKind, node.objectId, node.subject, node.body, node.authorName, node.gitHistoryId, node.relativePath,
     node.semantic ? canonicalJson(node.semantic) : ""]
     .filter(Boolean).join(" ").toLocaleLowerCase();
 }
@@ -2482,6 +2757,7 @@ export function queryTemporalProvenanceGraph(graph, {
     "OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "ProductConceptReference",
     "FeatureMappingCandidateSet", "FeatureMappingCandidate", "FeatureMappingEvidence", "FeatureMappingUnknown", "MappingEndpointReference",
     "ChangeImpactCandidateSet", "ChangeImpactCandidate", "ChangeImpactUnknown", "ChangeProductReference",
+    "DocumentChangeCandidateSet", "DocumentChangeCandidate",
   ]);
   const candidatePolicyAllows = (record) => includeUnreviewedCandidates || !candidateSurfaceKinds.has(record.kind);
   const nodeEligible = (node) => allowedKinds.includes(node.kind) && allowedAuthorityClasses.includes(node.authorityClass)

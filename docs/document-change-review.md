@@ -17,6 +17,7 @@ edited generated Markdown
   -> child SourceSnapshot and GraphSnapshot
   -> reconciled deterministic Markdown
   -> immutable application receipt
+  -> later audit SourceSnapshot and GraphSnapshot
 ```
 
 No Markdown parser or model is allowed to infer the authoritative Product Model from the edited prose. An accepting review must include the complete structured `resultingProductModel` selected by the user.
@@ -86,7 +87,9 @@ Before recording a review, the implementation verifies:
 
 Before application, it repeats candidate/published-byte validation, verifies the review and target Product Model revision, requires a current World Model, and rechecks Product Canon drift.
 
-An accepted application writes only the reviewed Product Model, derives revision parents, builds and verifies a child SourceSnapshot and GraphSnapshot, and then replaces the reviewed published drift with deterministic Markdown from that graph. A rejection does not mutate Canon or the graph; it reconciles the reviewed view to the current graph.
+An accepted application writes only the reviewed Product Model, derives revision parents, builds and verifies a child SourceSnapshot and GraphSnapshot, and then replaces the reviewed published drift with deterministic Markdown from that graph. A rejection does not mutate Canon. After either outcome, the immutable receipt is projected into a subsequent audit child GraphSnapshot and the deterministic Markdown view is advanced to that audit graph.
+
+The receipt deliberately names the pre-audit application outcome. It cannot name the same GraphSnapshot that contains it because that would create a content-hash cycle. The later audit graph is derived evidence only; the immutable ReviewDecision and application receipt remain the authoritative transition records.
 
 If Canon, World Model, graph projection, or Markdown reconciliation fails, current pointers, Canon bytes, and published documents are restored. Immutable review evidence remains available for diagnosis and retry. New immutable snapshots written before a rollback may remain as unreachable derived evidence but cannot become current authority.
 
@@ -133,7 +136,6 @@ MCP cannot record a review, apply one, write Canon, rebuild a graph, or publish 
 
 ## Explicitly deferred
 
-- projecting document CandidateSets, ReviewDecisions, and application receipts as nodes and relations in later GraphSnapshots;
 - semantic extraction of structured Product Model changes from prose;
 - automatic approval or application;
 - bidirectional document synchronization and conflict resolution;

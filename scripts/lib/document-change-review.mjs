@@ -4,6 +4,7 @@ import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import {
   createDocumentProjectionAdapter,
+  materializeMarkdownProjection,
   materializeReviewedMarkdownProjection,
   readDocumentChangeCandidateSet,
   verifyDocumentChangeCandidateSet,
@@ -21,7 +22,6 @@ import {
   deriveIncrementalRevisionParents,
   findWorldModelSnapshot,
   inspectWorldModel,
-  readWorldModel,
 } from "./world-model.mjs";
 import { createWorldModelStoreAdapter } from "./world-model-store.mjs";
 
@@ -454,6 +454,34 @@ function restorePublishedDocuments(adapter, documents, pointer) {
   if (pointer) adapter.writePointer(pointer);
 }
 
+async function buildDocumentAuditChild({ projectRoot, beforeWorld, storeAdapter, graphProjectionAdapter, computeAdapter, writerLease }) {
+  const common = {
+    root: projectRoot,
+    persist: false,
+    storeAdapter,
+    graphProjectionAdapter,
+    computeAdapter,
+    parentSourceSnapshotIds: beforeWorld.temporalProvenanceGraph.parentSourceSnapshotIds,
+    revisionParentIds: beforeWorld.temporalProvenanceGraph.revisionParentIds,
+  };
+  const sameLineagePreview = await buildWorldModel(common);
+  const revisionParentIds = deriveIncrementalRevisionParents({
+    previousGraph: beforeWorld.temporalProvenanceGraph,
+    candidateGraph: sameLineagePreview.snapshot.temporalProvenanceGraph,
+  });
+  const parentSourceSnapshotIds = [beforeWorld.temporalProvenanceGraph.sourceSnapshotId];
+  const preview = await buildWorldModel({ ...common, parentSourceSnapshotIds, revisionParentIds });
+  return buildWorldModel({
+    ...common,
+    persist: true,
+    parentSourceSnapshotIds,
+    revisionParentIds,
+    expectedWorldModelId: preview.snapshot.worldModelId,
+    expectedCurrentWorldModelId: beforeWorld.worldModelId,
+    writerLease,
+  });
+}
+
 async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = null, graphProjectionAdapter = null, documentProjectionAdapter = null, computeAdapter = null, writerLease }) {
   assertAuthorityMutable(inspected);
   const projectRoot = inspected.project.projectRoot;
@@ -467,7 +495,12 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
   }
   verifyDocumentChangeCandidateSetAgainstPublished({ projectRoot, candidateSet, adapter: documentProjectionAdapter });
   const currentStatus = inspectWorldModel({ root: projectRoot, storeAdapter });
-  if (currentStatus.status !== "current") fail("Repository World Model must be current before applying a document-change review.", "DOCUMENT_CHANGE_WORLD_MODEL_STALE");
+  const documentOnlyDriftKeys = new Set(["documentChangeProjectionChanged", "temporalProvenanceChanged"]);
+  const nonDocumentDrift = Object.entries(currentStatus.changes || {}).some(([key, value]) => !documentOnlyDriftKeys.has(key)
+    && (Array.isArray(value) ? value.length > 0 : value === true));
+  if (currentStatus.status !== "current" && (!currentStatus.changes?.documentChangeProjectionChanged || nonDocumentDrift)) {
+    fail("Repository World Model has non-document drift and must be refreshed before applying a document-change review.", "DOCUMENT_CHANGE_WORLD_MODEL_STALE");
+  }
   const beforeWorld = currentStatus.snapshot;
   const currentCanon = readProductModelCanon({ projectRoot });
   if (currentCanon.model.productModelId !== review.reviewedProductModelId || currentCanon.model.productModelHash !== review.reviewedProductModelHash) {
@@ -484,6 +517,7 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
   const canonExisted = fs.existsSync(canonFile);
   const canonBefore = canonExisted ? fs.readFileSync(canonFile, "utf8") : "";
   let canonWritten = false;
+  let createdReceiptFile = "";
   try {
     let afterWorld = beforeWorld;
     if (review.promotionAuthority) {
@@ -537,13 +571,31 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
       projection: materialized.projection,
       canonChanged: review.promotionAuthority,
     }), review, candidateSet, inspected.project.projectId);
-    persistImmutable(applicationFile(projectRoot, receipt.applicationReceiptId), receipt, (value) => verifyDocumentChangeApplicationReceipt(value, review, candidateSet, inspected.project.projectId), "Document-change application receipt");
+    const persistedReceipt = persistImmutable(applicationFile(projectRoot, receipt.applicationReceiptId), receipt, (value) => verifyDocumentChangeApplicationReceipt(value, review, candidateSet, inspected.project.projectId), "Document-change application receipt");
+    if (persistedReceipt.created) createdReceiptFile = persistedReceipt.file;
+    const audit = await buildDocumentAuditChild({
+      projectRoot,
+      beforeWorld: afterWorld,
+      storeAdapter: selectedStore,
+      graphProjectionAdapter: selectedGraph,
+      computeAdapter,
+      writerLease,
+    });
+    const auditProjection = materializeMarkdownProjection({ projectRoot, graph: audit.snapshot.temporalProvenanceGraph, adapter: selectedDocuments });
     const verifiedWorld = inspectWorldModel({ root: projectRoot, storeAdapter: selectedStore });
-    if (verifiedWorld.status !== "current" || verifiedWorld.snapshot.worldModelId !== afterWorld.worldModelId) {
+    if (verifiedWorld.status !== "current" || verifiedWorld.snapshot.worldModelId !== audit.snapshot.worldModelId) {
       fail("Applied document review did not leave a current verified World Model.", "DOCUMENT_CHANGE_APPLICATION_WORLD_MISMATCH");
     }
-    return { status: review.promotionAuthority ? "applied" : "rejected-and-reconciled", reviewDecision: review, applicationReceipt: receipt, worldModel: afterWorld, documentProjection: materialized.projection };
+    return {
+      status: review.promotionAuthority ? "applied" : "rejected-and-reconciled",
+      reviewDecision: review,
+      applicationReceipt: persistedReceipt.document,
+      worldModel: afterWorld,
+      auditWorldModel: audit.snapshot,
+      documentProjection: auditProjection.projection,
+    };
   } catch (error) {
+    if (createdReceiptFile && fs.existsSync(createdReceiptFile)) fs.unlinkSync(createdReceiptFile);
     if (canonWritten) {
       if (canonExisted) atomicWrite(canonFile, canonBefore);
       else if (fs.existsSync(canonFile)) fs.unlinkSync(canonFile);
