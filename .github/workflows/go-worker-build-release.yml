@@ -11,6 +11,10 @@ on:
       - "scripts/generate-go-worker-manifest.mjs"
       - "scripts/lib/compute-adapter.mjs"
       - "scripts/lib/go-worker-adapter.mjs"
+      - "scripts/lib/repository-scan.mjs"
+      - "scripts/lib/source-analysis.mjs"
+      - "scripts/verify-go-worker.mjs"
+      - "benchmarks/repository-scan-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
   pull_request:
     branches:
@@ -20,6 +24,10 @@ on:
       - "scripts/generate-go-worker-manifest.mjs"
       - "scripts/lib/compute-adapter.mjs"
       - "scripts/lib/go-worker-adapter.mjs"
+      - "scripts/lib/repository-scan.mjs"
+      - "scripts/lib/source-analysis.mjs"
+      - "scripts/verify-go-worker.mjs"
+      - "benchmarks/repository-scan-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
   workflow_dispatch:
     inputs:
@@ -141,7 +149,7 @@ jobs:
             --arch x64 \
             --binary "${binary_root}/head-agent-worker" \
             --output "${binary_root}/WORKER-MANIFEST.json" \
-            --operations "worker.health.v1,worker.lifecycle.v1"
+            --operations "worker.health.v1,worker.lifecycle.v1,repository.scan.v1"
           node ../../scripts/verify-go-worker.mjs --plugin-root "${NATIVE_TEST_ROOT}"
 
   build:

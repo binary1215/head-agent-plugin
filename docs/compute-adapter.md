@@ -6,7 +6,7 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this plane.
 
 `ComputeAdapter` separates deterministic heavy computation from the JavaScript control plane without transferring product authority, runtime authority, or semantic identity to an implementation language. Contract version `0.3.0` and WorkerProtocol version `0.2.0` are active.
 
-`JsReferenceComputeAdapter` runs deterministic reference operations in-process and remains the semantic oracle and local fallback. `GoWorkerComputeAdapter` now provides a verified native stdio transport. The packaged worker implements `worker.health.v1` only; `repository.scan.v1` remains a JavaScript operation until its Go implementation passes the existing corpus, complete-response conformance, identity, and benchmark gates. No user project receives native source or binaries.
+`JsReferenceComputeAdapter` runs deterministic reference operations in-process and remains the semantic oracle and local fallback. `GoWorkerComputeAdapter` provides a verified native stdio transport. The Go source now implements `repository.scan.v1` and matches the JavaScript complete response across six success/failure fixtures, but packaged release manifests still advertise `worker.health.v1` only. Comparative measurements show regressions for small and medium inputs and only marginal improvement for a large input, so production World Model scanning remains JavaScript rather than claiming unproven acceleration. No user project receives native source or binaries.
 
 ## Authority boundary
 
@@ -67,6 +67,8 @@ Conformance proves equivalence only for the supplied fixtures. An operation cann
 
 `worker.health.v1` is the first native conformance operation. Both backends return the same canonical authority-free readiness result. A test-only `worker.lifecycle.v1` fixture waits until the adapter timeout and proves cancellation plus PID exit; production manifests do not advertise that lifecycle operation.
 
+The Go `repository.scan.v1` candidate covers the same bounded file traversal, exclusions, raw-byte hashes, UTF-8 replacement behavior, classification, language mapping, symbol cap, dependency extraction, import bindings, call extraction, skipped counts, summaries, and content-derived identity as the JavaScript reference. Canonical JSON uses JavaScript-compatible UTF-16 key ordering and escaping. The tracked corpus covers JavaScript, Python, Markdown/Unicode, configuration, Dockerfile, test classification, excluded directories, unsupported files, managed projections, invalid roots, and resource-limit failures.
+
 ## Distribution and selection
 
 Each supported platform package contains the executable and a strict `WORKER-MANIFEST.json`. The manifest binds the WorkerProtocol version, platform, architecture, normalized plugin-relative executable path, byte size, SHA-256 digest, advertised operations, process restrictions, and all-false authority flags to a content-derived manifest ID.
@@ -85,12 +87,12 @@ Malformed or digest-invalid native responses, stdout limit violations, timeouts,
 
 The World Model consumes only a successfully validated complete result. JavaScript and future native implementations must use the same source-analysis producer version and canonical ordering. Backend name, execution mode, request ID, result digest, and elapsed time remain pointer or caller diagnostics outside the World Model snapshot identity.
 
-The tracked corpus under `benchmarks/repository-scan-v1/basic` covers file, symbol, dependency, binding, and call extraction. `npm run benchmark:repository-scan` repeats the reference operation, fails on semantic identity drift, and reports timing only as non-semantic diagnostics. The corpus and conformance gate establish migration evidence; they do not claim that native acceleration is already faster.
+The tracked corpus under `benchmarks/repository-scan-v1/basic` covers file, symbol, dependency, binding, call, Unicode, classification, exclusion, and failure behavior. `npm run benchmark:repository-scan` repeats the reference operation, fails on semantic identity drift, and reports timing only as non-semantic diagnostics. `scripts/benchmark-go-repository-scan.mjs` first proves complete-response conformance, alternates backend order, rejects fallback, and reports operational medians. The reviewed Windows evaluation is stored at `benchmarks/repository-scan-v1/native-evaluation.json`: the Go path was slower for small and medium corpora and only about 1.07x faster on the large corpus. This is insufficient for default activation.
 
 ## Explicitly deferred
 
 - compute-backed graph construction, traversal, or Context selection operations;
-- the Go implementation and migration of `repository.scan.v1`;
+- production activation, size-aware selection, or transport amortization for the conformant Go `repository.scan.v1` candidate;
 - worker descendants and descendant process-tree supervision;
 - benchmark-based migration of file scanning, parsing, World Model construction, graph traversal, or Context selection;
 - Rust or other native backends.

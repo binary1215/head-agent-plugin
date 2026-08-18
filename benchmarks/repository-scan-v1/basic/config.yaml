@@ -1,0 +1,3 @@
+scanner:
+  deterministic: true
+  authority: none

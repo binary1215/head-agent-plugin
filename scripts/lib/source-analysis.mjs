@@ -1,4 +1,4 @@
-export const SOURCE_ANALYSIS_VERSION = "0.1.0";
+export const SOURCE_ANALYSIS_VERSION = "0.2.0";
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -34,10 +34,15 @@ export function classifySourcePath(relative, extension) {
 
 function regexSymbols(text, expressions, maxSymbols) {
   const symbols = [];
+  const seen = new Set();
   for (const [kind, expression] of expressions) {
     for (const match of text.matchAll(expression)) {
-      symbols.push({ name: match[1], kind, line: lineAt(text, match.index || 0) });
-      if (symbols.length >= maxSymbols) return symbols;
+      const symbol = { name: match[1], kind, line: lineAt(text, match.index || 0) };
+      const identity = JSON.stringify([symbol.line, symbol.kind, symbol.name]);
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      symbols.push(symbol);
+      if (symbols.length >= maxSymbols) return symbols.sort((left, right) => left.line - right.line || compareText(left.name, right.name));
     }
   }
   return symbols.sort((left, right) => left.line - right.line || compareText(left.name, right.name));

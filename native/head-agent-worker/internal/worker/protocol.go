@@ -11,6 +11,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/binary1215/head-agent-plugin/native/head-agent-worker/internal/canonicaljson"
+	"github.com/binary1215/head-agent-plugin/native/head-agent-worker/internal/repositoryscan"
 )
 
 const (
@@ -84,24 +87,7 @@ type response struct {
 }
 
 func canonicalJSON(value any) ([]byte, error) {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var normalized any
-	if err := decoder.Decode(&normalized); err != nil {
-		return nil, err
-	}
-	var output bytes.Buffer
-	encoder := json.NewEncoder(&output)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "")
-	if err := encoder.Encode(normalized); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(output.Bytes(), []byte("\n")), nil
+	return canonicaljson.Marshal(value)
 }
 
 func digest(value []byte) string {
@@ -258,6 +244,15 @@ func handle(value request) (response, error) {
 	}
 	if value.Operation == LifecycleOperation {
 		return lifecycle(value)
+	}
+	if value.Operation == repositoryscan.Operation {
+		result, operationFailure := repositoryscan.Scan(value.Input, repositoryscan.Limits{
+			MaxFiles: value.Limits.MaxFiles, MaxFileBytes: value.Limits.MaxFileBytes, MaxTotalBytes: value.Limits.MaxTotalBytes,
+		})
+		if operationFailure != nil {
+			return failure(value, operationFailure.Code, operationFailure.Message), nil
+		}
+		return success(value, result)
 	}
 	return failure(value, "UNSUPPORTED_COMPUTE_OPERATION", fmt.Sprintf("Unsupported compute operation: %s", value.Operation)), nil
 }

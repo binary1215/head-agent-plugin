@@ -17,7 +17,7 @@ import {
 } from "./source-analysis.mjs";
 import { GoWorkerComputeAdapter } from "./go-worker-adapter.mjs";
 
-export const REPOSITORY_SCAN_VERSION = "0.1.0";
+export const REPOSITORY_SCAN_VERSION = "0.2.0";
 export const REPOSITORY_SCAN_OPERATION = "repository.scan.v1";
 export const REPOSITORY_SCAN_SEMANTIC_PRODUCER = Object.freeze({
   name: "head-agent-core-repository-scan",

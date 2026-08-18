@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "kind": "GoRepositoryScanMigrationEvaluation",
+  "workerProtocolVersion": "0.2.0",
+  "repositoryScanProducerVersion": "0.2.0",
+  "sourceAnalysisVersion": "0.2.0",
+  "environment": {
+    "platform": "windows-x64",
+    "goVersion": "1.26.6",
+    "nodeVersion": "24.18.0"
+  },
+  "conformance": {
+    "fixedCorpusFixtureCount": 6,
+    "fixedCorpusScanId": "repository-scan-1d4ac0c3da5c82dc795bf638",
+    "fixedCorpusResultDigest": "f6e30e4ce240e42752fc9464c380bc705bdee70c93a6e94ebba1d8a63bdab22c",
+    "largeCorpusScanId": "repository-scan-ef6baa1a34f95e4aac30eaea",
+    "largeCorpusResultDigest": "2a5c8037565b6a807d6afd1c70b353c162afe3be4074b32e9da280978b7967dc",
+    "completeResponseEquivalent": true
+  },
+  "benchmarks": [
+    {
+      "corpusClass": "fixed-small",
+      "iterations": 15,
+      "javascriptMedianMs": 3.7299,
+      "goMedianMs": 25.6218,
+      "speedupRatio": 0.145575
+    },
+    {
+      "corpusClass": "current-plugin-medium",
+      "iterations": 7,
+      "javascriptMedianMs": 180.5223,
+      "goMedianMs": 194.4542,
+      "speedupRatio": 0.928354
+    },
+    {
+      "corpusClass": "structural-reference-large",
+      "iterations": 3,
+      "javascriptMedianMs": 10990.6006,
+      "goMedianMs": 10316.3074,
+      "speedupRatio": 1.065362
+    }
+  ],
+  "decision": {
+    "productionManifestAdvertisesRepositoryScan": false,
+    "reason": "The Go implementation is conformant, but small and medium repositories regress and the measured large-repository improvement is marginal. Keep JavaScript as the production path until selection or transport amortization has repeatable material benefit."
+  },
+  "authorityEffect": "none"
+}
