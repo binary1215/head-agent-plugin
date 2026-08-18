@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.27` adds explicit conformance-gated ArcadeDB GraphProjection activation with environment-only credential resolution, immutable remote snapshots, a verified current pointer, and a complete local mirror. GraphDB remains optional and non-authoritative; server-side topology traversal is still deferred.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.28` adds snapshot-scoped ArcadeDB vertices and edges, a content-derived topology receipt, exact remote re-verification, and safe completion of exact partial writes. GraphDB remains optional and non-authoritative; traversal reads the verified remote topology but still applies the deterministic client reference algorithm, while server-side bounded traversal remains deferred.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 

@@ -190,7 +190,7 @@ It covers existing code, a new-project brief, empty evidence, revision, rejectio
 
 ## Explicitly deferred
 
-- ArcadeDB server-side vertex/edge traversal and non-ArcadeDB transports;
+- ArcadeDB server-side bounded traversal and non-ArcadeDB transports;
 - dedicated imported-backlog connectors beyond an explicit structured brief;
 - general relationship promotion beyond the separate Feature/code/test mapping review scope;
 - automatic semantic promotion, document synchronization, and merge/conflict resolution.

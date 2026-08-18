@@ -2,9 +2,12 @@ import {
   ArcadeDbGraphProjectionAdapter,
   LocalJsonGraphProjectionAdapter,
   buildArcadeDbGraphProjectionActivation,
+  buildArcadeDbGraphTopologyActivation,
   createActivatedArcadeDbGraphProjectionAdapter,
   inspectArcadeDbGraphProjectionActivation,
+  inspectArcadeDbGraphTopologyActivation,
   persistArcadeDbGraphProjectionActivation,
+  persistArcadeDbGraphTopologyActivation,
   verifyGraphProjectionAdapterConformance,
 } from "./graph-projection-adapter.mjs";
 import { inspectWorldGraphProjection, inspectWorldModel } from "./world-model.mjs";
@@ -59,6 +62,16 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     conformanceReport,
   });
   const persisted = persistArcadeDbGraphProjectionActivation({ projectRoot: world.snapshot.projectRoot, activation, conformanceReport });
+  const topology = remoteAdapter.materializeTopology(graph);
+  const topologyActivation = buildArcadeDbGraphTopologyActivation({
+    storageSelection: configured.storageSelection,
+    graph,
+    topology,
+  });
+  const persistedTopology = persistArcadeDbGraphTopologyActivation({
+    projectRoot: world.snapshot.projectRoot,
+    activation: topologyActivation,
+  });
   return {
     status: "verified-active",
     projectId: world.snapshot.projectId,
@@ -68,6 +81,7 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     activation: persisted.activation,
     pointer: persisted.pointer,
     conformanceReport,
+    topology: persistedTopology.activation,
     credentialsPersisted: false,
     authority: "rebuildable-derived-projection-not-project-canon",
   };
@@ -76,6 +90,10 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
 export function inspectArcadeDbGraphProjectionStatus({ root = ".", transport = null } = {}) {
   const world = inspectWorldModel({ root });
   const activation = inspectArcadeDbGraphProjectionActivation({ projectRoot: world.snapshot.projectRoot });
+  const topology = inspectArcadeDbGraphTopologyActivation({
+    projectRoot: world.snapshot.projectRoot,
+    graph: world.snapshot.temporalProvenanceGraph,
+  });
   if (activation.status !== "verified-active") return {
     status: activation.status,
     worldModelStatus: world.status,
@@ -83,6 +101,7 @@ export function inspectArcadeDbGraphProjectionStatus({ root = ".", transport = n
     graphSnapshotId: world.snapshot.temporalProvenanceGraph.graphSnapshotId,
     storageSelection: activation.storageSelection,
     activation: null,
+    topology,
     credentialsPersisted: false,
     authority: "rebuildable-derived-projection-not-project-canon",
   };
@@ -95,6 +114,7 @@ export function inspectArcadeDbGraphProjectionStatus({ root = ".", transport = n
     graphSnapshotId: world.snapshot.temporalProvenanceGraph.graphSnapshotId,
     storageSelectionId: activation.storageSelection.storageSelectionId,
     activation: activation.activation,
+    topology,
     projection: projection.projection,
     credentialsPersisted: false,
     authority: "rebuildable-derived-projection-not-project-canon",
