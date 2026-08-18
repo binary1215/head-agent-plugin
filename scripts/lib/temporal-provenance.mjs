@@ -1,8 +1,11 @@
 import crypto from "node:crypto";
+import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.1.0";
+export const TEMPORAL_PROVENANCE_VERSION = "0.2.0";
 export const TEMPORAL_RELATION_TYPES = Object.freeze([
   "CONTAINS",
+  "REALIZES",
+  "GOVERNED_BY",
   "HAS_REVISION",
   "CURRENT_REVISION",
   "PARENT_OF",
@@ -18,6 +21,18 @@ export const TEMPORAL_NODE_KINDS = Object.freeze([
   "SymbolRevision",
   "Test",
   "TestRevision",
+  "FeatureGroup",
+  "FeatureGroupRevision",
+  "Capability",
+  "CapabilityRevision",
+  "Feature",
+  "FeatureRevision",
+  "Requirement",
+  "RequirementRevision",
+  "Constraint",
+  "ConstraintRevision",
+  "Decision",
+  "DecisionRevision",
   "SourceSnapshot",
   "SourceSnapshotReference",
   "RevisionReference",
@@ -26,6 +41,14 @@ export const TEMPORAL_NODE_KINDS = Object.freeze([
 const PRODUCER = "head-agent-core-temporal-provenance";
 const AUTHORITY_CLASSES = new Set(["canon-projected", "reviewed", "derived", "heuristic", "runtime-observed"]);
 const FRESHNESS_STATES = new Set(["current", "stale", "historical"]);
+const PRODUCT_DEFINITIONS = Object.freeze({
+  FeatureGroup: { collection: "featureGroups", prefix: "feature-group", revisionPrefix: "feature-group-revision" },
+  Capability: { collection: "capabilities", prefix: "capability", revisionPrefix: "capability-revision" },
+  Feature: { collection: "features", prefix: "feature", revisionPrefix: "feature-revision" },
+  Requirement: { collection: "requirements", prefix: "requirement", revisionPrefix: "requirement-revision" },
+  Constraint: { collection: "constraints", prefix: "constraint", revisionPrefix: "constraint-revision" },
+  Decision: { collection: "decisions", prefix: "decision", revisionPrefix: "decision-revision" },
+});
 
 const fail = (message, code = "TEMPORAL_PROVENANCE_ERROR") => {
   const error = new Error(message);
@@ -133,12 +156,59 @@ function revisionReferenceKind(revisionId) {
   if (revisionId.startsWith("file-revision-")) return "FileRevision";
   if (revisionId.startsWith("symbol-revision-")) return "SymbolRevision";
   if (revisionId.startsWith("test-revision-")) return "TestRevision";
+  for (const [kind, definition] of Object.entries(PRODUCT_DEFINITIONS)) {
+    if (revisionId.startsWith(`${definition.revisionPrefix}-`)) return `${kind}Revision`;
+  }
   return "";
 }
 
-export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSnapshotIds = [], revisionParentIds = {} } = {}) {
+function productRecordsFor({ projectId, productModel, productEvidenceId, revisionParents, knownLogicalIds }) {
+  if (!productModel || typeof productModel !== "object" || Array.isArray(productModel)) fail("productModel is required.", "INVALID_TEMPORAL_PRODUCT_MODEL");
+  if (!/^product-model-[a-f0-9]{24}$/.test(productModel.productModelId || "") || !/^[a-f0-9]{64}$/.test(productModel.productModelHash || "")) {
+    fail("productModel requires verified content-derived identity.", "INVALID_TEMPORAL_PRODUCT_MODEL");
+  }
+  if (typeof productEvidenceId !== "string" || !productEvidenceId) fail("productEvidenceId is required.", "INVALID_TEMPORAL_PRODUCT_MODEL");
+  const records = [];
+  for (const [kind, definition] of Object.entries(PRODUCT_DEFINITIONS)) {
+    const entities = productModel[definition.collection];
+    if (!Array.isArray(entities)) fail(`productModel.${definition.collection} must be an array.`, "INVALID_TEMPORAL_PRODUCT_MODEL");
+    for (const entity of entities) {
+      if (!entity || typeof entity.key !== "string" || !entity.key) fail(`${kind} requires a stable key.`, "INVALID_TEMPORAL_PRODUCT_MODEL");
+      const logicalEntityId = identity(definition.prefix, { projectId, key: entity.key });
+      knownLogicalIds.add(logicalEntityId);
+      const parentRevisionIds = parentIdsFor(revisionParents, logicalEntityId, definition.revisionPrefix);
+      const semantic = canonical(entity);
+      const revisionId = identity(definition.revisionPrefix, { logicalEntityId, semantic, parentRevisionIds });
+      records.push({
+        kind,
+        revisionKind: `${kind}Revision`,
+        key: entity.key,
+        logicalEntityId,
+        revisionId,
+        parentRevisionIds,
+        semantic,
+        evidenceIds: [productEvidenceId],
+      });
+    }
+  }
+  return records.sort((left, right) => left.logicalEntityId.localeCompare(right.logicalEntityId));
+}
+
+export function buildTemporalProvenanceGraph({
+  projectId,
+  files,
+  productModel = null,
+  productEvidenceId = "",
+  parentSourceSnapshotIds = [],
+  revisionParentIds = {},
+} = {}) {
   if (typeof projectId !== "string" || !projectId.trim()) fail("projectId is required.", "TEMPORAL_PROJECT_ID_REQUIRED");
   if (!Array.isArray(files)) fail("files must be an array.", "TEMPORAL_FILES_REQUIRED");
+  const selectedProductModel = productModel || normalizeProductModelDocument(emptyProductModelDocument());
+  const selectedProductEvidenceId = productEvidenceId || identity("evidence", {
+    kind: "product-canon",
+    productModelHash: selectedProductModel.productModelHash,
+  });
   const parents = normalizeParentSourceSnapshotIds(parentSourceSnapshotIds);
   const revisionParents = normalizeRevisionParentIds(revisionParentIds);
   const orderedFiles = [...files].sort((left, right) => String(left.path).localeCompare(String(right.path)));
@@ -206,6 +276,14 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
     records.push({ file, fileId, fileRevisionId, fileParentRevisionIds, symbolRecords, testRecord, evidenceId: evidenceId(file) });
   }
 
+  const productRecords = productRecordsFor({
+    projectId,
+    productModel: selectedProductModel,
+    productEvidenceId: selectedProductEvidenceId,
+    revisionParents,
+    knownLogicalIds,
+  });
+
   for (const logicalEntityId of Object.keys(revisionParents)) {
     if (!knownLogicalIds.has(logicalEntityId)) {
       fail(`Revision parents reference an unknown logical entity: ${logicalEntityId}`, "UNKNOWN_REVISION_PARENT_ENTITY");
@@ -215,13 +293,16 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
   const fileRevisionIds = records.map((record) => record.fileRevisionId).sort();
   const symbolRevisionIds = records.flatMap((record) => record.symbolRecords.map((symbol) => symbol.symbolRevisionId)).sort();
   const testRevisionIds = records.flatMap((record) => record.testRecord ? [record.testRecord.testRevisionId] : []).sort();
-  const stateDigest = digest(canonicalJson({ projectId, fileRevisionIds, symbolRevisionIds, testRevisionIds, producerVersion: TEMPORAL_PROVENANCE_VERSION }));
+  const productRevisionIds = productRecords.map((record) => record.revisionId).sort();
+  const stateDigest = digest(canonicalJson({ projectId, fileRevisionIds, symbolRevisionIds, testRevisionIds, productRevisionIds, productModelId: selectedProductModel.productModelId, producerVersion: TEMPORAL_PROVENANCE_VERSION }));
   const sourceSnapshotId = identity("source-snapshot", {
     projectId,
     parentSnapshotIds: parents,
     fileRevisionIds,
     symbolRevisionIds,
     testRevisionIds,
+    productRevisionIds,
+    productModelId: selectedProductModel.productModelId,
     stateDigest,
     producerVersion: TEMPORAL_PROVENANCE_VERSION,
   });
@@ -229,7 +310,7 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
 
   const nodes = [];
   const edges = [];
-  const allEvidenceIds = records.map((record) => record.evidenceId).sort();
+  const allEvidenceIds = [...records.map((record) => record.evidenceId), selectedProductEvidenceId].sort();
   nodes.push({
     nodeId: sourceSnapshotId,
     kind: "SourceSnapshot",
@@ -238,6 +319,8 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
     fileRevisionIds,
     symbolRevisionIds,
     testRevisionIds,
+    productRevisionIds,
+    productModelId: selectedProductModel.productModelId,
     stateDigest,
     ...nodeMetadata({ evidenceIds: allEvidenceIds }),
   });
@@ -266,15 +349,15 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
   }
 
   const revisionReferences = new Map();
-  const addRevisionParents = (logicalEntityId, revisionId, parentRevisionIds, revisionKind, evidenceIds) => {
+  const addRevisionParents = (logicalEntityId, revisionId, parentRevisionIds, revisionKind, evidenceIds, authorityClass = "derived") => {
     for (const parentRevisionId of parentRevisionIds) {
       if (parentRevisionId === revisionId) fail("A revision cannot parent itself.", "TEMPORAL_REVISION_CYCLE");
       const existing = revisionReferences.get(parentRevisionId);
       if (existing && (existing.logicalEntityId !== logicalEntityId || existing.revisionKind !== revisionKind)) {
         fail(`Revision parent identity is associated with conflicting logical entities: ${parentRevisionId}`, "REVISION_PARENT_IDENTITY_CONFLICT");
       }
-      if (!existing) revisionReferences.set(parentRevisionId, { logicalEntityId, revisionKind, evidenceIds });
-      edges.push(edgeRecord({ type: "PARENT_OF", from: parentRevisionId, to: revisionId, sourceSnapshotId, evidenceIds, origin: "declared-parent" }));
+      if (!existing) revisionReferences.set(parentRevisionId, { logicalEntityId, revisionKind, evidenceIds, authorityClass });
+      edges.push(edgeRecord({ type: "PARENT_OF", from: parentRevisionId, to: revisionId, sourceSnapshotId, evidenceIds, origin: "declared-parent", authorityClass }));
     }
   };
 
@@ -361,6 +444,67 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
     }
   }
 
+  const productByKindAndKey = new Map(productRecords.map((record) => [`${record.kind}:${record.key}`, record]));
+  for (const record of productRecords) {
+    nodes.push({
+      nodeId: record.logicalEntityId,
+      kind: record.kind,
+      projectId,
+      key: record.key,
+      ...nodeMetadata({
+        evidenceIds: record.evidenceIds,
+        sourceSnapshotId,
+        authorityClass: "canon-projected",
+        origin: "project-product-canon",
+      }),
+    });
+    nodes.push({
+      nodeId: record.revisionId,
+      kind: record.revisionKind,
+      logicalEntityId: record.logicalEntityId,
+      key: record.key,
+      semantic: record.semantic,
+      parentRevisionIds: record.parentRevisionIds,
+      ...nodeMetadata({
+        evidenceIds: record.evidenceIds,
+        sourceSnapshotId,
+        authorityClass: "canon-projected",
+        origin: "project-product-canon",
+      }),
+    });
+    edges.push(edgeRecord({ type: "CONTAINS", from: sourceSnapshotId, to: record.revisionId, sourceSnapshotId, evidenceIds: record.evidenceIds, authorityClass: "canon-projected", origin: "project-product-canon" }));
+    edges.push(edgeRecord({ type: "HAS_REVISION", from: record.logicalEntityId, to: record.revisionId, sourceSnapshotId, evidenceIds: record.evidenceIds, authorityClass: "canon-projected", origin: "project-product-canon" }));
+    edges.push(edgeRecord({ type: "CURRENT_REVISION", from: record.logicalEntityId, to: record.revisionId, sourceSnapshotId, evidenceIds: record.evidenceIds, authorityClass: "canon-projected", origin: "project-product-canon" }));
+    addRevisionParents(record.logicalEntityId, record.revisionId, record.parentRevisionIds, record.revisionKind, record.evidenceIds, "canon-projected");
+  }
+
+  const productRelation = (type, from, to) => edges.push(edgeRecord({
+    type,
+    from,
+    to,
+    sourceSnapshotId,
+    evidenceIds: [selectedProductEvidenceId],
+    authorityClass: "canon-projected",
+    origin: "project-product-canon",
+  }));
+  for (const record of productRecords) {
+    if (record.kind === "FeatureGroup") {
+      for (const parentKey of record.semantic.parentFeatureGroupKeys) {
+        productRelation("CONTAINS", productByKindAndKey.get(`FeatureGroup:${parentKey}`).logicalEntityId, record.logicalEntityId);
+      }
+    }
+    if (record.kind !== "Feature") continue;
+    for (const groupKey of record.semantic.featureGroupKeys) {
+      productRelation("CONTAINS", productByKindAndKey.get(`FeatureGroup:${groupKey}`).logicalEntityId, record.logicalEntityId);
+    }
+    for (const capabilityKey of record.semantic.capabilityKeys) {
+      productRelation("REALIZES", record.logicalEntityId, productByKindAndKey.get(`Capability:${capabilityKey}`).logicalEntityId);
+    }
+    for (const governed of record.semantic.governedBy) {
+      productRelation("GOVERNED_BY", record.logicalEntityId, productByKindAndKey.get(`${governed.kind}:${governed.key}`).logicalEntityId);
+    }
+  }
+
   for (const [parentRevisionId, reference] of revisionReferences) {
     nodes.push({
       nodeId: parentRevisionId,
@@ -368,7 +512,7 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
       referencedRevisionId: parentRevisionId,
       revisionKind: reference.revisionKind,
       logicalEntityId: reference.logicalEntityId,
-      ...nodeMetadata({ evidenceIds: reference.evidenceIds, sourceSnapshotId, origin: "declared-parent" }),
+      ...nodeMetadata({ evidenceIds: reference.evidenceIds, sourceSnapshotId, origin: "declared-parent", authorityClass: reference.authorityClass }),
     });
   }
 
@@ -383,6 +527,13 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
     symbolRevisionCount: nodes.filter((node) => node.kind === "SymbolRevision").length,
     testCount: nodes.filter((node) => node.kind === "Test").length,
     testRevisionCount: nodes.filter((node) => node.kind === "TestRevision").length,
+    featureGroupCount: nodes.filter((node) => node.kind === "FeatureGroup").length,
+    capabilityCount: nodes.filter((node) => node.kind === "Capability").length,
+    featureCount: nodes.filter((node) => node.kind === "Feature").length,
+    requirementCount: nodes.filter((node) => node.kind === "Requirement").length,
+    constraintCount: nodes.filter((node) => node.kind === "Constraint").length,
+    decisionCount: nodes.filter((node) => node.kind === "Decision").length,
+    productRevisionCount: productRevisionIds.length,
     sourceParentCount: parents.length,
     revisionParentCount: edges.filter((edge) => edge.type === "PARENT_OF" && edge.to !== sourceSnapshotId).length,
   };
@@ -393,6 +544,8 @@ export function buildTemporalProvenanceGraph({ projectId, files, parentSourceSna
     rebuildable: true,
     uniqueAuthority: false,
     projectId,
+    productModelId: selectedProductModel.productModelId,
+    productModelHash: selectedProductModel.productModelHash,
     sourceSnapshotId,
     parentSourceSnapshotIds: parents,
     revisionParentIds: revisionParents,
@@ -419,6 +572,9 @@ function requireMetadata(record, label, { sourceSnapshotRequired = true } = {}) 
   }
   if (typeof record.instructionAuthority !== "boolean" || typeof record.promotionAuthority !== "boolean") {
     fail(`${label} authority flags must be boolean.`, "INVALID_TEMPORAL_AUTHORITY");
+  }
+  if (record.instructionAuthority || record.promotionAuthority) {
+    fail(`${label} cannot gain instruction or promotion authority from graph projection.`, "INVALID_TEMPORAL_AUTHORITY");
   }
   if (record.authorityClass === "heuristic" || record.origin.startsWith("heuristic")) {
     if (typeof record.confidence !== "number" || record.confidence < 0 || record.confidence > 1) {
@@ -457,12 +613,22 @@ function expectedNodeId(node) {
     fileRevisionId: node.fileRevisionId,
     parentRevisionIds: node.parentRevisionIds,
   });
+  const productDefinition = PRODUCT_DEFINITIONS[node.kind];
+  if (productDefinition) return identity(productDefinition.prefix, { projectId: node.projectId, key: node.key });
+  const productRevisionEntry = Object.entries(PRODUCT_DEFINITIONS).find(([kind]) => node.kind === `${kind}Revision`);
+  if (productRevisionEntry) return identity(productRevisionEntry[1].revisionPrefix, {
+    logicalEntityId: node.logicalEntityId,
+    semantic: node.semantic,
+    parentRevisionIds: node.parentRevisionIds,
+  });
   if (node.kind === "SourceSnapshot") return identity("source-snapshot", {
     projectId: node.projectId,
     parentSnapshotIds: node.parentSnapshotIds,
     fileRevisionIds: node.fileRevisionIds,
     symbolRevisionIds: node.symbolRevisionIds,
     testRevisionIds: node.testRevisionIds,
+    productRevisionIds: node.productRevisionIds,
+    productModelId: node.productModelId,
     stateDigest: node.stateDigest,
     producerVersion: node.producerVersion,
   });
@@ -472,14 +638,20 @@ function expectedNodeId(node) {
 }
 
 function validEndpointKinds(type, fromKind, toKind) {
+  const productKinds = Object.keys(PRODUCT_DEFINITIONS);
+  const productRevisionKinds = productKinds.map((kind) => `${kind}Revision`);
   if (type === "CONTAINS") return (fromKind === "Repository" && ["File", "Test"].includes(toKind))
-    || (fromKind === "SourceSnapshot" && toKind === "FileRevision");
+    || (fromKind === "SourceSnapshot" && ["FileRevision", ...productRevisionKinds].includes(toKind))
+    || (fromKind === "FeatureGroup" && ["FeatureGroup", "Feature"].includes(toKind));
   if (["HAS_REVISION", "CURRENT_REVISION"].includes(type)) return (fromKind === "File" && toKind === "FileRevision")
-    || (fromKind === "Symbol" && toKind === "SymbolRevision") || (fromKind === "Test" && toKind === "TestRevision");
+    || (fromKind === "Symbol" && toKind === "SymbolRevision") || (fromKind === "Test" && toKind === "TestRevision")
+    || productKinds.some((kind) => fromKind === kind && toKind === `${kind}Revision`);
   if (type === "PARENT_OF") return (["SourceSnapshot", "SourceSnapshotReference"].includes(fromKind) && toKind === "SourceSnapshot")
-    || (fromKind === "RevisionReference" && ["FileRevision", "SymbolRevision", "TestRevision"].includes(toKind));
+    || (fromKind === "RevisionReference" && ["FileRevision", "SymbolRevision", "TestRevision", ...productRevisionKinds].includes(toKind));
   if (type === "DECLARES") return fromKind === "FileRevision" && toKind === "SymbolRevision";
   if (type === "REFERENCES") return fromKind === "TestRevision" && toKind === "FileRevision";
+  if (type === "REALIZES") return fromKind === "Feature" && toKind === "Capability";
+  if (type === "GOVERNED_BY") return fromKind === "Feature" && ["Requirement", "Constraint", "Decision"].includes(toKind);
   return false;
 }
 
@@ -490,6 +662,9 @@ export function verifyTemporalProvenanceGraph(graph) {
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
     fail("Temporal provenance graph cannot claim canonical or unique authority.", "INVALID_TEMPORAL_GRAPH_AUTHORITY");
+  }
+  if (!/^product-model-[a-f0-9]{24}$/.test(graph.productModelId || "") || !/^[a-f0-9]{64}$/.test(graph.productModelHash || "")) {
+    fail("Temporal graph product model identity is invalid.", "INVALID_TEMPORAL_PRODUCT_MODEL");
   }
   const payload = { ...graph };
   delete payload.graphSnapshotId;
@@ -519,25 +694,33 @@ export function verifyTemporalProvenanceGraph(graph) {
     if (nodes.has(node.nodeId)) fail(`Duplicate temporal node: ${node.nodeId}`, "DUPLICATE_TEMPORAL_NODE");
     requireMetadata(node, `Node ${node.nodeId}`, { sourceSnapshotRequired: node.kind !== "SourceSnapshot" });
     if (node.kind !== "SourceSnapshot" && node.sourceSnapshotId !== graph.sourceSnapshotId) fail(`Node ${node.nodeId} is scoped to a different SourceSnapshot.`, "TEMPORAL_SCOPE_MISMATCH");
-    for (const field of ["parentRevisionIds", "parentSnapshotIds", "fileRevisionIds", "symbolRevisionIds", "testRevisionIds"]) {
+    for (const field of ["parentRevisionIds", "parentSnapshotIds", "fileRevisionIds", "symbolRevisionIds", "testRevisionIds", "productRevisionIds"]) {
       if (node[field] && canonicalJson(node[field]) !== canonicalJson([...new Set(node[field])].sort())) fail(`Node ${node.nodeId} has a non-normalized ${field}.`, "INVALID_TEMPORAL_PARENT_SET");
     }
     if (expectedNodeId(node) !== node.nodeId) fail(`Temporal node identity mismatch: ${node.nodeId}`, "TEMPORAL_NODE_IDENTITY_MISMATCH");
+    if ((PRODUCT_DEFINITIONS[node.kind] || Object.keys(PRODUCT_DEFINITIONS).some((kind) => node.kind === `${kind}Revision`))
+      && (node.authorityClass !== "canon-projected" || node.origin !== "project-product-canon")) {
+      fail(`Product node ${node.nodeId} has invalid projection authority.`, "INVALID_PRODUCT_PROJECTION_AUTHORITY");
+    }
     nodes.set(node.nodeId, node);
   }
   const sourceSnapshot = nodes.get(graph.sourceSnapshotId);
   if (!sourceSnapshot || sourceSnapshot.kind !== "SourceSnapshot") fail("Current SourceSnapshot node is missing.", "SOURCE_SNAPSHOT_MISSING");
   if (sourceSnapshot.parentSnapshotIds.includes(sourceSnapshot.nodeId)) fail("A SourceSnapshot cannot parent itself.", "TEMPORAL_SOURCE_CYCLE");
   if (sourceSnapshot.projectId !== graph.projectId
+    || sourceSnapshot.productModelId !== graph.productModelId
     || canonicalJson(sourceSnapshot.parentSnapshotIds) !== canonicalJson(graph.parentSourceSnapshotIds)) {
     fail("SourceSnapshot scope or parents do not match the GraphSnapshot.", "SOURCE_SNAPSHOT_SCOPE_MISMATCH");
   }
   const actualFileRevisionIds = graph.nodes.filter((node) => node.kind === "FileRevision").map((node) => node.nodeId).sort();
   const actualSymbolRevisionIds = graph.nodes.filter((node) => node.kind === "SymbolRevision").map((node) => node.nodeId).sort();
   const actualTestRevisionIds = graph.nodes.filter((node) => node.kind === "TestRevision").map((node) => node.nodeId).sort();
+  const productRevisionKinds = Object.keys(PRODUCT_DEFINITIONS).map((kind) => `${kind}Revision`);
+  const actualProductRevisionIds = graph.nodes.filter((node) => productRevisionKinds.includes(node.kind)).map((node) => node.nodeId).sort();
   if (canonicalJson(sourceSnapshot.fileRevisionIds) !== canonicalJson(actualFileRevisionIds)
     || canonicalJson(sourceSnapshot.symbolRevisionIds) !== canonicalJson(actualSymbolRevisionIds)
-    || canonicalJson(sourceSnapshot.testRevisionIds) !== canonicalJson(actualTestRevisionIds)) {
+    || canonicalJson(sourceSnapshot.testRevisionIds) !== canonicalJson(actualTestRevisionIds)
+    || canonicalJson(sourceSnapshot.productRevisionIds) !== canonicalJson(actualProductRevisionIds)) {
     fail("SourceSnapshot revision sets do not match the projected revisions.", "SOURCE_SNAPSHOT_REVISION_MISMATCH");
   }
   const expectedStateDigest = digest(canonicalJson({
@@ -545,15 +728,28 @@ export function verifyTemporalProvenanceGraph(graph) {
     fileRevisionIds: actualFileRevisionIds,
     symbolRevisionIds: actualSymbolRevisionIds,
     testRevisionIds: actualTestRevisionIds,
+    productRevisionIds: actualProductRevisionIds,
+    productModelId: graph.productModelId,
     producerVersion: TEMPORAL_PROVENANCE_VERSION,
   }));
   if (sourceSnapshot.stateDigest !== expectedStateDigest) fail("SourceSnapshot state digest is invalid.", "SOURCE_SNAPSHOT_STATE_MISMATCH");
   const repositories = graph.nodes.filter((node) => node.kind === "Repository");
   if (repositories.length !== 1 || repositories[0].projectId !== graph.projectId) fail("Temporal graph requires exactly one matching Repository.", "TEMPORAL_REPOSITORY_MISMATCH");
+  const reconstructedProductDocument = { schemaVersion: 1 };
+  for (const [kind, definition] of Object.entries(PRODUCT_DEFINITIONS)) {
+    const revisions = graph.nodes.filter((node) => node.kind === `${kind}Revision`);
+    const logicals = graph.nodes.filter((node) => node.kind === kind);
+    if (revisions.length !== logicals.length) fail(`${kind} logical and Revision counts differ.`, "PRODUCT_REVISION_SET_MISMATCH");
+    reconstructedProductDocument[definition.collection] = revisions.map((node) => node.semantic);
+  }
+  const reconstructedProductModel = normalizeProductModelDocument(reconstructedProductDocument);
+  if (reconstructedProductModel.productModelId !== graph.productModelId || reconstructedProductModel.productModelHash !== graph.productModelHash) {
+    fail("Product model identity does not match product Revision semantics.", "PRODUCT_MODEL_IDENTITY_MISMATCH");
+  }
   const actualRevisionParentIds = {};
   for (const node of graph.nodes) {
     if (node.projectId && node.projectId !== graph.projectId) fail(`Node ${node.nodeId} belongs to another project.`, "TEMPORAL_PROJECT_SCOPE_MISMATCH");
-    if (!["FileRevision", "SymbolRevision", "TestRevision"].includes(node.kind)) continue;
+    if (!["FileRevision", "SymbolRevision", "TestRevision", ...productRevisionKinds].includes(node.kind)) continue;
     const logical = nodes.get(node.logicalEntityId);
     const expectedLogicalKind = node.kind.replace("Revision", "");
     if (!logical || logical.kind !== expectedLogicalKind) fail(`Revision ${node.nodeId} has no matching logical entity.`, "REVISION_LOGICAL_ENTITY_MISMATCH");
@@ -567,6 +763,9 @@ export function verifyTemporalProvenanceGraph(graph) {
     }
     if (node.kind === "TestRevision" && (logical.path !== node.path || logical.fileId !== nodes.get(node.fileRevisionId)?.logicalEntityId)) {
       fail(`TestRevision ${node.nodeId} does not match its Test.`, "REVISION_LOGICAL_ENTITY_MISMATCH");
+    }
+    if (productRevisionKinds.includes(node.kind) && logical.key !== node.key) {
+      fail(`${node.kind} ${node.nodeId} does not match its logical product entity.`, "REVISION_LOGICAL_ENTITY_MISMATCH");
     }
   }
   if (canonicalJson(actualRevisionParentIds) !== canonicalJson(graph.revisionParentIds)) {
@@ -594,7 +793,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     }
   }
   for (const node of graph.nodes) {
-    if (!["FileRevision", "SymbolRevision", "TestRevision"].includes(node.kind)) continue;
+    if (!["FileRevision", "SymbolRevision", "TestRevision", ...productRevisionKinds].includes(node.kind)) continue;
     if (!hasEdge("HAS_REVISION", node.logicalEntityId, node.nodeId) || !hasEdge("CURRENT_REVISION", node.logicalEntityId, node.nodeId)) {
       fail(`Revision projection is missing logical links: ${node.nodeId}`, "REVISION_LINK_MISSING");
     }
@@ -607,6 +806,72 @@ export function verifyTemporalProvenanceGraph(graph) {
       }
     }
   }
+  const productLogical = new Map();
+  for (const kind of Object.keys(PRODUCT_DEFINITIONS)) {
+    for (const node of graph.nodes.filter((candidate) => candidate.kind === kind)) productLogical.set(`${kind}:${node.key}`, node.nodeId);
+  }
+  for (const featureGroupRevision of graph.nodes.filter((node) => node.kind === "FeatureGroupRevision")) {
+    for (const parentKey of featureGroupRevision.semantic.parentFeatureGroupKeys) {
+      if (!hasEdge("CONTAINS", productLogical.get(`FeatureGroup:${parentKey}`), featureGroupRevision.logicalEntityId)) {
+        fail(`FeatureGroup relation is missing for ${featureGroupRevision.key}.`, "PRODUCT_RELATION_MISSING");
+      }
+    }
+  }
+  for (const featureRevision of graph.nodes.filter((node) => node.kind === "FeatureRevision")) {
+    for (const groupKey of featureRevision.semantic.featureGroupKeys) {
+      if (!hasEdge("CONTAINS", productLogical.get(`FeatureGroup:${groupKey}`), featureRevision.logicalEntityId)) {
+        fail(`FeatureGroup containment is missing for ${featureRevision.key}.`, "PRODUCT_RELATION_MISSING");
+      }
+    }
+    for (const capabilityKey of featureRevision.semantic.capabilityKeys) {
+      if (!hasEdge("REALIZES", featureRevision.logicalEntityId, productLogical.get(`Capability:${capabilityKey}`))) {
+        fail(`Capability realization is missing for ${featureRevision.key}.`, "PRODUCT_RELATION_MISSING");
+      }
+    }
+    for (const governed of featureRevision.semantic.governedBy) {
+      if (!hasEdge("GOVERNED_BY", featureRevision.logicalEntityId, productLogical.get(`${governed.kind}:${governed.key}`))) {
+        fail(`Governance relation is missing for ${featureRevision.key}.`, "PRODUCT_RELATION_MISSING");
+      }
+    }
+  }
+  const expectedProductRelations = new Set();
+  const addExpectedProductRelation = (type, from, to) => expectedProductRelations.add(`${type}|${from}|${to}`);
+  for (const revision of graph.nodes.filter((node) => productRevisionKinds.includes(node.kind))) {
+    addExpectedProductRelation("HAS_REVISION", revision.logicalEntityId, revision.nodeId);
+    addExpectedProductRelation("CURRENT_REVISION", revision.logicalEntityId, revision.nodeId);
+    addExpectedProductRelation("CONTAINS", graph.sourceSnapshotId, revision.nodeId);
+  }
+  for (const featureGroupRevision of graph.nodes.filter((node) => node.kind === "FeatureGroupRevision")) {
+    for (const parentKey of featureGroupRevision.semantic.parentFeatureGroupKeys) {
+      addExpectedProductRelation("CONTAINS", productLogical.get(`FeatureGroup:${parentKey}`), featureGroupRevision.logicalEntityId);
+    }
+  }
+  for (const featureRevision of graph.nodes.filter((node) => node.kind === "FeatureRevision")) {
+    for (const groupKey of featureRevision.semantic.featureGroupKeys) {
+      addExpectedProductRelation("CONTAINS", productLogical.get(`FeatureGroup:${groupKey}`), featureRevision.logicalEntityId);
+    }
+    for (const capabilityKey of featureRevision.semantic.capabilityKeys) {
+      addExpectedProductRelation("REALIZES", featureRevision.logicalEntityId, productLogical.get(`Capability:${capabilityKey}`));
+    }
+    for (const governed of featureRevision.semantic.governedBy) {
+      addExpectedProductRelation("GOVERNED_BY", featureRevision.logicalEntityId, productLogical.get(`${governed.kind}:${governed.key}`));
+    }
+  }
+  const productNodeKinds = new Set([...Object.keys(PRODUCT_DEFINITIONS), ...productRevisionKinds]);
+  const actualProductRelations = graph.edges.filter((edge) => {
+    const fromKind = nodes.get(edge.from)?.kind;
+    const toKind = nodes.get(edge.to)?.kind;
+    return ["REALIZES", "GOVERNED_BY"].includes(edge.type)
+      || (edge.type === "CONTAINS" && (productNodeKinds.has(fromKind) || productNodeKinds.has(toKind)))
+      || (["HAS_REVISION", "CURRENT_REVISION"].includes(edge.type) && productNodeKinds.has(fromKind));
+  });
+  const actualProductRelationSet = new Set(actualProductRelations.map((edge) => `${edge.type}|${edge.from}|${edge.to}`));
+  if (canonicalJson([...actualProductRelationSet].sort()) !== canonicalJson([...expectedProductRelations].sort())) {
+    fail("Product relation projection does not match product canon.", "PRODUCT_RELATION_SET_MISMATCH");
+  }
+  if (actualProductRelations.some((edge) => edge.authorityClass !== "canon-projected" || edge.origin !== "project-product-canon")) {
+    fail("Product relations have invalid projection authority.", "INVALID_PRODUCT_PROJECTION_AUTHORITY");
+  }
   const summary = {
     nodeCount: graph.nodes.length,
     edgeCount: graph.edges.length,
@@ -616,6 +881,13 @@ export function verifyTemporalProvenanceGraph(graph) {
     symbolRevisionCount: graph.nodes.filter((node) => node.kind === "SymbolRevision").length,
     testCount: graph.nodes.filter((node) => node.kind === "Test").length,
     testRevisionCount: graph.nodes.filter((node) => node.kind === "TestRevision").length,
+    featureGroupCount: graph.nodes.filter((node) => node.kind === "FeatureGroup").length,
+    capabilityCount: graph.nodes.filter((node) => node.kind === "Capability").length,
+    featureCount: graph.nodes.filter((node) => node.kind === "Feature").length,
+    requirementCount: graph.nodes.filter((node) => node.kind === "Requirement").length,
+    constraintCount: graph.nodes.filter((node) => node.kind === "Constraint").length,
+    decisionCount: graph.nodes.filter((node) => node.kind === "Decision").length,
+    productRevisionCount: actualProductRevisionIds.length,
     sourceParentCount: graph.parentSourceSnapshotIds.length,
     revisionParentCount: graph.edges.filter((edge) => edge.type === "PARENT_OF" && edge.to !== graph.sourceSnapshotId).length,
   };
@@ -632,7 +904,8 @@ function normalizeAllowlist(values, supported, label) {
 
 function searchable(node) {
   return [node.nodeId, node.kind, node.path, node.name, node.symbolKind, node.classification, node.language,
-    node.logicalEntityId, node.fileId, node.fileRevisionId, node.referencedSourceSnapshotId, node.referencedRevisionId]
+    node.key, node.logicalEntityId, node.fileId, node.fileRevisionId, node.referencedSourceSnapshotId, node.referencedRevisionId,
+    node.semantic ? canonicalJson(node.semantic) : ""]
     .filter(Boolean).join(" ").toLocaleLowerCase();
 }
 
@@ -640,7 +913,7 @@ export function queryTemporalProvenanceGraph(graph, {
   query,
   kinds = null,
   relations = null,
-  authorityClasses = ["derived", "heuristic"],
+  authorityClasses = ["canon-projected", "derived", "heuristic"],
   freshness = ["current"],
   minConfidence = 0,
   includeUnreviewedCandidates = false,

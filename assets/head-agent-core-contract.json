@@ -12,20 +12,28 @@
     "identity": "Artifacts use content-derived identifiers, digest verification, and typed parent relationships.",
     "status": "Contract-bound Runs, evidence-linked Result Packets, deterministic Fresh HEAD review projections, ReviewDecision-linked plan generations, and authority-free knowledge proposals are active; provider runtime hydration and authorized promotion are deferred."
   },
+  "productModel": {
+    "purpose": "Preserve user-owned product intent independently from repository layout and project it into rebuildable temporal evidence.",
+    "source": ".head/context/product-model.json",
+    "types": ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"],
+    "relations": ["CONTAINS", "REALIZES", "GOVERNED_BY"],
+    "authority": "The source document is mutable user-owned project canon. Graph nodes, graph edges, ContextCapsule ProductContext, and documents are derived projections and cannot mutate or promote canon.",
+    "status": "Strict schema validation, stable logical keys, immutable content-derived revisions, Git-independent GraphSnapshot projection, and bounded Context Compiler selection are active; inferred candidates, product-to-code mappings, onboarding review, and authorized promotion are deferred."
+  },
   "worldModel": {
     "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, a Git-independent temporal File/Symbol/Test revision GraphSnapshot, all reachable Git commit-message decision evidence, current Git refs, canonical HEAD lifecycle state, point-in-time host-exported external runtime observations, and bounded semantic/temporal/history/runtime traversal are active; Feature/Capability/ChangeSet projection, AST-accurate analysis, structured Git decision inference, live runtime probing/control, document projections, and the optional GraphDB adapter are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, a Git-independent temporal Product/File/Symbol/Test revision GraphSnapshot, all reachable Git commit-message decision evidence, current Git refs, canonical HEAD lifecycle state, point-in-time host-exported external runtime observations, and bounded product/semantic/temporal/history/runtime traversal are active; ChangeSet and product-to-code projection, AST-accurate analysis, structured Git decision inference, live runtime probing/control, document projections, and the optional GraphDB adapter are deferred."
   },
   "temporalProvenance": {
-    "purpose": "Connect stable repository entities to immutable content-derived revisions and explicit multiple-parent ancestry without requiring Git or GraphDB.",
-    "types": ["Repository", "File", "FileRevision", "Symbol", "SymbolRevision", "Test", "TestRevision", "SourceSnapshot", "SourceSnapshotReference", "RevisionReference"],
-    "relations": ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES"],
+    "purpose": "Connect stable product and repository entities to immutable content-derived revisions and explicit multiple-parent ancestry without requiring Git or GraphDB.",
+    "types": ["Repository", "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision", "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision", "File", "FileRevision", "Symbol", "SymbolRevision", "Test", "TestRevision", "SourceSnapshot", "SourceSnapshotReference", "RevisionReference"],
+    "relations": ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES"],
     "identity": "Logical identities exclude line locations, Git objects, GraphDB records, provider sessions, and document page IDs; revisions and graph/query/result artifacts are digest-verifiable.",
     "authority": "Rebuildable derived evidence only with no instruction, promotion, canonical, or unique authority.",
-    "status": "Zero-or-more SourceSnapshot and Revision parents plus deterministic bounded traversal are active; automatic merge, conflict resolution, candidate promotion, and remote GraphProjectionAdapter backends are deferred."
+    "status": "Product Canon projection, zero-or-more SourceSnapshot and Revision parents, and deterministic bounded traversal are active; automatic merge, conflict resolution, inferred candidate promotion, product-to-code mappings, and remote GraphProjectionAdapter backends are deferred."
   },
   "roles": {
     "head": "Owns whole-outcome understanding, strategy, integration, and completion judgment.",
@@ -53,10 +61,13 @@
     "deterministic Fresh HEAD review projection",
     "ReviewDecision-linked plan generations",
     "authority-free knowledge proposals and HEAD recommendations",
+    "strict user-owned Product Model canon with stable product keys",
     "incremental local Repository World Model",
     "replaceable WorldModelStoreAdapter contract",
     "heuristic evidence-linked semantic call graph and bounded traversal",
-    "Git-independent temporal File, Symbol, and Test revision GraphSnapshot",
+    "Git-independent temporal Product, File, Symbol, and Test revision GraphSnapshot",
+    "canon-projected FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision revisions",
+    "bounded product-canon Context Compiler projection",
     "multiple-parent SourceSnapshot and Revision DAG",
     "deterministic allowlisted temporal traversal with graph, query, and result digests",
     "versioned GitHistoryAdapter and all-reachable commit-message decision evidence",
@@ -71,7 +82,8 @@
     "AST-accurate semantic call graph",
     "live runtime-state probing and streaming",
     "structured Git decision inference and supersession",
-    "Feature, Capability, ChangeSet, conformance, and candidate graph projection",
+    "ChangeSet, product-to-code, conformance, and candidate graph projection",
+    "initial onboarding candidate inference and batch ReviewDecision promotion",
     "automatic merge and conflict resolution",
     "Markdown, Obsidian, and Notion projection adapters",
     "replaceable GraphProjectionAdapter contract",

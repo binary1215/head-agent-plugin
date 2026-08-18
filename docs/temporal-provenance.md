@@ -4,11 +4,12 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this plane.
 
 ## Purpose and authority
 
-The temporal provenance graph connects observed repository state across time without making Git or GraphDB a product prerequisite. It is a deterministic, rebuildable `GraphSnapshot` derived from the current supported source scan plus explicit parent identities. It is evidence for Context Compiler traversal, not project canon, instruction authority, or promotion authority.
+The temporal provenance graph connects user-owned product intent and observed repository state across time without making Git or GraphDB a product prerequisite. It is a deterministic, rebuildable `GraphSnapshot` derived from validated Product Canon, the current supported source scan, and explicit parent identities. It is evidence for Context Compiler traversal; storing canon projections in the graph does not make the graph project canon, instruction authority, or promotion authority.
 
 The graph builder consumes only provider-neutral inputs:
 
 - project identity;
+- normalized `.head/context/product-model.json` content and its evidence identity;
 - normalized file paths, SHA-256 content digests, classifications, languages, and extracted symbols;
 - zero-or-more explicit parent `SourceSnapshot` identities;
 - optional zero-or-more parent Revision identities keyed by stable logical entity identity.
@@ -17,13 +18,15 @@ Git commits, branches, tags, GraphDB record IDs, provider session IDs, document-
 
 ## Logical entities and immutable revisions
 
-The active alpha slice materializes:
+Temporal provenance protocol `0.2.0` materializes:
 
-- stable logical entities: `Repository`, `File`, `Symbol`, and `Test`;
-- immutable states: `FileRevision`, `SymbolRevision`, and `TestRevision`;
+- stable product logical entities: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`;
+- immutable product states: the corresponding `*Revision` kinds;
+- stable implementation logical entities: `Repository`, `File`, `Symbol`, and `Test`;
+- immutable implementation states: `FileRevision`, `SymbolRevision`, and `TestRevision`;
 - temporal roots and external ancestry references: `SourceSnapshot`, `SourceSnapshotReference`, and `RevisionReference`.
 
-`File` identity derives from project identity and normalized path. `Symbol` identity derives from its File identity, kind, name, and deterministic same-name occurrence rather than its line number. `Test` identity derives from project identity and path. Revision identities derive from the logical identity, semantic state, and sorted parent Revision identities. A line move therefore preserves the Symbol logical identity while changing its SymbolRevision.
+Product logical identity derives from project identity, entity kind, and stable user-owned key. Renaming a Feature preserves logical identity while semantic edits create a new FeatureRevision. `File` identity derives from project identity and normalized path. `Symbol` identity derives from its File identity, kind, name, and deterministic same-name occurrence rather than its line number. `Test` identity derives from project identity and path. Revision identities derive from the logical identity, semantic state, and sorted parent Revision identities. A line move therefore preserves the Symbol logical identity while changing its SymbolRevision.
 
 The `SourceSnapshot` identity includes the project, complete sorted current Revision sets, an ancestry-independent state digest, the producer version, and sorted zero-or-more parent SourceSnapshots. Multiple parents are supported from the first schema version. This records a DAG shape only; automatic merge, conflict detection, conflict resolution, and ancestry fetching remain deferred.
 
@@ -34,6 +37,8 @@ Every projected node records `nodeId`, `kind`, `authorityClass`, `origin`, sorte
 Every edge records the same authority and provenance surface plus `edgeId`, typed endpoints, and `sourceSnapshotId`. Heuristic Symbol nodes and relations carry numeric confidence. The current implemented relation subset is:
 
 - `CONTAINS`;
+- `REALIZES`;
+- `GOVERNED_BY`;
 - `HAS_REVISION`;
 - `CURRENT_REVISION`;
 - `PARENT_OF`;
@@ -68,4 +73,4 @@ The Context Compiler performs a bounded per-file temporal expansion and records 
 
 ## Deferred boundaries
 
-This alpha does not yet implement FeatureGroup, Capability, Feature, Requirement, Constraint, Decision, ChangeSet, VcsEvidence, execution-lineage, conformance, candidate-promotion, or document-projection nodes and relations. It does not implement a `GraphProjectionAdapter` or GraphDB backend. It also does not infer parent revisions, perform merges, promote heuristic mappings, or treat current-state pointers as canon.
+This alpha does not yet implement ChangeSet, VcsEvidence, execution-lineage, product-to-code, conformance, candidate-promotion, or document-projection nodes and relations. It does not implement a `GraphProjectionAdapter` or GraphDB backend. It also does not infer parent revisions, perform merges, infer or promote product meaning, promote heuristic mappings, or treat current-state pointers as canon.

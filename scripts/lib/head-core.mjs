@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { emptyProductModelDocument } from "./product-model.mjs";
 
 export const SCHEMA_VERSION = 1;
 export const SUPPORTED_RUNTIMES = Object.freeze(["codex", "opencode"]);
@@ -160,6 +161,7 @@ function projectFiles(root, pluginRoot, runtimes, integrations) {
         tags: ["repository", "coverage", "context-compiler"]
       }]
     })],
+    [".head/context/product-model.json", json(emptyProductModelDocument())],
     [".head/sessions/current.json", json({
       schemaVersion: SCHEMA_VERSION,
       sessionId,
@@ -212,7 +214,7 @@ export function initializeProject({ root = ".", pluginRoot, runtimes } = {}) {
       atomicWrite(file, content);
       createdFiles.push(file);
     }
-    const mutableCanon = new Set([".head/instructions/project.md", ".head/context/knowledge.json", ".head/sessions/current.json"]);
+    const mutableCanon = new Set([".head/instructions/project.md", ".head/context/knowledge.json", ".head/context/product-model.json", ".head/sessions/current.json"]);
     const managed = [...files.keys()].filter((relative) => !mutableCanon.has(relative)).map((relative) => ({
       path: relative.replaceAll("\\", "/"),
       sha256: sha256(fs.readFileSync(path.join(canonicalRoot, relative))),
@@ -287,7 +289,7 @@ export function coreContract() {
     schemaVersion: SCHEMA_VERSION,
     roles: ["head", "developer", "coder", "reviewer"],
     runtimes: SUPPORTED_RUNTIMES,
-    activeCapabilities: ["project-init", "projection", "session-canon", "contract-bound-run", "result-packet", "fresh-head-review-projection", "review-gate", "review-linked-plan-generation", "knowledge-promotion-proposals", "repository-world-model-alpha", "replaceable-world-model-store-contract", "local-json-world-model-store", "heuristic-semantic-call-graph", "bounded-semantic-graph-query", "git-history-adapter-contract", "all-reachable-git-decision-evidence", "runtime-state-adapter-contract", "host-exported-runtime-state-evidence", "history-and-runtime-aware-context-compilation", "freshness-gated-repository-context", "checkpoint", "context-compiler", "execution-lineage-contracts", "read-only-mcp"],
-    deferredCapabilities: ["ast-accurate-semantic-call-graph", "live-runtime-state-probe", "structured-git-decision-inference", "graphdb-world-model-store-adapter", "provider-runtime-fresh-head-hydration", "authorized-knowledge-promotion", "worker-launch", "live-caller-fencing", "agent-comm", "service-host", "herdr"],
+    activeCapabilities: ["project-init", "projection", "session-canon", "contract-bound-run", "result-packet", "fresh-head-review-projection", "review-gate", "review-linked-plan-generation", "knowledge-promotion-proposals", "product-model-canon-contract", "repository-world-model-alpha", "replaceable-world-model-store-contract", "local-json-world-model-store", "heuristic-semantic-call-graph", "bounded-semantic-graph-query", "product-canon-graph-projection", "temporal-product-revisions", "product-context-compilation", "git-history-adapter-contract", "all-reachable-git-decision-evidence", "runtime-state-adapter-contract", "host-exported-runtime-state-evidence", "history-and-runtime-aware-context-compilation", "freshness-gated-repository-context", "checkpoint", "context-compiler", "execution-lineage-contracts", "read-only-mcp"],
+    deferredCapabilities: ["initial-onboarding-candidate-review", "changeset-temporal-provenance", "feature-code-mapping-candidates", "authorized-relationship-promotion", "compute-adapter", "go-worker", "ast-accurate-semantic-call-graph", "live-runtime-state-probe", "structured-git-decision-inference", "graphdb-world-model-store-adapter", "provider-runtime-fresh-head-hydration", "authorized-knowledge-promotion", "worker-launch", "live-caller-fencing", "agent-comm", "service-host", "herdr"],
   };
 }

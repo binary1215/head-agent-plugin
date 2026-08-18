@@ -78,6 +78,15 @@ The original HEAD runtime is a Node distribution and coordination system, not me
 17. **Refresh creates snapshots, not mutations.** Explicit indexing and future event-driven refresh create new immutable `SourceSnapshot`, revision, and `GraphSnapshot` artifacts. A validated current pointer may advance atomically, but an existing snapshot, revision, Capsule, or execution artifact is never rewritten in place.
 18. **Observation may refresh automatically; meaning may not.** Deterministic source digests, code structure, runtime observations, and execution evidence may be refreshed automatically. Feature mappings, authority-bearing relationships, product canon, Decisions, and document-originated changes remain candidates until an authorized ReviewDecision promotes them.
 19. **Accepted execution inputs stay frozen.** An accepted `ContextCapsule` and `ExecutionContract` remain pinned to their recorded source and graph identities. A newer snapshot creates an explicit drift condition; HEAD must choose to continue with the pinned inputs or issue a new Capsule and Contract. Refresh never silently changes an active Run.
+20. **Onboarding bootstraps authority without inventing it.** Existing code, tests, documents, imported backlogs, and a new-project brief may produce product-model candidates. They do not become Feature, Capability, FeatureGroup, Requirement, Constraint, or Decision canon until an authorized onboarding ReviewDecision adopts them.
+21. **Batch review is the normal bootstrap path.** Users do not need to register every inferred Feature manually. Onboarding presents an evidence-linked candidate set that may be accepted, rejected, renamed, merged, split, or selected in one bounded review; the recorded ReviewDecision is the authority transition.
+22. **Project sessions are core identities, provider sessions are references.** Initialization creates a project-scoped HEAD Session directory and explicit onboarding state. Codex, OpenCode, or other provider conversation identifiers may be attached as optional evidence but never define the HEAD Session or recovery identity.
+23. **Graph connection is optional operational configuration.** Onboarding may ask whether to use local materialization or an external GraphDB adapter. Endpoint/database selection and secret-reference names are operational configuration; credentials are never written into project canon, candidate artifacts, GraphSnapshots, or generated documents. Local operation remains complete without GraphDB.
+24. **Control plane and compute plane are separate.** JavaScript modules own plugin orchestration, Codex/OpenCode/MCP/CLI integration, prompts, authority decisions, canon mutation, ReviewDecision, adapter selection, and process supervision. Heavy deterministic computation may be delegated through a versioned `ComputeAdapter` to a bundled native worker.
+25. **Native acceleration must not change semantics.** Compute backend selection must not change `SourceSnapshot`, entity revision, `GraphSnapshot`, candidate-set, traversal-result, or `ContextCapsule` semantic identities. A JavaScript reference implementation and accelerated implementations must produce canonically equivalent output from the same accepted inputs and semantic protocol version.
+26. **Go accelerates the plugin, not the user project.** The first native backend is a bundled Go worker that analyzes projects written in any supported language. It does not translate user code into Go, require the user's project to use Go, or copy Go source and binaries into the user's project state.
+27. **Authority stays outside the compute worker.** A native worker may produce observations, evidence, digests, graph materializations, traversal results, and product candidates. It cannot approve candidates, create an authoritative ReviewDecision, mutate Product Canon, widen an ExecutionContract, or grant itself instruction or promotion authority.
+28. **Native migration is evidence-gated and incremental.** `ComputeAdapter` boundaries are planned before heavy features, but an operation moves to Go only after its semantic contract, deterministic JavaScript reference behavior, conformance fixtures, and benchmark corpus exist. Rust remains a future backend option only when profiling shows a material bottleneck that the Go backend cannot satisfy economically.
 
 ## Semantic contracts
 
@@ -169,6 +178,78 @@ Heuristic or inferred nodes and edges also require a `confidence` value from zer
 Automatic analysis never creates an approved `IMPLEMENTS`, `VERIFIED_BY`, `IMPACTS`, or other authority-bearing mapping directly. It creates an immutable `FeatureMappingCandidate` or `RelationshipCandidate` with `instructionAuthority: false`, `promotionAuthority: false`, producer identity and version, confidence, Evidence links, and the source GraphSnapshot.
 
 Candidate relations use `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, and `REVIEWED_BY`. An accepting ReviewDecision does not mutate or relabel the candidate. It creates a separate reviewed relation linked back with `PROMOTED_FROM`; rejection remains separately linked with `REJECTED_BY`. This preserves the proposal, evidence, reviewer disposition, and accepted projection as distinct immutable facts. Unreviewed candidates are excluded from normal canonical and execution context unless the task explicitly asks to inspect candidates.
+
+### Initial onboarding contract
+
+The same provider-neutral onboarding state machine serves both an existing project and a newly created project. The difference is the evidence source, not the authority model:
+
+- an existing project is explicitly indexed first and may infer candidates from observed code, tests, configuration, product documents, and imported backlog evidence;
+- a new project may infer candidates from a user-owned product brief, requirements, constraints, and design inputs before implementation exists;
+- a project with an already approved product model imports or reads that model as canon and may skip product bootstrap while still indexing implementation evidence.
+
+The initial flow is:
+
+```text
+initialize HEAD project and project-scoped Session
+  -> record privacy-safe storage selection (local by default, GraphDB optional)
+  -> index observed project inputs into an immutable World Model snapshot
+  -> derive an immutable OnboardingCandidateSet with evidence and confidence
+  -> present bounded batch review (accept all, accept selection, revise, or reject)
+  -> persist an onboarding-scoped ReviewDecision
+  -> create the next Product Canon revision from accepted candidates
+  -> rebuild and verify the GraphSnapshot before onboarding becomes ready
+```
+
+Onboarding candidates use stable content-derived identities and record producer/version, source snapshot, evidence links, confidence, and `instructionAuthority: false` / `promotionAuthority: false`. Directory structure may inform implementation Components but must not be converted into an authoritative FeatureGroup taxonomy. Candidate inference must explain its evidence and confidence and preserve explicit Unknowns when the repository does not justify a product concept.
+
+An onboarding ReviewDecision is a typed `ReviewDecision` with `decisionScope: product-canon-bootstrap`. It records the reviewed candidate-set identity, accepted/rejected candidate identities, user edits, rationale, previous Product Model identity, and resulting Product Model identity. The candidate is not mutated or relabeled after review. Promotion creates new canon content and a separate immutable decision receipt so that the authority transition can be audited and replayed.
+
+GraphDB configuration is never a prerequisite for this flow. The local World Model and graph projection provide the conformance baseline. If an external adapter is selected before that adapter is available or verified, onboarding records the capability as pending and continues locally with explicit disclosure; it must not pretend the remote projection succeeded.
+
+### Native compute acceleration contract
+
+`ComputeAdapter` is a versioned, provider-neutral boundary between the JavaScript control plane and replaceable computation backends:
+
+```text
+Codex / OpenCode / future runtime
+  -> JavaScript control plane
+       -> JsReferenceComputeAdapter
+       -> GoWorkerComputeAdapter
+       -> future profiled backend such as Rust
+```
+
+The JavaScript reference adapter is the semantic conformance baseline and local fallback. The Go worker is the first production acceleration backend. Backend selection, executable path, process ID, elapsed time, and performance counters are operational diagnostics outside content-derived semantic identity. `producer` and `producerVersion` inside semantic artifacts identify the shared algorithm/protocol version rather than the implementation language, so conforming JavaScript and Go implementations generate the same semantic identities.
+
+The worker protocol uses bounded standard input/output and records at least `schemaVersion`, `requestId`, operation, input digest, semantic producer version, resource limits, result digest, structured warnings, and structured errors. Every operation must define deterministic ordering, canonical serialization, maximum files/bytes/output, timeout, cancellation, and all-or-nothing result validation. Partial or digest-invalid output cannot advance a World Model or graph pointer.
+
+The JavaScript control plane resolves only a verified bundled executable beneath the plugin distribution root and invokes it directly without a shell. It passes structured data rather than executable text, bounds standard output and error output, records process ownership, terminates owned child processes on success/failure/cancellation, and verifies OS/architecture-specific distribution hashes. Project content, prompts, endpoints, credentials, environment values, and GraphDB data must never be interpreted as commands.
+
+The intended distribution shape is plugin-owned rather than project-owned:
+
+```text
+dist/
+  windows-x64/head-agent-worker.exe
+  linux-x64/head-agent-worker
+  linux-arm64/head-agent-worker
+  darwin-arm64/head-agent-worker
+```
+
+Initial Go migration priority is file discovery/read/hash and source parsing, followed by World Model construction, temporal graph construction, and bounded traversal. Feature inference may use the worker only to create evidence-linked candidates. Context Compiler policy, authority resolution, ReviewDecision, Product Canon mutation, CLI/MCP/runtime integration, and promotion remain in the JavaScript control plane. Context-selection computation moves only if profiling demonstrates a material benefit without weakening minimum-sufficient-context explanations.
+
+### Active v0.5 onboarding and compute implementation plan
+
+1. Define `ComputeAdapter` and a versioned stdio `WorkerProtocol`, including digest, error, cancellation, resource-limit, and backend-neutral semantic identity rules.
+2. Wrap current JavaScript behavior in `JsReferenceComputeAdapter` and establish deterministic conformance fixtures before moving any operation.
+3. Add the Go worker skeleton, OS/architecture selection, bundled-binary integrity verification, owned-process cleanup, and disclosed JavaScript fallback without enabling unverified semantic substitution.
+4. Move file discovery/read/hash and parsing first; require JavaScript/Go canonical-output and semantic-identity equivalence plus repeatable benchmark evidence.
+5. Move World Model and temporal graph build/query operations incrementally with the same conformance gate; decide Context Compiler acceleration only after profiling.
+6. Extend initialization with a project-scoped Session record and an explicit onboarding state pointer while preserving existing initialized projects through a deterministic missing-state migration path.
+7. Add a privacy-safe storage-selection descriptor that defaults to local materialization and accepts only GraphDB endpoint/database plus secret-reference names, never credential values.
+8. Build deterministic FeatureGroup, Capability, and Feature candidates from the current verified World Model or an explicit new-project brief; store them as immutable evidence-linked candidate sets.
+9. Add bounded batch review and a content-derived onboarding ReviewDecision; require an explicit acceptance disposition before writing Product Canon.
+10. Merge accepted entities into Product Canon with stable keys, reference validation, conflict rejection, previous/next model hashes, and atomic pointer advancement.
+11. Re-index and verify the resulting Product Canon projection in the temporal GraphSnapshot; expose onboarding status and evidence through CLI and read-only MCP.
+12. Verify existing-project, new-project, empty-evidence, rejection, tamper, secret-rejection, deterministic identity, JS/Go conformance, worker failure/cancellation, Git-absent, GraphDB-absent, and Go-binary-absent scenarios before declaring the slice complete.
 
 ### Bounded traversal contract
 
@@ -317,13 +398,16 @@ Current v0.5 alpha progress, verified through 2026-08-19; milestone remains acti
 - normalized runtime observations are content-addressed, adapter-neutral, and freshness-gated; raw provider IDs and non-project workspace paths are reduced to digests, while raw commands, endpoints, environment, prompts, transcripts, and credentials are rejected;
 - CLI, read-only MCP, and task-specific Context Capsules expose bounded runtime evidence, and source changes make the entire repository evidence layer stale until rebuild;
 - the existing Git history capability is optional evidence and already fails open when Git is unavailable; it is not the future change-lineage authority;
-- a separate temporal provenance `GraphSnapshot` now preserves stable Repository/File/Symbol/Test logical identities and immutable File/Symbol/Test revisions without redefining the existing heuristic semantic graph;
+- `.head/context/product-model.json` is a strict user-owned Product Canon contract for stable FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision keys; missing canon in an older initialized project is the deterministic empty model rather than inferred meaning;
+- a separate temporal provenance `GraphSnapshot` now preserves stable Product/Repository/File/Symbol/Test logical identities and immutable Product/File/Symbol/Test revisions without redefining the existing heuristic semantic graph;
+- Product logical and revision nodes plus `CONTAINS`, `REALIZES`, and `GOVERNED_BY` edges are projected as `canon-projected` derived evidence with no instruction or promotion authority;
 - SourceSnapshot and Revision schemas accept sorted zero-or-more explicit parents, support multiple-parent DAG shape, reject direct self-parent cycles, and make no automatic merge or conflict-resolution claim;
 - every temporal node and edge carries typed provenance, freshness, producer version, evidence identities, and instruction/promotion authority flags; heuristic Symbol projections carry numeric confidence;
 - deterministic temporal traversal records kind/relation/authority/freshness allowlists, confidence policy, depth and size bounds, ordering, inclusion/exclusion reasons, and GraphSnapshot/query/result digests;
 - the temporal graph is constructed and queried in projects with no `.git`; optional Git history remains a separate evidence plane and does not participate in temporal logical or revision identities;
 - World Model, Context Compiler, CLI, and read-only MCP expose the verified temporal slice and reject stale or digest-invalid materializations;
-- Feature/Capability/ChangeSet, conformance, candidate-promotion, execution-lineage graph projection, the replaceable GraphProjectionAdapter, deterministic document projections, debounced filesystem/CI refresh, AST-accurate/dynamic call resolution, live runtime probing/control, and authorized knowledge promotion remain explicitly deferred.
+- Context Compiler `0.5.1` selects a deterministic bounded `ProductContext` only from current canon-projected product nodes and records Product Model, GraphSnapshot, query, and result identities without promoting graph evidence;
+- ChangeSet and product-to-code mappings, onboarding candidate inference and batch promotion, conformance, candidate-promotion, execution-lineage graph projection, the replaceable GraphProjectionAdapter, deterministic document projections, debounced filesystem/CI refresh, the ComputeAdapter/Go worker acceleration plane, AST-accurate/dynamic call resolution, live runtime probing/control, and authorized knowledge promotion remain explicitly deferred.
 
 ## Roadmap
 
@@ -337,7 +421,7 @@ Implement planning generations `a -> plan1 -> a1 -> plan2 -> a2`, bounded result
 
 ### v0.5 — Repository World Model
 
-Add incremental file, symbol, dependency, Feature/Capability, provider-neutral ChangeSet/revision, optional VCS evidence, and runtime-state indexing with claim-level freshness and Hot/Warm/Cold history. Introduce a multiple-parent temporal provenance DAG, a replaceable `GraphProjectionAdapter`, typed and provenance-complete relationship allowlists, immutable mapping candidates with ReviewDecision-gated promotion, deterministic bounded traversal, and Markdown-first knowledge projections. After explicit indexing and snapshot conformance are verified, add debounced filesystem/CI event ingestion that creates new immutable snapshots and advances the current pointer only after validation. GraphDB and Git remain optional adapters; neither may become the unique authority or a prerequisite for core operation.
+Add a provider-neutral `ComputeAdapter` before new heavy analysis paths, preserve current JavaScript behavior as the semantic reference, and introduce a bundled Go worker only through canonical-output conformance and benchmark gates. Move file scan/parse, World Model construction, temporal graph construction, and bounded traversal incrementally while keeping authority, Product Canon, ReviewDecision, Context policy, CLI, and MCP in the JavaScript control plane. Add an initial onboarding state machine that can index existing projects or bootstrap new-project briefs, infer evidence-linked product candidates, and promote a batch only through an onboarding-scoped ReviewDecision. Add incremental file, symbol, dependency, Feature/Capability, provider-neutral ChangeSet/revision, optional VCS evidence, and runtime-state indexing with claim-level freshness and Hot/Warm/Cold history. Introduce a multiple-parent temporal provenance DAG, a replaceable `GraphProjectionAdapter`, typed and provenance-complete relationship allowlists, immutable mapping candidates with ReviewDecision-gated promotion, deterministic bounded traversal, and Markdown-first knowledge projections. After explicit indexing and snapshot conformance are verified, add debounced filesystem/CI event ingestion that creates new immutable snapshots and advances the current pointer only after validation. GraphDB, Git, and native acceleration remain replaceable implementation choices; none may become the unique authority or a prerequisite for core semantic recovery.
 
 ### v0.6 — Runtime adapters
 
@@ -370,6 +454,14 @@ Before every material milestone, answer all of these:
 17. Does every refresh create and validate a new immutable snapshot before advancing a current pointer, without rewriting prior artifacts?
 18. Can automatic refresh update observed facts without promoting semantic candidates, changing canon, or mutating an accepted Capsule or active Run?
 19. When a newer snapshot creates drift, does HEAD make an explicit continue, recompile, revise, or cancel decision with preserved lineage?
+20. Does onboarding keep inferred product meaning as a candidate until a recorded user review adopts it, while allowing a bounded batch decision instead of forcing one-by-one entry?
+21. Can the same onboarding flow work for existing code, a new-project brief, and a project with pre-existing canon without confusing their evidence sources?
+22. Are GraphDB credentials absent from project artifacts, and can onboarding finish locally when Git and GraphDB are unavailable?
+23. Does changing from the JavaScript reference adapter to the Go worker preserve canonical output and every semantic identity for the same inputs and protocol version?
+24. Is the Go worker limited to plugin-owned computation without rewriting user code, copying native artifacts into project state, or acquiring canon/review/promotion authority?
+25. Can the core disclose and recover through the JavaScript reference path when the Go binary is absent, incompatible, corrupt, timed out, or cancelled?
+26. Are worker invocation, input/output, resource limits, PID ownership, cancellation, and binary integrity bounded and verifiable without shell interpretation of project-controlled data?
+27. Is every native migration justified by repeatable benchmark and profiling evidence while concurrent results remain canonically ordered and digest-reproducible?
 
 If any answer is “no” or “unknown,” record the gap before proceeding.
 
@@ -396,3 +488,6 @@ If any answer is “no” or “unknown,” record the gap before proceeding.
 - 2026-08-19: incorporated the detailed temporal-graph proposal by adding provenance-complete node contracts, explicit revision/time and execution-lineage relations, and canonical relation directions; retained the provider-neutral `ChangeSet -> VcsEvidence -> GitCommit` boundary instead of making commits part of the required logical change model.
 - 2026-08-19: implemented the first Git-independent temporal provenance slice with stable File/Symbol/Test entities, immutable revisions, explicit multiple-parent SourceSnapshot and Revision DAGs, provenance-complete typed relations, deterministic bounded traversal, and World Model/Context/CLI/MCP integration; kept Feature/Capability/ChangeSet, promotion, document projection, GraphProjectionAdapter, GraphDB, and automatic merge work deferred.
 - 2026-08-19: adopted near-real-time observed-state refresh as a future event-ingestion capability: refresh creates immutable SourceSnapshot/revision/GraphSnapshot artifacts, advances the current pointer only after validation, never promotes semantic candidates or canon automatically, and never mutates an accepted ContextCapsule, ExecutionContract, or active Run; drift requires an explicit HEAD decision.
+- 2026-08-19: adopted a provider-neutral initial onboarding state machine for existing and new projects: observed inputs create immutable product candidates, a bounded batch ReviewDecision is the sole authority transition into Product Canon, project-scoped HEAD Sessions remain distinct from provider conversations, and GraphDB selection is optional privacy-safe operational configuration with a complete local fallback.
+- 2026-08-19: adopted a hybrid plugin architecture with a JavaScript control plane and a replaceable native compute plane. Go is the first acceleration backend for measured heavy operations, JavaScript remains the semantic reference and fallback, conforming backends must preserve canonical output and semantic identities, and native workers cannot own ReviewDecision, Product Canon mutation, promotion, runtime authorization, or the user's project implementation language. Rust remains optional until profiling demonstrates an unmet bottleneck.
+- 2026-08-19: completed and regression-tested the first Product Canon vertical slice: strict user-owned Product Model validation, stable product identities, immutable canon-projected temporal revisions and relations, Git-independent World Model integration, and bounded task-relevant ProductContext compilation. Inferred onboarding candidates, product-to-code mappings, and promotion remain deferred so observed code cannot silently invent product authority.

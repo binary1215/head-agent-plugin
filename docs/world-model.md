@@ -49,7 +49,7 @@ The read-only MCP tool `head_world_model` exposes the same digest and freshness 
 
 ## Temporal provenance graph
 
-World Model version `0.5.0` includes a separate `GraphSnapshot` built by temporal provenance protocol `0.1.0`. It leaves the older heuristic import/call graph intact while adding stable Repository/File/Symbol/Test logical identities, immutable File/Symbol/Test revisions, and explicit zero-or-more SourceSnapshot and Revision parents. Every node and edge carries typed provenance, freshness, producer version, evidence identities, and instruction/promotion authority flags. Heuristic Symbol projections use numeric confidence.
+World Model version `0.5.1` includes a separate `GraphSnapshot` built by temporal provenance protocol `0.2.0`. It leaves the older heuristic import/call graph intact while adding stable Product/Repository/File/Symbol/Test logical identities, immutable Product/File/Symbol/Test revisions, and explicit zero-or-more SourceSnapshot and Revision parents. Product entities come only from the validated user-owned `.head/context/product-model.json` canon and are projected with `authorityClass: canon-projected`; the graph itself still has no canonical or promotion authority. Every node and edge carries typed provenance, freshness, producer version, evidence identities, and instruction/promotion authority flags. Heuristic Symbol projections use numeric confidence.
 
 The temporal graph consumes no Git state. A project without `.git` constructs and queries the same temporal identities from the same project ID, source scan, explicit parent sets, and producer version. Optional Git history remains a separate World Model evidence plane. See [`temporal-provenance.md`](temporal-provenance.md) for identity, ancestry, validation, and bounded traversal contracts.
 
@@ -84,8 +84,10 @@ The adapter descriptor and physical source path live only in the World Model poi
 - content-derived File, Symbol, and ExternalDependency nodes;
 - evidence-linked `DECLARES`, `IMPORTS`, and resolvable `CALLS` edges;
 - stable temporal Repository/File/Symbol/Test logical entities and immutable File/Symbol/Test revisions;
+- stable FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision logical entities with immutable canon-projected revisions;
+- validated `CONTAINS`, `REALIZES`, and `GOVERNED_BY` product relationships independent from repository directory structure;
 - zero-or-more SourceSnapshot and Revision parents with no automatic merge claim;
-- provenance-complete `CONTAINS`, `HAS_REVISION`, `CURRENT_REVISION`, `PARENT_OF`, `DECLARES`, and `REFERENCES` edges;
+- provenance-complete `CONTAINS`, `REALIZES`, `GOVERNED_BY`, `HAS_REVISION`, `CURRENT_REVISION`, `PARENT_OF`, `DECLARES`, and `REFERENCES` edges;
 - deterministic bounded temporal traversal with kind/relation/authority/freshness allowlists, confidence policy, inclusion/exclusion reasons, and graph/query/result digests;
 - file digest and line provenance, heuristic confidence, unresolved counts, and bounded traversal;
 - local `.git/HEAD` and in-repository ref resolution without following external gitdir pointers;
@@ -94,7 +96,7 @@ The adapter descriptor and physical source path live only in the World Model poi
 - semantic HEAD lifecycle state including current plan, active Run/contract, pending review, and required plan action;
 - added, changed, and removed path calculation;
 - file-level freshness;
-- Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, bounded semantic and temporal relationships, GraphSnapshot/TraversalQuery/result digests, and World Model ID.
+- Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, bounded semantic and temporal relationships, bounded ProductContext projections, GraphSnapshot/TraversalQuery/result digests, and World Model ID.
 
 Managed root projections and these directories are excluded: `.head`, `.git`, VCS metadata, dependency/vendor directories, generated build outputs, caches, coverage outputs, and virtual environments. Symlinks and unsupported/binary or oversized files are skipped and counted.
 
@@ -102,6 +104,7 @@ Managed root projections and these directories are excluded: `.head`, `.git`, VC
 
 - no World Model: Capsule coverage remains `curated-head-canon-only`;
 - current World Model: task-relevant repository files, bounded semantic and temporal relationships, history-class-eligible Git evidence, and runtime observations compete within the normal context budget;
+- matching Product Canon concepts compete as one bounded `ProductContext` derived projection under the same budget;
 - stale World Model: repository candidates are excluded and Capsule coverage explicitly records the stale exclusion;
 - every repository candidate, semantic node, and edge remains `evidence-not-instruction`.
 
@@ -115,7 +118,8 @@ This prevents a stale index from silently directing execution while still allowi
 - generated/vendor source classification beyond the current exclusion rules;
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
-- Feature/Capability/ChangeSet, conformance, candidate, lineage, and document-projection graph planes;
+- ChangeSet, product-to-code, conformance, candidate, lineage, and document-projection graph planes;
+- inferred onboarding candidates, batch ReviewDecision promotion, and Product Canon mutation workflows;
 - automatic parent inference, merge, and conflict resolution;
 - the replaceable `GraphProjectionAdapter` contract;
 - the optional GraphDB storage adapter and remote graph expansion.

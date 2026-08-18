@@ -15,6 +15,7 @@ The plugin is organized as a thin Codex distribution around a provider-neutral c
        -> scripts/lib/execution-lineage
                                   content-derived lineage artifacts
        -> scripts/lib/run-lineage contract-bound Run state transitions
+       -> scripts/lib/product-model user-owned product-intent canon contract
        -> scripts/lib/world-model incremental repository view
             -> scripts/lib/semantic-graph evidence-linked semantic projection
             -> scripts/lib/temporal-provenance immutable revision DAG and bounded traversal
@@ -77,7 +78,9 @@ The World Model materializes supported repository files, heuristic symbols, depe
 
 The semantic graph uses content-derived node and edge identities, file digest and line evidence, explicit heuristic confidence, and `evidence-not-instruction` trust boundaries. It currently covers file containment, module imports, and resolvable JavaScript/TypeScript/Python calls.
 
-The temporal provenance graph is a separate verified projection so existing heuristic semantic identities are not silently redefined. It separates stable Repository/File/Symbol/Test logical identities from immutable File/Symbol/Test revisions, supports explicit zero-or-more SourceSnapshot and Revision parents, and validates provenance-complete typed edges. Its bounded `TraversalQuery` fixes relation, kind, authority, freshness, confidence, depth, node, edge, and ordering policy and returns graph/query/result digests. It consumes no Git objects and requires no GraphDB. Automatic merge, Feature/Capability/ChangeSet projection, candidate promotion, document projection, and the `GraphProjectionAdapter` remain deferred.
+The Product Model source at `.head/context/product-model.json` is user-owned canon. It defines stable FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision keys independently from repository directories. A missing Product Model in an older initialized project is the explicit empty semantic model; code and documents do not silently fill it. See [`product-model.md`](product-model.md).
+
+The temporal provenance graph is a separate verified projection so existing heuristic semantic identities are not silently redefined. It separates stable Repository/File/Symbol/Test and product logical identities from immutable revisions, supports explicit zero-or-more SourceSnapshot and Revision parents, and validates provenance-complete typed edges. Product nodes and `CONTAINS`, `REALIZES`, and `GOVERNED_BY` relations are marked `canon-projected`, but the graph remains derived and cannot mutate canon or promote candidates. Its bounded `TraversalQuery` fixes relation, kind, authority, freshness, confidence, depth, node, edge, and ordering policy and returns graph/query/result digests. It consumes no Git objects and requires no GraphDB. Automatic Feature discovery, Feature-to-code/test mapping candidates, authorized promotion, ChangeSet/conformance projection, automatic merge, document projection, the ComputeAdapter/Go worker plane, and the `GraphProjectionAdapter` remain deferred.
 
 `GitHistoryAdapter` separately supplies rebuildable, content-addressed commit evidence. The default asynchronous Git CLI adapter may fail open with explicit coverage when process launch is unavailable; a byte-preserving host-export adapter provides the same semantic input in constrained runtimes. Current refs validate reachability, and commit messages remain evidence rather than instructions or promoted decisions.
 

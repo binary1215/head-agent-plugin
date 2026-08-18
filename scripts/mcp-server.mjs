@@ -116,7 +116,7 @@ export const tools = [
   },
   {
     name: "head_temporal_graph",
-    description: "Run a deterministic allowlisted traversal over the current rebuildable temporal provenance GraphSnapshot without granting canon or promotion authority.",
+    description: "Run a deterministic allowlisted traversal over the current rebuildable temporal provenance GraphSnapshot, including Product Canon projections, without granting the graph canon or promotion authority.",
     inputSchema: {
       type: "object",
       properties: {
@@ -158,7 +158,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
   if (request.method === "initialize") {
-    return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.9" } });
+    return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.10" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });

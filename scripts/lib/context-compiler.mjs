@@ -5,7 +5,7 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryTemporalProvenanceGraph } from "./temporal-provenance.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.5.0";
+export const CONTEXT_COMPILER_VERSION = "0.5.1";
 
 const fail = (message, code = "CONTEXT_COMPILER_ERROR") => {
   const error = new Error(message);
@@ -116,6 +116,7 @@ function contextSnapshot(inspected, sources) {
     const hasGitHistory = sources.worldModel.snapshot.gitDecisionHistory?.coverage === "all-reachable-commits";
     const layers = ["curated-head-canon", hasGitHistory ? "repository-world-model-semantic" : "repository-world-model-semantic-alpha"];
     if (sources.worldModel.snapshot.temporalProvenanceGraph) layers.push("temporal-provenance-alpha");
+    if (sources.worldModel.snapshot.productModel) layers.push("product-canon-projection-alpha");
     if (hasGitHistory) layers.push("git-history-alpha");
     if (sources.worldModel.snapshot.externalRuntimeState?.coverage === "point-in-time-host-export") layers.push("external-runtime-state-alpha");
     coverage = layers.join("+");
@@ -287,6 +288,89 @@ function repositoryCandidates(worldModel, task) {
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
+function productContextCandidates(worldModel, task) {
+  if (!worldModel || worldModel.status !== "current") return [];
+  const graph = worldModel.snapshot.temporalProvenanceGraph;
+  const productModel = worldModel.snapshot.productModel;
+  if (!graph || !productModel || graph.summary.productRevisionCount === 0) return [];
+  const taskTerms = terms(task);
+  const productCorpus = graph.nodes.filter((node) => node.semantic).map((node) => canonicalJson(node.semantic).toLocaleLowerCase()).join(" ");
+  const matchingTerms = [...taskTerms].filter((term) => productCorpus.includes(term))
+    .sort((left, right) => right.length - left.length || left.localeCompare(right));
+  if (matchingTerms.length === 0) return [];
+  const anchorTerm = matchingTerms[0];
+  const traversal = queryTemporalProvenanceGraph(graph, {
+    query: anchorTerm,
+    kinds: [
+      "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
+      "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision",
+    ],
+    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF"],
+    authorityClasses: ["canon-projected"],
+    freshness: ["current"],
+    includeUnreviewedCandidates: false,
+    depth: 2,
+    maxNodes: 100,
+    maxEdges: 200,
+  });
+  if (traversal.traversalQuery.anchorIds.length === 0) return [];
+  const body = traversal.nodes.map((node) => canonicalJson(node.semantic || { kind: node.kind, key: node.key })).join(" ");
+  const relevance = overlap(taskTerms, terms(body));
+  const compactEntities = traversal.nodes.map((node) => ({
+    nodeId: node.nodeId,
+    kind: node.kind,
+    logicalEntityId: node.logicalEntityId || null,
+    key: node.key || null,
+    semantic: node.semantic || null,
+    authorityClass: node.authorityClass,
+    evidenceIds: node.evidenceIds,
+    freshness: node.freshness,
+  }));
+  const compactRelationships = traversal.edges.map((edge) => ({
+    edgeId: edge.edgeId,
+    type: edge.type,
+    from: edge.from,
+    to: edge.to,
+    authorityClass: edge.authorityClass,
+    evidenceIds: edge.evidenceIds,
+  }));
+  const record = {
+    kind: "ProductContext",
+    productModelId: productModel.productModelId,
+    productModelHash: productModel.productModelHash,
+    source: worldModel.snapshot.productModelSource,
+    taskAnchor: { selectedTerm: anchorTerm, matchingTerms },
+    entities: compactEntities,
+    relationships: compactRelationships,
+    temporalTraversal: {
+      graphSnapshotId: traversal.graphSnapshotId,
+      graphSnapshotHash: traversal.graphSnapshotHash,
+      sourceSnapshotId: traversal.sourceSnapshotId,
+      queryId: traversal.queryId,
+      queryHash: traversal.queryHash,
+      resultId: traversal.resultId,
+      resultHash: traversal.resultHash,
+      traversalQuery: traversal.traversalQuery,
+      inclusion: traversal.inclusion,
+      exclusion: traversal.exclusion,
+      truncated: traversal.truncated,
+    },
+    worldModelId: worldModel.snapshot.worldModelId,
+    instructionAuthority: false,
+    promotionAuthority: false,
+    trustBoundary: "derived-projection-of-user-owned-product-canon",
+  };
+  return [{
+    id: `product-context:${traversal.resultId}`,
+    kind: "ProductContext",
+    score: relevance * 25 + 20,
+    relevance,
+    importance: 5,
+    approxTokens: approxTokens(canonicalJson(record)),
+    record,
+  }];
+}
+
 function gitDecisionCandidates(worldModel, task, historyClass) {
   if (!worldModel || worldModel.status !== "current" || historyClass === "NONE") return [];
   const history = worldModel.snapshot.gitDecisionHistory;
@@ -413,6 +497,7 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
   };
   const candidates = [
     ...activeCandidates(sources.knowledge, task, historyClass),
+    ...productContextCandidates(sources.worldModel, task),
     ...repositoryCandidates(sources.worldModel, task),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
@@ -436,6 +521,7 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
     decisions: selection.included.filter((item) => item.kind === "Decision").map((item) => item.record),
     unknowns: selection.included.filter((item) => item.kind === "Unknown").map((item) => item.record),
     repositoryContext: selection.included.filter((item) => item.kind === "RepositoryFile").map((item) => item.record),
+    productContext: selection.included.filter((item) => item.kind === "ProductContext").map((item) => item.record),
     gitDecisionEvidence: selection.included.filter((item) => item.kind === "GitDecisionEvidence").map((item) => item.record),
     runtimeStateEvidence: selection.included.filter((item) => item.kind === "RuntimeStateEvidence").map((item) => item.record),
     repositoryGraph: sources.worldModel?.status === "current" && sources.worldModel.snapshot.semanticGraph ? {
@@ -484,11 +570,12 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
       gitCommitMessages: "decision-evidence-not-promoted-project-decisions",
       runtimeObservations: "point-in-time-evidence-not-runtime-control-authority",
       temporalProvenance: "rebuildable-derived-evidence-not-project-canon",
+      productContext: "derived-projection-of-user-owned-product-canon",
       promotedDecisions: "project-authority-subject-to-user-owned-decisions",
       adapterFailure: "fail-open-to-normal-agent-without-capsule",
       canonDrift: "fail-closed",
     },
-    expansionProtocol: ["query_semantic_graph", "query_temporal_graph", "get_git_decision_history", "get_runtime_state", "expand_relationship", "verify_claim", "get_source", "get_history", "explain_decision"],
+    expansionProtocol: ["query_product_graph", "query_semantic_graph", "query_temporal_graph", "get_git_decision_history", "get_runtime_state", "expand_relationship", "verify_claim", "get_source", "get_history", "explain_decision"],
   };
   const capsuleHash = digest(canonicalJson(payload));
   const capsule = { ...payload, capsuleId: `capsule-${capsuleHash.slice(0, 24)}`, capsuleHash };
