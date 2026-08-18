@@ -4,12 +4,13 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this plane.
 
 ## Purpose and authority
 
-The temporal provenance graph connects user-owned product intent and observed repository state across time without making Git or GraphDB a product prerequisite. It is a deterministic, rebuildable `GraphSnapshot` derived from validated Product Canon, the current supported source scan, and explicit parent identities. It is evidence for Context Compiler traversal; storing canon projections in the graph does not make the graph project canon, instruction authority, or promotion authority.
+The temporal provenance graph connects user-owned product intent, immutable onboarding review history, and observed repository state across time without making Git or GraphDB a product prerequisite. It is a deterministic, rebuildable `GraphSnapshot` derived from validated Product Canon, immutable onboarding artifacts, the current supported source scan, and explicit parent identities. It is evidence for Context Compiler traversal; storing canon, candidate, or review projections in the graph does not make the graph project canon, instruction authority, or promotion authority.
 
 The graph builder consumes only provider-neutral inputs:
 
 - project identity;
 - normalized `.head/context/product-model.json` content and its evidence identity;
+- digest-verified onboarding CandidateSets, Evidence, Unknowns, ReviewDecisions, and ProductModelRevision receipts;
 - normalized file paths, SHA-256 content digests, classifications, languages, and extracted symbols;
 - zero-or-more explicit parent `SourceSnapshot` identities;
 - optional zero-or-more parent Revision identities keyed by stable logical entity identity.
@@ -18,13 +19,14 @@ Git commits, branches, tags, GraphDB record IDs, provider session IDs, document-
 
 ## Logical entities and immutable revisions
 
-Temporal provenance protocol `0.2.0` materializes:
+Temporal provenance protocol `0.3.0` materializes:
 
 - stable product logical entities: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`;
 - immutable product states: the corresponding `*Revision` kinds;
 - stable implementation logical entities: `Repository`, `File`, `Symbol`, and `Test`;
 - immutable implementation states: `FileRevision`, `SymbolRevision`, and `TestRevision`;
 - temporal roots and external ancestry references: `SourceSnapshot`, `SourceSnapshotReference`, and `RevisionReference`.
+- onboarding evidence and review history: `OnboardingCandidateSet`, `OnboardingProductCandidate`, `OnboardingEvidence`, `OnboardingUnknown`, `OnboardingReviewDecision`, `ProductConceptReference`, and `ProductModelRevision`.
 
 Product logical identity derives from project identity, entity kind, and stable user-owned key. Renaming a Feature preserves logical identity while semantic edits create a new FeatureRevision. `File` identity derives from project identity and normalized path. `Symbol` identity derives from its File identity, kind, name, and deterministic same-name occurrence rather than its line number. `Test` identity derives from project identity and path. Revision identities derive from the logical identity, semantic state, and sorted parent Revision identities. A line move therefore preserves the Symbol logical identity while changing its SymbolRevision.
 
@@ -43,7 +45,10 @@ Every edge records the same authority and provenance surface plus `edgeId`, type
 - `CURRENT_REVISION`;
 - `PARENT_OF`;
 - `DECLARES`;
-- `REFERENCES`.
+- `REFERENCES`;
+- `PROPOSES_FROM`, `PROPOSES_TO`, and `SUPPORTED_BY`;
+- `REVIEWED_BY`, `ACCEPTED_BY`, and `REJECTED_BY`;
+- `PRODUCES` and `PROMOTED_FROM`.
 
 The verifier rejects digest mismatch, unsupported node or relation types, duplicate identities, nondeterministic ordering, dangling or invalid endpoint kinds, missing provenance, invalid authority flags, invalid confidence, scope mismatch, and direct self-parent cycles.
 
@@ -53,7 +58,7 @@ The verifier rejects digest mismatch, unsupported node or relation types, duplic
 
 - node-kind, relation, authority-class, and freshness allowlists;
 - minimum confidence;
-- the fixed exclusion of unreviewed candidates in this alpha;
+- default exclusion of CandidateSet, candidate, Evidence, Unknown, and ProductConceptReference nodes, with an explicit `includeUnreviewedCandidates` opt-in;
 - maximum depth, node count, and edge count;
 - anchor identities and deterministic ordering.
 
@@ -65,12 +70,13 @@ The result records graph, query, and result IDs and hashes; selected nodes and e
 node scripts/head.mjs world-index <project> --parent-snapshot <id,id>
 node scripts/head.mjs world-index <project> --revision-parents <json-file>
 node scripts/head.mjs world-temporal <project> --query <text> --kind File,FileRevision --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
+node scripts/head.mjs world-temporal <project> --query <candidate-id> --kind OnboardingProductCandidate,OnboardingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
 ```
 
-`--revision-parents` reads a JSON object whose keys are current logical entity IDs and whose values are arrays of parent Revision IDs. The read-only MCP tool `head_temporal_graph` exposes the same bounded traversal. Both reject a stale World Model.
+`--revision-parents` reads a JSON object whose keys are current logical entity IDs and whose values are arrays of parent Revision IDs. The read-only MCP tool `head_temporal_graph` exposes the same bounded traversal through `include_unreviewed_candidates`. Both reject a stale World Model. ReviewDecision and ProductModelRevision receipts remain visible under normal reviewed traversal; the unreviewed candidate surface requires explicit opt-in and still has no authority effect.
 
 The Context Compiler performs a bounded per-file temporal expansion and records the GraphSnapshot, SourceSnapshot, TraversalQuery, and traversal result digests in included repository candidates. Stale temporal evidence is excluded with the rest of the stale World Model.
 
 ## Deferred boundaries
 
-This alpha does not yet implement ChangeSet, VcsEvidence, execution-lineage, product-to-code, conformance, candidate-promotion, or document-projection nodes and relations. It does not implement a `GraphProjectionAdapter` or GraphDB backend. It also does not infer parent revisions, perform merges, infer or promote product meaning, promote heuristic mappings, or treat current-state pointers as canon.
+This alpha does not yet implement ChangeSet, VcsEvidence, execution-lineage, product-to-code, conformance, general candidate-promotion, or document-projection nodes and relations. It does not implement a `GraphProjectionAdapter` or GraphDB backend. It also does not infer parent revisions, perform merges, infer or promote product meaning outside the explicit onboarding ReviewDecision contract, promote heuristic mappings, or treat current-state pointers as canon.

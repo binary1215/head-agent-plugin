@@ -11,6 +11,7 @@ import {
 } from "./git-history.mjs";
 import { buildSemanticGraph, querySemanticGraph, SEMANTIC_GRAPH_VERSION, verifySemanticGraph } from "./semantic-graph.mjs";
 import { normalizeProductModelDocument, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
+import { loadOnboardingGraphProjection, ONBOARDING_GRAPH_PROJECTION_VERSION } from "./onboarding-projection.mjs";
 import {
   buildRepositoryScanInput,
   createRepositoryScanComputeAdapter,
@@ -41,7 +42,7 @@ import {
   WORLD_MODEL_STORAGE_CONTRACT,
 } from "./world-model-store.mjs";
 
-export const WORLD_MODEL_VERSION = "0.5.3";
+export const WORLD_MODEL_VERSION = "0.5.4";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
@@ -204,6 +205,19 @@ function verifiedSnapshot(snapshot, expectedId = "") {
     }
   }
   if (snapshot.temporalProvenanceGraph) verifyTemporalProvenanceGraph(snapshot.temporalProvenanceGraph);
+  if (snapshot.protocol?.version === WORLD_MODEL_VERSION) {
+    const projection = snapshot.onboardingProjection;
+    const graphProjection = snapshot.temporalProvenanceGraph?.onboardingProjection;
+    if (!projection || projection.authority !== "derived-projection-manifest-not-project-canon"
+      || projection.instructionAuthority !== false || projection.promotionAuthority !== false
+      || projection.projectionInputId !== graphProjection?.projectionInputId
+      || projection.projectionInputHash !== graphProjection?.projectionInputHash
+      || canonicalJson(projection.candidateSetIds) !== canonicalJson(graphProjection?.candidateSetIds)
+      || canonicalJson(projection.reviewDecisionIds) !== canonicalJson(graphProjection?.reviewDecisionIds)
+      || canonicalJson(projection.productModelRevisionIds) !== canonicalJson(graphProjection?.productModelRevisionIds)) {
+      fail("World Model onboarding projection and temporal graph disagree.", "ONBOARDING_TEMPORAL_IDENTITY_MISMATCH");
+    }
+  }
   if (snapshot.productModel && snapshot.temporalProvenanceGraph
     && (snapshot.productModel.productModelId !== snapshot.temporalProvenanceGraph.productModelId
       || snapshot.productModel.productModelHash !== snapshot.temporalProvenanceGraph.productModelHash)) {
@@ -230,6 +244,7 @@ function indexerState() {
     repositoryScanVersion: REPOSITORY_SCAN_VERSION,
     semanticGraphVersion: SEMANTIC_GRAPH_VERSION,
     productModelVersion: PRODUCT_MODEL_VERSION,
+    onboardingGraphProjectionVersion: ONBOARDING_GRAPH_PROJECTION_VERSION,
     temporalProvenanceVersion: TEMPORAL_PROVENANCE_VERSION,
     gitDecisionHistoryVersion: GIT_DECISION_HISTORY_VERSION,
     gitHistoryAdapterVersion: GIT_HISTORY_ADAPTER_VERSION,
@@ -238,10 +253,14 @@ function indexerState() {
   };
 }
 
-function sourceDigestFor(files, productModel, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
+function sourceDigestFor(files, productModel, onboardingProjection, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
   return digest(canonicalJson({
     files,
     productModel: { productModelId: productModel.productModelId, productModelHash: productModel.productModelHash },
+    onboardingProjection: {
+      projectionInputId: onboardingProjection.projectionInputId,
+      projectionInputHash: onboardingProjection.projectionInputHash,
+    },
     git,
     runtimeState,
     externalRuntimeState: externalRuntimeState.runtimeStateHash,
@@ -283,6 +302,11 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   });
   const scan = scanRepositoryReference(scanInput);
   const productCanon = readProductModelCanon({ projectRoot: inspected.project.projectRoot });
+  const onboardingProjection = loadOnboardingGraphProjection({
+    projectRoot: inspected.project.projectRoot,
+    projectId: inspected.project.projectId,
+    currentProductModelId: productCanon.model.productModelId,
+  });
   const git = gitHeadState(inspected.project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
   const selectedRuntimeAdapter = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer.sourceAdapters?.runtimeState);
@@ -293,12 +317,14 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     files: scan.files,
     productModel: productCanon.model,
     productEvidenceId: productCanon.evidenceId,
+    onboardingProjection,
     parentSourceSnapshotIds: stored.snapshot.temporalProvenanceGraph?.parentSourceSnapshotIds || [],
     revisionParentIds: stored.snapshot.temporalProvenanceGraph?.revisionParentIds || {},
   });
   const currentSourceDigest = sourceDigestFor(
     scan.files,
     productCanon.model,
+    onboardingProjection,
     git,
     runtimeState,
     externalRuntimeState,
@@ -331,6 +357,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
       runtimeStateChanged: canonicalJson(runtimeState) !== canonicalJson(stored.snapshot.runtimeState),
       externalRuntimeStateChanged: externalRuntimeState.runtimeStateHash !== stored.snapshot.externalRuntimeState?.runtimeStateHash,
       productModelChanged: productCanon.model.productModelHash !== stored.snapshot.productModel?.productModelHash,
+      onboardingProjectionChanged: onboardingProjection.projectionInputHash !== stored.snapshot.onboardingProjection?.projectionInputHash,
       temporalProvenanceChanged: currentTemporalProvenanceGraph.graphSnapshotHash !== stored.snapshot.temporalProvenanceGraph?.graphSnapshotHash,
     },
     fileFreshness,
@@ -346,6 +373,7 @@ export async function buildWorldModel({
   gitHistoryAdapter = null,
   runtimeStateAdapter = null,
   computeAdapter = null,
+  onboardingProjectionInput = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
 } = {}) {
@@ -358,6 +386,11 @@ export async function buildWorldModel({
   });
   const scan = validateRepositoryScanResult(repositoryScanExecution.result);
   const productCanon = readProductModelCanon({ projectRoot: project.projectRoot });
+  const onboardingProjection = onboardingProjectionInput || loadOnboardingGraphProjection({
+    projectRoot: project.projectRoot,
+    projectId: project.projectId,
+    currentProductModelId: productCanon.model.productModelId,
+  });
   const git = gitHeadState(project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
   const indexer = indexerState();
@@ -369,12 +402,14 @@ export async function buildWorldModel({
     files: scan.files,
     productModel: productCanon.model,
     productEvidenceId: productCanon.evidenceId,
+    onboardingProjection,
     parentSourceSnapshotIds,
     revisionParentIds,
   });
   const sourceDigest = sourceDigestFor(
     scan.files,
     productCanon.model,
+    onboardingProjection,
     git,
     runtimeState,
     externalRuntimeState,
@@ -414,6 +449,7 @@ export async function buildWorldModel({
       semanticGraph: "heuristic-file-symbol-import-call-graph-with-evidence-locations",
       temporalProvenanceGraph: "content-addressed-file-symbol-test-revisions-with-multiple-parent-dag",
       productModel: "user-owned-feature-capability-requirement-constraint-decision-canon-projected-into-temporal-graph",
+      onboardingProjection: "immutable-candidates-evidence-unknowns-reviews-and-product-model-revision-receipts-projected-without-authority-escalation",
       gitHistory: gitDecisionHistory.coverage,
       runtimeState: "canonical-head-lifecycle-state",
       externalRuntimeState: externalRuntimeState.coverage,
@@ -424,6 +460,16 @@ export async function buildWorldModel({
     externalRuntimeState,
     productModel: productCanon.model,
     productModelSource: { status: productCanon.status, relativePath: productCanon.relativePath, evidenceId: productCanon.evidenceId },
+    onboardingProjection: {
+      projectionInputId: onboardingProjection.projectionInputId,
+      projectionInputHash: onboardingProjection.projectionInputHash,
+      candidateSetIds: onboardingProjection.candidateSets.map((item) => item.candidateSetId),
+      reviewDecisionIds: onboardingProjection.reviewDecisions.map((item) => item.reviewDecisionId),
+      productModelRevisionIds: onboardingProjection.productModelRevisions.map((item) => item.productModelId),
+      authority: "derived-projection-manifest-not-project-canon",
+      instructionAuthority: false,
+      promotionAuthority: false,
+    },
     repositoryScan: {
       scanId: scan.scanId,
       scanHash: scan.scanHash,
@@ -454,6 +500,14 @@ export async function buildWorldModel({
       requirementCount: temporalProvenanceGraph.summary.requirementCount,
       constraintCount: temporalProvenanceGraph.summary.constraintCount,
       decisionCount: temporalProvenanceGraph.summary.decisionCount,
+      onboardingCandidateSetCount: temporalProvenanceGraph.summary.onboardingCandidateSetCount,
+      onboardingCandidateCount: temporalProvenanceGraph.summary.onboardingCandidateCount,
+      onboardingEvidenceCount: temporalProvenanceGraph.summary.onboardingEvidenceCount,
+      onboardingUnknownCount: temporalProvenanceGraph.summary.onboardingUnknownCount,
+      onboardingReviewDecisionCount: temporalProvenanceGraph.summary.onboardingReviewDecisionCount,
+      onboardingAcceptedCandidateCount: temporalProvenanceGraph.summary.onboardingAcceptedCandidateCount,
+      onboardingRejectedCandidateCount: temporalProvenanceGraph.summary.onboardingRejectedCandidateCount,
+      productModelRevisionReceiptCount: temporalProvenanceGraph.summary.productModelRevisionReceiptCount,
       gitCommitCount: gitDecisionHistory.summary.commitCount,
       runtimeObservationCount: externalRuntimeState.summary.observationCount,
     },
@@ -494,6 +548,7 @@ export async function buildWorldModel({
     runtimeStateChanged: changed && canonicalJson(previous?.runtimeState || null) !== canonicalJson(snapshot.runtimeState),
     externalRuntimeStateChanged: changed && previous?.externalRuntimeState?.runtimeStateHash !== snapshot.externalRuntimeState.runtimeStateHash,
     productModelChanged: changed && previous?.productModel?.productModelHash !== snapshot.productModel.productModelHash,
+    onboardingProjectionChanged: changed && previous?.onboardingProjection?.projectionInputHash !== snapshot.onboardingProjection.projectionInputHash,
     temporalProvenanceChanged: changed && previous?.temporalProvenanceGraph?.graphSnapshotHash !== snapshot.temporalProvenanceGraph.graphSnapshotHash,
   };
   const pointer = {
@@ -565,7 +620,7 @@ export function queryWorldTemporalGraph({
   query,
   kinds = null,
   relations = null,
-  authorityClasses = ["canon-projected", "derived", "heuristic"],
+  authorityClasses = ["canon-projected", "reviewed", "derived", "heuristic"],
   freshness = ["current"],
   minConfidence = 0,
   includeUnreviewedCandidates = false,

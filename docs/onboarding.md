@@ -29,6 +29,8 @@ initialized
 
 Repository and brief analysis creates `OnboardingCandidateSet` evidence with `instructionAuthority: false` and `promotionAuthority: false`. Only an explicit `ReviewDecision` with `decisionScope: "product-canon-bootstrap"` may write Product Canon. A candidate is never mutated or relabeled: revision creates a successor candidate with a new identity, and acceptance creates separate canon plus an immutable decision receipt.
 
+Candidate protocol `0.2.0` derives candidate-set identity from project, Session, mode, exact SourceSnapshot, Product Model input, candidates, Evidence, Unknowns, ancestry, and producer policy. It deliberately excludes the derived World Model ID so rebuilding the same evidence after rejection produces the same candidate identity instead of coupling authority review to a materialized-view pointer.
+
 ## Starting onboarding
 
 Existing projects can use local storage without an input file:
@@ -170,18 +172,23 @@ Later source changes do not erase the historical onboarding decision. Read-only 
 
 The read-only MCP tool `head_onboarding_status` verifies the state pointer, Session record, storage selection, current candidate set, linked ReviewDecision, Product Model revisions, Product Canon identity, and World Model freshness. It cannot review or promote candidates.
 
+## Temporal graph projection
+
+World Model `0.5.4` loads bounded immutable onboarding artifacts and verifies every nested content identity before projecting them through onboarding projection protocol `0.1.0` into temporal provenance protocol `0.3.0`. Candidate sets connect to exact source evidence, candidates connect to Evidence and separate proposed product-concept references, and ReviewDecisions preserve accepted, rejected, revised, and promotion outcomes. Accepted decisions connect to immutable previous/resulting ProductModelRevision receipts; the resulting receipt links back to the promoted candidate identities.
+
+This graph is an audit and traversal projection, not the decision source. All projected node and edge instruction/promotion flags are false, even when the source ReviewDecision records the user's promotion authority. Normal traversal hides CandidateSet, candidate, Evidence, Unknown, and proposed-concept nodes. A user can explicitly inspect them with `world-temporal --include-candidates true` or MCP `include_unreviewed_candidates: true`; the Context Compiler never enables that option. Reviewed decision and ProductModelRevision receipts remain available in normal reviewed traversal.
+
 Run the dependency-free verifier with:
 
 ```powershell
 npm run verify:onboarding
 ```
 
-It covers existing code, a new-project brief, empty evidence, revision, rejection, selection, deterministic restart, pre-existing canon, stale source, tampering, secret rejection, legacy migration, read-only MCP, and operation without Git, GraphDB, or a Go binary.
+It covers existing code, a new-project brief, empty evidence, revision, rejection, selection, deterministic restart, candidate/review/promotion graph projection, default candidate exclusion, explicit candidate traversal, graph and artifact tampering, pre-existing canon, stale source, secret rejection, legacy migration, read-only MCP, and operation without Git, GraphDB, or a Go binary.
 
 ## Explicitly deferred
 
 - a verified remote GraphDB adapter;
 - dedicated imported-backlog connectors beyond an explicit structured brief;
-- GraphSnapshot projection of candidate and promotion-receipt nodes and edges;
 - Feature-to-code/test mapping candidates and general relationship promotion;
 - automatic semantic promotion, document synchronization, and merge/conflict resolution.

@@ -138,7 +138,8 @@ export const tools = [
         depth: { type: "integer", minimum: 0, maximum: 3, default: 1 },
         node_limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
         edge_limit: { type: "integer", minimum: 0, maximum: 1000, default: 200 },
-        min_confidence: { type: "number", minimum: 0, maximum: 1, default: 0 }
+        min_confidence: { type: "number", minimum: 0, maximum: 1, default: 0 },
+        include_unreviewed_candidates: { type: "boolean", default: false }
       },
       required: ["project_root", "query"],
       additionalProperties: false
@@ -169,7 +170,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
   if (request.method === "initialize") {
-    return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.15" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.16" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -212,6 +213,7 @@ export async function dispatch(request) {
                           query: args.query,
                           kinds: args.kinds || null,
                           relations: args.relation_types || null,
+                          includeUnreviewedCandidates: args.include_unreviewed_candidates ?? false,
                           minConfidence: args.min_confidence ?? 0,
                           depth: args.depth ?? 1,
                           maxNodes: args.node_limit ?? 100,

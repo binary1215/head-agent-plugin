@@ -37,6 +37,7 @@ node scripts/head.mjs world-index <project> --revision-parents <logical-entity-t
 node scripts/head.mjs world-status <project>
 node scripts/head.mjs world-query <project> --query <symbol-or-path> --depth 1 --limit 100
 node scripts/head.mjs world-temporal <project> --query <path-or-symbol> --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
+node scripts/head.mjs world-temporal <project> --query <candidate-id> --include-candidates true --depth 1 --limit 100 --edge-limit 200
 node scripts/head.mjs world-history <project> --query <decision-terms> --limit 20
 node scripts/head.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
 ```
@@ -49,7 +50,7 @@ The read-only MCP tool `head_world_model` exposes the same digest and freshness 
 
 ## Temporal provenance graph
 
-World Model version `0.5.3` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.2.0`. Source analysis now removes duplicate `(line, kind, name)` symbols before applying the per-file bound, preventing large repositories from producing a self-invalid scan. It leaves the heuristic import/call graph intact while adding stable Product/Repository/File/Symbol/Test logical identities, immutable Product/File/Symbol/Test revisions, and explicit zero-or-more SourceSnapshot and Revision parents. Product entities come only from the validated user-owned `.head/context/product-model.json` canon and are projected with `authorityClass: canon-projected`; the graph itself still has no canonical or promotion authority. Every node and edge carries typed provenance, freshness, producer version, evidence identities, and instruction/promotion authority flags. Heuristic Symbol projections use numeric confidence.
+World Model version `0.5.4` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding graph projection protocol `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.3.0`. Source analysis removes duplicate `(line, kind, name)` symbols before applying the per-file bound. The temporal graph adds stable Product/Repository/File/Symbol/Test identities, immutable revisions, explicit zero-or-more SourceSnapshot and Revision parents, and immutable onboarding CandidateSet, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts. Product entities come only from validated user-owned Product Canon and are `canon-projected`. Candidate and review history is loaded from content-addressed onboarding artifacts, while every graph projection still has false instruction and promotion authority flags.
 
 The repository scan is the first built-in `ComputeAdapter` operation. Its semantic output contains only normalized relative paths and deterministic source facts. The scan root is operational input and is excluded from the repository-scan result; backend identity, execution mode, timing, and process details remain pointer diagnostics outside World Model identity. A Go implementation now produces byte-equivalent complete responses on the tracked corpus and limit/error fixtures, but release manifests intentionally do not advertise it because measured small and medium scans regress and the large-input gain is marginal. The default adapter therefore probes the verified distribution, discloses `GO_WORKER_OPERATION_NOT_INSTALLED`, and runs the JavaScript reference. The World Model continues to record its separately validated canonical project root.
 
@@ -89,9 +90,10 @@ The adapter descriptor and physical source path live only in the World Model poi
 - stable temporal Repository/File/Symbol/Test logical entities and immutable File/Symbol/Test revisions;
 - stable FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision logical entities with immutable canon-projected revisions;
 - onboarding-triggered explicit indexing before candidate inference and a verified child SourceSnapshot/GraphSnapshot rebuild after ReviewDecision-gated Product Canon promotion;
+- digest-verified onboarding CandidateSet, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipt projection with candidate-to-evidence, review, disposition, and promotion lineage;
 - validated `CONTAINS`, `REALIZES`, and `GOVERNED_BY` product relationships independent from repository directory structure;
 - zero-or-more SourceSnapshot and Revision parents with no automatic merge claim;
-- provenance-complete `CONTAINS`, `REALIZES`, `GOVERNED_BY`, `HAS_REVISION`, `CURRENT_REVISION`, `PARENT_OF`, `DECLARES`, and `REFERENCES` edges;
+- provenance-complete product/repository edges plus `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, and `PROMOTED_FROM` onboarding edges;
 - deterministic bounded temporal traversal with kind/relation/authority/freshness allowlists, confidence policy, inclusion/exclusion reasons, and graph/query/result digests;
 - file digest and line provenance, heuristic confidence, unresolved counts, and bounded traversal;
 - local `.git/HEAD` and in-repository ref resolution without following external gitdir pointers;
@@ -111,6 +113,7 @@ Managed root projections and these directories are excluded: `.head`, `.git`, VC
 - matching Product Canon concepts compete as one bounded `ProductContext` derived projection under the same budget;
 - stale World Model: repository candidates are excluded and Capsule coverage explicitly records the stale exclusion;
 - every repository candidate, semantic node, and edge remains `evidence-not-instruction`.
+- unreviewed onboarding candidate-space nodes are excluded by default and require explicit CLI/MCP opt-in; Context Capsules never opt in.
 
 This prevents a stale index from silently directing execution while still allowing normal curated-canon compilation.
 
@@ -122,8 +125,7 @@ This prevents a stale index from silently directing execution while still allowi
 - generated/vendor source classification beyond the current exclusion rules;
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
-- ChangeSet, product-to-code, conformance, candidate, lineage, and document-projection graph planes;
-- onboarding candidate and promotion-receipt projection into the temporal graph, beyond the active separate immutable onboarding artifacts;
+- ChangeSet, product-to-code, conformance, execution-lineage, and document-projection graph planes;
 - dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
 - the replaceable `GraphProjectionAdapter` contract;

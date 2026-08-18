@@ -5,8 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initializeProject } from "./lib/head-core.mjs";
+import { compileContext } from "./lib/context-compiler.mjs";
 import { inspectOnboarding, readOnboardingCandidateSet, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
 import { normalizeProductModelDocument } from "./lib/product-model.mjs";
+import { verifyTemporalProvenanceGraph } from "./lib/temporal-provenance.mjs";
+import { inspectWorldModel, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "./mcp-server.mjs";
 import { runCommand } from "./head.mjs";
 
@@ -80,6 +83,50 @@ async function verifyExistingProjectPromotion() {
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.origin === "repository-test-symbol-heuristic"), true);
   assert.equal(started.candidateSet.candidates.every((candidate) => candidate.instructionAuthority === false && candidate.promotionAuthority === false), true);
   assert.equal(normalizeProductModelDocument().features.length, 0);
+  const candidateGraph = inspectWorldModel({ root });
+  assert.equal(candidateGraph.status, "current");
+  assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingCandidateSetCount, 1);
+  assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingCandidateCount, started.candidateSet.candidates.length);
+  assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingReviewDecisionCount, 0);
+  const candidateId = started.candidateSet.candidates[0].candidateId;
+  const hiddenCandidate = queryWorldTemporalGraph({
+    root,
+    query: candidateId,
+    kinds: ["OnboardingProductCandidate"],
+    depth: 0,
+  });
+  assert.equal(hiddenCandidate.nodes.length, 0);
+  assert.equal(hiddenCandidate.exclusion.unreviewedCandidatesExcluded > 0, true);
+  const explicitCandidate = await runCommand([
+    "world-temporal",
+    root,
+    "--query",
+    candidateId,
+    "--kind",
+    "OnboardingProductCandidate,OnboardingEvidence,ProductConceptReference",
+    "--include-candidates",
+    "true",
+    "--depth",
+    "1",
+  ]);
+  assert.equal(explicitCandidate.nodes.some((node) => node.nodeId === candidateId), true);
+  assert.equal(explicitCandidate.edges.some((edge) => edge.type === "SUPPORTED_BY"), true);
+  const mcpCandidate = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/call",
+    params: {
+      name: "head_temporal_graph",
+      arguments: {
+        project_root: root,
+        query: candidateId,
+        kinds: ["OnboardingProductCandidate"],
+        include_unreviewed_candidates: true,
+        depth: 0,
+      },
+    },
+  });
+  assert.equal(mcpCandidate.result.structuredContent.nodes[0].nodeId, candidateId);
 
   const reread = readOnboardingCandidateSet({ root, candidateSetId: started.candidateSet.candidateSetId });
   assert.equal(reread.candidateSet.candidateSetHash, started.candidateSet.candidateSetHash);
@@ -108,6 +155,29 @@ async function verifyExistingProjectPromotion() {
   assert.equal(ready.worldModel.status, "current");
   assert.equal(ready.productModel.productModelId, accepted.productModel.productModelId);
   assert.equal(ready.worldModel.sourceSnapshotId, accepted.worldModel.sourceSnapshotId);
+  const promotedGraph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.equal(promotedGraph.summary.onboardingReviewDecisionCount, 1);
+  assert.equal(promotedGraph.summary.productModelRevisionReceiptCount, 2);
+  assert.equal(promotedGraph.edges.some((edge) => edge.type === "REVIEWED_BY" && edge.to === accepted.reviewDecision.reviewDecisionId), true);
+  assert.equal(promotedGraph.edges.some((edge) => edge.type === "PRODUCES" && edge.to === accepted.productModel.productModelId), true);
+  assert.equal(promotedGraph.edges.some((edge) => edge.type === "PROMOTED_FROM"), true);
+  assert.equal(promotedGraph.nodes.find((node) => node.nodeId === candidateId).instructionAuthority, false);
+  assert.equal(verifyTemporalProvenanceGraph(promotedGraph).temporalGraphId, promotedGraph.temporalGraphId);
+  const tamperedGraph = structuredClone(promotedGraph);
+  tamperedGraph.nodes.find((node) => node.kind === "OnboardingReviewDecision").disposition = "reject";
+  assert.throws(() => verifyTemporalProvenanceGraph(tamperedGraph), { code: "TEMPORAL_GRAPH_DIGEST_MISMATCH" });
+  const reviewTraversal = queryWorldTemporalGraph({
+    root,
+    query: accepted.reviewDecision.reviewDecisionId,
+    kinds: ["OnboardingReviewDecision", "ProductModelRevision"],
+    relations: ["PRODUCES", "PARENT_OF"],
+    depth: 1,
+  });
+  assert.equal(reviewTraversal.nodes.some((node) => node.kind === "OnboardingReviewDecision"), true);
+  assert.equal(reviewTraversal.nodes.some((node) => node.kind === "ProductModelRevision"), true);
+  const capsule = compileContext({ root, task: "Explain the accepted product capability.", budget: 5000, persist: false }).capsule;
+  assert.equal(capsule.productContext.length > 0, true);
+  assert.equal(capsule.productContext.every((item) => item.trustBoundary === "derived-projection-of-user-owned-product-canon"), true);
   const previousRevision = JSON.parse(fs.readFileSync(path.join(
     root,
     ".head",
@@ -247,6 +317,12 @@ async function verifyRejection() {
   });
   assert.equal(selected.productModel.capabilities.length, 1);
   assert.equal(selected.productModel.features.length, 0);
+  const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.equal(graph.summary.onboardingReviewDecisionCount, 2);
+  assert.equal(graph.summary.onboardingAcceptedCandidateCount, 1);
+  assert.equal(graph.summary.onboardingRejectedCandidateCount > 0, true);
+  assert.equal(graph.edges.some((edge) => edge.type === "ACCEPTED_BY"), true);
+  assert.equal(graph.edges.some((edge) => edge.type === "REJECTED_BY"), true);
 }
 
 async function verifyExistingCanonSkip() {
@@ -379,6 +455,9 @@ try {
       "empty-evidence-user-seed",
       "candidate-rejection",
       "deterministic-restart-and-selection-acceptance",
+      "candidate-review-promotion-temporal-projection",
+      "candidate-traversal-opt-in-and-context-exclusion",
+      "temporal-projection-tamper-detection",
       "pre-existing-canon-skip",
       "candidate-set-resource-bounds",
       "graphdb-pending-local-fallback-and-secret-rejection",

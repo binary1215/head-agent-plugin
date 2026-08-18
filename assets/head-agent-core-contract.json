@@ -22,12 +22,12 @@
   },
   "onboarding": {
     "purpose": "Bootstrap a project-scoped HEAD Session and Product Canon without silently turning observed code, documentation, model inference, or storage capability into authority.",
-    "types": ["HeadSession", "OnboardingStatePointer", "OnboardingStorageSelection", "OnboardingCandidateSet", "ReviewDecision", "ProductModelRevision"],
+    "types": ["HeadSession", "OnboardingStatePointer", "OnboardingStorageSelection", "OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "ReviewDecision", "ProductModelRevision"],
     "inputs": ["existing project World Model", "new-project brief", "pre-existing Product Canon"],
     "reviewDispositions": ["accept-all", "accept-selection", "revise", "reject"],
     "authority": "Candidates and GraphSnapshots remain non-authoritative. Only an explicit ReviewDecision with decisionScope product-canon-bootstrap may create a new Product Canon revision.",
     "storage": "Local JSON is complete by default. GraphDB endpoint, database, and secret-reference names may be recorded as pending operational configuration; credential values are rejected and the remote adapter is not claimed active.",
-    "status": "Project-scoped Session records, deterministic legacy migration, evidence-linked bounded candidate inference, stale-source rejection, batch review, immutable decision receipts, Product Canon revision history, and post-promotion GraphSnapshot verification are active."
+    "status": "Project-scoped Session records, deterministic legacy migration, evidence-linked bounded candidate inference, stale-source rejection, batch review, immutable decision receipts, Product Canon revision history, onboarding receipt GraphSnapshot projection, and post-promotion GraphSnapshot verification are active."
   },
   "computeAdapter": {
     "purpose": "Delegate deterministic heavy computation without changing semantic identity or transferring authority from the JavaScript control plane.",
@@ -43,15 +43,15 @@
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, a Git-independent temporal Product/File/Symbol/Test revision GraphSnapshot, all reachable Git commit-message decision evidence, current Git refs, canonical HEAD lifecycle state, point-in-time host-exported external runtime observations, and bounded product/semantic/temporal/history/runtime traversal are active; ChangeSet and product-to-code projection, AST-accurate analysis, structured Git decision inference, live runtime probing/control, document projections, and the optional GraphDB adapter are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, a Git-independent temporal Product/File/Symbol/Test revision GraphSnapshot, immutable onboarding candidate/review/promotion receipts, all reachable Git commit-message decision evidence, current Git refs, canonical HEAD lifecycle state, point-in-time host-exported external runtime observations, and bounded product/semantic/temporal/history/runtime traversal are active; ChangeSet and product-to-code projection, AST-accurate analysis, structured Git decision inference, live runtime probing/control, document projections, and the optional GraphDB adapter are deferred."
   },
   "temporalProvenance": {
     "purpose": "Connect stable product and repository entities to immutable content-derived revisions and explicit multiple-parent ancestry without requiring Git or GraphDB.",
-    "types": ["Repository", "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision", "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision", "File", "FileRevision", "Symbol", "SymbolRevision", "Test", "TestRevision", "SourceSnapshot", "SourceSnapshotReference", "RevisionReference"],
-    "relations": ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES"],
+    "types": ["Repository", "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision", "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision", "File", "FileRevision", "Symbol", "SymbolRevision", "Test", "TestRevision", "SourceSnapshot", "SourceSnapshotReference", "RevisionReference", "OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "OnboardingReviewDecision", "ProductConceptReference", "ProductModelRevision"],
+    "relations": ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "PROPOSES_FROM", "PROPOSES_TO", "SUPPORTED_BY", "REVIEWED_BY", "ACCEPTED_BY", "REJECTED_BY", "PRODUCES", "PROMOTED_FROM"],
     "identity": "Logical identities exclude line locations, Git objects, GraphDB records, provider sessions, and document page IDs; revisions and graph/query/result artifacts are digest-verifiable.",
     "authority": "Rebuildable derived evidence only with no instruction, promotion, canonical, or unique authority.",
-    "status": "Product Canon projection, zero-or-more SourceSnapshot and Revision parents, and deterministic bounded traversal are active; automatic merge, conflict resolution, inferred candidate promotion, product-to-code mappings, and remote GraphProjectionAdapter backends are deferred."
+    "status": "Product Canon projection, immutable onboarding candidate/review/promotion receipt projection, default candidate-space exclusion with explicit opt-in, zero-or-more SourceSnapshot and Revision parents, and deterministic bounded traversal are active; automatic merge, conflict resolution, general candidate promotion, product-to-code mappings, and remote GraphProjectionAdapter backends are deferred."
   },
   "roles": {
     "head": "Owns whole-outcome understanding, strategy, integration, and completion judgment.",
@@ -77,6 +77,7 @@
     "bounded evidence-linked onboarding candidate sets from repository evidence or a user brief",
     "accept-all, accept-selection, revise, and reject onboarding ReviewDecisions",
     "ReviewDecision-gated Product Canon bootstrap and verified post-promotion GraphSnapshot rebuild",
+    "immutable onboarding candidate, evidence, unknown, review, and Product Model revision receipt projection",
     "deterministic Context Capsule compilation",
     "content-derived Execution Lineage contracts",
     "contract-bound Run lifecycle",
@@ -113,8 +114,7 @@
     "AST-accurate semantic call graph",
     "live runtime-state probing and streaming",
     "structured Git decision inference and supersession",
-    "ChangeSet, product-to-code, conformance, and candidate graph projection",
-    "onboarding candidate and promotion-receipt GraphSnapshot projection",
+    "ChangeSet, product-to-code, and conformance graph projection",
     "dedicated imported backlog evidence adapters",
     "automatic merge and conflict resolution",
     "Markdown, Obsidian, and Notion projection adapters",

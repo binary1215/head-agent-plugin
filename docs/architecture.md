@@ -16,8 +16,9 @@ The plugin is organized as a thin Codex distribution around a provider-neutral c
                                   content-derived lineage artifacts
        -> scripts/lib/run-lineage contract-bound Run state transitions
        -> scripts/lib/product-model user-owned product-intent canon contract
-       -> scripts/lib/onboarding project-scoped bootstrap, candidate, review, and promotion state machine
-            -> scripts/lib/onboarding-contract Session, storage, and state-pointer identity contract
+        -> scripts/lib/onboarding project-scoped bootstrap, candidate, review, and promotion state machine
+             -> scripts/lib/onboarding-contract Session, storage, and state-pointer identity contract
+             -> scripts/lib/onboarding-projection immutable onboarding artifact validation and graph input
        -> scripts/lib/compute-adapter backend-neutral compute and WorkerProtocol contract
        -> scripts/lib/world-model incremental repository view
             -> scripts/lib/semantic-graph evidence-linked semantic projection
@@ -33,7 +34,7 @@ Codex and OpenCode are projections of the same `.head/` authority. They do not o
 
 Initialization creates a project-scoped HEAD Session record and an explicit onboarding pointer independently from provider conversations. Onboarding indexes the local World Model, derives bounded evidence-linked candidates from an existing project or structured brief, and presents one immutable batch. Candidate inference stays in the JavaScript control plane and has no instruction or promotion authority.
 
-Only a CLI-supplied `ReviewDecision` with `decisionScope: product-canon-bootstrap` may create a Product Canon revision. Acceptance records previous and next Product Model hashes, rebuilds a child SourceSnapshot, and verifies the temporal GraphSnapshot before the state pointer becomes ready. Revision creates a successor candidate set; rejection leaves canon unchanged. Read-only MCP exposes the verified state but cannot review or promote.
+Only a CLI-supplied `ReviewDecision` with `decisionScope: product-canon-bootstrap` may create a Product Canon revision. Acceptance records previous and next Product Model hashes, rebuilds a child SourceSnapshot, and verifies the temporal GraphSnapshot before the state pointer becomes ready. Revision creates a successor candidate set; rejection leaves canon unchanged. Immutable candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts are projected into the graph for audit, but the projection cannot decide or promote. Read-only MCP exposes verified state and bounded graph traversal but cannot review or promote.
 
 Storage selection defaults to the complete local path. A GraphDB endpoint, database, and environment-style secret-reference names can be recorded as pending operational configuration, but credentials are rejected and no remote success is claimed before an adapter passes conformance. See [`onboarding.md`](onboarding.md).
 
@@ -91,7 +92,7 @@ The semantic graph uses content-derived node and edge identities, file digest an
 
 The Product Model source at `.head/context/product-model.json` is user-owned canon. It defines stable FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision keys independently from repository directories. A missing Product Model in an older initialized project is the explicit empty semantic model; code and documents do not silently fill it. See [`product-model.md`](product-model.md).
 
-The temporal provenance graph is a separate verified projection so existing heuristic semantic identities are not silently redefined. It separates stable Repository/File/Symbol/Test and product logical identities from immutable revisions, supports explicit zero-or-more SourceSnapshot and Revision parents, and validates provenance-complete typed edges. Product nodes and `CONTAINS`, `REALIZES`, and `GOVERNED_BY` relations are marked `canon-projected`, but the graph remains derived and cannot mutate canon or promote candidates. Its bounded `TraversalQuery` fixes relation, kind, authority, freshness, confidence, depth, node, edge, and ordering policy and returns graph/query/result digests. It consumes no Git objects and requires no GraphDB. Automatic Feature discovery, Feature-to-code/test mapping candidates, authorized promotion, ChangeSet/conformance projection, automatic merge, document projection, and the `GraphProjectionAdapter` remain deferred.
+The temporal provenance graph is a separate verified projection so existing heuristic semantic identities are not silently redefined. It separates stable Repository/File/Symbol/Test and product logical identities from immutable revisions, supports explicit zero-or-more SourceSnapshot and Revision parents, and validates provenance-complete typed edges. Product nodes and product relations are `canon-projected`; onboarding CandidateSet, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts preserve the review trail without becoming canon. Candidate-space nodes are excluded from normal traversal unless explicitly requested, while reviewed receipts remain queryable. The graph remains derived and cannot mutate canon or promote candidates. Its bounded `TraversalQuery` fixes relation, kind, authority, freshness, confidence, depth, node, edge, candidate inclusion, and ordering policy and returns graph/query/result digests. It consumes no Git objects and requires no GraphDB. Feature-to-code/test mapping candidates, general authorized promotion, ChangeSet/conformance projection, automatic merge, document projection, and the `GraphProjectionAdapter` remain deferred.
 
 ## Native compute plane
 

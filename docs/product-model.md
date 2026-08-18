@@ -88,6 +88,8 @@ The project-scoped onboarding state machine stores candidate sets and `decisionS
 
 Acceptance records previous and resulting Product Model identities and immutable Product Model revision documents. It then rebuilds a child SourceSnapshot and verifies that the new Product Model identity is present in the current temporal GraphSnapshot before onboarding becomes ready. See [`onboarding.md`](onboarding.md) for the complete state and input contracts.
 
+The temporal graph also projects the immutable candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts needed to explain how a concept reached canon. These receipts do not become Product Model entities. Candidate nodes point to separate `ProductConceptReference` nodes, while only the reviewed resulting `.head/context/product-model.json` content creates `canon-projected` Product entities and revisions.
+
 ## Explicitly deferred
 
-This slice does not treat inferred code or documentation meaning as canon without review. It does not yet provide a dedicated imported-backlog adapter, Feature-to-code or Feature-to-test mapping candidates, candidate/receipt GraphSnapshot projection, promoted conformance relations, ChangeSets, or document projections. Those capabilities require their own immutable candidate and authorized promotion contracts.
+This slice does not treat inferred code or documentation meaning as canon without review. It does not yet provide a dedicated imported-backlog adapter, Feature-to-code or Feature-to-test mapping candidates, promoted conformance relations, ChangeSets, or document projections. Those capabilities require their own immutable candidate and authorized promotion contracts.

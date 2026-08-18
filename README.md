@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.15` adds a project-scoped onboarding state machine that indexes existing projects or structured new-project briefs, produces immutable evidence-linked product candidates, and permits Product Canon bootstrap only through an explicit onboarding ReviewDecision. The conformant Go `repository.scan.v1` candidate remains non-default because current benchmark evidence does not justify production selection.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.16` projects immutable onboarding CandidateSet, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts into the temporal graph while keeping candidates separate from Product Canon and hidden from normal traversal. Product Canon bootstrap still requires an explicit onboarding ReviewDecision. The conformant Go `repository.scan.v1` candidate remains non-default because current benchmark evidence does not justify production selection.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 
@@ -15,6 +15,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Bounded evidence-linked FeatureGroup, Capability, and Feature candidate inference from repository evidence or a structured new-project brief.
 - Batch onboarding ReviewDecisions for accept-all, dependency-complete selection, revision, or rejection; candidates remain immutable and non-authoritative.
 - Review-gated Product Canon revisions with previous/next hashes, stale-source rejection, rollback on failed promotion, and a verified child GraphSnapshot before onboarding becomes ready.
+- Content-addressed onboarding CandidateSet, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipt projection with `PROPOSES_*`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, and `PROMOTED_FROM` lineage.
 - Six Context Compiler types: Snapshot, Evidence, Claim, Decision, Unknown, and ContextCapsule.
 - Budgeted minimum-sufficient Context Capsule compilation with explicit exclusions and Unknowns.
 - Read-only MCP tools for core status, project status, Capsule preview, and persisted Capsule verification.
@@ -24,7 +25,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - ReviewDecision-linked plan generations and non-authoritative knowledge-promotion proposals.
 - Incremental Repository World Model with digest verification, file-level freshness, a heuristic evidence-linked file/symbol/import/call graph, and Context Compiler integration.
 - Versioned `repository.scan.v1` operation with relative-path-only semantic output, strict limits and result validation, a JavaScript reference implementation, conformance coverage, and a repeatable benchmark corpus.
-- Content-addressed temporal provenance GraphSnapshot with stable Repository/File/Symbol/Test identities, immutable revisions, zero-or-more SourceSnapshot and Revision parents, and provenance-complete typed edges.
+- Content-addressed temporal provenance GraphSnapshot with stable Product/Repository/File/Symbol/Test identities, onboarding review receipts, immutable revisions, zero-or-more SourceSnapshot and Revision parents, and provenance-complete typed edges.
 - Explicit `.head/context/product-model.json` canon with stable product keys and validated FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision relationships.
 - Canon-projected immutable product revisions and bounded Product Context retrieval without granting the derived graph instruction or promotion authority.
 - Versioned `ComputeAdapter` and WorkerProtocol contracts with canonical request/response validation, structured errors, resource bounds, timeout/cancellation, and no authority effect.
@@ -45,7 +46,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 
 ## What is intentionally deferred
 
-Feature-to-code/test mapping candidates, candidate/receipt GraphSnapshot projection, dedicated imported-backlog connectors, ChangeSet and conformance projection, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+Feature-to-code/test mapping candidates, dedicated imported-backlog connectors, ChangeSet and conformance projection, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
 
 ## Use from source
 
@@ -60,6 +61,7 @@ node .\scripts\head.mjs world-status C:\path\to\project
 node .\scripts\head.mjs world-query C:\path\to\project --query "symbol or path" --depth 1 --limit 100
 node .\scripts\head.mjs world-temporal C:\path\to\project --query "file or symbol" --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
 node .\scripts\head.mjs world-temporal C:\path\to\project --query "Message delivery" --kind Feature,FeatureRevision,Capability --relations REALIZES,HAS_REVISION,CURRENT_REVISION --depth 2 --limit 100 --edge-limit 200
+node .\scripts\head.mjs world-temporal C:\path\to\project --query "onboarding-candidate-..." --kind OnboardingProductCandidate,OnboardingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
 node .\scripts\head.mjs world-history C:\path\to\project --query "decision terms" --limit 20
 node .\scripts\head.mjs world-index C:\path\to\project --runtime-state C:\path\to\runtime-state.json
 node .\scripts\head.mjs world-runtime C:\path\to\project --runtime codex --state active --kind session --limit 20

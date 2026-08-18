@@ -20,6 +20,12 @@ import {
   verifyStorageSelection,
 } from "./onboarding-contract.mjs";
 import {
+  loadOnboardingGraphProjection,
+  verifyOnboardingCandidateSetForProjection,
+  verifyOnboardingReviewDecisionForProjection,
+  verifyProductModelRevisionForProjection,
+} from "./onboarding-projection.mjs";
+import {
   emptyProductModelDocument,
   normalizeProductModelDocument,
   PRODUCT_ENTITY_KINDS,
@@ -28,7 +34,7 @@ import {
 } from "./product-model.mjs";
 import { buildWorldModel, inspectWorldModel, readWorldModel } from "./world-model.mjs";
 
-export const ONBOARDING_CANDIDATE_VERSION = "0.1.0";
+export const ONBOARDING_CANDIDATE_VERSION = "0.2.0";
 export const ONBOARDING_REVIEW_VERSION = "0.1.0";
 export const ONBOARDING_INFERENCE_VERSION = "0.1.0";
 
@@ -314,7 +320,6 @@ function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId
     sessionId,
     inputMode,
     storageSelectionId,
-    worldModelId: worldModel.worldModelId,
     sourceSnapshotId: worldModel.temporalProvenanceGraph.sourceSnapshotId,
     productModelId: worldModel.productModel.productModelId,
     briefEvidenceId,
@@ -369,7 +374,7 @@ function verifyCandidateSet(document, projectId = "") {
       fail(`Candidate references unknown evidence: ${evidenceId}`, "UNKNOWN_ONBOARDING_EVIDENCE");
     }
   }
-  return document;
+  return verifyOnboardingCandidateSetForProjection(document, projectId);
 }
 
 export function readOnboardingCandidateSet({ root = ".", candidateSetId } = {}) {
@@ -580,6 +585,35 @@ function persistStorageSelection(projectRoot, selection) {
   return persistImmutable(file, selection, "Onboarding storage selection");
 }
 
+async function rebuildWithOnboardingProjection({
+  projectRoot,
+  projectId,
+  currentProductModelId,
+  sourceWorld,
+  additionalCandidateSets = [],
+  additionalReviewDecisions = [],
+  additionalProductModelRevisions = [],
+  parentSourceSnapshotIds = null,
+  revisionParentIds = null,
+}) {
+  const sourceGraph = sourceWorld.snapshot.temporalProvenanceGraph;
+  const onboardingProjectionInput = loadOnboardingGraphProjection({
+    projectRoot,
+    projectId,
+    currentProductModelId,
+    additionalCandidateSets,
+    additionalReviewDecisions,
+    additionalProductModelRevisions,
+  });
+  return buildWorldModel({
+    root: projectRoot,
+    persist: true,
+    onboardingProjectionInput,
+    parentSourceSnapshotIds: parentSourceSnapshotIds ?? sourceGraph.parentSourceSnapshotIds,
+    revisionParentIds: revisionParentIds ?? sourceGraph.revisionParentIds,
+  });
+}
+
 export async function startOnboarding({ root = ".", mode = "existing", storage = null, brief = null } = {}) {
   const inspected = readyProject(root, "onboarding start");
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
@@ -632,13 +666,20 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
     unknowns: merged.unknowns,
     briefEvidenceId: briefInput?.evidenceId || null,
   });
+  const projectedWorld = await rebuildWithOnboardingProjection({
+    projectRoot,
+    projectId: inspected.project.projectId,
+    currentProductModelId: productCanon.model.productModelId,
+    sourceWorld: world,
+    additionalCandidateSets: [candidateSet],
+  });
   persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId), candidateSet, "Onboarding candidate set");
   const phase = candidateSet.candidates.length ? "awaiting-review" : "awaiting-evidence";
   const state = writeState(projectRoot, previousState, {
     phase,
     storageSelectionId: normalizedStorage.storageSelectionId,
-    worldModelId: world.snapshot.worldModelId,
-    sourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+    worldModelId: projectedWorld.snapshot.worldModelId,
+    sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
     candidateSetId: candidateSet.candidateSetId,
     reviewDecisionId: null,
     productModelId: productCanon.model.productModelId,
@@ -649,6 +690,12 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
     state,
     storageSelection: normalizedStorage,
     candidateSet,
+    worldModel: {
+      evidenceWorldModelId: world.snapshot.worldModelId,
+      projectedWorldModelId: projectedWorld.snapshot.worldModelId,
+      sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+      graphSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
+    },
     disclosure: normalizedStorage.mode === "graphdb" ? "GraphDB adapter is pending; local materialization remains active." : "Local materialization is active.",
   };
 }
@@ -799,6 +846,7 @@ export function readOnboardingReviewDecision({ root = ".", reviewDecisionId } = 
   if (!fs.existsSync(file)) fail(`Onboarding ReviewDecision not found: ${reviewDecisionId}`, "ONBOARDING_REVIEW_NOT_FOUND");
   const reviewDecision = verifyReviewDecision(readJson(file, "Onboarding ReviewDecision"), inspected.project.projectId);
   const candidateSet = readOnboardingCandidateSet({ root: inspected.project.projectRoot, candidateSetId: reviewDecision.candidateSetId }).candidateSet;
+  verifyOnboardingReviewDecisionForProjection(reviewDecision, candidateSet, inspected.project.projectId);
   if (candidateSet.sessionId !== reviewDecision.sessionId) fail("Onboarding ReviewDecision Session identity is invalid.", "ONBOARDING_SESSION_MISMATCH");
   const known = new Set(candidateSet.candidates.map((candidate) => candidate.candidateId));
   const accepted = new Set(reviewDecision.acceptedCandidateIds || []);
@@ -816,8 +864,8 @@ export function readOnboardingReviewDecision({ root = ".", reviewDecisionId } = 
   return { status: "verified", file, reviewDecision };
 }
 
-function persistProductRevision(projectRoot, model) {
-  const revision = {
+function productModelRevisionDocument(model) {
+  return {
     schemaVersion: 1,
     kind: "ProductModelRevision",
     productModelId: model.productModelId,
@@ -825,6 +873,10 @@ function persistProductRevision(projectRoot, model) {
     document: productModelDocument(model),
     authority: "user-owned-project-canon-revision",
   };
+}
+
+function persistProductRevision(projectRoot, model) {
+  const revision = productModelRevisionDocument(model);
   return persistImmutable(
     relativeFile(projectRoot, `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${model.productModelId}.json`),
     revision,
@@ -847,6 +899,7 @@ function readProductRevision(projectRoot, productModelId) {
     || revision.authority !== "user-owned-project-canon-revision") {
     fail("Product Model revision digest verification failed.", "PRODUCT_MODEL_REVISION_DIGEST_MISMATCH");
   }
+  verifyProductModelRevisionForProjection(revision);
   return { file, revision };
 }
 
@@ -876,12 +929,11 @@ export async function reviewOnboarding({
   const reviewedSetId = requiredText(candidateSetId, "candidateSetId");
   if (state.candidateSetId !== reviewedSetId) fail("Onboarding review references a stale candidate set.", "STALE_ONBOARDING_CANDIDATE_SET");
   const candidateSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: reviewedSetId }).candidateSet;
-  if (candidateSet.worldModelId !== state.worldModelId || candidateSet.sourceSnapshotId !== state.sourceSnapshotId) {
+  if (candidateSet.sourceSnapshotId !== state.sourceSnapshotId) {
     fail("Onboarding candidate set no longer matches the recorded source snapshot.", "ONBOARDING_SOURCE_SNAPSHOT_CONFLICT");
   }
   const currentWorld = inspectWorldModel({ root: projectRoot });
   if (currentWorld.status !== "current"
-    || currentWorld.snapshot.worldModelId !== candidateSet.worldModelId
     || currentWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId) {
     fail("Observed project state changed after candidate inference; re-index and create a new candidate set.", "ONBOARDING_SOURCE_DRIFT");
   }
@@ -919,16 +971,36 @@ export async function reviewOnboarding({
       previousProductModel: currentCanon.model,
     });
     verifyReviewDecision(review, inspected.project.projectId);
-    persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
     const sourceWorld = readWorldModel({ root: projectRoot }).snapshot;
     const nextSet = revisionCandidateSet({ candidateSet, revisionItems, reviewDecision: review, worldModel: sourceWorld });
+    const projectedWorld = await rebuildWithOnboardingProjection({
+      projectRoot,
+      projectId: inspected.project.projectId,
+      currentProductModelId: currentCanon.model.productModelId,
+      sourceWorld: { snapshot: sourceWorld },
+      additionalCandidateSets: [nextSet],
+      additionalReviewDecisions: [review],
+    });
+    persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
     persistImmutable(candidateSetFile(projectRoot, nextSet.candidateSetId), nextSet, "Onboarding candidate set");
     const nextState = writeState(projectRoot, state, {
       phase: nextSet.candidates.length ? "awaiting-review" : "awaiting-evidence",
       candidateSetId: nextSet.candidateSetId,
       reviewDecisionId: review.reviewDecisionId,
+      worldModelId: projectedWorld.snapshot.worldModelId,
+      sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
     });
-    return { status: "onboarding_revision_awaiting_review", state: nextState, reviewDecision: review, candidateSet: nextSet };
+    return {
+      status: "onboarding_revision_awaiting_review",
+      state: nextState,
+      reviewDecision: review,
+      candidateSet: nextSet,
+      worldModel: {
+        worldModelId: projectedWorld.snapshot.worldModelId,
+        sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+        graphSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
+      },
+    };
   }
 
   if (normalizedDisposition === "reject") {
@@ -946,9 +1018,32 @@ export async function reviewOnboarding({
       previousProductModel: currentCanon.model,
     });
     verifyReviewDecision(review, inspected.project.projectId);
+    const sourceWorld = readWorldModel({ root: projectRoot });
+    const projectedWorld = await rebuildWithOnboardingProjection({
+      projectRoot,
+      projectId: inspected.project.projectId,
+      currentProductModelId: currentCanon.model.productModelId,
+      sourceWorld,
+      additionalReviewDecisions: [review],
+    });
     persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
-    const nextState = writeState(projectRoot, state, { phase: "rejected", reviewDecisionId: review.reviewDecisionId });
-    return { status: "onboarding_rejected", state: nextState, reviewDecision: review, productCanonChanged: false };
+    const nextState = writeState(projectRoot, state, {
+      phase: "rejected",
+      reviewDecisionId: review.reviewDecisionId,
+      worldModelId: projectedWorld.snapshot.worldModelId,
+      sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+    });
+    return {
+      status: "onboarding_rejected",
+      state: nextState,
+      reviewDecision: review,
+      productCanonChanged: false,
+      worldModel: {
+        worldModelId: projectedWorld.snapshot.worldModelId,
+        sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+        graphSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
+      },
+    };
   }
 
   if (!candidateSet.candidates.length) fail("An empty candidate set cannot be accepted.", "ONBOARDING_EVIDENCE_REQUIRED");
@@ -983,6 +1078,8 @@ export async function reviewOnboarding({
   });
   verifyReviewDecision(review, inspected.project.projectId);
   const previousWorld = readWorldModel({ root: projectRoot });
+  const previousProductRevision = productModelRevisionDocument(currentCanon.model);
+  const resultingProductRevision = productModelRevisionDocument(nextModel);
   const canonFile = relativeFile(projectRoot, PRODUCT_MODEL_RELATIVE_PATH);
   const previousCanonExisted = fs.existsSync(canonFile);
   const previousCanonBytes = previousCanonExisted ? fs.readFileSync(canonFile, "utf8") : "";
@@ -990,21 +1087,28 @@ export async function reviewOnboarding({
   try {
     atomicWrite(canonFile, json(productModelDocument(nextModel)));
     promoted = true;
-    const rebuilt = await buildWorldModel({
-      root: projectRoot,
-      persist: true,
+    const rebuilt = await rebuildWithOnboardingProjection({
+      projectRoot,
+      projectId: inspected.project.projectId,
+      currentProductModelId: nextModel.productModelId,
+      sourceWorld: previousWorld,
+      additionalReviewDecisions: [review],
+      additionalProductModelRevisions: [previousProductRevision, resultingProductRevision],
       parentSourceSnapshotIds: [candidateSet.sourceSnapshotId],
+      revisionParentIds: {},
     });
+    persistProductRevision(projectRoot, currentCanon.model);
+    persistProductRevision(projectRoot, nextModel);
+    persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
     const verifiedWorld = inspectWorldModel({ root: projectRoot });
     if (verifiedWorld.status !== "current"
       || rebuilt.snapshot.productModel.productModelId !== nextModel.productModelId
       || rebuilt.snapshot.temporalProvenanceGraph.productModelId !== nextModel.productModelId
-      || !rebuilt.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds.includes(candidateSet.sourceSnapshotId)) {
+      || !rebuilt.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds.includes(candidateSet.sourceSnapshotId)
+      || !rebuilt.snapshot.temporalProvenanceGraph.onboardingProjection.reviewDecisionIds.includes(review.reviewDecisionId)
+      || !rebuilt.snapshot.temporalProvenanceGraph.onboardingProjection.productModelRevisionIds.includes(nextModel.productModelId)) {
       fail("Promoted Product Canon did not produce the expected verified GraphSnapshot.", "ONBOARDING_GRAPH_VERIFICATION_FAILED");
     }
-    persistProductRevision(projectRoot, currentCanon.model);
-    persistProductRevision(projectRoot, nextModel);
-    persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
     const nextState = writeState(projectRoot, state, {
       phase: "ready",
       worldModelId: rebuilt.snapshot.worldModelId,

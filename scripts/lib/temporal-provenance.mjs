@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
+import { verifyOnboardingGraphProjectionInput } from "./onboarding-projection.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.2.0";
-export const TEMPORAL_RELATION_TYPES = Object.freeze([
+export const TEMPORAL_PROVENANCE_VERSION = "0.3.0";
+const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
   "GOVERNED_BY",
@@ -12,8 +13,19 @@ export const TEMPORAL_RELATION_TYPES = Object.freeze([
   "DECLARES",
   "REFERENCES",
 ]);
+export const TEMPORAL_RELATION_TYPES = Object.freeze([
+  ...TEMPORAL_RELATION_TYPES_V02,
+  "PROPOSES_FROM",
+  "PROPOSES_TO",
+  "SUPPORTED_BY",
+  "REVIEWED_BY",
+  "ACCEPTED_BY",
+  "REJECTED_BY",
+  "PROMOTED_FROM",
+  "PRODUCES",
+]);
 
-export const TEMPORAL_NODE_KINDS = Object.freeze([
+const TEMPORAL_NODE_KINDS_V02 = Object.freeze([
   "Repository",
   "File",
   "FileRevision",
@@ -36,6 +48,16 @@ export const TEMPORAL_NODE_KINDS = Object.freeze([
   "SourceSnapshot",
   "SourceSnapshotReference",
   "RevisionReference",
+]);
+export const TEMPORAL_NODE_KINDS = Object.freeze([
+  ...TEMPORAL_NODE_KINDS_V02,
+  "OnboardingCandidateSet",
+  "OnboardingProductCandidate",
+  "OnboardingEvidence",
+  "OnboardingUnknown",
+  "OnboardingReviewDecision",
+  "ProductConceptReference",
+  "ProductModelRevision",
 ]);
 
 const PRODUCER = "head-agent-core-temporal-provenance";
@@ -194,17 +216,349 @@ function productRecordsFor({ projectId, productModel, productEvidenceId, revisio
   return records.sort((left, right) => left.logicalEntityId.localeCompare(right.logicalEntityId));
 }
 
+function onboardingProjectionDescriptor(projection) {
+  if (!projection) return {
+    status: "not-provided",
+    projectionInputId: null,
+    projectionInputHash: null,
+    candidateSetIds: [],
+    reviewDecisionIds: [],
+    productModelRevisionIds: [],
+  };
+  return {
+    status: "projected",
+    projectionInputId: projection.projectionInputId,
+    projectionInputHash: projection.projectionInputHash,
+    candidateSetIds: projection.candidateSets.map((item) => item.candidateSetId),
+    reviewDecisionIds: projection.reviewDecisions.map((item) => item.reviewDecisionId),
+    productModelRevisionIds: projection.productModelRevisions.map((item) => item.productModelId),
+  };
+}
+
+function appendOnboardingProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+  const emptySummary = {
+    onboardingCandidateSetCount: 0,
+    onboardingCandidateCount: 0,
+    onboardingEvidenceCount: 0,
+    onboardingUnknownCount: 0,
+    onboardingReviewDecisionCount: 0,
+    onboardingAcceptedCandidateCount: 0,
+    onboardingRejectedCandidateCount: 0,
+    productModelRevisionReceiptCount: 0,
+  };
+  if (!projection) return emptySummary;
+  verifyOnboardingGraphProjectionInput(projection);
+  const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
+  const pushNode = (node) => {
+    const existing = nodeById.get(node.nodeId);
+    if (existing) return existing;
+    nodeById.set(node.nodeId, node);
+    nodes.push(node);
+    return node;
+  };
+  const candidateById = new Map();
+  const conceptReferences = new Map();
+
+  const ensureSourceReference = (referencedSourceSnapshotId, evidenceIds) => {
+    if (referencedSourceSnapshotId === sourceSnapshotId) return sourceSnapshotId;
+    pushNode({
+      nodeId: referencedSourceSnapshotId,
+      kind: "SourceSnapshotReference",
+      referencedSourceSnapshotId,
+      ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "onboarding-source-reference" }),
+    });
+    return referencedSourceSnapshotId;
+  };
+
+  for (const candidateSet of projection.candidateSets) {
+    const setEvidenceIds = candidateSet.evidence.map((evidence) => evidence.evidenceId);
+    const setEvidenceId = identity("evidence", {
+      kind: "onboarding-candidate-set",
+      candidateSetId: candidateSet.candidateSetId,
+      candidateSetHash: candidateSet.candidateSetHash,
+    });
+    const sourceReferenceId = ensureSourceReference(candidateSet.sourceSnapshotId, [setEvidenceId]);
+    pushNode({
+      nodeId: candidateSet.candidateSetId,
+      kind: "OnboardingCandidateSet",
+      projectId,
+      sessionId: candidateSet.sessionId,
+      candidateSetHash: candidateSet.candidateSetHash,
+      inputMode: candidateSet.inputMode,
+      evidenceWorldModelId: candidateSet.worldModelId || null,
+      evidenceSourceSnapshotId: candidateSet.sourceSnapshotId,
+      evidenceProductModelId: candidateSet.productModelId,
+      candidateIds: candidateSet.candidates.map((candidate) => candidate.candidateId),
+      onboardingEvidenceIds: setEvidenceIds,
+      unknownIds: candidateSet.unknowns.map((unknown) => unknown.unknownId),
+      parentCandidateSetIds: candidateSet.parentCandidateSetIds,
+      successorReviewDecisionId: candidateSet.reviewDecisionId,
+      ...nodeMetadata({ evidenceIds: [...setEvidenceIds, setEvidenceId], sourceSnapshotId, origin: "onboarding-candidate-set" }),
+    });
+    edges.push(edgeRecord({
+      type: "PROPOSES_FROM",
+      from: candidateSet.candidateSetId,
+      to: sourceReferenceId,
+      sourceSnapshotId,
+      evidenceIds: [setEvidenceId],
+      origin: "onboarding-candidate-source",
+    }));
+    for (const evidence of candidateSet.evidence) {
+      pushNode({
+        nodeId: evidence.evidenceId,
+        kind: "OnboardingEvidence",
+        onboardingEvidenceHash: evidence.evidenceHash,
+        sourceKind: evidence.sourceKind,
+        sourceId: evidence.sourceId,
+        path: evidence.path,
+        line: evidence.line,
+        contentDigest: evidence.contentDigest,
+        statement: evidence.statement,
+        ...nodeMetadata({ evidenceIds: [evidence.evidenceId], sourceSnapshotId, origin: `onboarding-evidence:${evidence.sourceKind}` }),
+      });
+      edges.push(edgeRecord({
+        type: "CONTAINS",
+        from: candidateSet.candidateSetId,
+        to: evidence.evidenceId,
+        sourceSnapshotId,
+        evidenceIds: [evidence.evidenceId],
+        origin: "onboarding-candidate-set",
+      }));
+    }
+    for (const candidate of candidateSet.candidates) {
+      candidateById.set(candidate.candidateId, { candidate, candidateSet });
+      pushNode({
+        nodeId: candidate.candidateId,
+        kind: "OnboardingProductCandidate",
+        candidateHash: candidate.candidateHash,
+        productKind: candidate.productKind,
+        proposedEntity: candidate.proposedEntity,
+        explanation: candidate.explanation,
+        evidenceSourceSnapshotId: candidate.sourceSnapshotId,
+        ...nodeMetadata({
+          evidenceIds: candidate.evidenceIds,
+          sourceSnapshotId,
+          authorityClass: "heuristic",
+          origin: candidate.origin,
+          confidence: candidate.confidence,
+        }),
+      });
+      edges.push(edgeRecord({
+        type: "CONTAINS",
+        from: candidateSet.candidateSetId,
+        to: candidate.candidateId,
+        sourceSnapshotId,
+        evidenceIds: candidate.evidenceIds,
+        origin: "onboarding-candidate-set",
+      }));
+      const conceptReferenceId = identity("product-concept-reference", {
+        projectId,
+        productKind: candidate.productKind,
+        key: candidate.proposedEntity.key,
+      });
+      const concept = conceptReferences.get(conceptReferenceId) || {
+        productKind: candidate.productKind,
+        key: candidate.proposedEntity.key,
+        evidenceIds: new Set(),
+      };
+      for (const evidenceId of candidate.evidenceIds) concept.evidenceIds.add(evidenceId);
+      conceptReferences.set(conceptReferenceId, concept);
+      edges.push(edgeRecord({
+        type: "PROPOSES_TO",
+        from: candidate.candidateId,
+        to: conceptReferenceId,
+        sourceSnapshotId,
+        evidenceIds: candidate.evidenceIds,
+        origin: candidate.origin,
+        authorityClass: "heuristic",
+        confidence: candidate.confidence,
+      }));
+      for (const evidenceId of candidate.evidenceIds) edges.push(edgeRecord({
+        type: "SUPPORTED_BY",
+        from: candidate.candidateId,
+        to: evidenceId,
+        sourceSnapshotId,
+        evidenceIds: [evidenceId],
+        origin: candidate.origin,
+        authorityClass: "heuristic",
+        confidence: candidate.confidence,
+      }));
+    }
+    for (const unknown of candidateSet.unknowns) {
+      pushNode({
+        nodeId: unknown.unknownId,
+        kind: "OnboardingUnknown",
+        statement: unknown.statement,
+        unknownStatus: unknown.status,
+        ...nodeMetadata({ evidenceIds: unknown.evidenceIds || [], sourceSnapshotId, origin: "onboarding-explicit-unknown" }),
+      });
+      edges.push(edgeRecord({
+        type: "CONTAINS",
+        from: candidateSet.candidateSetId,
+        to: unknown.unknownId,
+        sourceSnapshotId,
+        evidenceIds: unknown.evidenceIds || [],
+        origin: "onboarding-candidate-set",
+      }));
+    }
+  }
+
+  for (const [conceptReferenceId, concept] of conceptReferences) pushNode({
+    nodeId: conceptReferenceId,
+    kind: "ProductConceptReference",
+    projectId,
+    productKind: concept.productKind,
+    key: concept.key,
+    ...nodeMetadata({ evidenceIds: [...concept.evidenceIds], sourceSnapshotId, origin: "onboarding-candidate-target" }),
+  });
+
+  for (const candidateSet of projection.candidateSets) for (const parentCandidateSetId of candidateSet.parentCandidateSetIds) {
+    edges.push(edgeRecord({
+      type: "PARENT_OF",
+      from: parentCandidateSetId,
+      to: candidateSet.candidateSetId,
+      sourceSnapshotId,
+      evidenceIds: [identity("evidence", { kind: "onboarding-candidate-parent", parentCandidateSetId, candidateSetId: candidateSet.candidateSetId })],
+      origin: "onboarding-review-revision",
+      authorityClass: "reviewed",
+    }));
+  }
+
+  for (const revision of projection.productModelRevisions) {
+    const model = normalizeProductModelDocument(revision.document);
+    pushNode({
+      nodeId: revision.productModelId,
+      kind: "ProductModelRevision",
+      productModelHash: revision.productModelHash,
+      entityCounts: {
+        featureGroups: model.featureGroups.length,
+        capabilities: model.capabilities.length,
+        features: model.features.length,
+        requirements: model.requirements.length,
+        constraints: model.constraints.length,
+        decisions: model.decisions.length,
+      },
+      ...nodeMetadata({
+        evidenceIds: [identity("evidence", { kind: "product-model-revision", productModelId: revision.productModelId, productModelHash: revision.productModelHash })],
+        sourceSnapshotId,
+        authorityClass: "canon-projected",
+        origin: "user-owned-product-canon-revision",
+      }),
+    });
+  }
+
+  for (const review of projection.reviewDecisions) {
+    const reviewEvidenceId = identity("evidence", {
+      kind: "onboarding-review-decision",
+      reviewDecisionId: review.reviewDecisionId,
+      reviewDecisionHash: review.reviewDecisionHash,
+    });
+    pushNode({
+      nodeId: review.reviewDecisionId,
+      kind: "OnboardingReviewDecision",
+      projectId,
+      sessionId: review.sessionId,
+      reviewDecisionHash: review.reviewDecisionHash,
+      candidateSetId: review.candidateSetId,
+      disposition: review.disposition,
+      acceptedCandidateIds: review.acceptedCandidateIds,
+      rejectedCandidateIds: review.rejectedCandidateIds,
+      previousProductModelId: review.previousProductModelId,
+      previousProductModelHash: review.previousProductModelHash,
+      resultingProductModelId: review.resultingProductModelId,
+      resultingProductModelHash: review.resultingProductModelHash,
+      rationale: review.rationale,
+      sourceAuthority: review.authority,
+      sourcePromotionAuthority: review.promotionAuthority,
+      ...nodeMetadata({ evidenceIds: [reviewEvidenceId], sourceSnapshotId, authorityClass: "reviewed", origin: "explicit-user-onboarding-review" }),
+    });
+    edges.push(edgeRecord({
+      type: "REVIEWED_BY",
+      from: review.candidateSetId,
+      to: review.reviewDecisionId,
+      sourceSnapshotId,
+      evidenceIds: [reviewEvidenceId],
+      origin: "explicit-user-onboarding-review",
+      authorityClass: "reviewed",
+    }));
+    for (const candidateId of review.acceptedCandidateIds) edges.push(edgeRecord({
+      type: "ACCEPTED_BY",
+      from: candidateId,
+      to: review.reviewDecisionId,
+      sourceSnapshotId,
+      evidenceIds: [reviewEvidenceId],
+      origin: "explicit-user-onboarding-review",
+      authorityClass: "reviewed",
+    }));
+    for (const candidateId of review.rejectedCandidateIds) edges.push(edgeRecord({
+      type: "REJECTED_BY",
+      from: candidateId,
+      to: review.reviewDecisionId,
+      sourceSnapshotId,
+      evidenceIds: [reviewEvidenceId],
+      origin: "explicit-user-onboarding-review",
+      authorityClass: "reviewed",
+    }));
+    if (review.promotionAuthority) {
+      edges.push(edgeRecord({
+        type: "PRODUCES",
+        from: review.reviewDecisionId,
+        to: review.resultingProductModelId,
+        sourceSnapshotId,
+        evidenceIds: [reviewEvidenceId],
+        origin: "explicit-user-onboarding-review",
+        authorityClass: "reviewed",
+      }));
+      if (review.previousProductModelId !== review.resultingProductModelId) edges.push(edgeRecord({
+        type: "PARENT_OF",
+        from: review.previousProductModelId,
+        to: review.resultingProductModelId,
+        sourceSnapshotId,
+        evidenceIds: [reviewEvidenceId],
+        origin: "explicit-user-onboarding-review",
+        authorityClass: "reviewed",
+      }));
+      for (const candidateId of review.acceptedCandidateIds) edges.push(edgeRecord({
+        type: "PROMOTED_FROM",
+        from: review.resultingProductModelId,
+        to: candidateId,
+        sourceSnapshotId,
+        evidenceIds: [reviewEvidenceId, ...(candidateById.get(candidateId)?.candidate.evidenceIds || [])],
+        origin: "explicit-user-onboarding-review",
+        authorityClass: "reviewed",
+      }));
+    }
+  }
+
+  return {
+    onboardingCandidateSetCount: projection.candidateSets.length,
+    onboardingCandidateCount: projection.candidateSets.reduce((count, item) => count + item.candidates.length, 0),
+    onboardingEvidenceCount: new Set(projection.candidateSets.flatMap((item) => item.evidence.map((evidence) => evidence.evidenceId))).size,
+    onboardingUnknownCount: new Set(projection.candidateSets.flatMap((item) => item.unknowns.map((unknown) => unknown.unknownId))).size,
+    onboardingReviewDecisionCount: projection.reviewDecisions.length,
+    onboardingAcceptedCandidateCount: projection.reviewDecisions.reduce((count, item) => count + item.acceptedCandidateIds.length, 0),
+    onboardingRejectedCandidateCount: projection.reviewDecisions.reduce((count, item) => count + item.rejectedCandidateIds.length, 0),
+    productModelRevisionReceiptCount: projection.productModelRevisions.length,
+  };
+}
+
 export function buildTemporalProvenanceGraph({
   projectId,
   files,
   productModel = null,
   productEvidenceId = "",
+  onboardingProjection = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
 } = {}) {
   if (typeof projectId !== "string" || !projectId.trim()) fail("projectId is required.", "TEMPORAL_PROJECT_ID_REQUIRED");
   if (!Array.isArray(files)) fail("files must be an array.", "TEMPORAL_FILES_REQUIRED");
   const selectedProductModel = productModel || normalizeProductModelDocument(emptyProductModelDocument());
+  const selectedOnboardingProjection = onboardingProjection ? verifyOnboardingGraphProjectionInput(onboardingProjection) : null;
+  if (selectedOnboardingProjection && (selectedOnboardingProjection.projectId !== projectId
+    || selectedOnboardingProjection.currentProductModelId !== selectedProductModel.productModelId)) {
+    fail("Onboarding projection input does not match the temporal graph scope.", "ONBOARDING_TEMPORAL_SCOPE_MISMATCH");
+  }
   const selectedProductEvidenceId = productEvidenceId || identity("evidence", {
     kind: "product-canon",
     productModelHash: selectedProductModel.productModelHash,
@@ -516,6 +870,25 @@ export function buildTemporalProvenanceGraph({
     });
   }
 
+  const onboardingSummary = appendOnboardingProjection({
+    projectId,
+    sourceSnapshotId,
+    projection: selectedOnboardingProjection,
+    nodes,
+    edges,
+  });
+
+  const uniqueEdges = new Map();
+  for (const edge of edges) {
+    const existing = uniqueEdges.get(edge.edgeId);
+    if (existing && canonicalJson(existing) !== canonicalJson(edge)) {
+      fail(`Temporal edge identity collision: ${edge.edgeId}`, "TEMPORAL_EDGE_IDENTITY_COLLISION");
+    }
+    uniqueEdges.set(edge.edgeId, edge);
+  }
+  edges.length = 0;
+  edges.push(...uniqueEdges.values());
+
   nodes.sort((left, right) => left.nodeId.localeCompare(right.nodeId));
   edges.sort((left, right) => left.edgeId.localeCompare(right.edgeId));
   const summary = {
@@ -535,7 +908,8 @@ export function buildTemporalProvenanceGraph({
     decisionCount: nodes.filter((node) => node.kind === "Decision").length,
     productRevisionCount: productRevisionIds.length,
     sourceParentCount: parents.length,
-    revisionParentCount: edges.filter((edge) => edge.type === "PARENT_OF" && edge.to !== sourceSnapshotId).length,
+    revisionParentCount: Object.values(revisionParents).reduce((count, values) => count + values.length, 0),
+    ...onboardingSummary,
   };
   const payload = {
     kind: "GraphSnapshot",
@@ -546,6 +920,7 @@ export function buildTemporalProvenanceGraph({
     projectId,
     productModelId: selectedProductModel.productModelId,
     productModelHash: selectedProductModel.productModelHash,
+    onboardingProjection: onboardingProjectionDescriptor(selectedOnboardingProjection),
     sourceSnapshotId,
     parentSourceSnapshotIds: parents,
     revisionParentIds: revisionParents,
@@ -634,6 +1009,17 @@ function expectedNodeId(node) {
   });
   if (node.kind === "SourceSnapshotReference") return node.referencedSourceSnapshotId;
   if (node.kind === "RevisionReference") return node.referencedRevisionId;
+  if (node.kind === "OnboardingCandidateSet") return `onboarding-candidates-${String(node.candidateSetHash || "").slice(0, 24)}`;
+  if (node.kind === "OnboardingProductCandidate") return `onboarding-candidate-${String(node.candidateHash || "").slice(0, 24)}`;
+  if (node.kind === "OnboardingEvidence") return `onboarding-evidence-${String(node.onboardingEvidenceHash || "").slice(0, 24)}`;
+  if (node.kind === "OnboardingUnknown") return node.nodeId;
+  if (node.kind === "OnboardingReviewDecision") return `onboarding-review-decision-${String(node.reviewDecisionHash || "").slice(0, 24)}`;
+  if (node.kind === "ProductConceptReference") return identity("product-concept-reference", {
+    projectId: node.projectId,
+    productKind: node.productKind,
+    key: node.key,
+  });
+  if (node.kind === "ProductModelRevision") return `product-model-${String(node.productModelHash || "").slice(0, 24)}`;
   return "";
 }
 
@@ -642,22 +1028,34 @@ function validEndpointKinds(type, fromKind, toKind) {
   const productRevisionKinds = productKinds.map((kind) => `${kind}Revision`);
   if (type === "CONTAINS") return (fromKind === "Repository" && ["File", "Test"].includes(toKind))
     || (fromKind === "SourceSnapshot" && ["FileRevision", ...productRevisionKinds].includes(toKind))
-    || (fromKind === "FeatureGroup" && ["FeatureGroup", "Feature"].includes(toKind));
+    || (fromKind === "FeatureGroup" && ["FeatureGroup", "Feature"].includes(toKind))
+    || (fromKind === "OnboardingCandidateSet" && ["OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown"].includes(toKind));
   if (["HAS_REVISION", "CURRENT_REVISION"].includes(type)) return (fromKind === "File" && toKind === "FileRevision")
     || (fromKind === "Symbol" && toKind === "SymbolRevision") || (fromKind === "Test" && toKind === "TestRevision")
     || productKinds.some((kind) => fromKind === kind && toKind === `${kind}Revision`);
   if (type === "PARENT_OF") return (["SourceSnapshot", "SourceSnapshotReference"].includes(fromKind) && toKind === "SourceSnapshot")
-    || (fromKind === "RevisionReference" && ["FileRevision", "SymbolRevision", "TestRevision", ...productRevisionKinds].includes(toKind));
+    || (fromKind === "RevisionReference" && ["FileRevision", "SymbolRevision", "TestRevision", ...productRevisionKinds].includes(toKind))
+    || (fromKind === "OnboardingCandidateSet" && toKind === "OnboardingCandidateSet")
+    || (fromKind === "ProductModelRevision" && toKind === "ProductModelRevision");
   if (type === "DECLARES") return fromKind === "FileRevision" && toKind === "SymbolRevision";
   if (type === "REFERENCES") return fromKind === "TestRevision" && toKind === "FileRevision";
   if (type === "REALIZES") return fromKind === "Feature" && toKind === "Capability";
   if (type === "GOVERNED_BY") return fromKind === "Feature" && ["Requirement", "Constraint", "Decision"].includes(toKind);
+  if (type === "PROPOSES_FROM") return fromKind === "OnboardingCandidateSet" && ["SourceSnapshot", "SourceSnapshotReference"].includes(toKind);
+  if (type === "PROPOSES_TO") return fromKind === "OnboardingProductCandidate" && toKind === "ProductConceptReference";
+  if (type === "SUPPORTED_BY") return fromKind === "OnboardingProductCandidate" && toKind === "OnboardingEvidence";
+  if (type === "REVIEWED_BY") return fromKind === "OnboardingCandidateSet" && toKind === "OnboardingReviewDecision";
+  if (["ACCEPTED_BY", "REJECTED_BY"].includes(type)) return fromKind === "OnboardingProductCandidate" && toKind === "OnboardingReviewDecision";
+  if (type === "PROMOTED_FROM") return fromKind === "ProductModelRevision" && toKind === "OnboardingProductCandidate";
+  if (type === "PRODUCES") return fromKind === "OnboardingReviewDecision" && toKind === "ProductModelRevision";
   return false;
 }
 
 export function verifyTemporalProvenanceGraph(graph) {
+  const graphVersion = graph?.protocol?.version;
+  const legacyV02 = graphVersion === "0.2.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || graph.protocol.version !== TEMPORAL_PROVENANCE_VERSION) {
+    || !new Set(["0.2.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
@@ -679,8 +1077,10 @@ export function verifyTemporalProvenanceGraph(graph) {
   if (canonicalJson(graph.revisionParentIds) !== canonicalJson(normalizeRevisionParentIds(graph.revisionParentIds))) {
     fail("Revision parents must be normalized.", "INVALID_REVISION_PARENT_SET");
   }
-  if (canonicalJson(graph.relationTypes) !== canonicalJson([...TEMPORAL_RELATION_TYPES])
-    || canonicalJson(graph.nodeKinds) !== canonicalJson([...TEMPORAL_NODE_KINDS])) {
+  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : TEMPORAL_RELATION_TYPES;
+  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : TEMPORAL_NODE_KINDS;
+  if (canonicalJson(graph.relationTypes) !== canonicalJson([...expectedRelationTypes])
+    || canonicalJson(graph.nodeKinds) !== canonicalJson([...expectedNodeKinds])) {
     fail("Temporal graph vocabulary does not match the implemented allowlist.", "TEMPORAL_VOCABULARY_MISMATCH");
   }
   if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) fail("Temporal graph nodes and edges are required.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
@@ -730,7 +1130,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     testRevisionIds: actualTestRevisionIds,
     productRevisionIds: actualProductRevisionIds,
     productModelId: graph.productModelId,
-    producerVersion: TEMPORAL_PROVENANCE_VERSION,
+    producerVersion: sourceSnapshot.producerVersion,
   }));
   if (sourceSnapshot.stateDigest !== expectedStateDigest) fail("SourceSnapshot state digest is invalid.", "SOURCE_SNAPSHOT_STATE_MISMATCH");
   const repositories = graph.nodes.filter((node) => node.kind === "Repository");
@@ -774,7 +1174,7 @@ export function verifyTemporalProvenanceGraph(graph) {
   const edgeIds = new Set();
   for (const edge of graph.edges) {
     if (!TEMPORAL_RELATION_TYPES.includes(edge.type)) fail(`Unsupported temporal relation: ${edge.type}`, "UNSUPPORTED_TEMPORAL_RELATION");
-    if (edgeIds.has(edge.edgeId)) fail(`Duplicate temporal edge: ${edge.edgeId}`, "DUPLICATE_TEMPORAL_EDGE");
+    if (edgeIds.has(edge.edgeId)) fail(`Duplicate temporal edge: ${edge.edgeId} (${edge.type} ${edge.from} -> ${edge.to})`, "DUPLICATE_TEMPORAL_EDGE");
     requireMetadata(edge, `Edge ${edge.edgeId}`);
     if (edge.sourceSnapshotId !== graph.sourceSnapshotId) fail(`Edge ${edge.edgeId} is scoped to a different SourceSnapshot.`, "TEMPORAL_SCOPE_MISMATCH");
     const from = nodes.get(edge.from);
@@ -803,6 +1203,143 @@ export function verifyTemporalProvenanceGraph(graph) {
         || reference.revisionKind !== node.kind || revisionReferenceKind(parentRevisionId) !== node.kind
         || !hasEdge("PARENT_OF", parentRevisionId, node.nodeId)) {
         fail(`Revision parent projection is incomplete: ${parentRevisionId}`, "REVISION_PARENT_MISSING");
+      }
+    }
+  }
+  const onboardingDescriptor = legacyV02 ? onboardingProjectionDescriptor(null) : graph.onboardingProjection;
+  if (!onboardingDescriptor || !["not-provided", "projected"].includes(onboardingDescriptor.status)) {
+    fail("Temporal graph onboarding projection descriptor is invalid.", "INVALID_ONBOARDING_TEMPORAL_PROJECTION");
+  }
+  for (const field of ["candidateSetIds", "reviewDecisionIds", "productModelRevisionIds"]) {
+    if (!Array.isArray(onboardingDescriptor[field])
+      || canonicalJson(onboardingDescriptor[field]) !== canonicalJson([...new Set(onboardingDescriptor[field])].sort())) {
+      fail(`Temporal graph onboarding ${field} must be sorted and unique.`, "INVALID_ONBOARDING_TEMPORAL_PROJECTION");
+    }
+  }
+  if (onboardingDescriptor.status === "projected"
+    && (!/^onboarding-graph-input-[a-f0-9]{24}$/.test(onboardingDescriptor.projectionInputId || "")
+      || !/^[a-f0-9]{64}$/.test(onboardingDescriptor.projectionInputHash || ""))) {
+    fail("Temporal graph onboarding projection identity is invalid.", "INVALID_ONBOARDING_TEMPORAL_PROJECTION");
+  }
+  if (onboardingDescriptor.status === "not-provided"
+    && (onboardingDescriptor.projectionInputId != null || onboardingDescriptor.projectionInputHash != null
+      || onboardingDescriptor.candidateSetIds.length || onboardingDescriptor.reviewDecisionIds.length
+      || onboardingDescriptor.productModelRevisionIds.length)) {
+    fail("Temporal graph claims onboarding artifacts without a projection input.", "INVALID_ONBOARDING_TEMPORAL_PROJECTION");
+  }
+  const onboardingCandidateSets = graph.nodes.filter((node) => node.kind === "OnboardingCandidateSet");
+  const onboardingCandidates = graph.nodes.filter((node) => node.kind === "OnboardingProductCandidate");
+  const onboardingEvidence = graph.nodes.filter((node) => node.kind === "OnboardingEvidence");
+  const onboardingUnknowns = graph.nodes.filter((node) => node.kind === "OnboardingUnknown");
+  const onboardingReviews = graph.nodes.filter((node) => node.kind === "OnboardingReviewDecision");
+  const productModelRevisions = graph.nodes.filter((node) => node.kind === "ProductModelRevision");
+  const productConceptReferences = graph.nodes.filter((node) => node.kind === "ProductConceptReference");
+  const idsOf = (records) => records.map((record) => record.nodeId).sort();
+  if (canonicalJson(idsOf(onboardingCandidateSets)) !== canonicalJson(onboardingDescriptor.candidateSetIds)
+    || canonicalJson(idsOf(onboardingReviews)) !== canonicalJson(onboardingDescriptor.reviewDecisionIds)
+    || canonicalJson(idsOf(productModelRevisions)) !== canonicalJson(onboardingDescriptor.productModelRevisionIds)) {
+    fail("Temporal graph onboarding artifact sets do not match the projection descriptor.", "ONBOARDING_TEMPORAL_SET_MISMATCH");
+  }
+  const onboardingCandidateIds = new Set(idsOf(onboardingCandidates));
+  const onboardingEvidenceIds = new Set(idsOf(onboardingEvidence));
+  const onboardingUnknownIds = new Set(idsOf(onboardingUnknowns));
+  const productModelRevisionIds = new Set(idsOf(productModelRevisions));
+  const containingSetsByCandidate = new Map();
+  for (const candidateSet of onboardingCandidateSets) {
+    if (!/^[a-f0-9]{64}$/.test(candidateSet.candidateSetHash || "")
+      || (candidateSet.evidenceWorldModelId != null && !/^world-model-[a-f0-9]{24}$/.test(candidateSet.evidenceWorldModelId))
+      || !/^source-snapshot-[a-f0-9]{24}$/.test(candidateSet.evidenceSourceSnapshotId || "")
+      || !/^product-model-[a-f0-9]{24}$/.test(candidateSet.evidenceProductModelId || "")) {
+      fail(`Onboarding candidate-set node is invalid: ${candidateSet.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
+    }
+    for (const [field, known] of [["candidateIds", onboardingCandidateIds], ["onboardingEvidenceIds", onboardingEvidenceIds], ["unknownIds", onboardingUnknownIds]]) {
+      if (!Array.isArray(candidateSet[field]) || candidateSet[field].some((id) => !known.has(id))) {
+        fail(`Onboarding candidate set has invalid ${field}: ${candidateSet.nodeId}`, "ONBOARDING_TEMPORAL_DANGLING_REFERENCE");
+      }
+      for (const id of candidateSet[field]) if (!hasEdge("CONTAINS", candidateSet.nodeId, id)) {
+        fail(`Onboarding candidate-set containment is missing: ${candidateSet.nodeId} -> ${id}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+      }
+    }
+    const proposedFrom = graph.edges.filter((edge) => edge.type === "PROPOSES_FROM" && edge.from === candidateSet.nodeId);
+    if (proposedFrom.length !== 1 || proposedFrom[0].to !== candidateSet.evidenceSourceSnapshotId) {
+      fail(`Onboarding candidate-set source relation is invalid: ${candidateSet.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+    }
+    for (const parentId of candidateSet.parentCandidateSetIds || []) if (!hasEdge("PARENT_OF", parentId, candidateSet.nodeId)) {
+      fail(`Onboarding candidate-set parent relation is missing: ${candidateSet.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+    }
+    for (const candidateId of candidateSet.candidateIds) {
+      const memberships = containingSetsByCandidate.get(candidateId) || [];
+      memberships.push(candidateSet.nodeId);
+      containingSetsByCandidate.set(candidateId, memberships);
+    }
+  }
+  for (const candidate of onboardingCandidates) {
+    if (!/^[a-f0-9]{64}$/.test(candidate.candidateHash || "") || !Object.keys(PRODUCT_DEFINITIONS).includes(candidate.productKind)
+      || !/^source-snapshot-[a-f0-9]{24}$/.test(candidate.evidenceSourceSnapshotId || "")) {
+      fail(`Onboarding candidate node is invalid: ${candidate.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
+    }
+    if (!(containingSetsByCandidate.get(candidate.nodeId) || []).length) {
+      fail(`Onboarding candidate must belong to at least one candidate set: ${candidate.nodeId}`, "ONBOARDING_TEMPORAL_SET_MISMATCH");
+    }
+    const targetEdges = graph.edges.filter((edge) => edge.type === "PROPOSES_TO" && edge.from === candidate.nodeId);
+    if (targetEdges.length !== 1 || nodes.get(targetEdges[0].to)?.kind !== "ProductConceptReference") {
+      fail(`Onboarding candidate target relation is invalid: ${candidate.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+    }
+    const supportedIds = graph.edges.filter((edge) => edge.type === "SUPPORTED_BY" && edge.from === candidate.nodeId).map((edge) => edge.to).sort();
+    if (canonicalJson(supportedIds) !== canonicalJson(candidate.evidenceIds)) {
+      fail(`Onboarding candidate Evidence relations are incomplete: ${candidate.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  for (const evidence of onboardingEvidence) {
+    if (!/^[a-f0-9]{64}$/.test(evidence.onboardingEvidenceHash || "") || typeof evidence.statement !== "string" || !evidence.statement) {
+      fail(`Onboarding Evidence node is invalid: ${evidence.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
+    }
+  }
+  for (const unknown of onboardingUnknowns) if (!/^onboarding-unknown-[a-f0-9]{24}$/.test(unknown.nodeId) || unknown.unknownStatus !== "open") {
+    fail(`Onboarding Unknown node is invalid: ${unknown.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
+  }
+  for (const reference of productConceptReferences) if (!Object.keys(PRODUCT_DEFINITIONS).includes(reference.productKind) || typeof reference.key !== "string" || !reference.key) {
+    fail(`Product concept reference is invalid: ${reference.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
+  }
+  for (const revision of productModelRevisions) if (!/^[a-f0-9]{64}$/.test(revision.productModelHash || "")
+    || !revision.entityCounts || Object.values(revision.entityCounts).some((count) => !Number.isInteger(count) || count < 0)) {
+    fail(`Product Model revision node is invalid: ${revision.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
+  }
+  let acceptedCandidateCount = 0;
+  let rejectedCandidateCount = 0;
+  for (const review of onboardingReviews) {
+    if (!/^[a-f0-9]{64}$/.test(review.reviewDecisionHash || "")
+      || !["accept-all", "accept-selection", "revise", "reject"].includes(review.disposition)
+      || !onboardingDescriptor.candidateSetIds.includes(review.candidateSetId)
+      || review.sourceAuthority !== "explicit-user-onboarding-review" || typeof review.sourcePromotionAuthority !== "boolean") {
+      fail(`Onboarding ReviewDecision node is invalid: ${review.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
+    }
+    if (!hasEdge("REVIEWED_BY", review.candidateSetId, review.nodeId)) {
+      fail(`Onboarding review relation is missing: ${review.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+    }
+    for (const candidateId of review.acceptedCandidateIds) {
+      if (!onboardingCandidateIds.has(candidateId) || !hasEdge("ACCEPTED_BY", candidateId, review.nodeId)) {
+        fail(`Onboarding acceptance relation is missing: ${candidateId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+      }
+      acceptedCandidateCount += 1;
+    }
+    for (const candidateId of review.rejectedCandidateIds) {
+      if (!onboardingCandidateIds.has(candidateId) || !hasEdge("REJECTED_BY", candidateId, review.nodeId)) {
+        fail(`Onboarding rejection relation is missing: ${candidateId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+      }
+      rejectedCandidateCount += 1;
+    }
+    if (review.sourcePromotionAuthority) {
+      if (!productModelRevisionIds.has(review.previousProductModelId) || !productModelRevisionIds.has(review.resultingProductModelId)
+        || !hasEdge("PRODUCES", review.nodeId, review.resultingProductModelId)) {
+        fail(`Onboarding promotion receipt is incomplete: ${review.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+      }
+      if (review.previousProductModelId !== review.resultingProductModelId
+        && !hasEdge("PARENT_OF", review.previousProductModelId, review.resultingProductModelId)) {
+        fail(`Product Model revision ancestry is missing: ${review.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
+      }
+      for (const candidateId of review.acceptedCandidateIds) if (!hasEdge("PROMOTED_FROM", review.resultingProductModelId, candidateId)) {
+        fail(`Product Model promotion provenance is missing: ${candidateId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
       }
     }
   }
@@ -889,8 +1426,18 @@ export function verifyTemporalProvenanceGraph(graph) {
     decisionCount: graph.nodes.filter((node) => node.kind === "Decision").length,
     productRevisionCount: actualProductRevisionIds.length,
     sourceParentCount: graph.parentSourceSnapshotIds.length,
-    revisionParentCount: graph.edges.filter((edge) => edge.type === "PARENT_OF" && edge.to !== graph.sourceSnapshotId).length,
+    revisionParentCount: Object.values(actualRevisionParentIds).reduce((count, values) => count + values.length, 0),
   };
+  if (!legacyV02) Object.assign(summary, {
+    onboardingCandidateSetCount: onboardingCandidateSets.length,
+    onboardingCandidateCount: onboardingCandidates.length,
+    onboardingEvidenceCount: onboardingEvidence.length,
+    onboardingUnknownCount: onboardingUnknowns.length,
+    onboardingReviewDecisionCount: onboardingReviews.length,
+    onboardingAcceptedCandidateCount: acceptedCandidateCount,
+    onboardingRejectedCandidateCount: rejectedCandidateCount,
+    productModelRevisionReceiptCount: productModelRevisions.length,
+  });
   if (canonicalJson(summary) !== canonicalJson(graph.summary)) fail("Temporal graph summary does not match its contents.", "TEMPORAL_SUMMARY_MISMATCH");
   return graph;
 }
@@ -905,6 +1452,7 @@ function normalizeAllowlist(values, supported, label) {
 function searchable(node) {
   return [node.nodeId, node.kind, node.path, node.name, node.symbolKind, node.classification, node.language,
     node.key, node.logicalEntityId, node.fileId, node.fileRevisionId, node.referencedSourceSnapshotId, node.referencedRevisionId,
+    node.productKind, node.inputMode, node.sourceKind, node.disposition, node.statement, node.explanation, node.rationale,
     node.semantic ? canonicalJson(node.semantic) : ""]
     .filter(Boolean).join(" ").toLocaleLowerCase();
 }
@@ -913,7 +1461,7 @@ export function queryTemporalProvenanceGraph(graph, {
   query,
   kinds = null,
   relations = null,
-  authorityClasses = ["canon-projected", "derived", "heuristic"],
+  authorityClasses = ["canon-projected", "reviewed", "derived", "heuristic"],
   freshness = ["current"],
   minConfidence = 0,
   includeUnreviewedCandidates = false,
@@ -936,11 +1484,13 @@ export function queryTemporalProvenanceGraph(graph, {
   if (!Number.isInteger(safeMaxNodes) || safeMaxNodes < 1 || safeMaxNodes > 500) fail("Temporal traversal maxNodes must be from 1 to 500.", "INVALID_TEMPORAL_QUERY_NODE_LIMIT");
   if (!Number.isInteger(safeMaxEdges) || safeMaxEdges < 0 || safeMaxEdges > 1000) fail("Temporal traversal maxEdges must be from 0 to 1000.", "INVALID_TEMPORAL_QUERY_EDGE_LIMIT");
   if (!Number.isFinite(safeMinimumConfidence) || safeMinimumConfidence < 0 || safeMinimumConfidence > 1) fail("Temporal traversal minConfidence must be from zero through one.", "INVALID_TEMPORAL_QUERY_CONFIDENCE");
-  if (includeUnreviewedCandidates !== false) fail("This graph slice has no candidate-eligible traversal surface.", "TEMPORAL_CANDIDATE_TRAVERSAL_UNAVAILABLE");
+  if (typeof includeUnreviewedCandidates !== "boolean") fail("includeUnreviewedCandidates must be boolean.", "INVALID_TEMPORAL_QUERY_CANDIDATE_POLICY");
 
   const confidenceOf = (record) => record.confidence == null ? 1 : record.confidence;
+  const candidateSurfaceKinds = new Set(["OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "ProductConceptReference"]);
+  const candidatePolicyAllows = (record) => includeUnreviewedCandidates || !candidateSurfaceKinds.has(record.kind);
   const nodeEligible = (node) => allowedKinds.includes(node.kind) && allowedAuthorityClasses.includes(node.authorityClass)
-    && allowedFreshness.includes(node.freshness) && confidenceOf(node) >= safeMinimumConfidence;
+    && allowedFreshness.includes(node.freshness) && confidenceOf(node) >= safeMinimumConfidence && candidatePolicyAllows(node);
   const edgeEligible = (edge) => allowedRelations.includes(edge.type) && allowedAuthorityClasses.includes(edge.authorityClass)
     && allowedFreshness.includes(edge.freshness) && confidenceOf(edge) >= safeMinimumConfidence;
   const eligibleNodes = graph.nodes.filter(nodeEligible);
@@ -980,7 +1530,7 @@ export function queryTemporalProvenanceGraph(graph, {
     allowedAuthorityClasses,
     allowedFreshness,
     minConfidence: safeMinimumConfidence,
-    includeUnreviewedCandidates: false,
+    includeUnreviewedCandidates,
     maxDepth: safeDepth,
     maxNodes: safeMaxNodes,
     maxEdges: safeMaxEdges,
@@ -1005,7 +1555,7 @@ export function queryTemporalProvenanceGraph(graph, {
       disallowedEdgeCount: graph.edges.filter((edge) => !edgeEligible(edge)).length,
       nodeLimitExcluded,
       edgeLimitExcluded,
-      unreviewedCandidatesExcluded: 0,
+      unreviewedCandidatesExcluded: graph.nodes.filter((node) => candidateSurfaceKinds.has(node.kind) && !includeUnreviewedCandidates).length,
     },
     truncated: nodeLimitExcluded > 0 || edgeLimitExcluded > 0,
     authority: "derived-evidence-only",
