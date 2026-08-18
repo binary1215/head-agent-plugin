@@ -9,6 +9,7 @@ import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "./lib/run-lineage.mjs";
 import { buildWorldModel, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
+import { inspectOnboarding, readOnboardingCandidateSet, readOnboardingReviewDecision, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -32,6 +33,11 @@ export function usage() {
       "head init <project> [--runtime codex,opencode]",
       "head status <project>",
       "head doctor <project>",
+      "head onboarding-start <project> [--input <onboarding.json>]",
+      "head onboarding-status <project>",
+      "head onboarding-review <project> --input <review.json>",
+      "head onboarding-candidates <project> --candidate-set <onboarding-candidate-set-id>",
+      "head onboarding-review-read <project> --review <onboarding-review-decision-id>",
       "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>] [--parent-snapshot <id,id>] [--revision-parents <json-file>]",
       "head world-status <project>",
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
@@ -61,6 +67,10 @@ function inputJson(options, label) {
   catch (error) { throw new Error(`${label} input is invalid JSON: ${error.message}`); }
 }
 
+function optionalInputJson(options, label) {
+  return options.input ? inputJson(options, label) : {};
+}
+
 function readJsonFile(file, label) {
   try { return JSON.parse(fs.readFileSync(path.resolve(file), "utf8")); }
   catch (error) { throw new Error(`${label} is invalid JSON: ${error.message}`); }
@@ -71,6 +81,11 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "help" || command === "--help" || command === "-h") return usage();
   if (command === "init") return initializeProject({ root, pluginRoot, runtimes: options.runtime?.split(",") });
   if (command === "status" || command === "doctor") return inspectProject(root);
+  if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
+  if (command === "onboarding-status") return inspectOnboarding({ root });
+  if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });
+  if (command === "onboarding-candidates") return readOnboardingCandidateSet({ root, candidateSetId: options["candidate-set"] });
+  if (command === "onboarding-review-read") return readOnboardingReviewDecision({ root, reviewDecisionId: options.review });
   if (command === "world-index") return buildWorldModel({
     root,
     persist: true,

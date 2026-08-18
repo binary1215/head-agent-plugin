@@ -6,7 +6,7 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this contract. The P
 
 `.head/context/product-model.json` is mutable project canon for `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`. New project initialization creates an explicit empty document. An older initialized project without the file is interpreted as the same empty semantic model until an authorized process creates the file, so migration does not invent product meaning.
 
-An empty Product Model means “HEAD has no approved product concepts yet.” Existing source files, tests, README headings, issues, or directory names remain Evidence and do not automatically become Features. A new project may define product intent before code exists; an existing project may later bootstrap candidates from observed evidence. The planned onboarding flow performs that inference as immutable candidates and requires a batch ReviewDecision before promotion into this canon.
+An empty Product Model means “HEAD has no approved product concepts yet.” Existing source files, tests, README headings, issues, or directory names remain Evidence and do not automatically become Features. The active onboarding flow can derive immutable candidates from bounded repository evidence or a structured new-project brief, but requires an explicit batch ReviewDecision before promotion into this canon. Directory structure is never converted into authoritative FeatureGroup taxonomy.
 
 ## Schema
 
@@ -82,6 +82,12 @@ node scripts/head.mjs world-temporal <project> --query "Message delivery" --kind
 
 The Context Compiler may include a task-relevant bounded Product Context only from a current verified World Model. It records GraphSnapshot, query, and result digests, allows only `canon-projected` product relations, and excludes unreviewed candidates.
 
+## Onboarding promotion
+
+The project-scoped onboarding state machine stores candidate sets and `decisionScope: "product-canon-bootstrap"` ReviewDecisions separately from this file. Candidates have content-derived identities plus evidence, confidence, producer, source snapshot, and explicit false instruction/promotion authority flags. `accept-all` and dependency-complete `accept-selection` create a new normalized Product Model only after stale-source, Product Canon drift, conflict, and reference checks pass. `revise` creates a successor candidate set; `reject` leaves canon unchanged.
+
+Acceptance records previous and resulting Product Model identities and immutable Product Model revision documents. It then rebuilds a child SourceSnapshot and verifies that the new Product Model identity is present in the current temporal GraphSnapshot before onboarding becomes ready. See [`onboarding.md`](onboarding.md) for the complete state and input contracts.
+
 ## Explicitly deferred
 
-This slice does not infer product canon from code, documentation, directories, Git, or runtime observations. It does not yet create Feature-to-code or Feature-to-test mapping candidates, onboarding candidate sets, onboarding ReviewDecisions, promoted conformance relations, ChangeSets, or document projections. Those capabilities require their own immutable candidate and authorized promotion contracts.
+This slice does not treat inferred code or documentation meaning as canon without review. It does not yet provide a dedicated imported-backlog adapter, Feature-to-code or Feature-to-test mapping candidates, candidate/receipt GraphSnapshot projection, promoted conformance relations, ChangeSets, or document projections. Those capabilities require their own immutable candidate and authorized promotion contracts.

@@ -88,6 +88,7 @@ The adapter descriptor and physical source path live only in the World Model poi
 - evidence-linked `DECLARES`, `IMPORTS`, and resolvable `CALLS` edges;
 - stable temporal Repository/File/Symbol/Test logical entities and immutable File/Symbol/Test revisions;
 - stable FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision logical entities with immutable canon-projected revisions;
+- onboarding-triggered explicit indexing before candidate inference and a verified child SourceSnapshot/GraphSnapshot rebuild after ReviewDecision-gated Product Canon promotion;
 - validated `CONTAINS`, `REALIZES`, and `GOVERNED_BY` product relationships independent from repository directory structure;
 - zero-or-more SourceSnapshot and Revision parents with no automatic merge claim;
 - provenance-complete `CONTAINS`, `REALIZES`, `GOVERNED_BY`, `HAS_REVISION`, `CURRENT_REVISION`, `PARENT_OF`, `DECLARES`, and `REFERENCES` edges;
@@ -122,7 +123,8 @@ This prevents a stale index from silently directing execution while still allowi
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
 - ChangeSet, product-to-code, conformance, candidate, lineage, and document-projection graph planes;
-- inferred onboarding candidates, batch ReviewDecision promotion, and Product Canon mutation workflows;
+- onboarding candidate and promotion-receipt projection into the temporal graph, beyond the active separate immutable onboarding artifacts;
+- dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
 - the replaceable `GraphProjectionAdapter` contract;
 - the optional GraphDB storage adapter and remote graph expansion.

@@ -16,6 +16,8 @@ The plugin is organized as a thin Codex distribution around a provider-neutral c
                                   content-derived lineage artifacts
        -> scripts/lib/run-lineage contract-bound Run state transitions
        -> scripts/lib/product-model user-owned product-intent canon contract
+       -> scripts/lib/onboarding project-scoped bootstrap, candidate, review, and promotion state machine
+            -> scripts/lib/onboarding-contract Session, storage, and state-pointer identity contract
        -> scripts/lib/compute-adapter backend-neutral compute and WorkerProtocol contract
        -> scripts/lib/world-model incremental repository view
             -> scripts/lib/semantic-graph evidence-linked semantic projection
@@ -26,6 +28,14 @@ The plugin is organized as a thin Codex distribution around a provider-neutral c
 ```
 
 Codex and OpenCode are projections of the same `.head/` authority. They do not own separate project truth.
+
+## Onboarding authority plane
+
+Initialization creates a project-scoped HEAD Session record and an explicit onboarding pointer independently from provider conversations. Onboarding indexes the local World Model, derives bounded evidence-linked candidates from an existing project or structured brief, and presents one immutable batch. Candidate inference stays in the JavaScript control plane and has no instruction or promotion authority.
+
+Only a CLI-supplied `ReviewDecision` with `decisionScope: product-canon-bootstrap` may create a Product Canon revision. Acceptance records previous and next Product Model hashes, rebuilds a child SourceSnapshot, and verifies the temporal GraphSnapshot before the state pointer becomes ready. Revision creates a successor candidate set; rejection leaves canon unchanged. Read-only MCP exposes the verified state but cannot review or promote.
+
+Storage selection defaults to the complete local path. A GraphDB endpoint, database, and environment-style secret-reference names can be recorded as pending operational configuration, but credentials are rejected and no remote success is claimed before an adapter passes conformance. See [`onboarding.md`](onboarding.md).
 
 ## Why the old runtime is not embedded
 

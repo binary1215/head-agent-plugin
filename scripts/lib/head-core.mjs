@@ -1,7 +1,13 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { emptyProductModelDocument } from "./product-model.mjs";
+import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
+import {
+  initialOnboardingDocuments,
+  ONBOARDING_STATE_RELATIVE_PATH,
+  ONBOARDING_STORAGE_DIRECTORY,
+  SESSION_RECORD_DIRECTORY,
+} from "./onboarding-contract.mjs";
 
 export const SCHEMA_VERSION = 1;
 export const SUPPORTED_RUNTIMES = Object.freeze(["codex", "opencode"]);
@@ -139,6 +145,28 @@ function projectFiles(root, pluginRoot, runtimes, integrations) {
     },
   };
   const sessionId = `session-${crypto.randomUUID()}`;
+  const productModelDocument = emptyProductModelDocument();
+  const productModel = normalizeProductModelDocument(productModelDocument);
+  const sessionState = {
+    schemaVersion: SCHEMA_VERSION,
+    sessionId,
+    mode: "session",
+    currentWholePlanId: null,
+    activeRunId: null,
+    activeExecutionContractId: null,
+    lastResultPacketId: null,
+    pendingReview: null,
+    lastReviewDecisionId: null,
+    requiredPlanAction: null,
+    latestCheckpoint: null,
+    updatedAt: createdAt,
+  };
+  const onboarding = initialOnboardingDocuments({
+    project,
+    sessionState,
+    productModelId: productModel.productModelId,
+    updatedAt: createdAt,
+  });
   const files = new Map([
     [".head/project.json", json(project)],
     [".head/instructions/project.md", "# Project-specific HEAD context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n"],
@@ -161,21 +189,11 @@ function projectFiles(root, pluginRoot, runtimes, integrations) {
         tags: ["repository", "coverage", "context-compiler"]
       }]
     })],
-    [".head/context/product-model.json", json(emptyProductModelDocument())],
-    [".head/sessions/current.json", json({
-      schemaVersion: SCHEMA_VERSION,
-      sessionId,
-      mode: "session",
-      currentWholePlanId: null,
-      activeRunId: null,
-      activeExecutionContractId: null,
-      lastResultPacketId: null,
-      pendingReview: null,
-      lastReviewDecisionId: null,
-      requiredPlanAction: null,
-      latestCheckpoint: null,
-      updatedAt: createdAt,
-    })],
+    [".head/context/product-model.json", json(productModelDocument)],
+    [".head/sessions/current.json", json(sessionState)],
+    [`${SESSION_RECORD_DIRECTORY}/${onboarding.sessionRecord.sessionId}.json`, json(onboarding.sessionRecord)],
+    [`${ONBOARDING_STORAGE_DIRECTORY}/${onboarding.storageSelection.storageSelectionId}.json`, json(onboarding.storageSelection)],
+    [ONBOARDING_STATE_RELATIVE_PATH, json(onboarding.state)],
   ]);
   if (integrations.codex?.status === "managed") files.set("AGENTS.md", headInstructions());
   if (integrations.opencode?.status === "managed") files.set("opencode.json", json(opencodeProjection(pluginRoot)));
@@ -214,7 +232,13 @@ export function initializeProject({ root = ".", pluginRoot, runtimes } = {}) {
       atomicWrite(file, content);
       createdFiles.push(file);
     }
-    const mutableCanon = new Set([".head/instructions/project.md", ".head/context/knowledge.json", ".head/context/product-model.json", ".head/sessions/current.json"]);
+    const mutableCanon = new Set([
+      ".head/instructions/project.md",
+      ".head/context/knowledge.json",
+      ".head/context/product-model.json",
+      ".head/sessions/current.json",
+      ONBOARDING_STATE_RELATIVE_PATH,
+    ]);
     const managed = [...files.keys()].filter((relative) => !mutableCanon.has(relative)).map((relative) => ({
       path: relative.replaceAll("\\", "/"),
       sha256: sha256(fs.readFileSync(path.join(canonicalRoot, relative))),
@@ -289,7 +313,7 @@ export function coreContract() {
     schemaVersion: SCHEMA_VERSION,
     roles: ["head", "developer", "coder", "reviewer"],
     runtimes: SUPPORTED_RUNTIMES,
-    activeCapabilities: ["project-init", "projection", "session-canon", "contract-bound-run", "result-packet", "fresh-head-review-projection", "review-gate", "review-linked-plan-generation", "knowledge-promotion-proposals", "product-model-canon-contract", "repository-world-model-alpha", "replaceable-world-model-store-contract", "local-json-world-model-store", "heuristic-semantic-call-graph", "bounded-semantic-graph-query", "product-canon-graph-projection", "temporal-product-revisions", "product-context-compilation", "compute-adapter-contract", "worker-protocol-contract", "javascript-reference-compute-adapter", "go-worker-stdio-transport", "go-worker-distribution-manifest", "native-worker-integrity-verification", "native-worker-bounded-process-lifecycle", "native-worker-javascript-fallback", "compute-backend-conformance", "repository-scan-compute-operation", "go-repository-scan-conformance-candidate", "repository-scan-conformance-corpus", "repository-scan-benchmark", "git-history-adapter-contract", "all-reachable-git-decision-evidence", "runtime-state-adapter-contract", "host-exported-runtime-state-evidence", "history-and-runtime-aware-context-compilation", "freshness-gated-repository-context", "checkpoint", "context-compiler", "execution-lineage-contracts", "read-only-mcp"],
-    deferredCapabilities: ["initial-onboarding-candidate-review", "changeset-temporal-provenance", "feature-code-mapping-candidates", "authorized-relationship-promotion", "compute-backed-graph-and-context-operations", "go-repository-scan-production-selection", "native-worker-descendant-tree-supervision", "ast-accurate-semantic-call-graph", "live-runtime-state-probe", "structured-git-decision-inference", "graphdb-world-model-store-adapter", "provider-runtime-fresh-head-hydration", "authorized-knowledge-promotion", "live-caller-fencing", "agent-comm", "service-host", "herdr"],
+    activeCapabilities: ["project-init", "projection", "session-canon", "project-scoped-session-record", "onboarding-state-machine", "privacy-safe-storage-selection", "evidence-linked-onboarding-candidates", "onboarding-batch-review", "review-gated-product-canon-bootstrap", "post-promotion-graph-verification", "contract-bound-run", "result-packet", "fresh-head-review-projection", "review-gate", "review-linked-plan-generation", "knowledge-promotion-proposals", "product-model-canon-contract", "repository-world-model-alpha", "replaceable-world-model-store-contract", "local-json-world-model-store", "heuristic-semantic-call-graph", "bounded-semantic-graph-query", "product-canon-graph-projection", "temporal-product-revisions", "product-context-compilation", "compute-adapter-contract", "worker-protocol-contract", "javascript-reference-compute-adapter", "go-worker-stdio-transport", "go-worker-distribution-manifest", "native-worker-integrity-verification", "native-worker-bounded-process-lifecycle", "native-worker-javascript-fallback", "compute-backend-conformance", "repository-scan-compute-operation", "go-repository-scan-conformance-candidate", "repository-scan-conformance-corpus", "repository-scan-benchmark", "git-history-adapter-contract", "all-reachable-git-decision-evidence", "runtime-state-adapter-contract", "host-exported-runtime-state-evidence", "history-and-runtime-aware-context-compilation", "freshness-gated-repository-context", "checkpoint", "context-compiler", "execution-lineage-contracts", "read-only-mcp"],
+    deferredCapabilities: ["onboarding-candidate-graph-projection", "imported-backlog-adapter", "changeset-temporal-provenance", "feature-code-mapping-candidates", "authorized-relationship-promotion", "compute-backed-graph-and-context-operations", "go-repository-scan-production-selection", "native-worker-descendant-tree-supervision", "ast-accurate-semantic-call-graph", "live-runtime-state-probe", "structured-git-decision-inference", "graphdb-world-model-store-adapter", "provider-runtime-fresh-head-hydration", "authorized-knowledge-promotion", "live-caller-fencing", "agent-comm", "service-host", "herdr"],
   };
 }

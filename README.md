@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.14` adds a complete Go candidate for `repository.scan.v1`, JavaScript/Go complete-response conformance, a multilingual tracked corpus, and comparative benchmarks. Release manifests still advertise only authority-free health, so production repository scanning remains on the JavaScript semantic oracle until native selection or transport amortization shows repeatable material benefit.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.15` adds a project-scoped onboarding state machine that indexes existing projects or structured new-project briefs, produces immutable evidence-linked product candidates, and permits Product Canon bootstrap only through an explicit onboarding ReviewDecision. The conformant Go `repository.scan.v1` candidate remains non-default because current benchmark evidence does not justify production selection.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 
@@ -10,6 +10,11 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Dependency-free Node CLI for project initialization, status, checkpoints, and Run lifecycle.
 - Safe Codex and OpenCode projections that preserve existing `AGENTS.md` and `opencode.json` files.
 - `.head/` project, Session, Run, and managed-file canon with digest drift detection.
+- Immutable project-scoped HEAD Session records and a digest-verified onboarding state pointer with deterministic migration for older initialized projects.
+- Local-default, privacy-safe onboarding storage selection; GraphDB configuration stores only endpoint, database, and secret-reference names and continues locally while the remote adapter is pending.
+- Bounded evidence-linked FeatureGroup, Capability, and Feature candidate inference from repository evidence or a structured new-project brief.
+- Batch onboarding ReviewDecisions for accept-all, dependency-complete selection, revision, or rejection; candidates remain immutable and non-authoritative.
+- Review-gated Product Canon revisions with previous/next hashes, stale-source rejection, rollback on failed promotion, and a verified child GraphSnapshot before onboarding becomes ready.
 - Six Context Compiler types: Snapshot, Evidence, Claim, Decision, Unknown, and ContextCapsule.
 - Budgeted minimum-sufficient Context Capsule compilation with explicit exclusions and Unknowns.
 - Read-only MCP tools for core status, project status, Capsule preview, and persisted Capsule verification.
@@ -40,13 +45,16 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 
 ## What is intentionally deferred
 
-Automatic Feature discovery, onboarding candidate sets and ReviewDecision promotion, Feature-to-code/test mapping candidates, ChangeSet and conformance projection, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+Feature-to-code/test mapping candidates, candidate/receipt GraphSnapshot projection, dedicated imported-backlog connectors, ChangeSet and conformance projection, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
 
 ## Use from source
 
 ```powershell
 node .\scripts\head.mjs init C:\path\to\project --runtime codex,opencode
 node .\scripts\head.mjs status C:\path\to\project
+node .\scripts\head.mjs onboarding-start C:\path\to\project
+node .\scripts\head.mjs onboarding-status C:\path\to\project
+node .\scripts\head.mjs onboarding-review C:\path\to\project --input .\onboarding-review.json
 node .\scripts\head.mjs world-index C:\path\to\project
 node .\scripts\head.mjs world-status C:\path\to\project
 node .\scripts\head.mjs world-query C:\path\to\project --query "symbol or path" --depth 1 --limit 100
@@ -68,12 +76,12 @@ node .\scripts\head.mjs run-review C:\path\to\project --input .\review.json
 
 `world-index` uses the local Git CLI by default and fails open with an explicit coverage reason if the host forbids child processes. In that environment, export Git log bytes with the exact format in [`docs/world-model.md`](docs/world-model.md), then pass the file with `world-index <project> --git-log <file>`.
 
-`init` creates an empty `.head/context/product-model.json`. This is user-owned mutable canon, not generated graph output. Existing initialized projects without the file are treated as the same empty semantic model until an authorized process creates it.
+`init` creates an empty `.head/context/product-model.json`, an immutable project-scoped HEAD Session record, a local storage-selection record, and an explicit onboarding pointer. Product Model content remains user-owned mutable canon, not generated graph output. Existing initialized projects receive these onboarding artifacts only through the deterministic missing-state migration path.
 
-See [`docs/execution-lineage.md`](docs/execution-lineage.md) for the JSON contracts and state machine, [`docs/product-model.md`](docs/product-model.md) for Product Model authority and schema, [`docs/world-model.md`](docs/world-model.md) for indexing coverage and freshness behavior, [`docs/temporal-provenance.md`](docs/temporal-provenance.md) for identity and bounded traversal contracts, [`docs/compute-adapter.md`](docs/compute-adapter.md) for the native-compute semantic boundary, and [`docs/runtime-state.md`](docs/runtime-state.md) for the strict host-export and privacy boundary.
+See [`docs/onboarding.md`](docs/onboarding.md) for the bootstrap state machine and batch review schema, [`docs/execution-lineage.md`](docs/execution-lineage.md) for the Run contracts and state machine, [`docs/product-model.md`](docs/product-model.md) for Product Model authority and schema, [`docs/world-model.md`](docs/world-model.md) for indexing coverage and freshness behavior, [`docs/temporal-provenance.md`](docs/temporal-provenance.md) for identity and bounded traversal contracts, [`docs/compute-adapter.md`](docs/compute-adapter.md) for the native-compute semantic boundary, and [`docs/runtime-state.md`](docs/runtime-state.md) for the strict host-export and privacy boundary.
 
 ## Provenance boundary
 
 The design was informed by the user-provided `head-agent-core-main` snapshot and by `oh-my-openagent-dev` as a structural example. This implementation is a fresh adapter/core split and does not copy the original host daemon or worker runtime. The provided HEAD snapshot did not expose a repository license in its root, so this plugin remains `UNLICENSED` pending an explicit distribution decision.
 
-The supplied graph database was not queried or modified. Database-governed onboarding is a separate authority and release concern, not a prerequisite for this local plugin foundation.
+The supplied graph database was not queried or modified. Onboarding can record a privacy-safe pending GraphDB selection, but the verified local path remains complete and no remote database becomes canon or a prerequisite.

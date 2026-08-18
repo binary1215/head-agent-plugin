@@ -1,12 +1,13 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.14",
+  "version": "0.3.0-alpha.15",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
   "scripts": {
     "test": "node --test --test-isolation=none test/*.test.mjs",
     "check": "npm test",
-    "benchmark:repository-scan": "node scripts/benchmark-repository-scan.mjs"
+    "benchmark:repository-scan": "node scripts/benchmark-repository-scan.mjs",
+    "verify:onboarding": "node scripts/verify-onboarding.mjs"
   }
 }

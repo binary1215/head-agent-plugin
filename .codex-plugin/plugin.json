@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.14",
+  "version": "0.3.0-alpha.15",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -18,13 +18,16 @@
   "interface": {
     "displayName": "HEAD Agent Core",
     "shortDescription": "HEAD-owned coordination and continuity",
-    "longDescription": "A provider-neutral HEAD core with explicit authority boundaries, deterministic Context Capsules, contract-bound Runs, evidence-linked Result Packets, and review-gated Execution Lineage.",
+    "longDescription": "A provider-neutral HEAD core with explicit authority boundaries, deterministic Context Capsules, review-gated product onboarding, contract-bound Runs, evidence-linked Result Packets, and auditable Execution Lineage.",
     "developerName": "ccolt",
     "category": "Developer Tools",
     "capabilities": [
       "Skills",
       "MCP Tools",
       "Project Initialization",
+      "Project-scoped Onboarding State",
+      "Evidence-linked Product Candidate Review",
+      "Review-gated Product Canon Bootstrap",
       "Context Continuity",
       "Context Compilation",
       "Execution Lineage Contracts",
@@ -48,6 +51,8 @@
     ],
     "defaultPrompt": [
       "Initialize this project for HEAD coordination.",
+      "Index this project and prepare an evidence-linked onboarding candidate batch without changing Product Canon.",
+      "Review the current onboarding candidate batch before promoting any product concepts.",
       "Compile the minimum sufficient context for this task.",
       "Create a verifiable whole-plan execution lineage.",
       "Run one accepted Execution Contract and review its Result Packet.",

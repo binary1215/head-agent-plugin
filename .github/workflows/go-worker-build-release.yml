@@ -13,7 +13,15 @@ on:
       - "scripts/lib/go-worker-adapter.mjs"
       - "scripts/lib/repository-scan.mjs"
       - "scripts/lib/source-analysis.mjs"
+      - "scripts/lib/head-core.mjs"
+      - "scripts/lib/onboarding-contract.mjs"
+      - "scripts/lib/onboarding.mjs"
+      - "scripts/lib/product-model.mjs"
+      - "scripts/lib/world-model.mjs"
+      - "scripts/head.mjs"
+      - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
+      - "scripts/verify-onboarding.mjs"
       - "benchmarks/repository-scan-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
   pull_request:
@@ -26,7 +34,15 @@ on:
       - "scripts/lib/go-worker-adapter.mjs"
       - "scripts/lib/repository-scan.mjs"
       - "scripts/lib/source-analysis.mjs"
+      - "scripts/lib/head-core.mjs"
+      - "scripts/lib/onboarding-contract.mjs"
+      - "scripts/lib/onboarding.mjs"
+      - "scripts/lib/product-model.mjs"
+      - "scripts/lib/world-model.mjs"
+      - "scripts/head.mjs"
+      - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
+      - "scripts/verify-onboarding.mjs"
       - "benchmarks/repository-scan-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
   workflow_dispatch:
@@ -128,6 +144,9 @@ jobs:
       - name: Run static analysis
         working-directory: native/head-agent-worker
         run: go vet ./...
+
+      - name: Verify onboarding authority and recovery contract
+        run: node scripts/verify-onboarding.mjs
 
       - name: Verify native stdio and JavaScript conformance
         shell: bash
