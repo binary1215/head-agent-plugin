@@ -92,4 +92,4 @@ The temporal graph also projects the immutable candidate, Evidence, Unknown, Rev
 
 ## Explicitly deferred
 
-This slice does not treat inferred code or documentation meaning as canon without review. It does not yet provide a dedicated imported-backlog adapter, Feature-to-code or Feature-to-test mapping candidates, promoted conformance relations, ChangeSets, or document projections. Those capabilities require their own immutable candidate and authorized promotion contracts.
+This slice does not treat inferred code or documentation meaning as canon without review. Feature-to-code and Feature-to-test mappings now have a separate immutable candidate and explicit ReviewDecision contract, but they do not mutate Product Canon. Dedicated imported-backlog adapters, broader conformance relations, ChangeSets, and document projections remain deferred.

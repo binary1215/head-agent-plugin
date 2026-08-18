@@ -211,8 +211,8 @@ function repositoryCandidates(worldModel, task) {
   return worldModel.snapshot.files.map((file) => {
     const temporalTraversal = temporalGraph ? queryTemporalProvenanceGraph(temporalGraph, {
       query: file.path,
-      relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES"],
-      authorityClasses: ["derived", "heuristic"],
+      relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "IMPLEMENTS", "VERIFIED_BY"],
+      authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
       freshness: ["current"],
       minConfidence: 0,
       includeUnreviewedCandidates: false,
@@ -304,9 +304,10 @@ function productContextCandidates(worldModel, task) {
     kinds: [
       "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
       "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision",
+      "File", "Symbol", "Test", "ReviewedRelationship", "FeatureMappingReviewDecision",
     ],
-    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF"],
-    authorityClasses: ["canon-projected"],
+    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "IMPLEMENTS", "VERIFIED_BY", "PROMOTED_FROM", "PRODUCES"],
+    authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
     freshness: ["current"],
     includeUnreviewedCandidates: false,
     depth: 2,
@@ -321,6 +322,9 @@ function productContextCandidates(worldModel, task) {
     kind: node.kind,
     logicalEntityId: node.logicalEntityId || null,
     key: node.key || null,
+    path: node.path || null,
+    name: node.name || null,
+    relationshipType: node.relationshipType || null,
     semantic: node.semantic || null,
     authorityClass: node.authorityClass,
     evidenceIds: node.evidenceIds,

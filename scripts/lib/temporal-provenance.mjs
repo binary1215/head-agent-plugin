@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import { verifyOnboardingGraphProjectionInput } from "./onboarding-projection.mjs";
+import { verifyFeatureMappingProjectionInput } from "./feature-mapping-projection.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.3.0";
+export const TEMPORAL_PROVENANCE_VERSION = "0.4.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -13,7 +14,7 @@ const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "DECLARES",
   "REFERENCES",
 ]);
-export const TEMPORAL_RELATION_TYPES = Object.freeze([
+const TEMPORAL_RELATION_TYPES_V03 = Object.freeze([
   ...TEMPORAL_RELATION_TYPES_V02,
   "PROPOSES_FROM",
   "PROPOSES_TO",
@@ -23,6 +24,11 @@ export const TEMPORAL_RELATION_TYPES = Object.freeze([
   "REJECTED_BY",
   "PROMOTED_FROM",
   "PRODUCES",
+]);
+export const TEMPORAL_RELATION_TYPES = Object.freeze([
+  ...TEMPORAL_RELATION_TYPES_V03,
+  "IMPLEMENTS",
+  "VERIFIED_BY",
 ]);
 
 const TEMPORAL_NODE_KINDS_V02 = Object.freeze([
@@ -49,7 +55,7 @@ const TEMPORAL_NODE_KINDS_V02 = Object.freeze([
   "SourceSnapshotReference",
   "RevisionReference",
 ]);
-export const TEMPORAL_NODE_KINDS = Object.freeze([
+const TEMPORAL_NODE_KINDS_V03 = Object.freeze([
   ...TEMPORAL_NODE_KINDS_V02,
   "OnboardingCandidateSet",
   "OnboardingProductCandidate",
@@ -58,6 +64,16 @@ export const TEMPORAL_NODE_KINDS = Object.freeze([
   "OnboardingReviewDecision",
   "ProductConceptReference",
   "ProductModelRevision",
+]);
+export const TEMPORAL_NODE_KINDS = Object.freeze([
+  ...TEMPORAL_NODE_KINDS_V03,
+  "FeatureMappingCandidateSet",
+  "FeatureMappingCandidate",
+  "FeatureMappingEvidence",
+  "FeatureMappingUnknown",
+  "FeatureMappingReviewDecision",
+  "ReviewedRelationship",
+  "MappingEndpointReference",
 ]);
 
 const PRODUCER = "head-agent-core-temporal-provenance";
@@ -129,12 +145,12 @@ function evidenceId(file) {
   return identity("evidence", { kind: "file-content", path: file.path, digest: file.digest });
 }
 
-function nodeMetadata({ evidenceIds = [], sourceSnapshotId = null, authorityClass = "derived", origin = "derived-source-scan", confidence } = {}) {
+function nodeMetadata({ evidenceIds = [], sourceSnapshotId = null, authorityClass = "derived", origin = "derived-source-scan", confidence, freshness = "current" } = {}) {
   const metadata = {
     authorityClass,
     origin,
     evidenceIds: sortedUniqueStrings(evidenceIds, "evidenceIds"),
-    freshness: "current",
+    freshness,
     producer: PRODUCER,
     producerVersion: TEMPORAL_PROVENANCE_VERSION,
     instructionAuthority: false,
@@ -542,12 +558,244 @@ function appendOnboardingProjection({ projectId, sourceSnapshotId, projection, n
   };
 }
 
+function featureMappingProjectionDescriptor(projection) {
+  if (!projection) return {
+    status: "not-provided",
+    projectionInputId: null,
+    projectionInputHash: null,
+    candidateSetIds: [],
+    reviewDecisionIds: [],
+  };
+  return {
+    status: "projected",
+    projectionInputId: projection.projectionInputId,
+    projectionInputHash: projection.projectionInputHash,
+    candidateSetIds: projection.candidateSets.map((item) => item.candidateSetId),
+    reviewDecisionIds: projection.reviewDecisions.map((item) => item.reviewDecisionId),
+  };
+}
+
+function reviewedRelationshipIdentityPayload({ review, candidate }) {
+  return {
+    projectId: review.projectId,
+    reviewDecisionId: review.reviewDecisionId,
+    candidateId: candidate.candidateId,
+    relationshipType: candidate.relationshipType,
+    fromNodeId: candidate.from.nodeId,
+    fromKind: candidate.from.kind,
+    toNodeId: candidate.to.nodeId,
+    toKind: candidate.to.kind,
+    evidenceSourceSnapshotId: candidate.sourceSnapshotId,
+    productModelId: review.productModelId,
+  };
+}
+
+function appendFeatureMappingProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+  const emptySummary = {
+    featureMappingCandidateSetCount: 0,
+    featureMappingCandidateCount: 0,
+    featureMappingEvidenceCount: 0,
+    featureMappingUnknownCount: 0,
+    featureMappingReviewDecisionCount: 0,
+    featureMappingAcceptedCandidateCount: 0,
+    featureMappingRejectedCandidateCount: 0,
+    reviewedRelationshipCount: 0,
+    activeReviewedRelationshipCount: 0,
+  };
+  if (!projection) return emptySummary;
+  verifyFeatureMappingProjectionInput(projection);
+  const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
+  const pushNode = (node) => {
+    const existing = nodeById.get(node.nodeId);
+    if (existing) return existing;
+    nodeById.set(node.nodeId, node);
+    nodes.push(node);
+    return node;
+  };
+  const ensureEndpoint = (endpoint, evidenceIds) => {
+    const existing = nodeById.get(endpoint.nodeId);
+    if (existing) return { node: existing, active: existing.kind === endpoint.kind };
+    const reference = pushNode({
+      nodeId: endpoint.nodeId,
+      kind: "MappingEndpointReference",
+      referencedNodeId: endpoint.nodeId,
+      referencedKind: endpoint.kind,
+      referencedRevisionId: endpoint.revisionId,
+      path: endpoint.path || "",
+      name: endpoint.name || "",
+      key: endpoint.key || "",
+      ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "historical-feature-mapping-endpoint", freshness: "historical" }),
+    });
+    return { node: reference, active: false };
+  };
+  const candidateById = new Map();
+
+  for (const candidateSet of projection.candidateSets) {
+    const setEvidenceId = identity("evidence", {
+      kind: "feature-mapping-candidate-set",
+      candidateSetId: candidateSet.candidateSetId,
+      candidateSetHash: candidateSet.candidateSetHash,
+    });
+    pushNode({
+      nodeId: candidateSet.candidateSetId,
+      kind: "FeatureMappingCandidateSet",
+      projectId,
+      sessionId: candidateSet.sessionId,
+      candidateSetHash: candidateSet.candidateSetHash,
+      evidenceWorldModelId: candidateSet.worldModelId,
+      evidenceGraphSnapshotId: candidateSet.graphSnapshotId,
+      evidenceSourceSnapshotId: candidateSet.sourceSnapshotId,
+      evidenceProductModelId: candidateSet.productModelId,
+      evidenceProductModelHash: candidateSet.productModelHash,
+      candidateIds: candidateSet.candidates.map((candidate) => candidate.candidateId),
+      featureMappingEvidenceIds: candidateSet.evidence.map((evidence) => evidence.evidenceId),
+      unknownIds: candidateSet.unknowns.map((unknown) => unknown.unknownId),
+      ...nodeMetadata({ evidenceIds: [setEvidenceId, ...candidateSet.evidence.map((item) => item.evidenceId)], sourceSnapshotId, origin: "feature-mapping-candidate-set" }),
+    });
+    for (const evidence of candidateSet.evidence) {
+      pushNode({
+        nodeId: evidence.evidenceId,
+        kind: "FeatureMappingEvidence",
+        featureMappingEvidenceHash: evidence.evidenceHash,
+        sourceKind: evidence.sourceKind,
+        sourceNodeId: evidence.sourceNodeId,
+        sourceRevisionId: evidence.sourceRevisionId,
+        path: evidence.path,
+        line: evidence.line,
+        contentDigest: evidence.contentDigest,
+        statement: evidence.statement,
+        ...nodeMetadata({ evidenceIds: [evidence.evidenceId], sourceSnapshotId, origin: `feature-mapping-evidence:${evidence.sourceKind}` }),
+      });
+      edges.push(edgeRecord({ type: "CONTAINS", from: candidateSet.candidateSetId, to: evidence.evidenceId,
+        sourceSnapshotId, evidenceIds: [evidence.evidenceId], origin: "feature-mapping-candidate-set" }));
+    }
+    for (const candidate of candidateSet.candidates) {
+      candidateById.set(candidate.candidateId, { candidate, candidateSet });
+      pushNode({
+        nodeId: candidate.candidateId,
+        kind: "FeatureMappingCandidate",
+        candidateHash: candidate.candidateHash,
+        relationshipType: candidate.relationshipType,
+        proposedFromNodeId: candidate.from.nodeId,
+        proposedFromKind: candidate.from.kind,
+        proposedToNodeId: candidate.to.nodeId,
+        proposedToKind: candidate.to.kind,
+        evidenceSourceSnapshotId: candidate.sourceSnapshotId,
+        explanation: candidate.explanation,
+        ...nodeMetadata({ evidenceIds: candidate.evidenceIds, sourceSnapshotId, authorityClass: "heuristic", origin: candidate.origin, confidence: candidate.confidence }),
+      });
+      edges.push(edgeRecord({ type: "CONTAINS", from: candidateSet.candidateSetId, to: candidate.candidateId,
+        sourceSnapshotId, evidenceIds: candidate.evidenceIds, origin: "feature-mapping-candidate-set" }));
+      const from = ensureEndpoint(candidate.from, candidate.evidenceIds);
+      const to = ensureEndpoint(candidate.to, candidate.evidenceIds);
+      edges.push(edgeRecord({ type: "PROPOSES_FROM", from: candidate.candidateId, to: from.node.nodeId,
+        sourceSnapshotId, evidenceIds: candidate.evidenceIds, origin: candidate.origin, authorityClass: "heuristic", confidence: candidate.confidence }));
+      edges.push(edgeRecord({ type: "PROPOSES_TO", from: candidate.candidateId, to: to.node.nodeId,
+        sourceSnapshotId, evidenceIds: candidate.evidenceIds, origin: candidate.origin, authorityClass: "heuristic", confidence: candidate.confidence }));
+      for (const evidenceId of candidate.evidenceIds) edges.push(edgeRecord({ type: "SUPPORTED_BY", from: candidate.candidateId, to: evidenceId,
+        sourceSnapshotId, evidenceIds: [evidenceId], origin: candidate.origin, authorityClass: "heuristic", confidence: candidate.confidence }));
+    }
+    for (const unknown of candidateSet.unknowns) {
+      pushNode({
+        nodeId: unknown.unknownId,
+        kind: "FeatureMappingUnknown",
+        statement: unknown.statement,
+        unknownStatus: unknown.status,
+        ...nodeMetadata({ evidenceIds: unknown.evidenceIds, sourceSnapshotId, origin: "feature-mapping-explicit-unknown" }),
+      });
+      edges.push(edgeRecord({ type: "CONTAINS", from: candidateSet.candidateSetId, to: unknown.unknownId,
+        sourceSnapshotId, evidenceIds: unknown.evidenceIds, origin: "feature-mapping-candidate-set" }));
+    }
+  }
+
+  let reviewedRelationshipCount = 0;
+  let activeReviewedRelationshipCount = 0;
+  for (const review of projection.reviewDecisions) {
+    const reviewEvidenceId = identity("evidence", {
+      kind: "feature-mapping-review-decision",
+      reviewDecisionId: review.reviewDecisionId,
+      reviewDecisionHash: review.reviewDecisionHash,
+    });
+    pushNode({
+      nodeId: review.reviewDecisionId,
+      kind: "FeatureMappingReviewDecision",
+      projectId,
+      sessionId: review.sessionId,
+      reviewDecisionHash: review.reviewDecisionHash,
+      candidateSetId: review.candidateSetId,
+      disposition: review.disposition,
+      acceptedCandidateIds: review.acceptedCandidateIds,
+      rejectedCandidateIds: review.rejectedCandidateIds,
+      evidenceSourceSnapshotId: review.sourceSnapshotId,
+      evidenceProductModelId: review.productModelId,
+      evidenceProductModelHash: review.productModelHash,
+      rationale: review.rationale,
+      sourceAuthority: review.authority,
+      sourcePromotionAuthority: review.promotionAuthority,
+      ...nodeMetadata({ evidenceIds: [reviewEvidenceId], sourceSnapshotId, authorityClass: "reviewed", origin: "explicit-user-feature-mapping-review" }),
+    });
+    edges.push(edgeRecord({ type: "REVIEWED_BY", from: review.candidateSetId, to: review.reviewDecisionId,
+      sourceSnapshotId, evidenceIds: [reviewEvidenceId], origin: "explicit-user-feature-mapping-review", authorityClass: "reviewed" }));
+    for (const candidateId of review.acceptedCandidateIds) {
+      const candidate = candidateById.get(candidateId)?.candidate;
+      edges.push(edgeRecord({ type: "ACCEPTED_BY", from: candidateId, to: review.reviewDecisionId,
+        sourceSnapshotId, evidenceIds: [reviewEvidenceId], origin: "explicit-user-feature-mapping-review", authorityClass: "reviewed" }));
+      if (!candidate) continue;
+      const from = ensureEndpoint(candidate.from, candidate.evidenceIds);
+      const to = ensureEndpoint(candidate.to, candidate.evidenceIds);
+      const receiptPayload = reviewedRelationshipIdentityPayload({ review, candidate });
+      const relationshipNodeId = identity("reviewed-relationship", receiptPayload);
+      const active = from.active && to.active;
+      pushNode({
+        nodeId: relationshipNodeId,
+        kind: "ReviewedRelationship",
+        ...receiptPayload,
+        candidateHash: candidate.candidateHash,
+        reviewDecisionHash: review.reviewDecisionHash,
+        projectionStatus: active ? "current" : "stale-endpoint",
+        ...nodeMetadata({
+          evidenceIds: [reviewEvidenceId, ...candidate.evidenceIds],
+          sourceSnapshotId,
+          authorityClass: "reviewed",
+          origin: "explicit-user-feature-mapping-review",
+          freshness: active ? "current" : "stale",
+        }),
+      });
+      edges.push(edgeRecord({ type: "PROMOTED_FROM", from: relationshipNodeId, to: candidateId,
+        sourceSnapshotId, evidenceIds: [reviewEvidenceId, ...candidate.evidenceIds], origin: "explicit-user-feature-mapping-review", authorityClass: "reviewed" }));
+      edges.push(edgeRecord({ type: "PRODUCES", from: review.reviewDecisionId, to: relationshipNodeId,
+        sourceSnapshotId, evidenceIds: [reviewEvidenceId, ...candidate.evidenceIds], origin: "explicit-user-feature-mapping-review", authorityClass: "reviewed" }));
+      if (active) {
+        edges.push(edgeRecord({ type: candidate.relationshipType, from: candidate.from.nodeId, to: candidate.to.nodeId,
+          sourceSnapshotId, evidenceIds: [reviewEvidenceId, ...candidate.evidenceIds], origin: "explicit-user-feature-mapping-review", authorityClass: "reviewed" }));
+        activeReviewedRelationshipCount += 1;
+      }
+      reviewedRelationshipCount += 1;
+    }
+    for (const candidateId of review.rejectedCandidateIds) edges.push(edgeRecord({ type: "REJECTED_BY", from: candidateId, to: review.reviewDecisionId,
+      sourceSnapshotId, evidenceIds: [reviewEvidenceId], origin: "explicit-user-feature-mapping-review", authorityClass: "reviewed" }));
+  }
+
+  return {
+    featureMappingCandidateSetCount: projection.candidateSets.length,
+    featureMappingCandidateCount: projection.candidateSets.reduce((count, item) => count + item.candidates.length, 0),
+    featureMappingEvidenceCount: new Set(projection.candidateSets.flatMap((item) => item.evidence.map((evidence) => evidence.evidenceId))).size,
+    featureMappingUnknownCount: new Set(projection.candidateSets.flatMap((item) => item.unknowns.map((unknown) => unknown.unknownId))).size,
+    featureMappingReviewDecisionCount: projection.reviewDecisions.length,
+    featureMappingAcceptedCandidateCount: projection.reviewDecisions.reduce((count, item) => count + item.acceptedCandidateIds.length, 0),
+    featureMappingRejectedCandidateCount: projection.reviewDecisions.reduce((count, item) => count + item.rejectedCandidateIds.length, 0),
+    reviewedRelationshipCount,
+    activeReviewedRelationshipCount,
+  };
+}
+
 export function buildTemporalProvenanceGraph({
   projectId,
   files,
   productModel = null,
   productEvidenceId = "",
   onboardingProjection = null,
+  featureMappingProjection = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
 } = {}) {
@@ -555,9 +803,14 @@ export function buildTemporalProvenanceGraph({
   if (!Array.isArray(files)) fail("files must be an array.", "TEMPORAL_FILES_REQUIRED");
   const selectedProductModel = productModel || normalizeProductModelDocument(emptyProductModelDocument());
   const selectedOnboardingProjection = onboardingProjection ? verifyOnboardingGraphProjectionInput(onboardingProjection) : null;
+  const selectedFeatureMappingProjection = featureMappingProjection ? verifyFeatureMappingProjectionInput(featureMappingProjection) : null;
   if (selectedOnboardingProjection && (selectedOnboardingProjection.projectId !== projectId
     || selectedOnboardingProjection.currentProductModelId !== selectedProductModel.productModelId)) {
     fail("Onboarding projection input does not match the temporal graph scope.", "ONBOARDING_TEMPORAL_SCOPE_MISMATCH");
+  }
+  if (selectedFeatureMappingProjection && (selectedFeatureMappingProjection.projectId !== projectId
+    || selectedFeatureMappingProjection.currentProductModelId !== selectedProductModel.productModelId)) {
+    fail("Feature mapping projection input does not match the temporal graph scope.", "FEATURE_MAPPING_TEMPORAL_SCOPE_MISMATCH");
   }
   const selectedProductEvidenceId = productEvidenceId || identity("evidence", {
     kind: "product-canon",
@@ -877,6 +1130,13 @@ export function buildTemporalProvenanceGraph({
     nodes,
     edges,
   });
+  const featureMappingSummary = appendFeatureMappingProjection({
+    projectId,
+    sourceSnapshotId,
+    projection: selectedFeatureMappingProjection,
+    nodes,
+    edges,
+  });
 
   const uniqueEdges = new Map();
   for (const edge of edges) {
@@ -910,6 +1170,7 @@ export function buildTemporalProvenanceGraph({
     sourceParentCount: parents.length,
     revisionParentCount: Object.values(revisionParents).reduce((count, values) => count + values.length, 0),
     ...onboardingSummary,
+    ...featureMappingSummary,
   };
   const payload = {
     kind: "GraphSnapshot",
@@ -921,6 +1182,7 @@ export function buildTemporalProvenanceGraph({
     productModelId: selectedProductModel.productModelId,
     productModelHash: selectedProductModel.productModelHash,
     onboardingProjection: onboardingProjectionDescriptor(selectedOnboardingProjection),
+    featureMappingProjection: featureMappingProjectionDescriptor(selectedFeatureMappingProjection),
     sourceSnapshotId,
     parentSourceSnapshotIds: parents,
     revisionParentIds: revisionParents,
@@ -1020,6 +1282,24 @@ function expectedNodeId(node) {
     key: node.key,
   });
   if (node.kind === "ProductModelRevision") return `product-model-${String(node.productModelHash || "").slice(0, 24)}`;
+  if (node.kind === "FeatureMappingCandidateSet") return `feature-mapping-candidates-${String(node.candidateSetHash || "").slice(0, 24)}`;
+  if (node.kind === "FeatureMappingCandidate") return `feature-mapping-candidate-${String(node.candidateHash || "").slice(0, 24)}`;
+  if (node.kind === "FeatureMappingEvidence") return `feature-mapping-evidence-${String(node.featureMappingEvidenceHash || "").slice(0, 24)}`;
+  if (node.kind === "FeatureMappingUnknown") return node.nodeId;
+  if (node.kind === "FeatureMappingReviewDecision") return `feature-mapping-review-decision-${String(node.reviewDecisionHash || "").slice(0, 24)}`;
+  if (node.kind === "ReviewedRelationship") return identity("reviewed-relationship", {
+    projectId: node.projectId,
+    reviewDecisionId: node.reviewDecisionId,
+    candidateId: node.candidateId,
+    relationshipType: node.relationshipType,
+    fromNodeId: node.fromNodeId,
+    fromKind: node.fromKind,
+    toNodeId: node.toNodeId,
+    toKind: node.toKind,
+    evidenceSourceSnapshotId: node.evidenceSourceSnapshotId,
+    productModelId: node.productModelId,
+  });
+  if (node.kind === "MappingEndpointReference") return node.referencedNodeId;
   return "";
 }
 
@@ -1029,7 +1309,8 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "CONTAINS") return (fromKind === "Repository" && ["File", "Test"].includes(toKind))
     || (fromKind === "SourceSnapshot" && ["FileRevision", ...productRevisionKinds].includes(toKind))
     || (fromKind === "FeatureGroup" && ["FeatureGroup", "Feature"].includes(toKind))
-    || (fromKind === "OnboardingCandidateSet" && ["OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown"].includes(toKind));
+    || (fromKind === "OnboardingCandidateSet" && ["OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown"].includes(toKind))
+    || (fromKind === "FeatureMappingCandidateSet" && ["FeatureMappingCandidate", "FeatureMappingEvidence", "FeatureMappingUnknown"].includes(toKind));
   if (["HAS_REVISION", "CURRENT_REVISION"].includes(type)) return (fromKind === "File" && toKind === "FileRevision")
     || (fromKind === "Symbol" && toKind === "SymbolRevision") || (fromKind === "Test" && toKind === "TestRevision")
     || productKinds.some((kind) => fromKind === kind && toKind === `${kind}Revision`);
@@ -1041,21 +1322,31 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "REFERENCES") return fromKind === "TestRevision" && toKind === "FileRevision";
   if (type === "REALIZES") return fromKind === "Feature" && toKind === "Capability";
   if (type === "GOVERNED_BY") return fromKind === "Feature" && ["Requirement", "Constraint", "Decision"].includes(toKind);
-  if (type === "PROPOSES_FROM") return fromKind === "OnboardingCandidateSet" && ["SourceSnapshot", "SourceSnapshotReference"].includes(toKind);
-  if (type === "PROPOSES_TO") return fromKind === "OnboardingProductCandidate" && toKind === "ProductConceptReference";
-  if (type === "SUPPORTED_BY") return fromKind === "OnboardingProductCandidate" && toKind === "OnboardingEvidence";
-  if (type === "REVIEWED_BY") return fromKind === "OnboardingCandidateSet" && toKind === "OnboardingReviewDecision";
-  if (["ACCEPTED_BY", "REJECTED_BY"].includes(type)) return fromKind === "OnboardingProductCandidate" && toKind === "OnboardingReviewDecision";
-  if (type === "PROMOTED_FROM") return fromKind === "ProductModelRevision" && toKind === "OnboardingProductCandidate";
-  if (type === "PRODUCES") return fromKind === "OnboardingReviewDecision" && toKind === "ProductModelRevision";
+  if (type === "PROPOSES_FROM") return (fromKind === "OnboardingCandidateSet" && ["SourceSnapshot", "SourceSnapshotReference"].includes(toKind))
+    || (fromKind === "FeatureMappingCandidate" && ["File", "Symbol", "Feature", "Capability", "MappingEndpointReference"].includes(toKind));
+  if (type === "PROPOSES_TO") return (fromKind === "OnboardingProductCandidate" && toKind === "ProductConceptReference")
+    || (fromKind === "FeatureMappingCandidate" && ["Feature", "Capability", "Test", "MappingEndpointReference"].includes(toKind));
+  if (type === "SUPPORTED_BY") return (fromKind === "OnboardingProductCandidate" && toKind === "OnboardingEvidence")
+    || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingEvidence");
+  if (type === "REVIEWED_BY") return (fromKind === "OnboardingCandidateSet" && toKind === "OnboardingReviewDecision")
+    || (fromKind === "FeatureMappingCandidateSet" && toKind === "FeatureMappingReviewDecision");
+  if (["ACCEPTED_BY", "REJECTED_BY"].includes(type)) return (fromKind === "OnboardingProductCandidate" && toKind === "OnboardingReviewDecision")
+    || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingReviewDecision");
+  if (type === "PROMOTED_FROM") return (fromKind === "ProductModelRevision" && toKind === "OnboardingProductCandidate")
+    || (fromKind === "ReviewedRelationship" && toKind === "FeatureMappingCandidate");
+  if (type === "PRODUCES") return (fromKind === "OnboardingReviewDecision" && toKind === "ProductModelRevision")
+    || (fromKind === "FeatureMappingReviewDecision" && toKind === "ReviewedRelationship");
+  if (type === "IMPLEMENTS") return ["File", "Symbol"].includes(fromKind) && ["Feature", "Capability"].includes(toKind);
+  if (type === "VERIFIED_BY") return ["Feature", "Capability"].includes(fromKind) && toKind === "Test";
   return false;
 }
 
 export function verifyTemporalProvenanceGraph(graph) {
   const graphVersion = graph?.protocol?.version;
   const legacyV02 = graphVersion === "0.2.0";
+  const legacyV03 = graphVersion === "0.3.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || !new Set(["0.2.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
+    || !new Set(["0.2.0", "0.3.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
@@ -1077,8 +1368,8 @@ export function verifyTemporalProvenanceGraph(graph) {
   if (canonicalJson(graph.revisionParentIds) !== canonicalJson(normalizeRevisionParentIds(graph.revisionParentIds))) {
     fail("Revision parents must be normalized.", "INVALID_REVISION_PARENT_SET");
   }
-  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : TEMPORAL_RELATION_TYPES;
-  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : TEMPORAL_NODE_KINDS;
+  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : TEMPORAL_RELATION_TYPES;
+  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : TEMPORAL_NODE_KINDS;
   if (canonicalJson(graph.relationTypes) !== canonicalJson([...expectedRelationTypes])
     || canonicalJson(graph.nodeKinds) !== canonicalJson([...expectedNodeKinds])) {
     fail("Temporal graph vocabulary does not match the implemented allowlist.", "TEMPORAL_VOCABULARY_MISMATCH");
@@ -1343,6 +1634,133 @@ export function verifyTemporalProvenanceGraph(graph) {
       }
     }
   }
+  const mappingDescriptor = (legacyV02 || legacyV03) ? featureMappingProjectionDescriptor(null) : graph.featureMappingProjection;
+  if (!mappingDescriptor || !["not-provided", "projected"].includes(mappingDescriptor.status)) {
+    fail("Temporal graph Feature mapping projection descriptor is invalid.", "INVALID_FEATURE_MAPPING_TEMPORAL_PROJECTION");
+  }
+  for (const field of ["candidateSetIds", "reviewDecisionIds"]) {
+    if (!Array.isArray(mappingDescriptor[field])
+      || canonicalJson(mappingDescriptor[field]) !== canonicalJson([...new Set(mappingDescriptor[field])].sort())) {
+      fail(`Temporal graph Feature mapping ${field} must be sorted and unique.`, "INVALID_FEATURE_MAPPING_TEMPORAL_PROJECTION");
+    }
+  }
+  if (mappingDescriptor.status === "projected"
+    && (!/^feature-mapping-projection-[a-f0-9]{24}$/.test(mappingDescriptor.projectionInputId || "")
+      || !/^[a-f0-9]{64}$/.test(mappingDescriptor.projectionInputHash || ""))) {
+    fail("Temporal graph Feature mapping projection identity is invalid.", "INVALID_FEATURE_MAPPING_TEMPORAL_PROJECTION");
+  }
+  if (mappingDescriptor.status === "not-provided"
+    && (mappingDescriptor.projectionInputId != null || mappingDescriptor.projectionInputHash != null
+      || mappingDescriptor.candidateSetIds.length || mappingDescriptor.reviewDecisionIds.length)) {
+    fail("Temporal graph claims Feature mapping artifacts without a projection input.", "INVALID_FEATURE_MAPPING_TEMPORAL_PROJECTION");
+  }
+  const mappingCandidateSets = graph.nodes.filter((node) => node.kind === "FeatureMappingCandidateSet");
+  const mappingCandidates = graph.nodes.filter((node) => node.kind === "FeatureMappingCandidate");
+  const mappingEvidence = graph.nodes.filter((node) => node.kind === "FeatureMappingEvidence");
+  const mappingUnknowns = graph.nodes.filter((node) => node.kind === "FeatureMappingUnknown");
+  const mappingReviews = graph.nodes.filter((node) => node.kind === "FeatureMappingReviewDecision");
+  const reviewedRelationships = graph.nodes.filter((node) => node.kind === "ReviewedRelationship");
+  if (canonicalJson(idsOf(mappingCandidateSets)) !== canonicalJson(mappingDescriptor.candidateSetIds)
+    || canonicalJson(idsOf(mappingReviews)) !== canonicalJson(mappingDescriptor.reviewDecisionIds)) {
+    fail("Temporal graph Feature mapping artifact sets do not match the projection descriptor.", "FEATURE_MAPPING_TEMPORAL_SET_MISMATCH");
+  }
+  const mappingCandidateIds = new Set(idsOf(mappingCandidates));
+  const mappingEvidenceIds = new Set(idsOf(mappingEvidence));
+  const mappingUnknownIds = new Set(idsOf(mappingUnknowns));
+  for (const candidateSet of mappingCandidateSets) {
+    if (!/^[a-f0-9]{64}$/.test(candidateSet.candidateSetHash || "")
+      || !/^world-model-[a-f0-9]{24}$/.test(candidateSet.evidenceWorldModelId || "")
+      || !/^graph-snapshot-[a-f0-9]{24}$/.test(candidateSet.evidenceGraphSnapshotId || "")
+      || !/^source-snapshot-[a-f0-9]{24}$/.test(candidateSet.evidenceSourceSnapshotId || "")
+      || !/^product-model-[a-f0-9]{24}$/.test(candidateSet.evidenceProductModelId || "")
+      || !/^[a-f0-9]{64}$/.test(candidateSet.evidenceProductModelHash || "")) {
+      fail(`Feature mapping candidate-set node is invalid: ${candidateSet.nodeId}`, "INVALID_FEATURE_MAPPING_TEMPORAL_NODE");
+    }
+    for (const [field, known] of [["candidateIds", mappingCandidateIds], ["featureMappingEvidenceIds", mappingEvidenceIds], ["unknownIds", mappingUnknownIds]]) {
+      if (!Array.isArray(candidateSet[field]) || candidateSet[field].some((id) => !known.has(id))) {
+        fail(`Feature mapping candidate set has invalid ${field}: ${candidateSet.nodeId}`, "FEATURE_MAPPING_TEMPORAL_DANGLING_REFERENCE");
+      }
+      for (const id of candidateSet[field]) if (!hasEdge("CONTAINS", candidateSet.nodeId, id)) {
+        fail(`Feature mapping candidate-set containment is missing: ${candidateSet.nodeId} -> ${id}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
+      }
+    }
+  }
+  for (const candidate of mappingCandidates) {
+    if (!/^[a-f0-9]{64}$/.test(candidate.candidateHash || "")
+      || !["IMPLEMENTS", "VERIFIED_BY"].includes(candidate.relationshipType)
+      || !/^source-snapshot-[a-f0-9]{24}$/.test(candidate.evidenceSourceSnapshotId || "")) {
+      fail(`Feature mapping candidate node is invalid: ${candidate.nodeId}`, "INVALID_FEATURE_MAPPING_TEMPORAL_NODE");
+    }
+    const canonicalDirection = candidate.relationshipType === "IMPLEMENTS"
+      ? ["File", "Symbol"].includes(candidate.proposedFromKind) && ["Feature", "Capability"].includes(candidate.proposedToKind)
+      : ["Feature", "Capability"].includes(candidate.proposedFromKind) && candidate.proposedToKind === "Test";
+    const endpointKind = (nodeId) => {
+      const endpoint = nodes.get(nodeId);
+      return endpoint?.kind === "MappingEndpointReference" ? endpoint.referencedKind : endpoint?.kind;
+    };
+    if (!canonicalDirection || endpointKind(candidate.proposedFromNodeId) !== candidate.proposedFromKind
+      || endpointKind(candidate.proposedToNodeId) !== candidate.proposedToKind) {
+      fail(`Feature mapping candidate direction is invalid: ${candidate.nodeId}`, "INVALID_FEATURE_MAPPING_DIRECTION");
+    }
+    const containing = graph.edges.filter((edge) => edge.type === "CONTAINS" && edge.to === candidate.nodeId && nodes.get(edge.from)?.kind === "FeatureMappingCandidateSet");
+    const proposedFrom = graph.edges.filter((edge) => edge.type === "PROPOSES_FROM" && edge.from === candidate.nodeId);
+    const proposedTo = graph.edges.filter((edge) => edge.type === "PROPOSES_TO" && edge.from === candidate.nodeId);
+    const supportedIds = graph.edges.filter((edge) => edge.type === "SUPPORTED_BY" && edge.from === candidate.nodeId).map((edge) => edge.to).sort();
+    if (containing.length < 1 || proposedFrom.length !== 1 || proposedFrom[0].to !== candidate.proposedFromNodeId
+      || proposedTo.length !== 1 || proposedTo[0].to !== candidate.proposedToNodeId
+      || canonicalJson(supportedIds) !== canonicalJson(candidate.evidenceIds)) {
+      fail(`Feature mapping candidate relations are incomplete: ${candidate.nodeId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  for (const evidence of mappingEvidence) if (!/^[a-f0-9]{64}$/.test(evidence.featureMappingEvidenceHash || "")
+    || typeof evidence.statement !== "string" || !evidence.statement) {
+    fail(`Feature mapping Evidence node is invalid: ${evidence.nodeId}`, "INVALID_FEATURE_MAPPING_TEMPORAL_NODE");
+  }
+  for (const unknown of mappingUnknowns) if (!/^feature-mapping-unknown-[a-f0-9]{24}$/.test(unknown.nodeId) || unknown.unknownStatus !== "open") {
+    fail(`Feature mapping Unknown node is invalid: ${unknown.nodeId}`, "INVALID_FEATURE_MAPPING_TEMPORAL_NODE");
+  }
+  let mappingAcceptedCandidateCount = 0;
+  let mappingRejectedCandidateCount = 0;
+  for (const review of mappingReviews) {
+    if (!/^[a-f0-9]{64}$/.test(review.reviewDecisionHash || "")
+      || !["accept-all", "accept-selection", "reject"].includes(review.disposition)
+      || !mappingDescriptor.candidateSetIds.includes(review.candidateSetId)
+      || review.sourceAuthority !== "explicit-user-feature-mapping-review"
+      || review.sourcePromotionAuthority !== review.disposition.startsWith("accept")
+      || !hasEdge("REVIEWED_BY", review.candidateSetId, review.nodeId)) {
+      fail(`Feature mapping ReviewDecision node is invalid: ${review.nodeId}`, "INVALID_FEATURE_MAPPING_TEMPORAL_NODE");
+    }
+    for (const candidateId of review.acceptedCandidateIds) {
+      if (!mappingCandidateIds.has(candidateId) || !hasEdge("ACCEPTED_BY", candidateId, review.nodeId)) {
+        fail(`Feature mapping acceptance relation is missing: ${candidateId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
+      }
+      mappingAcceptedCandidateCount += 1;
+    }
+    for (const candidateId of review.rejectedCandidateIds) {
+      if (!mappingCandidateIds.has(candidateId) || !hasEdge("REJECTED_BY", candidateId, review.nodeId)) {
+        fail(`Feature mapping rejection relation is missing: ${candidateId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
+      }
+      mappingRejectedCandidateCount += 1;
+    }
+  }
+  for (const relationship of reviewedRelationships) {
+    if (!mappingCandidateIds.has(relationship.candidateId)
+      || !mappingDescriptor.reviewDecisionIds.includes(relationship.reviewDecisionId)
+      || !["IMPLEMENTS", "VERIFIED_BY"].includes(relationship.relationshipType)
+      || !["current", "stale-endpoint"].includes(relationship.projectionStatus)
+      || !hasEdge("PROMOTED_FROM", relationship.nodeId, relationship.candidateId)
+      || !hasEdge("PRODUCES", relationship.reviewDecisionId, relationship.nodeId)) {
+      fail(`Reviewed relationship receipt is incomplete: ${relationship.nodeId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
+    }
+    const canonicalDirection = relationship.relationshipType === "IMPLEMENTS"
+      ? ["File", "Symbol"].includes(relationship.fromKind) && ["Feature", "Capability"].includes(relationship.toKind)
+      : ["Feature", "Capability"].includes(relationship.fromKind) && relationship.toKind === "Test";
+    if (!canonicalDirection) fail(`Reviewed relationship direction is invalid: ${relationship.nodeId}`, "INVALID_FEATURE_MAPPING_DIRECTION");
+    const hasCanonicalRelationship = hasEdge(relationship.relationshipType, relationship.fromNodeId, relationship.toNodeId);
+    if ((relationship.projectionStatus === "current") !== hasCanonicalRelationship) {
+      fail(`Reviewed relationship projection status is inconsistent: ${relationship.nodeId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
+    }
+  }
   const productLogical = new Map();
   for (const kind of Object.keys(PRODUCT_DEFINITIONS)) {
     for (const node of graph.nodes.filter((candidate) => candidate.kind === kind)) productLogical.set(`${kind}:${node.key}`, node.nodeId);
@@ -1438,6 +1856,17 @@ export function verifyTemporalProvenanceGraph(graph) {
     onboardingRejectedCandidateCount: rejectedCandidateCount,
     productModelRevisionReceiptCount: productModelRevisions.length,
   });
+  if (!legacyV02 && !legacyV03) Object.assign(summary, {
+    featureMappingCandidateSetCount: mappingCandidateSets.length,
+    featureMappingCandidateCount: mappingCandidates.length,
+    featureMappingEvidenceCount: mappingEvidence.length,
+    featureMappingUnknownCount: mappingUnknowns.length,
+    featureMappingReviewDecisionCount: mappingReviews.length,
+    featureMappingAcceptedCandidateCount: mappingAcceptedCandidateCount,
+    featureMappingRejectedCandidateCount: mappingRejectedCandidateCount,
+    reviewedRelationshipCount: reviewedRelationships.length,
+    activeReviewedRelationshipCount: reviewedRelationships.filter((node) => node.projectionStatus === "current").length,
+  });
   if (canonicalJson(summary) !== canonicalJson(graph.summary)) fail("Temporal graph summary does not match its contents.", "TEMPORAL_SUMMARY_MISMATCH");
   return graph;
 }
@@ -1487,7 +1916,10 @@ export function queryTemporalProvenanceGraph(graph, {
   if (typeof includeUnreviewedCandidates !== "boolean") fail("includeUnreviewedCandidates must be boolean.", "INVALID_TEMPORAL_QUERY_CANDIDATE_POLICY");
 
   const confidenceOf = (record) => record.confidence == null ? 1 : record.confidence;
-  const candidateSurfaceKinds = new Set(["OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "ProductConceptReference"]);
+  const candidateSurfaceKinds = new Set([
+    "OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "ProductConceptReference",
+    "FeatureMappingCandidateSet", "FeatureMappingCandidate", "FeatureMappingEvidence", "FeatureMappingUnknown", "MappingEndpointReference",
+  ]);
   const candidatePolicyAllows = (record) => includeUnreviewedCandidates || !candidateSurfaceKinds.has(record.kind);
   const nodeEligible = (node) => allowedKinds.includes(node.kind) && allowedAuthorityClasses.includes(node.authorityClass)
     && allowedFreshness.includes(node.freshness) && confidenceOf(node) >= safeMinimumConfidence && candidatePolicyAllows(node);

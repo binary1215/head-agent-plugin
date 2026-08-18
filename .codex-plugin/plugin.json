@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.16",
+  "version": "0.3.0-alpha.17",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -29,6 +29,8 @@
       "Evidence-linked Product Candidate Review",
       "Review-gated Product Canon Bootstrap",
       "Immutable Onboarding Review Graph Projection",
+      "Review-gated Feature-to-Code Mapping Candidates",
+      "Reviewed IMPLEMENTS and VERIFIED_BY Relations",
       "Context Continuity",
       "Context Compilation",
       "Execution Lineage Contracts",
@@ -61,6 +63,7 @@
       "Inspect a bounded derived projection of the user-owned Product Model without changing canon.",
       "Inspect content-addressed File, Symbol, and Test revisions through a bounded temporal graph query.",
       "Inspect onboarding review and promotion receipts; include unreviewed candidates only when explicitly requested.",
+      "Infer Feature-to-code mapping candidates, then require explicit review before creating IMPLEMENTS or VERIFIED_BY relationships.",
       "Inspect external runtime observations without granting runtime control authority.",
       "Inspect the current HEAD session and Context Capsule."
     ],

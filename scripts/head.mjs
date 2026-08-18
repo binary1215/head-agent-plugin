@@ -10,6 +10,7 @@ import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "./lib/run-lineage.mjs";
 import { buildWorldModel, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 import { inspectOnboarding, readOnboardingCandidateSet, readOnboardingReviewDecision, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
+import { inspectFeatureMapping, readFeatureMappingCandidateSet, readFeatureMappingReviewDecision, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -38,6 +39,11 @@ export function usage() {
       "head onboarding-review <project> --input <review.json>",
       "head onboarding-candidates <project> --candidate-set <onboarding-candidate-set-id>",
       "head onboarding-review-read <project> --review <onboarding-review-decision-id>",
+      "head feature-mapping-start <project>",
+      "head feature-mapping-status <project>",
+      "head feature-mapping-review <project> --input <review.json>",
+      "head feature-mapping-candidates <project> --candidate-set <feature-mapping-candidate-set-id>",
+      "head feature-mapping-review-read <project> --review <feature-mapping-review-decision-id>",
       "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>] [--parent-snapshot <id,id>] [--revision-parents <json-file>]",
       "head world-status <project>",
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
@@ -86,6 +92,11 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });
   if (command === "onboarding-candidates") return readOnboardingCandidateSet({ root, candidateSetId: options["candidate-set"] });
   if (command === "onboarding-review-read") return readOnboardingReviewDecision({ root, reviewDecisionId: options.review });
+  if (command === "feature-mapping-start") return startFeatureMapping({ root });
+  if (command === "feature-mapping-status") return inspectFeatureMapping({ root });
+  if (command === "feature-mapping-review") return reviewFeatureMapping({ ...inputJson(options, "Feature mapping ReviewDecision"), root });
+  if (command === "feature-mapping-candidates") return readFeatureMappingCandidateSet({ root, candidateSetId: options["candidate-set"] });
+  if (command === "feature-mapping-review-read") return readFeatureMappingReviewDecision({ root, reviewDecisionId: options.review });
   if (command === "world-index") return buildWorldModel({
     root,
     persist: true,

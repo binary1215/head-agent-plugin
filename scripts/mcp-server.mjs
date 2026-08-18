@@ -8,6 +8,7 @@ import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
 import { inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 import { inspectOnboarding } from "./lib/onboarding.mjs";
+import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
 
 const protocolVersion = "2024-11-05";
 export const tools = [
@@ -29,6 +30,16 @@ export const tools = [
   {
     name: "head_onboarding_status",
     description: "Read and digest-verify the project-scoped onboarding state, current candidate batch, storage selection, Product Canon identity, and local World Model status without promoting candidates or mutating project state.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "head_feature_mapping_status",
+    description: "Read and digest-verify the current Feature mapping candidate batch or explicit reviewed relationship decision without creating or promoting mappings.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
@@ -169,8 +180,8 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 
 export async function dispatch(request) {
   const id = request.id ?? null;
-  if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.16" } });
+    if (request.method === "initialize") {
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.17" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -184,6 +195,8 @@ export async function dispatch(request) {
         ? inspectProject(args.project_root)
         : name === "head_onboarding_status"
           ? inspectOnboarding({ root: args.project_root })
+        : name === "head_feature_mapping_status"
+          ? inspectFeatureMapping({ root: args.project_root })
         : name === "head_context_preview"
           ? compileContext({ root: args.project_root, task: args.task, budget: args.budget ?? 4000, persist: false })
           : name === "head_context_capsule"
