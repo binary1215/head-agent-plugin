@@ -49,20 +49,27 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
   const graph = world.snapshot.temporalProvenanceGraph;
   const remoteAdapter = new ArcadeDbGraphProjectionAdapter({ storageSelection: configured.storageSelection, transport });
   remoteAdapter.ensureSchema();
-  const conformanceReport = verifyGraphProjectionAdapterConformance({
+  verifyGraphProjectionAdapterConformance({
     projectRoot: world.snapshot.projectRoot,
     graph,
     referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: world.snapshot.projectRoot }),
     candidateAdapter: remoteAdapter,
     queries: conformanceQueries(graph),
   });
-  const activation = buildArcadeDbGraphProjectionActivation({
-    storageSelection: configured.storageSelection,
-    graph,
-    conformanceReport,
-  });
-  const persisted = persistArcadeDbGraphProjectionActivation({ projectRoot: world.snapshot.projectRoot, activation, conformanceReport });
   const topology = remoteAdapter.materializeTopology(graph);
+  const serverTraversalAdapter = new ArcadeDbGraphProjectionAdapter({
+    storageSelection: configured.storageSelection,
+    transport,
+    topologyRequired: true,
+    serverTraversalRequired: true,
+  });
+  const conformanceReport = verifyGraphProjectionAdapterConformance({
+    projectRoot: world.snapshot.projectRoot,
+    graph,
+    referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: world.snapshot.projectRoot }),
+    candidateAdapter: serverTraversalAdapter,
+    queries: conformanceQueries(graph),
+  });
   const topologyActivation = buildArcadeDbGraphTopologyActivation({
     storageSelection: configured.storageSelection,
     graph,
@@ -72,6 +79,12 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     projectRoot: world.snapshot.projectRoot,
     activation: topologyActivation,
   });
+  const activation = buildArcadeDbGraphProjectionActivation({
+    storageSelection: configured.storageSelection,
+    graph,
+    conformanceReport,
+  });
+  const persisted = persistArcadeDbGraphProjectionActivation({ projectRoot: world.snapshot.projectRoot, activation, conformanceReport });
   return {
     status: "verified-active",
     projectId: world.snapshot.projectId,
@@ -82,6 +95,7 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     pointer: persisted.pointer,
     conformanceReport,
     topology: persistedTopology.activation,
+    traversalMode: conformanceReport.candidateAdapter.traversalMode,
     credentialsPersisted: false,
     authority: "rebuildable-derived-projection-not-project-canon",
   };
@@ -102,6 +116,7 @@ export function inspectArcadeDbGraphProjectionStatus({ root = ".", transport = n
     storageSelection: activation.storageSelection,
     activation: null,
     topology,
+    traversalMode: null,
     credentialsPersisted: false,
     authority: "rebuildable-derived-projection-not-project-canon",
   };
@@ -116,6 +131,7 @@ export function inspectArcadeDbGraphProjectionStatus({ root = ".", transport = n
     activation: activation.activation,
     topology,
     projection: projection.projection,
+    traversalMode: adapter.describe().traversalMode,
     credentialsPersisted: false,
     authority: "rebuildable-derived-projection-not-project-canon",
   };

@@ -73,7 +73,7 @@ Temporal queries first compute the deterministic reference contract from the emb
 - missing, corrupt, tampered, or conflicting snapshot/pointer: fail closed;
 - backend absence never removes the embedded graph or changes semantic identity.
 
-The reference comparison intentionally favors correctness over acceleration in this first slice. Future GraphDB or compute-backed traversal may optimize validation only after conformance proves the same deterministic output.
+The reference comparison intentionally favors correctness over acceleration. ArcadeDB may now perform the bounded physical expansion, but the provider-neutral client remains responsible for anchor selection, policy, ordering, canonical output, and semantic digests. Further optimization may remove full remote snapshot/topology reload only after a prepared-query and integrity contract proves the same deterministic output.
 
 ## ArcadeDB activation and materialization
 
@@ -84,11 +84,15 @@ node scripts/head.mjs world-graph-remote-activate C:\path\to\project
 node scripts/head.mjs world-graph-remote-status C:\path\to\project
 ```
 
-Activation creates the `HeadAgentGraphSnapshot` and `HeadAgentGraphPointer` document schema, writes and re-reads the current immutable GraphSnapshot, compares two bounded traversal fixtures against the local reference adapter, persists the digest-verified conformance report, and only then advances a content-addressed local activation pointer. It then materializes the same snapshot into `HeadAgentGraphNode` vertices and `HeadAgentGraphEdge` edges and writes `HeadAgentGraphTopology` only after the complete node and edge sets can be re-read exactly. The activation receipts record the current storage-selection, graph, conformance, node-set, and edge-set identities and explicitly record that credential values and server record identities are not persisted or semantic.
+Activation creates the `HeadAgentGraphSnapshot` and `HeadAgentGraphPointer` document schema, writes and re-reads the current immutable GraphSnapshot, and first proves baseline snapshot-query equivalence against the local reference adapter. It then materializes the snapshot into `HeadAgentGraphNode` vertices and `HeadAgentGraphEdge` edges and writes `HeadAgentGraphTopology` only after the complete node and edge sets can be re-read exactly. A second conformance pass runs the named bounded fixtures through server expansion. Only after both passes succeed are the topology receipt and final content-addressed activation receipt advanced. A failed upgrade therefore cannot activate an unverified traversal mode. The receipts bind the current storage-selection, graph, conformance, node-set, and edge-set identities and explicitly record that credential values and server record identities are not persisted or semantic.
 
 The canonical GraphSnapshot document remains the recoverable remote envelope. Its topology representation is snapshot-scoped: every vertex stores the exact semantic node JSON and every edge stores the exact semantic edge JSON while ArcadeDB record IDs remain operational details. The topology manifest binds the project, GraphSnapshot, SourceSnapshot, sorted node and edge set digests, counts, and non-authority flags to a content-derived identity. Unique indexes bind vertices and edges to `(projectId, graphSnapshotId, semanticId)` without making those database indexes semantic identity.
 
-Query execution reloads and verifies the canonical snapshot plus the complete remote vertex/edge topology, then runs the deterministic reference traversal locally. The common adapter boundary independently compares that result with the embedded graph result. Missing, extra, duplicated, malformed, or conflicting topology records fail closed. An interrupted write with no manifest may resume only when every existing record is an exact subset of the target GraphSnapshot; once a manifest exists, any partial or divergent state is rejected rather than repaired silently. This proves native topology durability and adapter-neutral identity without claiming that server-side bounded traversal is active.
+Activated query mode is `server-expanded-client-canonicalized`. Query execution reloads and verifies the canonical snapshot plus the complete remote vertex/edge topology, computes the deterministic reference query and anchors, and asks ArcadeDB to expand the snapshot-scoped topology with breadth-first `TRAVERSE`. One semantic hop is two physical traversal depths (vertex to edge to vertex), depth remains zero through three, and the response is capped at 8,192 records with one additional record used only to detect overflow.
+
+The server response is evidence, not semantic authority. The client requires the exact unfiltered bounded node/edge radius, verifies every JSON record against the immutable GraphSnapshot, verifies physical traversal depth, and rejects stale envelopes, missing coverage, duplicates, forged or out-of-radius records, and truncation. It then returns the deterministic reference `TemporalTraversalResult`; server ordering, ArcadeDB record IDs, and transport metadata never enter query or result identity. The common adapter boundary independently compares that result with the embedded graph result. This stage proves server expansion conformance, not end-to-end acceleration: full snapshot and topology verification still occurs on each activated read.
+
+An interrupted topology write with no manifest may resume only when every existing record is an exact subset of the target GraphSnapshot; once a manifest exists, any partial or divergent state is rejected rather than repaired silently.
 
 After activation, the default adapter mirrors every successful remote snapshot and pointer into the local JSON projection. Connection/timeout or missing-environment-reference failure may select the local mirror only before any remote content has been observed or mutated in that operation. Authentication failure, rejected requests, stale pointers, missing records, digest mismatch, content conflict, semantic query divergence, or failure after a remote observation/mutation fail closed. If local progress occurs during a remote outage, a later stale remote pointer also fails closed until explicit activation repairs and re-verifies the projection.
 
@@ -96,7 +100,7 @@ After activation, the default adapter mirrors every successful remote snapshot a
 
 - `LocalJsonGraphProjectionAdapter`: durable dependency-free baseline;
 - `InMemoryGraphProjectionAdapter`: non-durable conformance implementation;
-- `ArcadeDbGraphProjectionAdapter`: authenticated ArcadeDB HTTP/JSON durable projection with immutable snapshot insertion, snapshot-scoped vertex/edge topology, and verified pointer upsert;
+- `ArcadeDbGraphProjectionAdapter`: authenticated ArcadeDB HTTP/JSON durable projection with immutable snapshot insertion, snapshot-scoped vertex/edge topology, verified pointer upsert, and optional conformance-gated bounded server expansion;
 - `ActivatedArcadeDbGraphProjectionAdapter`: remote-first adapter with a complete local mirror and narrowly classified pre-observation availability fallback;
 - `verifyGraphProjectionAdapterConformance`: content-derived report naming both authority-bounded adapters and proving adapter-neutral semantics over one GraphSnapshot and one-to-64 named bounded query fixtures;
 - `world-graph-status`: read and verify projection state;
@@ -108,7 +112,7 @@ After activation, the default adapter mirrors every successful remote snapshot a
 
 ## Deferred
 
-- ArcadeDB server-side bounded traversal with exact local ordering, bounds, inclusion, and exclusion conformance;
+- prepared server-query execution and integrity evidence that avoid full remote snapshot/topology reload while preserving exact local ordering, bounds, inclusion, exclusion, and digests;
 - non-ArcadeDB GraphDB transports;
 - asynchronous pooled remote transport, retry/backoff, and transport amortization;
 - remote pointer compare-and-swap and transaction receipts;

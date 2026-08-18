@@ -10,6 +10,7 @@ export const GRAPH_PROJECTION_ADAPTER_VERSION = "0.1.0";
 export const GRAPH_PROJECTION_CONTRACT = "replaceable-rebuildable-derived-graph-projection";
 export const ARCADEDB_GRAPH_PROJECTION_VERSION = "0.1.0";
 export const ARCADEDB_GRAPH_TOPOLOGY_VERSION = "0.1.0";
+export const ARCADEDB_SERVER_TRAVERSAL_VERSION = "0.1.0";
 
 const ARCADEDB_SNAPSHOT_TYPE = "HeadAgentGraphSnapshot";
 const ARCADEDB_POINTER_TYPE = "HeadAgentGraphPointer";
@@ -23,6 +24,9 @@ const ARCADEDB_TOPOLOGY_ACTIVATION_DIRECTORY = path.join(".head", "graph-project
 const ARCADEDB_TOPOLOGY_ACTIVATION_POINTER = path.join(".head", "graph-projection", "arcadedb", "topology", "current.json");
 const ARCADEDB_TRANSPORT_METHODS = ["describe", "ensureSchema", "readPointer", "readSnapshot", "writePointer", "writeSnapshot", "listSnapshotIds"];
 const ARCADEDB_TOPOLOGY_TRANSPORT_METHODS = ["ensureTopologySchema", "readTopology", "writeTopology"];
+const ARCADEDB_SERVER_TRAVERSAL_TRANSPORT_METHODS = ["queryTopology"];
+const ARCADEDB_SERVER_TRAVERSAL_MODE = "server-expanded-client-canonicalized";
+const ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS = 8192;
 const BRIDGE_FILE = fileURLToPath(new URL("./arcadedb-http-bridge.mjs", import.meta.url));
 
 const REQUIRED_METHODS = [
@@ -264,6 +268,13 @@ function assertArcadeDbTopologyTransport(transport) {
   return transport;
 }
 
+function assertArcadeDbServerTraversalTransport(transport) {
+  for (const method of ARCADEDB_SERVER_TRAVERSAL_TRANSPORT_METHODS) if (typeof transport?.[method] !== "function") {
+    fail(`ArcadeDB transport is missing server traversal method ${method}().`, "INVALID_ARCADEDB_SERVER_TRAVERSAL_TRANSPORT");
+  }
+  return transport;
+}
+
 function bridgeError(result) {
   let document = null;
   try { document = JSON.parse(String(result.stdout || "")); } catch { /* handled below */ }
@@ -500,6 +511,38 @@ export class ArcadeDbHttpTransport {
       params: { projectId, graphSnapshotId, topologyId: topology.topologyId, topologyJson: graphProjectionCanonicalJson(topology) },
     });
   }
+
+  queryTopology(projectId, graphSnapshotId, { anchorIds, maxDepth, maxRecords }) {
+    if (!Array.isArray(anchorIds) || anchorIds.length > 500
+      || anchorIds.some((nodeId) => typeof nodeId !== "string" || !nodeId)
+      || !Number.isInteger(maxDepth) || maxDepth < 0 || maxDepth > 3
+      || !Number.isInteger(maxRecords) || maxRecords < 1 || maxRecords > ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS) {
+      fail("ArcadeDB server traversal request is invalid.", "INVALID_ARCADEDB_SERVER_TRAVERSAL_REQUEST");
+    }
+    if (anchorIds.length === 0) return {
+      protocolVersion: ARCADEDB_SERVER_TRAVERSAL_VERSION,
+      graphSnapshotId,
+      anchorIds: [],
+      maxDepth,
+      maxRecords,
+      truncated: false,
+      records: [],
+    };
+    const response = this.invoke("query", {
+      command: `SELECT @type AS recordType, nodeJson, edgeJson, $depth AS recordDepth FROM (TRAVERSE bothE('${ARCADEDB_EDGE_TYPE}'), bothV() FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND nodeId IN :anchorIds) MAXDEPTH ${maxDepth * 2} LIMIT ${maxRecords + 1} STRATEGY BREADTH_FIRST)`,
+      params: { projectId, graphSnapshotId, anchorIds },
+    });
+    const records = responseRecords(response);
+    return {
+      protocolVersion: ARCADEDB_SERVER_TRAVERSAL_VERSION,
+      graphSnapshotId,
+      anchorIds: [...anchorIds],
+      maxDepth,
+      maxRecords,
+      truncated: records.length > maxRecords,
+      records: records.slice(0, maxRecords),
+    };
+  }
 }
 
 function parseRemoteJson(value, label) {
@@ -533,8 +576,92 @@ function verifyResumablePartialTopology(remote, graph) {
   return true;
 }
 
+function unfilteredTraversalRadius(graph, anchorIds, maxDepth) {
+  const nodeDepths = new Map(anchorIds.map((nodeId) => [nodeId, 0]));
+  const edgeDepths = new Map();
+  let frontier = new Set(anchorIds);
+  for (let level = 0; level < maxDepth && frontier.size; level += 1) {
+    const next = new Set();
+    for (const edge of graph.edges) {
+      if (!frontier.has(edge.from) && !frontier.has(edge.to)) continue;
+      if (!edgeDepths.has(edge.edgeId)) edgeDepths.set(edge.edgeId, (level * 2) + 1);
+      for (const nodeId of [edge.from, edge.to]) {
+        if (nodeDepths.has(nodeId)) continue;
+        nodeDepths.set(nodeId, (level + 1) * 2);
+        next.add(nodeId);
+      }
+    }
+    frontier = next;
+  }
+  return { nodeDepths, edgeDepths };
+}
+
+function verifyArcadeDbServerTraversalResponse({ graph, reference, response, maxRecords }) {
+  const query = reference.traversalQuery;
+  assertFields(response, [
+    "protocolVersion", "graphSnapshotId", "anchorIds", "maxDepth", "maxRecords", "truncated", "records",
+  ], "ArcadeDB server traversal response", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
+  if (response.protocolVersion !== ARCADEDB_SERVER_TRAVERSAL_VERSION
+    || response.graphSnapshotId !== graph.graphSnapshotId
+    || graphProjectionCanonicalJson(response.anchorIds) !== graphProjectionCanonicalJson(query.anchorIds)
+    || response.maxDepth !== query.maxDepth || response.maxRecords !== maxRecords
+    || typeof response.truncated !== "boolean" || !Array.isArray(response.records)
+    || response.records.length > maxRecords) {
+    fail("ArcadeDB server traversal response envelope is invalid or stale.", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
+  }
+  if (response.truncated) {
+    fail("ArcadeDB server traversal exceeded its bounded response budget.", "ARCADEDB_SERVER_TRAVERSAL_TRUNCATED");
+  }
+
+  const expectedNodes = new Map(graph.nodes.map((node) => [node.nodeId, node]));
+  const expectedEdges = new Map(graph.edges.map((edge) => [edge.edgeId, edge]));
+  const radius = unfilteredTraversalRadius(graph, query.anchorIds, query.maxDepth);
+  const returnedNodes = new Set();
+  const returnedEdges = new Set();
+  for (const record of response.records) {
+    if (!record || typeof record !== "object" || Array.isArray(record)
+      || !Number.isInteger(record.recordDepth) || record.recordDepth < 0 || record.recordDepth > query.maxDepth * 2) {
+      fail("ArcadeDB server traversal returned an invalid record envelope.", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
+    }
+    if (record.recordType === ARCADEDB_NODE_TYPE && typeof record.nodeJson === "string" && record.edgeJson == null) {
+      const node = parseRemoteJson(record.nodeJson, "ArcadeDB server traversal node");
+      const expected = expectedNodes.get(node.nodeId);
+      if (!expected || returnedNodes.has(node.nodeId)
+        || graphProjectionCanonicalJson(node) !== graphProjectionCanonicalJson(expected)
+        || radius.nodeDepths.get(node.nodeId) !== record.recordDepth) {
+        fail("ArcadeDB server traversal returned a duplicate, forged, or out-of-radius node.", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
+      }
+      returnedNodes.add(node.nodeId);
+      continue;
+    }
+    if (record.recordType === ARCADEDB_EDGE_TYPE && typeof record.edgeJson === "string" && record.nodeJson == null) {
+      const edge = parseRemoteJson(record.edgeJson, "ArcadeDB server traversal edge");
+      const expected = expectedEdges.get(edge.edgeId);
+      if (!expected || returnedEdges.has(edge.edgeId)
+        || graphProjectionCanonicalJson(edge) !== graphProjectionCanonicalJson(expected)
+        || radius.edgeDepths.get(edge.edgeId) !== record.recordDepth) {
+        fail("ArcadeDB server traversal returned a duplicate, forged, or out-of-radius edge.", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
+      }
+      returnedEdges.add(edge.edgeId);
+      continue;
+    }
+    fail("ArcadeDB server traversal returned an unknown record type.", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
+  }
+
+  if (returnedNodes.size !== radius.nodeDepths.size || returnedEdges.size !== radius.edgeDepths.size
+    || [...radius.nodeDepths.keys()].some((nodeId) => !returnedNodes.has(nodeId))
+    || [...radius.edgeDepths.keys()].some((edgeId) => !returnedEdges.has(edgeId))) {
+    fail("ArcadeDB server traversal did not return the complete bounded graph radius.", "ARCADEDB_SERVER_TRAVERSAL_COVERAGE_MISMATCH");
+  }
+  if (reference.nodes.some((node) => !returnedNodes.has(node.nodeId))
+    || reference.edges.some((edge) => !returnedEdges.has(edge.edgeId))) {
+    fail("ArcadeDB server traversal does not cover the deterministic reference result.", "ARCADEDB_SERVER_TRAVERSAL_COVERAGE_MISMATCH");
+  }
+  return true;
+}
+
 export class ArcadeDbGraphProjectionAdapter {
-  constructor({ storageSelection, transport = null, topologyRequired = false } = {}) {
+  constructor({ storageSelection, transport = null, topologyRequired = false, serverTraversalRequired = false } = {}) {
     this.storageSelection = verifyStorageSelection(storageSelection);
     if (this.storageSelection.mode !== "graphdb") fail("ArcadeDB adapter requires a GraphDB storage selection.", "ARCADEDB_SELECTION_REQUIRED");
     this.projectId = this.storageSelection.projectId;
@@ -544,7 +671,9 @@ export class ArcadeDbGraphProjectionAdapter {
     this.locationBase = `arcadedb://${endpoint.host}/${encodeURIComponent(this.storageSelection.graphdb.database)}/head-agent/${encodeURIComponent(this.projectId)}`;
     this.schemaReady = false;
     this.topologySchemaReady = false;
-    this.topologyRequired = topologyRequired === true;
+    this.serverTraversalRequired = serverTraversalRequired === true;
+    this.topologyRequired = topologyRequired === true || this.serverTraversalRequired;
+    if (this.serverTraversalRequired) assertArcadeDbServerTraversalTransport(this.transport);
   }
 
   describe() {
@@ -555,7 +684,10 @@ export class ArcadeDbGraphProjectionAdapter {
       credentialsPersisted: false,
       serverRecordIdentitySemantic: false,
       topologyMode: this.topologyRequired ? "snapshot-scoped-vertex-edge-verified" : "not-required",
-      traversalMode: this.topologyRequired ? "verified-topology-client-reference" : "verified-snapshot-client-reference",
+      traversalMode: this.serverTraversalRequired
+        ? ARCADEDB_SERVER_TRAVERSAL_MODE
+        : this.topologyRequired ? "verified-topology-client-reference" : "verified-snapshot-client-reference",
+      ...(this.serverTraversalRequired ? { serverTraversalProtocolVersion: ARCADEDB_SERVER_TRAVERSAL_VERSION } : {}),
     };
   }
 
@@ -652,9 +784,23 @@ export class ArcadeDbGraphProjectionAdapter {
   query(id, options) {
     const entry = this.readSnapshot(id);
     if (!entry) fail(`Graph projection snapshot is missing: ${id}`, "GRAPH_PROJECTION_SNAPSHOT_MISSING");
-    const topology = this.topologyRequired ? this.readTopology(entry.document) : null;
-    const graph = topology ? { ...entry.document, nodes: topology.nodes, edges: topology.edges } : entry.document;
-    return queryTemporalProvenanceGraph(graph, options);
+    const reference = queryTemporalProvenanceGraph(entry.document, options);
+    if (!this.serverTraversalRequired || reference.traversalQuery.anchorIds.length === 0) return reference;
+    const maxRecords = Math.max(1, Math.min(
+      ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS,
+      entry.document.nodes.length + entry.document.edges.length,
+    ));
+    const response = assertArcadeDbServerTraversalTransport(this.transport).queryTopology(
+      this.projectId,
+      entry.document.graphSnapshotId,
+      {
+        anchorIds: [...reference.traversalQuery.anchorIds],
+        maxDepth: reference.traversalQuery.maxDepth,
+        maxRecords,
+      },
+    );
+    verifyArcadeDbServerTraversalResponse({ graph: entry.document, reference, response, maxRecords });
+    return reference;
   }
 }
 
@@ -674,13 +820,17 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
   }
 
   describe() {
+    const remoteDescriptor = this.remote.describe();
     return {
       ...descriptor("activated-arcadedb-with-local-mirror", { remote: true, durable: true }),
       credentialsPersisted: false,
       localMirror: true,
       fallbackPolicy: "unavailable-before-remote-observation-only",
-      topologyMode: this.remote.topologyRequired ? "snapshot-scoped-vertex-edge-verified" : "not-required",
-      traversalMode: this.remote.topologyRequired ? "verified-topology-client-reference" : "verified-snapshot-client-reference",
+      topologyMode: remoteDescriptor.topologyMode,
+      traversalMode: remoteDescriptor.traversalMode,
+      ...(remoteDescriptor.serverTraversalProtocolVersion
+        ? { serverTraversalProtocolVersion: remoteDescriptor.serverTraversalProtocolVersion }
+        : {}),
     };
   }
 
@@ -1240,13 +1390,15 @@ export function createActivatedArcadeDbGraphProjectionAdapter({ projectRoot, tra
   const inspected = inspectArcadeDbGraphProjectionActivation({ projectRoot });
   if (inspected.status !== "verified-active") return null;
   const topology = inspectArcadeDbGraphTopologyActivation({ projectRoot });
+  const serverTraversalRequired = inspected.conformanceReport?.candidateAdapter?.traversalMode === ARCADEDB_SERVER_TRAVERSAL_MODE;
   return new ActivatedArcadeDbGraphProjectionAdapter({
     projectRoot,
     storageSelection: inspected.storageSelection,
     remoteAdapter: new ArcadeDbGraphProjectionAdapter({
       storageSelection: inspected.storageSelection,
       transport,
-      topologyRequired: topology.status === "verified-active" || topology.status === "stale",
+      topologyRequired: serverTraversalRequired || topology.status === "verified-active" || topology.status === "stale",
+      serverTraversalRequired,
     }),
   });
 }
