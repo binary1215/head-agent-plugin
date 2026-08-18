@@ -5,7 +5,7 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryTemporalProvenanceGraph } from "./temporal-provenance.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.5.1";
+export const CONTEXT_COMPILER_VERSION = "0.6.0";
 
 const fail = (message, code = "CONTEXT_COMPILER_ERROR") => {
   const error = new Error(message);
@@ -211,7 +211,7 @@ function repositoryCandidates(worldModel, task) {
   return worldModel.snapshot.files.map((file) => {
     const temporalTraversal = temporalGraph ? queryTemporalProvenanceGraph(temporalGraph, {
       query: file.path,
-      relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "IMPLEMENTS", "VERIFIED_BY"],
+      relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "CHANGES"],
       authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
       freshness: ["current"],
       minConfidence: 0,
@@ -305,8 +305,9 @@ function productContextCandidates(worldModel, task) {
       "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
       "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision",
       "File", "Symbol", "Test", "ReviewedRelationship", "FeatureMappingReviewDecision",
+      "ChangeSet", "ReviewedImpact", "ChangeImpactReviewDecision",
     ],
-    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "IMPLEMENTS", "VERIFIED_BY", "PROMOTED_FROM", "PRODUCES"],
+    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "PROMOTED_FROM", "PRODUCES", "REVIEWED_BY"],
     authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
     freshness: ["current"],
     includeUnreviewedCandidates: false,
@@ -325,6 +326,9 @@ function productContextCandidates(worldModel, task) {
     path: node.path || null,
     name: node.name || null,
     relationshipType: node.relationshipType || null,
+    changeSetId: node.changeSetId || null,
+    changeIds: node.changeIds || null,
+    targetNodeId: node.targetNodeId || null,
     semantic: node.semantic || null,
     authorityClass: node.authorityClass,
     evidenceIds: node.evidenceIds,

@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.17` adds immutable Feature/Capability-to-code/test mapping candidates and explicit ReviewDecision-gated promotion into separate reviewed `IMPLEMENTS` and `VERIFIED_BY` relationships. Unreviewed candidates remain hidden from normal traversal and Context compilation. The conformant Go `repository.scan.v1` candidate remains non-default because current benchmark evidence does not justify production selection.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.18` adds Git-independent reviewed ChangeSets, exact File/Symbol/Test revision deltas, multiple-parent ChangeSet DAG shape, and explicit ReviewDecision-gated promotion of inferred Feature/Capability impact into separate reviewed `IMPACTS` relationships. Unreviewed mapping and impact candidates remain hidden from normal traversal and Context compilation. The conformant Go `repository.scan.v1` candidate remains non-default because current benchmark evidence does not justify production selection.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 
@@ -17,6 +17,8 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Review-gated Product Canon revisions with previous/next hashes, stale-source rejection, rollback on failed promotion, and a verified child GraphSnapshot before onboarding becomes ready.
 - Content-addressed onboarding CandidateSet, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipt projection with `PROPOSES_*`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, and `PROMOTED_FROM` lineage.
 - Bounded many-to-many Feature/Capability-to-File/Symbol/Test mapping candidates with immutable evidence, stale-source rejection, explicit accept/reject review, separate `ReviewedRelationship` receipts, and canonical-direction `IMPLEMENTS`/`VERIFIED_BY` edges.
+- Provider-neutral ChangeSets bound to exact pre/post SourceSnapshots, File/Symbol/Test revision differences, accepted ResultPackets and execution ReviewDecisions, with sorted zero-or-more ChangeSet parents and no Git prerequisite.
+- Immutable mapping-derived Change-impact candidates, explicit accept/reject review, separate `ReviewedImpact` receipts, and reviewed canonical `IMPACTS` edges consumed by bounded ProductContext traversal.
 - Six Context Compiler types: Snapshot, Evidence, Claim, Decision, Unknown, and ContextCapsule.
 - Budgeted minimum-sufficient Context Capsule compilation with explicit exclusions and Unknowns.
 - Read-only MCP tools for core status, project status, Capsule preview, and persisted Capsule verification.
@@ -47,7 +49,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 
 ## What is intentionally deferred
 
-Dedicated imported-backlog connectors, ChangeSet and conformance projection, general relationship promotion beyond Feature mapping, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+Dedicated imported-backlog connectors, optional ChangeSet-to-VcsEvidence attachment, conformance projection, general relationship promotion beyond Feature mapping and Change impact, automatic ChangeSet ancestry inference, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
 
 ## Use from source
 
@@ -60,6 +62,9 @@ node .\scripts\head.mjs onboarding-review C:\path\to\project --input .\onboardin
 node .\scripts\head.mjs feature-mapping-start C:\path\to\project
 node .\scripts\head.mjs feature-mapping-status C:\path\to\project
 node .\scripts\head.mjs feature-mapping-review C:\path\to\project --input .\feature-mapping-review.json
+node .\scripts\head.mjs change-set-record C:\path\to\project --input .\change-set.json
+node .\scripts\head.mjs change-set-status C:\path\to\project
+node .\scripts\head.mjs change-impact-review C:\path\to\project --input .\change-impact-review.json
 node .\scripts\head.mjs world-index C:\path\to\project
 node .\scripts\head.mjs world-status C:\path\to\project
 node .\scripts\head.mjs world-query C:\path\to\project --query "symbol or path" --depth 1 --limit 100
@@ -84,7 +89,7 @@ node .\scripts\head.mjs run-review C:\path\to\project --input .\review.json
 
 `init` creates an empty `.head/context/product-model.json`, an immutable project-scoped HEAD Session record, a local storage-selection record, and an explicit onboarding pointer. Product Model content remains user-owned mutable canon, not generated graph output. Existing initialized projects receive these onboarding artifacts only through the deterministic missing-state migration path.
 
-See [`docs/onboarding.md`](docs/onboarding.md) for the bootstrap state machine, [`docs/feature-mapping.md`](docs/feature-mapping.md) for mapping candidate and review contracts, [`docs/execution-lineage.md`](docs/execution-lineage.md) for the Run contracts and state machine, [`docs/product-model.md`](docs/product-model.md) for Product Model authority and schema, [`docs/world-model.md`](docs/world-model.md) for indexing coverage and freshness behavior, [`docs/temporal-provenance.md`](docs/temporal-provenance.md) for identity and bounded traversal contracts, [`docs/compute-adapter.md`](docs/compute-adapter.md) for the native-compute semantic boundary, and [`docs/runtime-state.md`](docs/runtime-state.md) for the strict host-export and privacy boundary.
+See [`docs/onboarding.md`](docs/onboarding.md) for the bootstrap state machine, [`docs/feature-mapping.md`](docs/feature-mapping.md) for mapping candidate and review contracts, [`docs/change-sets.md`](docs/change-sets.md) for provider-neutral change and reviewed-impact contracts, [`docs/execution-lineage.md`](docs/execution-lineage.md) for the Run contracts and state machine, [`docs/product-model.md`](docs/product-model.md) for Product Model authority and schema, [`docs/world-model.md`](docs/world-model.md) for indexing coverage and freshness behavior, [`docs/temporal-provenance.md`](docs/temporal-provenance.md) for identity and bounded traversal contracts, [`docs/compute-adapter.md`](docs/compute-adapter.md) for the native-compute semantic boundary, and [`docs/runtime-state.md`](docs/runtime-state.md) for the strict host-export and privacy boundary.
 
 ## Provenance boundary
 

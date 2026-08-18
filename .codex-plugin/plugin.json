@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.17",
+  "version": "0.3.0-alpha.18",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -31,6 +31,9 @@
       "Immutable Onboarding Review Graph Projection",
       "Review-gated Feature-to-Code Mapping Candidates",
       "Reviewed IMPLEMENTS and VERIFIED_BY Relations",
+      "Provider-neutral Reviewed ChangeSets",
+      "Multiple-parent ChangeSet DAG",
+      "Review-gated IMPACTS Relations",
       "Context Continuity",
       "Context Compilation",
       "Execution Lineage Contracts",
@@ -64,6 +67,7 @@
       "Inspect content-addressed File, Symbol, and Test revisions through a bounded temporal graph query.",
       "Inspect onboarding review and promotion receipts; include unreviewed candidates only when explicitly requested.",
       "Infer Feature-to-code mapping candidates, then require explicit review before creating IMPLEMENTS or VERIFIED_BY relationships.",
+      "Record an accepted execution as a Git-independent ChangeSet, then review inferred Feature or Capability impact before creating IMPACTS relationships.",
       "Inspect external runtime observations without granting runtime control authority.",
       "Inspect the current HEAD session and Context Capsule."
     ],

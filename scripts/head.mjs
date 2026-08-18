@@ -11,6 +11,7 @@ import { finishRun, getPendingReviewContext, reviewRun, startRun } from "./lib/r
 import { buildWorldModel, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 import { inspectOnboarding, readOnboardingCandidateSet, readOnboardingReviewDecision, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping, readFeatureMappingCandidateSet, readFeatureMappingReviewDecision, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
+import { inspectChangeSets, readChangeImpactCandidateSet, readChangeImpactReviewDecision, readChangeSet, recordChangeSet, reviewChangeImpact } from "./lib/change-set.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -44,6 +45,12 @@ export function usage() {
       "head feature-mapping-review <project> --input <review.json>",
       "head feature-mapping-candidates <project> --candidate-set <feature-mapping-candidate-set-id>",
       "head feature-mapping-review-read <project> --review <feature-mapping-review-decision-id>",
+      "head change-set-record <project> --input <change-set.json>",
+      "head change-set-status <project>",
+      "head change-set-read <project> --change-set <change-set-id>",
+      "head change-impact-candidates <project> --candidate-set <change-impact-candidate-set-id>",
+      "head change-impact-review <project> --input <review.json>",
+      "head change-impact-review-read <project> --review <change-impact-review-decision-id>",
       "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>] [--parent-snapshot <id,id>] [--revision-parents <json-file>]",
       "head world-status <project>",
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
@@ -97,6 +104,12 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "feature-mapping-review") return reviewFeatureMapping({ ...inputJson(options, "Feature mapping ReviewDecision"), root });
   if (command === "feature-mapping-candidates") return readFeatureMappingCandidateSet({ root, candidateSetId: options["candidate-set"] });
   if (command === "feature-mapping-review-read") return readFeatureMappingReviewDecision({ root, reviewDecisionId: options.review });
+  if (command === "change-set-record") return recordChangeSet({ ...inputJson(options, "ChangeSet"), root });
+  if (command === "change-set-status") return inspectChangeSets({ root });
+  if (command === "change-set-read") return readChangeSet({ root, changeSetId: options["change-set"] });
+  if (command === "change-impact-candidates") return readChangeImpactCandidateSet({ root, candidateSetId: options["candidate-set"] });
+  if (command === "change-impact-review") return reviewChangeImpact({ ...inputJson(options, "Change impact ReviewDecision"), root });
+  if (command === "change-impact-review-read") return readChangeImpactReviewDecision({ root, reviewDecisionId: options.review });
   if (command === "world-index") return buildWorldModel({
     root,
     persist: true,

@@ -1,9 +1,10 @@
 import crypto from "node:crypto";
 import { verifyOnboardingGraphProjectionInput } from "./onboarding-projection.mjs";
 import { verifyFeatureMappingProjectionInput } from "./feature-mapping-projection.mjs";
+import { verifyChangeSetProjectionInput } from "./change-set-projection.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.4.0";
+export const TEMPORAL_PROVENANCE_VERSION = "0.5.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -25,10 +26,16 @@ const TEMPORAL_RELATION_TYPES_V03 = Object.freeze([
   "PROMOTED_FROM",
   "PRODUCES",
 ]);
-export const TEMPORAL_RELATION_TYPES = Object.freeze([
+const TEMPORAL_RELATION_TYPES_V04 = Object.freeze([
   ...TEMPORAL_RELATION_TYPES_V03,
   "IMPLEMENTS",
   "VERIFIED_BY",
+]);
+export const TEMPORAL_RELATION_TYPES = Object.freeze([
+  ...TEMPORAL_RELATION_TYPES_V04,
+  "CHANGES",
+  "IMPACTS",
+  "SUPERSEDES",
 ]);
 
 const TEMPORAL_NODE_KINDS_V02 = Object.freeze([
@@ -65,7 +72,7 @@ const TEMPORAL_NODE_KINDS_V03 = Object.freeze([
   "ProductConceptReference",
   "ProductModelRevision",
 ]);
-export const TEMPORAL_NODE_KINDS = Object.freeze([
+const TEMPORAL_NODE_KINDS_V04 = Object.freeze([
   ...TEMPORAL_NODE_KINDS_V03,
   "FeatureMappingCandidateSet",
   "FeatureMappingCandidate",
@@ -74,6 +81,18 @@ export const TEMPORAL_NODE_KINDS = Object.freeze([
   "FeatureMappingReviewDecision",
   "ReviewedRelationship",
   "MappingEndpointReference",
+]);
+export const TEMPORAL_NODE_KINDS = Object.freeze([
+  ...TEMPORAL_NODE_KINDS_V04,
+  "ChangeSet",
+  "ChangeRevisionReference",
+  "ExecutionLineageReference",
+  "ChangeImpactCandidateSet",
+  "ChangeImpactCandidate",
+  "ChangeImpactUnknown",
+  "ChangeImpactReviewDecision",
+  "ReviewedImpact",
+  "ChangeProductReference",
 ]);
 
 const PRODUCER = "head-agent-core-temporal-provenance";
@@ -161,7 +180,7 @@ function nodeMetadata({ evidenceIds = [], sourceSnapshotId = null, authorityClas
   return metadata;
 }
 
-function edgeRecord({ type, from, to, sourceSnapshotId, evidenceIds = [], origin = "derived-source-scan", authorityClass = "derived", confidence }) {
+function edgeRecord({ type, from, to, sourceSnapshotId, evidenceIds = [], origin = "derived-source-scan", authorityClass = "derived", confidence, freshness = "current" }) {
   const payload = {
     type,
     from,
@@ -169,7 +188,7 @@ function edgeRecord({ type, from, to, sourceSnapshotId, evidenceIds = [], origin
     authorityClass,
     origin,
     evidenceIds: sortedUniqueStrings(evidenceIds, "edge evidenceIds"),
-    freshness: "current",
+    freshness,
     sourceSnapshotId,
     producer: PRODUCER,
     producerVersion: TEMPORAL_PROVENANCE_VERSION,
@@ -789,6 +808,266 @@ function appendFeatureMappingProjection({ projectId, sourceSnapshotId, projectio
   };
 }
 
+function changeSetProjectionDescriptor(projection) {
+  if (!projection) return {
+    status: "not-provided",
+    projectionInputId: null,
+    projectionInputHash: null,
+    changeSetIds: [],
+    candidateSetIds: [],
+    reviewDecisionIds: [],
+  };
+  return {
+    status: "projected",
+    projectionInputId: projection.projectionInputId,
+    projectionInputHash: projection.projectionInputHash,
+    changeSetIds: projection.changeSets.map((item) => item.changeSetId),
+    candidateSetIds: projection.candidateSets.map((item) => item.candidateSetId),
+    reviewDecisionIds: projection.reviewDecisions.map((item) => item.reviewDecisionId),
+  };
+}
+
+function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+  const emptySummary = {
+    changeSetCount: 0,
+    changeRecordCount: 0,
+    changeImpactCandidateSetCount: 0,
+    changeImpactCandidateCount: 0,
+    changeImpactUnknownCount: 0,
+    changeImpactReviewDecisionCount: 0,
+    changeImpactAcceptedCandidateCount: 0,
+    changeImpactRejectedCandidateCount: 0,
+    reviewedImpactCount: 0,
+    activeReviewedImpactCount: 0,
+  };
+  if (!projection) return emptySummary;
+  verifyChangeSetProjectionInput(projection);
+  const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
+  const pushNode = (node) => {
+    const existing = nodeById.get(node.nodeId);
+    if (existing) return existing;
+    nodeById.set(node.nodeId, node);
+    nodes.push(node);
+    return node;
+  };
+  const ensureExecutionReference = (artifactId, artifactKind, evidenceIds) => pushNode({
+    nodeId: artifactId,
+    kind: "ExecutionLineageReference",
+    referencedArtifactId: artifactId,
+    referencedArtifactKind: artifactKind,
+    ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "execution-lineage-reference", freshness: "historical" }),
+  });
+  const ensureProductEndpoint = (target, evidenceIds) => {
+    const existing = nodeById.get(target.nodeId);
+    if (existing) return { node: existing, active: existing.kind === target.kind };
+    return {
+      node: pushNode({
+        nodeId: target.nodeId,
+        kind: "ChangeProductReference",
+        referencedNodeId: target.nodeId,
+        referencedKind: target.kind,
+        referencedRevisionId: target.revisionId,
+        ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "historical-change-impact-endpoint", freshness: "historical" }),
+      }),
+      active: false,
+    };
+  };
+  const changeSetById = new Map();
+  const changeSetFreshness = new Map();
+  const candidateById = new Map();
+
+  for (const changeSet of projection.changeSets) {
+    changeSetById.set(changeSet.changeSetId, changeSet);
+    const projectedFreshness = changeSet.after.sourceSnapshotId === sourceSnapshotId ? "current" : "historical";
+    changeSetFreshness.set(changeSet.changeSetId, projectedFreshness);
+    const evidenceIds = [changeSet.resultPacketId, changeSet.reviewDecisionId].sort();
+    pushNode({
+      nodeId: changeSet.changeSetId,
+      kind: "ChangeSet",
+      projectId,
+      sessionId: changeSet.sessionId,
+      changeSetHash: changeSet.changeSetHash,
+      parentChangeSetIds: changeSet.parentChangeSetIds,
+      beforeGraphSnapshotId: changeSet.before.graphSnapshotId,
+      beforeSourceSnapshotId: changeSet.before.sourceSnapshotId,
+      afterGraphSnapshotId: changeSet.after.graphSnapshotId,
+      afterSourceSnapshotId: changeSet.after.sourceSnapshotId,
+      wholePlanId: changeSet.wholePlanId,
+      executionContractId: changeSet.executionContractId,
+      resultPacketId: changeSet.resultPacketId,
+      executionReviewDecisionId: changeSet.reviewDecisionId,
+      reviewDisposition: changeSet.reviewDisposition,
+      changeIds: changeSet.changes.map((item) => item.changeId),
+      sourceAuthority: changeSet.authority,
+      ...nodeMetadata({ evidenceIds, sourceSnapshotId, authorityClass: "reviewed", origin: "reviewed-execution-change-lineage", freshness: projectedFreshness }),
+    });
+    ensureExecutionReference(changeSet.resultPacketId, "ResultPacket", evidenceIds);
+    ensureExecutionReference(changeSet.reviewDecisionId, "ReviewDecision", evidenceIds);
+    edges.push(edgeRecord({ type: "SUPPORTED_BY", from: changeSet.changeSetId, to: changeSet.resultPacketId,
+      sourceSnapshotId, evidenceIds, origin: "reviewed-execution-change-lineage", authorityClass: "reviewed", freshness: projectedFreshness }));
+    edges.push(edgeRecord({ type: "REVIEWED_BY", from: changeSet.changeSetId, to: changeSet.reviewDecisionId,
+      sourceSnapshotId, evidenceIds, origin: "reviewed-execution-change-lineage", authorityClass: "reviewed", freshness: projectedFreshness }));
+    for (const parentId of changeSet.parentChangeSetIds) edges.push(edgeRecord({ type: "SUPERSEDES", from: changeSet.changeSetId, to: parentId,
+      sourceSnapshotId, evidenceIds, origin: "declared-change-set-parent", authorityClass: "reviewed", freshness: projectedFreshness }));
+    for (const change of changeSet.changes) {
+      const reference = (role, revisionId) => {
+        if (!revisionId) return null;
+        const nodeId = identity("change-revision-reference", { changeSetId: changeSet.changeSetId, changeId: change.changeId, role, revisionId });
+        return pushNode({
+          nodeId,
+          kind: "ChangeRevisionReference",
+          changeSetId: changeSet.changeSetId,
+          changeId: change.changeId,
+          role,
+          referencedRevisionId: revisionId,
+          logicalEntityId: change.logicalEntityId,
+          referencedKind: `${change.entityKind}Revision`,
+          path: change.path,
+          name: change.name,
+          ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "change-set-revision-reference", freshness: projectedFreshness === "historical" || role === "before" ? "historical" : "current" }),
+        });
+      };
+      const before = reference("before", change.beforeRevisionId);
+      const after = reference("after", change.afterRevisionId);
+      for (const revision of [before, after].filter(Boolean)) edges.push(edgeRecord({ type: "CHANGES", from: changeSet.changeSetId, to: revision.nodeId,
+        sourceSnapshotId, evidenceIds, origin: "reviewed-execution-change-lineage", authorityClass: "reviewed", freshness: projectedFreshness }));
+      if (before && after) edges.push(edgeRecord({ type: "SUPERSEDES", from: after.nodeId, to: before.nodeId,
+        sourceSnapshotId, evidenceIds, origin: "reviewed-execution-change-lineage", authorityClass: "reviewed", freshness: projectedFreshness }));
+    }
+  }
+
+  for (const candidateSet of projection.candidateSets) {
+    const evidenceIds = [candidateSet.changeSetId];
+    const projectedFreshness = changeSetFreshness.get(candidateSet.changeSetId) || "historical";
+    pushNode({
+      nodeId: candidateSet.candidateSetId,
+      kind: "ChangeImpactCandidateSet",
+      projectId,
+      sessionId: candidateSet.sessionId,
+      candidateSetHash: candidateSet.candidateSetHash,
+      changeSetId: candidateSet.changeSetId,
+      afterSourceSnapshotId: candidateSet.afterSourceSnapshotId,
+      afterGraphSnapshotId: candidateSet.afterGraphSnapshotId,
+      candidateIds: candidateSet.candidates.map((item) => item.candidateId),
+      unknownIds: candidateSet.unknowns.map((item) => item.unknownId),
+      ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "change-impact-candidate-set", freshness: projectedFreshness }),
+    });
+    for (const candidate of candidateSet.candidates) {
+      candidateById.set(candidate.candidateId, { candidate, candidateSet });
+      const candidateEvidence = [candidateSet.changeSetId, ...candidate.reviewedRelationshipIds].sort();
+      pushNode({
+        nodeId: candidate.candidateId,
+        kind: "ChangeImpactCandidate",
+        candidateHash: candidate.candidateHash,
+        changeSetId: candidate.changeSetId,
+        relationshipType: candidate.relationshipType,
+        targetNodeId: candidate.target.nodeId,
+        targetKind: candidate.target.kind,
+        targetRevisionId: candidate.target.revisionId,
+        changeIds: candidate.changeIds,
+        reviewedRelationshipIds: candidate.reviewedRelationshipIds,
+        explanation: candidate.explanation,
+        ...nodeMetadata({ evidenceIds: candidateEvidence, sourceSnapshotId, authorityClass: "heuristic", origin: "reviewed-mapping-change-impact-inference", confidence: candidate.confidence, freshness: projectedFreshness }),
+      });
+      ensureProductEndpoint(candidate.target, candidateEvidence);
+      edges.push(edgeRecord({ type: "CONTAINS", from: candidateSet.candidateSetId, to: candidate.candidateId,
+        sourceSnapshotId, evidenceIds: candidateEvidence, origin: "change-impact-candidate-set", freshness: projectedFreshness }));
+      edges.push(edgeRecord({ type: "SUPPORTED_BY", from: candidate.candidateId, to: candidate.changeSetId,
+        sourceSnapshotId, evidenceIds: candidateEvidence, origin: "reviewed-mapping-change-impact-inference", authorityClass: "heuristic", confidence: candidate.confidence, freshness: projectedFreshness }));
+      edges.push(edgeRecord({ type: "PROPOSES_TO", from: candidate.candidateId, to: candidate.target.nodeId,
+        sourceSnapshotId, evidenceIds: candidateEvidence, origin: "reviewed-mapping-change-impact-inference", authorityClass: "heuristic", confidence: candidate.confidence, freshness: projectedFreshness }));
+    }
+    for (const unknown of candidateSet.unknowns) {
+      pushNode({
+        nodeId: unknown.unknownId,
+        kind: "ChangeImpactUnknown",
+        changeSetId: candidateSet.changeSetId,
+        statement: unknown.statement,
+        unknownStatus: unknown.status,
+        ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "change-impact-explicit-unknown", freshness: projectedFreshness }),
+      });
+      edges.push(edgeRecord({ type: "CONTAINS", from: candidateSet.candidateSetId, to: unknown.unknownId,
+        sourceSnapshotId, evidenceIds, origin: "change-impact-candidate-set", freshness: projectedFreshness }));
+    }
+  }
+
+  let reviewedImpactCount = 0;
+  let activeReviewedImpactCount = 0;
+  for (const review of projection.reviewDecisions) {
+    const reviewEvidence = [review.changeSetId, review.reviewDecisionId].sort();
+    const projectedFreshness = changeSetFreshness.get(review.changeSetId) || "historical";
+    pushNode({
+      nodeId: review.reviewDecisionId,
+      kind: "ChangeImpactReviewDecision",
+      projectId,
+      sessionId: review.sessionId,
+      reviewDecisionHash: review.reviewDecisionHash,
+      changeSetId: review.changeSetId,
+      candidateSetId: review.candidateSetId,
+      disposition: review.disposition,
+      acceptedCandidateIds: review.acceptedCandidateIds,
+      rejectedCandidateIds: review.rejectedCandidateIds,
+      rationale: review.rationale,
+      sourceAuthority: review.authority,
+      sourcePromotionAuthority: review.promotionAuthority,
+      ...nodeMetadata({ evidenceIds: reviewEvidence, sourceSnapshotId, authorityClass: "reviewed", origin: "explicit-user-change-impact-review", freshness: projectedFreshness }),
+    });
+    edges.push(edgeRecord({ type: "REVIEWED_BY", from: review.candidateSetId, to: review.reviewDecisionId,
+      sourceSnapshotId, evidenceIds: reviewEvidence, origin: "explicit-user-change-impact-review", authorityClass: "reviewed", freshness: projectedFreshness }));
+    for (const candidateId of review.acceptedCandidateIds) {
+      const candidate = candidateById.get(candidateId)?.candidate;
+      edges.push(edgeRecord({ type: "ACCEPTED_BY", from: candidateId, to: review.reviewDecisionId,
+        sourceSnapshotId, evidenceIds: reviewEvidence, origin: "explicit-user-change-impact-review", authorityClass: "reviewed", freshness: projectedFreshness }));
+      if (!candidate) continue;
+      const target = ensureProductEndpoint(candidate.target, reviewEvidence);
+      const receiptPayload = {
+        projectId,
+        reviewDecisionId: review.reviewDecisionId,
+        candidateId,
+        changeSetId: candidate.changeSetId,
+        targetNodeId: candidate.target.nodeId,
+        targetKind: candidate.target.kind,
+        targetRevisionId: candidate.target.revisionId,
+      };
+      const receiptId = identity("reviewed-impact", receiptPayload);
+      const active = target.active && projectedFreshness === "current";
+      pushNode({
+        nodeId: receiptId,
+        kind: "ReviewedImpact",
+        ...receiptPayload,
+        candidateHash: candidate.candidateHash,
+        reviewDecisionHash: review.reviewDecisionHash,
+        projectionStatus: active ? "current" : target.active ? "historical-source" : "stale-endpoint",
+        ...nodeMetadata({ evidenceIds: reviewEvidence, sourceSnapshotId, authorityClass: "reviewed", origin: "explicit-user-change-impact-review", freshness: active ? "current" : target.active ? "historical" : "stale" }),
+      });
+      edges.push(edgeRecord({ type: "PROMOTED_FROM", from: receiptId, to: candidateId,
+        sourceSnapshotId, evidenceIds: reviewEvidence, origin: "explicit-user-change-impact-review", authorityClass: "reviewed", freshness: projectedFreshness }));
+      edges.push(edgeRecord({ type: "PRODUCES", from: review.reviewDecisionId, to: receiptId,
+        sourceSnapshotId, evidenceIds: reviewEvidence, origin: "explicit-user-change-impact-review", authorityClass: "reviewed", freshness: projectedFreshness }));
+      if (active) {
+        edges.push(edgeRecord({ type: "IMPACTS", from: candidate.changeSetId, to: candidate.target.nodeId,
+          sourceSnapshotId, evidenceIds: reviewEvidence, origin: "explicit-user-change-impact-review", authorityClass: "reviewed", freshness: projectedFreshness }));
+        activeReviewedImpactCount += 1;
+      }
+      reviewedImpactCount += 1;
+    }
+    for (const candidateId of review.rejectedCandidateIds) edges.push(edgeRecord({ type: "REJECTED_BY", from: candidateId, to: review.reviewDecisionId,
+      sourceSnapshotId, evidenceIds: reviewEvidence, origin: "explicit-user-change-impact-review", authorityClass: "reviewed", freshness: projectedFreshness }));
+  }
+  return {
+    changeSetCount: projection.changeSets.length,
+    changeRecordCount: projection.changeSets.reduce((count, item) => count + item.changes.length, 0),
+    changeImpactCandidateSetCount: projection.candidateSets.length,
+    changeImpactCandidateCount: projection.candidateSets.reduce((count, item) => count + item.candidates.length, 0),
+    changeImpactUnknownCount: projection.candidateSets.reduce((count, item) => count + item.unknowns.length, 0),
+    changeImpactReviewDecisionCount: projection.reviewDecisions.length,
+    changeImpactAcceptedCandidateCount: projection.reviewDecisions.reduce((count, item) => count + item.acceptedCandidateIds.length, 0),
+    changeImpactRejectedCandidateCount: projection.reviewDecisions.reduce((count, item) => count + item.rejectedCandidateIds.length, 0),
+    reviewedImpactCount,
+    activeReviewedImpactCount,
+  };
+}
+
 export function buildTemporalProvenanceGraph({
   projectId,
   files,
@@ -796,6 +1075,7 @@ export function buildTemporalProvenanceGraph({
   productEvidenceId = "",
   onboardingProjection = null,
   featureMappingProjection = null,
+  changeSetProjection = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
 } = {}) {
@@ -804,6 +1084,10 @@ export function buildTemporalProvenanceGraph({
   const selectedProductModel = productModel || normalizeProductModelDocument(emptyProductModelDocument());
   const selectedOnboardingProjection = onboardingProjection ? verifyOnboardingGraphProjectionInput(onboardingProjection) : null;
   const selectedFeatureMappingProjection = featureMappingProjection ? verifyFeatureMappingProjectionInput(featureMappingProjection) : null;
+  const selectedChangeSetProjection = changeSetProjection ? verifyChangeSetProjectionInput(changeSetProjection) : null;
+  if (selectedChangeSetProjection && selectedChangeSetProjection.projectId !== projectId) {
+    fail("ChangeSet projection input does not match the temporal graph scope.", "CHANGE_SET_TEMPORAL_SCOPE_MISMATCH");
+  }
   if (selectedOnboardingProjection && (selectedOnboardingProjection.projectId !== projectId
     || selectedOnboardingProjection.currentProductModelId !== selectedProductModel.productModelId)) {
     fail("Onboarding projection input does not match the temporal graph scope.", "ONBOARDING_TEMPORAL_SCOPE_MISMATCH");
@@ -1137,6 +1421,13 @@ export function buildTemporalProvenanceGraph({
     nodes,
     edges,
   });
+  const changeSetSummary = appendChangeSetProjection({
+    projectId,
+    sourceSnapshotId,
+    projection: selectedChangeSetProjection,
+    nodes,
+    edges,
+  });
 
   const uniqueEdges = new Map();
   for (const edge of edges) {
@@ -1171,6 +1462,7 @@ export function buildTemporalProvenanceGraph({
     revisionParentCount: Object.values(revisionParents).reduce((count, values) => count + values.length, 0),
     ...onboardingSummary,
     ...featureMappingSummary,
+    ...changeSetSummary,
   };
   const payload = {
     kind: "GraphSnapshot",
@@ -1183,6 +1475,7 @@ export function buildTemporalProvenanceGraph({
     productModelHash: selectedProductModel.productModelHash,
     onboardingProjection: onboardingProjectionDescriptor(selectedOnboardingProjection),
     featureMappingProjection: featureMappingProjectionDescriptor(selectedFeatureMappingProjection),
+    changeSetProjection: changeSetProjectionDescriptor(selectedChangeSetProjection),
     sourceSnapshotId,
     parentSourceSnapshotIds: parents,
     revisionParentIds: revisionParents,
@@ -1300,6 +1593,28 @@ function expectedNodeId(node) {
     productModelId: node.productModelId,
   });
   if (node.kind === "MappingEndpointReference") return node.referencedNodeId;
+  if (node.kind === "ChangeSet") return `change-set-${String(node.changeSetHash || "").slice(0, 24)}`;
+  if (node.kind === "ChangeRevisionReference") return identity("change-revision-reference", {
+    changeSetId: node.changeSetId,
+    changeId: node.changeId,
+    role: node.role,
+    revisionId: node.referencedRevisionId,
+  });
+  if (node.kind === "ExecutionLineageReference") return node.referencedArtifactId;
+  if (node.kind === "ChangeImpactCandidateSet") return `change-impact-candidates-${String(node.candidateSetHash || "").slice(0, 24)}`;
+  if (node.kind === "ChangeImpactCandidate") return `change-impact-candidate-${String(node.candidateHash || "").slice(0, 24)}`;
+  if (node.kind === "ChangeImpactUnknown") return node.nodeId;
+  if (node.kind === "ChangeImpactReviewDecision") return `change-impact-review-decision-${String(node.reviewDecisionHash || "").slice(0, 24)}`;
+  if (node.kind === "ReviewedImpact") return identity("reviewed-impact", {
+    projectId: node.projectId,
+    reviewDecisionId: node.reviewDecisionId,
+    candidateId: node.candidateId,
+    changeSetId: node.changeSetId,
+    targetNodeId: node.targetNodeId,
+    targetKind: node.targetKind,
+    targetRevisionId: node.targetRevisionId,
+  });
+  if (node.kind === "ChangeProductReference") return node.referencedNodeId;
   return "";
 }
 
@@ -1310,7 +1625,8 @@ function validEndpointKinds(type, fromKind, toKind) {
     || (fromKind === "SourceSnapshot" && ["FileRevision", ...productRevisionKinds].includes(toKind))
     || (fromKind === "FeatureGroup" && ["FeatureGroup", "Feature"].includes(toKind))
     || (fromKind === "OnboardingCandidateSet" && ["OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown"].includes(toKind))
-    || (fromKind === "FeatureMappingCandidateSet" && ["FeatureMappingCandidate", "FeatureMappingEvidence", "FeatureMappingUnknown"].includes(toKind));
+    || (fromKind === "FeatureMappingCandidateSet" && ["FeatureMappingCandidate", "FeatureMappingEvidence", "FeatureMappingUnknown"].includes(toKind))
+    || (fromKind === "ChangeImpactCandidateSet" && ["ChangeImpactCandidate", "ChangeImpactUnknown"].includes(toKind));
   if (["HAS_REVISION", "CURRENT_REVISION"].includes(type)) return (fromKind === "File" && toKind === "FileRevision")
     || (fromKind === "Symbol" && toKind === "SymbolRevision") || (fromKind === "Test" && toKind === "TestRevision")
     || productKinds.some((kind) => fromKind === kind && toKind === `${kind}Revision`);
@@ -1325,19 +1641,31 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "PROPOSES_FROM") return (fromKind === "OnboardingCandidateSet" && ["SourceSnapshot", "SourceSnapshotReference"].includes(toKind))
     || (fromKind === "FeatureMappingCandidate" && ["File", "Symbol", "Feature", "Capability", "MappingEndpointReference"].includes(toKind));
   if (type === "PROPOSES_TO") return (fromKind === "OnboardingProductCandidate" && toKind === "ProductConceptReference")
-    || (fromKind === "FeatureMappingCandidate" && ["Feature", "Capability", "Test", "MappingEndpointReference"].includes(toKind));
+    || (fromKind === "FeatureMappingCandidate" && ["Feature", "Capability", "Test", "MappingEndpointReference"].includes(toKind))
+    || (fromKind === "ChangeImpactCandidate" && ["Feature", "Capability", "ChangeProductReference"].includes(toKind));
   if (type === "SUPPORTED_BY") return (fromKind === "OnboardingProductCandidate" && toKind === "OnboardingEvidence")
-    || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingEvidence");
+    || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingEvidence")
+    || (fromKind === "ChangeSet" && toKind === "ExecutionLineageReference")
+    || (fromKind === "ChangeImpactCandidate" && toKind === "ChangeSet");
   if (type === "REVIEWED_BY") return (fromKind === "OnboardingCandidateSet" && toKind === "OnboardingReviewDecision")
-    || (fromKind === "FeatureMappingCandidateSet" && toKind === "FeatureMappingReviewDecision");
+    || (fromKind === "FeatureMappingCandidateSet" && toKind === "FeatureMappingReviewDecision")
+    || (fromKind === "ChangeSet" && toKind === "ExecutionLineageReference")
+    || (fromKind === "ChangeImpactCandidateSet" && toKind === "ChangeImpactReviewDecision");
   if (["ACCEPTED_BY", "REJECTED_BY"].includes(type)) return (fromKind === "OnboardingProductCandidate" && toKind === "OnboardingReviewDecision")
-    || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingReviewDecision");
+    || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingReviewDecision")
+    || (fromKind === "ChangeImpactCandidate" && toKind === "ChangeImpactReviewDecision");
   if (type === "PROMOTED_FROM") return (fromKind === "ProductModelRevision" && toKind === "OnboardingProductCandidate")
-    || (fromKind === "ReviewedRelationship" && toKind === "FeatureMappingCandidate");
+    || (fromKind === "ReviewedRelationship" && toKind === "FeatureMappingCandidate")
+    || (fromKind === "ReviewedImpact" && toKind === "ChangeImpactCandidate");
   if (type === "PRODUCES") return (fromKind === "OnboardingReviewDecision" && toKind === "ProductModelRevision")
-    || (fromKind === "FeatureMappingReviewDecision" && toKind === "ReviewedRelationship");
+    || (fromKind === "FeatureMappingReviewDecision" && toKind === "ReviewedRelationship")
+    || (fromKind === "ChangeImpactReviewDecision" && toKind === "ReviewedImpact");
   if (type === "IMPLEMENTS") return ["File", "Symbol"].includes(fromKind) && ["Feature", "Capability"].includes(toKind);
   if (type === "VERIFIED_BY") return ["Feature", "Capability"].includes(fromKind) && toKind === "Test";
+  if (type === "CHANGES") return fromKind === "ChangeSet" && toKind === "ChangeRevisionReference";
+  if (type === "IMPACTS") return fromKind === "ChangeSet" && ["Feature", "Capability"].includes(toKind);
+  if (type === "SUPERSEDES") return (fromKind === "ChangeSet" && toKind === "ChangeSet")
+    || (fromKind === "ChangeRevisionReference" && toKind === "ChangeRevisionReference");
   return false;
 }
 
@@ -1345,8 +1673,9 @@ export function verifyTemporalProvenanceGraph(graph) {
   const graphVersion = graph?.protocol?.version;
   const legacyV02 = graphVersion === "0.2.0";
   const legacyV03 = graphVersion === "0.3.0";
+  const legacyV04 = graphVersion === "0.4.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || !new Set(["0.2.0", "0.3.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
+    || !new Set(["0.2.0", "0.3.0", "0.4.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
@@ -1368,8 +1697,8 @@ export function verifyTemporalProvenanceGraph(graph) {
   if (canonicalJson(graph.revisionParentIds) !== canonicalJson(normalizeRevisionParentIds(graph.revisionParentIds))) {
     fail("Revision parents must be normalized.", "INVALID_REVISION_PARENT_SET");
   }
-  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : TEMPORAL_RELATION_TYPES;
-  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : TEMPORAL_NODE_KINDS;
+  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : TEMPORAL_RELATION_TYPES;
+  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : TEMPORAL_NODE_KINDS;
   if (canonicalJson(graph.relationTypes) !== canonicalJson([...expectedRelationTypes])
     || canonicalJson(graph.nodeKinds) !== canonicalJson([...expectedNodeKinds])) {
     fail("Temporal graph vocabulary does not match the implemented allowlist.", "TEMPORAL_VOCABULARY_MISMATCH");
@@ -1761,6 +2090,100 @@ export function verifyTemporalProvenanceGraph(graph) {
       fail(`Reviewed relationship projection status is inconsistent: ${relationship.nodeId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
     }
   }
+  const changeDescriptor = (legacyV02 || legacyV03 || legacyV04) ? changeSetProjectionDescriptor(null) : graph.changeSetProjection;
+  if (!changeDescriptor || !["not-provided", "projected"].includes(changeDescriptor.status)) {
+    fail("Temporal graph ChangeSet projection descriptor is invalid.", "INVALID_CHANGE_SET_TEMPORAL_PROJECTION");
+  }
+  for (const field of ["changeSetIds", "candidateSetIds", "reviewDecisionIds"]) {
+    if (!Array.isArray(changeDescriptor[field])
+      || canonicalJson(changeDescriptor[field]) !== canonicalJson([...new Set(changeDescriptor[field])].sort())) {
+      fail(`Temporal graph ChangeSet ${field} must be sorted and unique.`, "INVALID_CHANGE_SET_TEMPORAL_PROJECTION");
+    }
+  }
+  if (changeDescriptor.status === "projected"
+    && (!/^change-set-projection-[a-f0-9]{24}$/.test(changeDescriptor.projectionInputId || "")
+      || !/^[a-f0-9]{64}$/.test(changeDescriptor.projectionInputHash || ""))) {
+    fail("Temporal graph ChangeSet projection identity is invalid.", "INVALID_CHANGE_SET_TEMPORAL_PROJECTION");
+  }
+  if (changeDescriptor.status === "not-provided"
+    && (changeDescriptor.projectionInputId != null || changeDescriptor.projectionInputHash != null
+      || changeDescriptor.changeSetIds.length || changeDescriptor.candidateSetIds.length || changeDescriptor.reviewDecisionIds.length)) {
+    fail("Temporal graph claims ChangeSet artifacts without a projection input.", "INVALID_CHANGE_SET_TEMPORAL_PROJECTION");
+  }
+  const changeSets = graph.nodes.filter((node) => node.kind === "ChangeSet");
+  const changeRevisionReferences = graph.nodes.filter((node) => node.kind === "ChangeRevisionReference");
+  const changeCandidateSets = graph.nodes.filter((node) => node.kind === "ChangeImpactCandidateSet");
+  const changeCandidates = graph.nodes.filter((node) => node.kind === "ChangeImpactCandidate");
+  const changeUnknowns = graph.nodes.filter((node) => node.kind === "ChangeImpactUnknown");
+  const changeReviews = graph.nodes.filter((node) => node.kind === "ChangeImpactReviewDecision");
+  const reviewedImpacts = graph.nodes.filter((node) => node.kind === "ReviewedImpact");
+  if (canonicalJson(idsOf(changeSets)) !== canonicalJson(changeDescriptor.changeSetIds)
+    || canonicalJson(idsOf(changeCandidateSets)) !== canonicalJson(changeDescriptor.candidateSetIds)
+    || canonicalJson(idsOf(changeReviews)) !== canonicalJson(changeDescriptor.reviewDecisionIds)) {
+    fail("Temporal graph ChangeSet artifact sets do not match the projection descriptor.", "CHANGE_SET_TEMPORAL_SET_MISMATCH");
+  }
+  const changeSetIds = new Set(idsOf(changeSets));
+  const changeCandidateIds = new Set(idsOf(changeCandidates));
+  for (const changeSet of changeSets) {
+    if (!/^[a-f0-9]{64}$/.test(changeSet.changeSetHash || "") || changeSet.reviewDisposition !== "accept"
+      || changeSet.sourceAuthority !== "reviewed-execution-change-lineage"
+      || !hasEdge("SUPPORTED_BY", changeSet.nodeId, changeSet.resultPacketId)
+      || !hasEdge("REVIEWED_BY", changeSet.nodeId, changeSet.executionReviewDecisionId)) {
+      fail(`ChangeSet node is invalid: ${changeSet.nodeId}`, "INVALID_CHANGE_SET_TEMPORAL_NODE");
+    }
+    for (const parentId of changeSet.parentChangeSetIds) if (!changeSetIds.has(parentId) || !hasEdge("SUPERSEDES", changeSet.nodeId, parentId)) {
+      fail(`ChangeSet parent relation is missing: ${parentId}`, "CHANGE_SET_TEMPORAL_RELATION_MISSING");
+    }
+    for (const changeId of changeSet.changeIds) if (!changeRevisionReferences.some((reference) => reference.changeSetId === changeSet.nodeId && reference.changeId === changeId)
+      || !graph.edges.some((edge) => edge.type === "CHANGES" && edge.from === changeSet.nodeId && nodes.get(edge.to)?.changeId === changeId)) {
+      fail(`ChangeSet revision relation is missing: ${changeId}`, "CHANGE_SET_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  for (const candidateSet of changeCandidateSets) {
+    if (!changeSetIds.has(candidateSet.changeSetId)
+      || canonicalJson(candidateSet.candidateIds) !== canonicalJson(candidateSet.candidateIds.slice().sort())
+      || canonicalJson(candidateSet.unknownIds) !== canonicalJson(candidateSet.unknownIds.slice().sort())) {
+      fail(`Change impact candidate set is invalid: ${candidateSet.nodeId}`, "INVALID_CHANGE_IMPACT_TEMPORAL_NODE");
+    }
+    for (const candidateId of candidateSet.candidateIds) if (!changeCandidateIds.has(candidateId) || !hasEdge("CONTAINS", candidateSet.nodeId, candidateId)) {
+      fail(`Change impact candidate containment is missing: ${candidateId}`, "CHANGE_IMPACT_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  for (const candidate of changeCandidates) {
+    if (!changeSetIds.has(candidate.changeSetId) || candidate.relationshipType !== "IMPACTS"
+      || !["Feature", "Capability"].includes(candidate.targetKind)
+      || !hasEdge("SUPPORTED_BY", candidate.nodeId, candidate.changeSetId)
+      || !hasEdge("PROPOSES_TO", candidate.nodeId, candidate.targetNodeId)) {
+      fail(`Change impact candidate is invalid: ${candidate.nodeId}`, "INVALID_CHANGE_IMPACT_TEMPORAL_NODE");
+    }
+  }
+  let changeAcceptedCandidateCount = 0;
+  let changeRejectedCandidateCount = 0;
+  for (const review of changeReviews) {
+    if (!changeDescriptor.candidateSetIds.includes(review.candidateSetId)
+      || review.sourceAuthority !== "explicit-user-change-impact-review"
+      || review.sourcePromotionAuthority !== review.disposition.startsWith("accept")
+      || !hasEdge("REVIEWED_BY", review.candidateSetId, review.nodeId)) {
+      fail(`Change impact ReviewDecision node is invalid: ${review.nodeId}`, "INVALID_CHANGE_IMPACT_TEMPORAL_NODE");
+    }
+    for (const candidateId of review.acceptedCandidateIds) {
+      if (!changeCandidateIds.has(candidateId) || !hasEdge("ACCEPTED_BY", candidateId, review.nodeId)) fail(`Change impact acceptance relation is missing: ${candidateId}`, "CHANGE_IMPACT_TEMPORAL_RELATION_MISSING");
+      changeAcceptedCandidateCount += 1;
+    }
+    for (const candidateId of review.rejectedCandidateIds) {
+      if (!changeCandidateIds.has(candidateId) || !hasEdge("REJECTED_BY", candidateId, review.nodeId)) fail(`Change impact rejection relation is missing: ${candidateId}`, "CHANGE_IMPACT_TEMPORAL_RELATION_MISSING");
+      changeRejectedCandidateCount += 1;
+    }
+  }
+  for (const impact of reviewedImpacts) {
+    if (!changeCandidateIds.has(impact.candidateId) || !changeDescriptor.reviewDecisionIds.includes(impact.reviewDecisionId)
+      || !["current", "historical-source", "stale-endpoint"].includes(impact.projectionStatus)
+      || !hasEdge("PROMOTED_FROM", impact.nodeId, impact.candidateId)
+      || !hasEdge("PRODUCES", impact.reviewDecisionId, impact.nodeId)
+      || ((impact.projectionStatus === "current") !== hasEdge("IMPACTS", impact.changeSetId, impact.targetNodeId))) {
+      fail(`Reviewed impact receipt is incomplete: ${impact.nodeId}`, "CHANGE_IMPACT_TEMPORAL_RELATION_MISSING");
+    }
+  }
   const productLogical = new Map();
   for (const kind of Object.keys(PRODUCT_DEFINITIONS)) {
     for (const node of graph.nodes.filter((candidate) => candidate.kind === kind)) productLogical.set(`${kind}:${node.key}`, node.nodeId);
@@ -1867,6 +2290,18 @@ export function verifyTemporalProvenanceGraph(graph) {
     reviewedRelationshipCount: reviewedRelationships.length,
     activeReviewedRelationshipCount: reviewedRelationships.filter((node) => node.projectionStatus === "current").length,
   });
+  if (!legacyV02 && !legacyV03 && !legacyV04) Object.assign(summary, {
+    changeSetCount: changeSets.length,
+    changeRecordCount: changeSets.reduce((count, node) => count + node.changeIds.length, 0),
+    changeImpactCandidateSetCount: changeCandidateSets.length,
+    changeImpactCandidateCount: changeCandidates.length,
+    changeImpactUnknownCount: changeUnknowns.length,
+    changeImpactReviewDecisionCount: changeReviews.length,
+    changeImpactAcceptedCandidateCount: changeAcceptedCandidateCount,
+    changeImpactRejectedCandidateCount: changeRejectedCandidateCount,
+    reviewedImpactCount: reviewedImpacts.length,
+    activeReviewedImpactCount: reviewedImpacts.filter((node) => node.projectionStatus === "current").length,
+  });
   if (canonicalJson(summary) !== canonicalJson(graph.summary)) fail("Temporal graph summary does not match its contents.", "TEMPORAL_SUMMARY_MISMATCH");
   return graph;
 }
@@ -1882,6 +2317,7 @@ function searchable(node) {
   return [node.nodeId, node.kind, node.path, node.name, node.symbolKind, node.classification, node.language,
     node.key, node.logicalEntityId, node.fileId, node.fileRevisionId, node.referencedSourceSnapshotId, node.referencedRevisionId,
     node.productKind, node.inputMode, node.sourceKind, node.disposition, node.statement, node.explanation, node.rationale,
+    node.changeSetId, node.changeId, node.targetNodeId, node.targetKind, node.resultPacketId, node.executionReviewDecisionId,
     node.semantic ? canonicalJson(node.semantic) : ""]
     .filter(Boolean).join(" ").toLocaleLowerCase();
 }
@@ -1919,6 +2355,7 @@ export function queryTemporalProvenanceGraph(graph, {
   const candidateSurfaceKinds = new Set([
     "OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "ProductConceptReference",
     "FeatureMappingCandidateSet", "FeatureMappingCandidate", "FeatureMappingEvidence", "FeatureMappingUnknown", "MappingEndpointReference",
+    "ChangeImpactCandidateSet", "ChangeImpactCandidate", "ChangeImpactUnknown", "ChangeProductReference",
   ]);
   const candidatePolicyAllows = (record) => includeUnreviewedCandidates || !candidateSurfaceKinds.has(record.kind);
   const nodeEligible = (node) => allowedKinds.includes(node.kind) && allowedAuthorityClasses.includes(node.authorityClass)

@@ -40,6 +40,7 @@ node scripts/head.mjs world-temporal <project> --query <path-or-symbol> --relati
 node scripts/head.mjs world-temporal <project> --query <candidate-id> --include-candidates true --depth 1 --limit 100 --edge-limit 200
 node scripts/head.mjs world-history <project> --query <decision-terms> --limit 20
 node scripts/head.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
+node scripts/head.mjs change-set-status <project>
 ```
 
 `world-index` invokes the validated `repository.scan.v1` operation and materializes a deterministic snapshot. Repeating it without repository changes returns the same World Model ID. `world-status` recomputes the same reference scan and source digests and returns `current` or `stale` plus file-level `active`, `stale`, `removed`, and `unindexed` states.
@@ -50,7 +51,7 @@ The read-only MCP tool `head_world_model` exposes the same digest and freshness 
 
 ## Temporal provenance graph
 
-World Model version `0.6.0` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding projection protocol `0.1.0`, Feature mapping projection protocol `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.4.0`. The temporal graph adds immutable onboarding history and Feature/code/test mapping candidates. Only an explicit mapping ReviewDecision creates a separate reviewed relationship receipt and canonical `IMPLEMENTS` or `VERIFIED_BY` edge; candidates remain hidden from normal traversal and never acquire authority.
+World Model version `0.7.0` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding projection protocol `0.1.0`, Feature mapping protocol `0.1.0`, ChangeSet protocol `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.5.0`. The temporal graph adds immutable onboarding history, Feature/code/test mapping candidates, reviewed provider-neutral ChangeSets, exact revision deltas, and review-gated Feature/Capability impact. Mapping and impact inference remain hidden non-authoritative candidates; only their scoped explicit ReviewDecisions create separate reviewed receipts and canonical `IMPLEMENTS`, `VERIFIED_BY`, or `IMPACTS` edges.
 
 The repository scan is the first built-in `ComputeAdapter` operation. Its semantic output contains only normalized relative paths and deterministic source facts. The scan root is operational input and is excluded from the repository-scan result; backend identity, execution mode, timing, and process details remain pointer diagnostics outside World Model identity. A Go implementation now produces byte-equivalent complete responses on the tracked corpus and limit/error fixtures, but release manifests intentionally do not advertise it because measured small and medium scans regress and the large-input gain is marginal. The default adapter therefore probes the verified distribution, discloses `GO_WORKER_OPERATION_NOT_INSTALLED`, and runs the JavaScript reference. The World Model continues to record its separately validated canonical project root.
 
@@ -92,6 +93,8 @@ The adapter descriptor and physical source path live only in the World Model poi
 - onboarding-triggered explicit indexing before candidate inference and a verified child SourceSnapshot/GraphSnapshot rebuild after ReviewDecision-gated Product Canon promotion;
 - digest-verified onboarding CandidateSet, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipt projection with candidate-to-evidence, review, disposition, and promotion lineage;
 - bounded Feature/Capability-to-File/Symbol/Test mapping candidates, explicit accept/reject ReviewDecisions, separate reviewed relationship receipts, and canonical-direction `IMPLEMENTS`/`VERIFIED_BY` edges;
+- accepted-execution ChangeSets with exact before/after SourceSnapshot and File/Symbol/Test revision differences, sorted zero-or-more ChangeSet parents, and Git-independent identity;
+- immutable Change-impact candidates derived only through reviewed mappings, explicit accept/reject ReviewDecisions, separate ReviewedImpact receipts, and canonical `IMPACTS` edges;
 - validated `CONTAINS`, `REALIZES`, and `GOVERNED_BY` product relationships independent from repository directory structure;
 - zero-or-more SourceSnapshot and Revision parents with no automatic merge claim;
 - provenance-complete product/repository edges plus `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, and `PROMOTED_FROM` onboarding edges;
@@ -114,7 +117,7 @@ Managed root projections and these directories are excluded: `.head`, `.git`, VC
 - matching Product Canon concepts compete as one bounded `ProductContext` derived projection under the same budget;
 - stale World Model: repository candidates are excluded and Capsule coverage explicitly records the stale exclusion;
 - every repository candidate, semantic node, and edge remains `evidence-not-instruction`.
-- unreviewed onboarding and Feature mapping candidate-space nodes are excluded by default and require explicit CLI/MCP opt-in; Context Capsules never opt in and consume only reviewed mappings.
+- unreviewed onboarding, Feature mapping, and Change-impact candidate-space nodes are excluded by default and require explicit CLI/MCP opt-in; Context Capsules never opt in and consume only reviewed mappings and impacts.
 
 This prevents a stale index from silently directing execution while still allowing normal curated-canon compilation.
 
@@ -126,7 +129,7 @@ This prevents a stale index from silently directing execution while still allowi
 - generated/vendor source classification beyond the current exclusion rules;
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
-- ChangeSet, conformance, execution-lineage, and document-projection graph planes;
+- optional VcsEvidence attachment, conformance, complete execution-lineage, and document-projection graph planes;
 - dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
 - the replaceable `GraphProjectionAdapter` contract;
