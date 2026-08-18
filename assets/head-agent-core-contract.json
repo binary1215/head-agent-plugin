@@ -20,6 +20,15 @@
     "authority": "The source document is mutable user-owned project canon. Graph nodes, graph edges, ContextCapsule ProductContext, and documents are derived projections and cannot mutate or promote canon.",
     "status": "Strict schema validation, stable logical keys, immutable content-derived revisions, Git-independent GraphSnapshot projection, and bounded Context Compiler selection are active; inferred candidates, product-to-code mappings, onboarding review, and authorized promotion are deferred."
   },
+  "computeAdapter": {
+    "purpose": "Delegate deterministic heavy computation without changing semantic identity or transferring authority from the JavaScript control plane.",
+    "contractVersion": "0.1.0",
+    "workerProtocolVersion": "0.1.0",
+    "activeBackend": "javascript-reference",
+    "identity": "Canonical operation, input digest, semantic producer, and normalized limits determine the request; canonical complete output determines the result digest. Backend diagnostics are excluded.",
+    "authority": "Computation only with no instruction, promotion, control, project-mutation, or canon-mutation authority.",
+    "status": "Strict request/response validation, resource limits, timeout/cancellation, structured errors, authority-escalation rejection, and fixture-driven conformance reports are active; built-in repository operations, Go transport, binary integrity checks, process supervision, fallback, and benchmark-gated migration are deferred."
+  },
   "worldModel": {
     "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
@@ -68,6 +77,9 @@
     "Git-independent temporal Product, File, Symbol, and Test revision GraphSnapshot",
     "canon-projected FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision revisions",
     "bounded product-canon Context Compiler projection",
+    "versioned ComputeAdapter and WorkerProtocol contracts",
+    "deterministic JavaScript reference compute backend",
+    "backend-neutral compute conformance reports",
     "multiple-parent SourceSnapshot and Revision DAG",
     "deterministic allowlisted temporal traversal with graph, query, and result digests",
     "versioned GitHistoryAdapter and all-reachable commit-message decision evidence",
@@ -88,7 +100,10 @@
     "Markdown, Obsidian, and Notion projection adapters",
     "replaceable GraphProjectionAdapter contract",
     "GraphDB World Model store adapter",
-    "worker process launch",
+    "built-in repository compute operations",
+    "Go worker backend",
+    "native worker binary selection and integrity verification",
+    "native worker process launch, supervision, and JavaScript fallback",
     "live caller fencing",
     "role messaging",
     "service installation",

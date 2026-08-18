@@ -16,6 +16,7 @@ The plugin is organized as a thin Codex distribution around a provider-neutral c
                                   content-derived lineage artifacts
        -> scripts/lib/run-lineage contract-bound Run state transitions
        -> scripts/lib/product-model user-owned product-intent canon contract
+       -> scripts/lib/compute-adapter backend-neutral compute and WorkerProtocol contract
        -> scripts/lib/world-model incremental repository view
             -> scripts/lib/semantic-graph evidence-linked semantic projection
             -> scripts/lib/temporal-provenance immutable revision DAG and bounded traversal
@@ -80,7 +81,13 @@ The semantic graph uses content-derived node and edge identities, file digest an
 
 The Product Model source at `.head/context/product-model.json` is user-owned canon. It defines stable FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision keys independently from repository directories. A missing Product Model in an older initialized project is the explicit empty semantic model; code and documents do not silently fill it. See [`product-model.md`](product-model.md).
 
-The temporal provenance graph is a separate verified projection so existing heuristic semantic identities are not silently redefined. It separates stable Repository/File/Symbol/Test and product logical identities from immutable revisions, supports explicit zero-or-more SourceSnapshot and Revision parents, and validates provenance-complete typed edges. Product nodes and `CONTAINS`, `REALIZES`, and `GOVERNED_BY` relations are marked `canon-projected`, but the graph remains derived and cannot mutate canon or promote candidates. Its bounded `TraversalQuery` fixes relation, kind, authority, freshness, confidence, depth, node, edge, and ordering policy and returns graph/query/result digests. It consumes no Git objects and requires no GraphDB. Automatic Feature discovery, Feature-to-code/test mapping candidates, authorized promotion, ChangeSet/conformance projection, automatic merge, document projection, the ComputeAdapter/Go worker plane, and the `GraphProjectionAdapter` remain deferred.
+The temporal provenance graph is a separate verified projection so existing heuristic semantic identities are not silently redefined. It separates stable Repository/File/Symbol/Test and product logical identities from immutable revisions, supports explicit zero-or-more SourceSnapshot and Revision parents, and validates provenance-complete typed edges. Product nodes and `CONTAINS`, `REALIZES`, and `GOVERNED_BY` relations are marked `canon-projected`, but the graph remains derived and cannot mutate canon or promote candidates. Its bounded `TraversalQuery` fixes relation, kind, authority, freshness, confidence, depth, node, edge, and ordering policy and returns graph/query/result digests. It consumes no Git objects and requires no GraphDB. Automatic Feature discovery, Feature-to-code/test mapping candidates, authorized promotion, ChangeSet/conformance projection, automatic merge, document projection, and the `GraphProjectionAdapter` remain deferred.
+
+## Native compute plane
+
+`ComputeAdapter` contract `0.1.0` and WorkerProtocol `0.1.0` define a replaceable computation boundary without changing semantic identities or transferring authority from the JavaScript control plane. Canonical requests bind a versioned operation, input digest, semantic producer, and resource limits. Canonical responses are all-or-nothing, digest-verified, size-bounded, structured, and fixed to `authorityEffect: none`.
+
+`JsReferenceComputeAdapter` is the only active backend and the conformance oracle. It runs in process and does not mutate project state or canon. Candidate backends must match complete canonical responses for operation-specific fixtures. Built-in repository operations, the Go worker, binary integrity selection, native process supervision, fallback, and benchmark-gated migration remain deferred. See [`compute-adapter.md`](compute-adapter.md).
 
 `GitHistoryAdapter` separately supplies rebuildable, content-addressed commit evidence. The default asynchronous Git CLI adapter may fail open with explicit coverage when process launch is unavailable; a byte-preserving host-export adapter provides the same semantic input in constrained runtimes. Current refs validate reachability, and commit messages remain evidence rather than instructions or promoted decisions.
 
