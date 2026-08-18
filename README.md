@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.21` adds the provider-neutral `DocumentProjectionAdapter`, a deterministic Markdown renderer, local/in-memory conformance, published-view drift protection, and immutable `DocumentChangeCandidateSet` capture. Generated Markdown remains a one-way human view of the verified GraphSnapshot and cannot become Product Canon, instruction authority, or promotion authority. GraphDB, Obsidian, and Notion remain optional and unimplemented. The conformant Go `repository.scan.v1` candidate remains non-default because current benchmark evidence does not justify production selection.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.22` adds an explicit provider-neutral incremental refresh contract. Every eligible file is rediscovered and byte-hashed, digest-identical files reuse verified semantic analysis, and the result preserves complete `repository.scan.v1` semantics. Refresh creates immutable request/receipt evidence, automatically parents changed SourceSnapshots and revisions, and discloses active-Run drift without replacing a pinned Capsule. Product Canon, generated documents, Git, and GraphDB remain outside refresh authority.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 
@@ -27,6 +27,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Deterministic Fresh HEAD review projections that omit executor transcripts and provider session state.
 - ReviewDecision-linked plan generations and non-authoritative knowledge-promotion proposals.
 - Incremental Repository World Model with digest verification, file-level freshness, a heuristic evidence-linked file/symbol/import/call graph, and Context Compiler integration.
+- Explicit incremental observed-state refresh with digest-gated unchanged-file analysis reuse, full-scan semantic equivalence, immutable request/receipt artifacts, automatic SourceSnapshot ancestry, and active-Run drift disclosure.
 - Versioned `repository.scan.v1` operation with relative-path-only semantic output, strict limits and result validation, a JavaScript reference implementation, conformance coverage, and a repeatable benchmark corpus.
 - Content-addressed temporal provenance GraphSnapshot with stable Product/Repository/File/Symbol/Test identities, onboarding review receipts, immutable revisions, zero-or-more SourceSnapshot and Revision parents, and provenance-complete typed edges.
 - Explicit `.head/context/product-model.json` canon with stable product keys and validated FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision relationships.
@@ -52,7 +53,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 
 ## What is intentionally deferred
 
-Dedicated imported-backlog connectors, inferred commit-to-ChangeSet matching, conformance projection, general relationship promotion beyond Feature mapping and Change impact, automatic ChangeSet ancestry inference, automatic merge and conflict resolution, Obsidian/Notion projection adapters, DocumentChangeCandidate review/application, automatic document regeneration, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional remote GraphDB implementation, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+Dedicated imported-backlog connectors, inferred commit-to-ChangeSet matching, conformance projection, general relationship promotion beyond Feature mapping and Change impact, automatic ChangeSet ancestry inference, automatic merge and conflict resolution, debounced filesystem/CI refresh ingestion, Obsidian/Notion projection adapters, DocumentChangeCandidate review/application, automatic document regeneration, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional remote GraphDB implementation, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
 
 ## Use from source
 
@@ -70,6 +71,10 @@ node .\scripts\head.mjs change-set-status C:\path\to\project
 node .\scripts\head.mjs change-impact-review C:\path\to\project --input .\change-impact-review.json
 node .\scripts\head.mjs world-index C:\path\to\project
 node .\scripts\head.mjs world-status C:\path\to\project
+node .\scripts\head.mjs world-refresh C:\path\to\project
+node .\scripts\head.mjs world-refresh C:\path\to\project --expect-changed src/service.mjs
+node .\scripts\head.mjs world-refresh-status C:\path\to\project
+node .\scripts\head.mjs world-refresh-read C:\path\to\project --receipt incremental-refresh-receipt-<24-hex>
 node .\scripts\head.mjs world-graph-status C:\path\to\project
 node .\scripts\head.mjs world-docs-build C:\path\to\project
 node .\scripts\head.mjs world-docs-status C:\path\to\project

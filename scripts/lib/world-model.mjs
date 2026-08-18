@@ -28,6 +28,7 @@ import {
   REPOSITORY_SCAN_EXCLUDED_DIRECTORIES,
   REPOSITORY_SCAN_VERSION,
   scanRepositoryReference,
+  validateRepositoryScanExecution,
   validateRepositoryScanResult,
 } from "./repository-scan.mjs";
 import {
@@ -278,6 +279,55 @@ function changesBetween(previous, current) {
   };
 }
 
+const REVISION_KINDS = new Set([
+  "FileRevision", "SymbolRevision", "TestRevision", "FeatureGroupRevision",
+  "CapabilityRevision", "FeatureRevision", "RequirementRevision", "ConstraintRevision", "DecisionRevision",
+]);
+
+function revisionSemantic(node, nodes) {
+  const base = { kind: node.kind, logicalEntityId: node.logicalEntityId };
+  if (node.kind === "FileRevision") return {
+    ...base,
+    digest: node.digest,
+    language: node.language,
+    classification: node.classification,
+  };
+  if (node.kind === "SymbolRevision") return {
+    ...base,
+    path: node.path,
+    name: node.name,
+    symbolKind: node.symbolKind,
+    occurrence: node.occurrence,
+    line: node.line,
+    fileDigest: nodes.get(node.fileRevisionId)?.digest || "",
+  };
+  if (node.kind === "TestRevision") return {
+    ...base,
+    path: node.path,
+    fileDigest: nodes.get(node.fileRevisionId)?.digest || "",
+  };
+  return { ...base, key: node.key, semantic: node.semantic };
+}
+
+export function deriveIncrementalRevisionParents({ previousGraph, candidateGraph } = {}) {
+  verifyTemporalProvenanceGraph(previousGraph);
+  verifyTemporalProvenanceGraph(candidateGraph);
+  if (previousGraph.projectId !== candidateGraph.projectId) fail("Refresh graphs do not belong to the same project.", "REFRESH_GRAPH_SCOPE_MISMATCH");
+  const previousNodes = new Map(previousGraph.nodes.map((node) => [node.nodeId, node]));
+  const candidateNodes = new Map(candidateGraph.nodes.map((node) => [node.nodeId, node]));
+  const previousRevisions = new Map(previousGraph.nodes
+    .filter((node) => REVISION_KINDS.has(node.kind) && node.logicalEntityId)
+    .map((node) => [node.logicalEntityId, node]));
+  const parents = {};
+  for (const candidate of candidateGraph.nodes.filter((node) => REVISION_KINDS.has(node.kind) && node.logicalEntityId)) {
+    const previous = previousRevisions.get(candidate.logicalEntityId);
+    if (!previous || previous.kind !== candidate.kind) continue;
+    const unchanged = canonicalJson(revisionSemantic(previous, previousNodes)) === canonicalJson(revisionSemantic(candidate, candidateNodes));
+    parents[candidate.logicalEntityId] = unchanged ? [...previous.parentRevisionIds] : [previous.nodeId];
+  }
+  return Object.fromEntries(Object.entries(parents).sort(([left], [right]) => left.localeCompare(right)));
+}
+
 function indexerState() {
   return {
     worldModelVersion: WORLD_MODEL_VERSION,
@@ -477,15 +527,21 @@ export async function buildWorldModel({
   changeSetProjectionInput = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
+  repositoryScanExecution = null,
+  expectedWorldModelId = "",
+  expectedCurrentWorldModelId = "",
 } = {}) {
   const inspected = readyProject(root);
   const project = inspected.project;
-  const repositoryScanExecution = await executeRepositoryScan({
-    adapter: computeAdapter || createRepositoryScanComputeAdapter(),
-    projectRoot: project.projectRoot,
-    managedRootFiles: managedRootFilesForProject(project),
-  });
-  const scan = validateRepositoryScanResult(repositoryScanExecution.result);
+  const managedRootFiles = managedRootFilesForProject(project);
+  const selectedRepositoryScanExecution = repositoryScanExecution
+    ? validateRepositoryScanExecution(repositoryScanExecution, { projectRoot: project.projectRoot, managedRootFiles })
+    : await executeRepositoryScan({
+      adapter: computeAdapter || createRepositoryScanComputeAdapter(),
+      projectRoot: project.projectRoot,
+      managedRootFiles,
+    });
+  const scan = validateRepositoryScanResult(selectedRepositoryScanExecution.result);
   const productCanon = readProductModelCanon({ projectRoot: project.projectRoot });
   const onboardingProjection = onboardingProjectionInput || loadOnboardingGraphProjection({
     projectRoot: project.projectRoot,
@@ -663,14 +719,22 @@ export async function buildWorldModel({
   if (!persist) return {
     status: "preview",
     snapshot,
-    sourceAdapters: { compute: repositoryScanExecution.diagnostics },
-    sourceDiagnostics: { compute: repositoryScanExecution.diagnostics },
+    sourceAdapters: { compute: selectedRepositoryScanExecution.diagnostics },
+    sourceDiagnostics: { compute: selectedRepositoryScanExecution.diagnostics },
   };
+
+  if (expectedWorldModelId && worldModelId !== expectedWorldModelId) {
+    fail("World Model changed after refresh preview; current pointer was not advanced.", "REFRESH_PREVIEW_DRIFT");
+  }
 
   const adapter = createWorldModelStoreAdapter({ projectRoot: project.projectRoot, adapter: storeAdapter });
   let previous = null;
   let previousPointer = null;
-  if (adapter.readPointer()) {
+  const currentPointerEntry = adapter.readPointer();
+  if (expectedCurrentWorldModelId && currentPointerEntry?.document?.worldModelId !== expectedCurrentWorldModelId) {
+    fail("World Model current pointer changed during refresh.", "REFRESH_POINTER_CONFLICT");
+  }
+  if (currentPointerEntry) {
     const current = readWorldModel({ root: project.projectRoot, storeAdapter: adapter });
     previous = current.snapshot;
     previousPointer = current.pointer;
@@ -713,15 +777,15 @@ export async function buildWorldModel({
     previousWorldModelId: changed ? previous?.worldModelId || null : previousPointer?.previousWorldModelId || null,
     sourceAdapters: {
       compute: {
-        backend: repositoryScanExecution.diagnostics.backend,
-        adapterName: repositoryScanExecution.diagnostics.adapterName,
-        executionMode: repositoryScanExecution.diagnostics.executionMode,
-        requestId: repositoryScanExecution.request.requestId,
-        resultDigest: repositoryScanExecution.response.resultDigest,
-        fallbackUsed: repositoryScanExecution.diagnostics.fallbackUsed || false,
-        fallbackReasonCode: repositoryScanExecution.diagnostics.fallbackReasonCode || "",
-        workerRelativePath: repositoryScanExecution.diagnostics.workerRelativePath || "",
-        workerSha256: repositoryScanExecution.diagnostics.workerSha256 || "",
+        backend: selectedRepositoryScanExecution.diagnostics.backend,
+        adapterName: selectedRepositoryScanExecution.diagnostics.adapterName,
+        executionMode: selectedRepositoryScanExecution.diagnostics.executionMode,
+        requestId: selectedRepositoryScanExecution.request.requestId,
+        resultDigest: selectedRepositoryScanExecution.response.resultDigest,
+        fallbackUsed: selectedRepositoryScanExecution.diagnostics.fallbackUsed || false,
+        fallbackReasonCode: selectedRepositoryScanExecution.diagnostics.fallbackReasonCode || "",
+        workerRelativePath: selectedRepositoryScanExecution.diagnostics.workerRelativePath || "",
+        workerSha256: selectedRepositoryScanExecution.diagnostics.workerSha256 || "",
       },
       runtimeState: externalRuntimeResult.adapter,
       graphProjection: {
@@ -757,7 +821,7 @@ export async function buildWorldModel({
       graphProjection: pointer.sourceAdapters.graphProjection,
     },
     sourceDiagnostics: {
-      compute: repositoryScanExecution.diagnostics,
+      compute: selectedRepositoryScanExecution.diagnostics,
       gitHistory: gitHistoryResult.diagnostics,
       runtimeState: externalRuntimeResult.diagnostics,
     },

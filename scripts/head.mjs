@@ -12,6 +12,7 @@ import { buildWorldModel, captureWorldMarkdownChanges, inspectWorldGraphProjecti
 import { inspectOnboarding, readOnboardingCandidateSet, readOnboardingReviewDecision, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping, readFeatureMappingCandidateSet, readFeatureMappingReviewDecision, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
 import { attachVcsEvidence, inspectChangeSets, readChangeImpactCandidateSet, readChangeImpactReviewDecision, readChangeSet, readVcsEvidence, recordChangeSet, reviewChangeImpact } from "./lib/change-set.mjs";
+import { inspectIncrementalRefresh, readIncrementalRefreshReceipt, refreshWorldModel } from "./lib/incremental-refresh.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -55,6 +56,9 @@ export function usage() {
       "head change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>",
       "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>] [--parent-snapshot <id,id>] [--revision-parents <json-file>]",
       "head world-status <project>",
+      "head world-refresh <project> [--expect-changed <path,path>] [--trigger-evidence <id,id>] [--parent-snapshot <id,id>]",
+      "head world-refresh-status <project>",
+      "head world-refresh-read <project> --receipt <incremental-refresh-receipt-id>",
       "head world-graph-status <project>",
       "head world-docs-build <project>",
       "head world-docs-status <project>",
@@ -128,6 +132,15 @@ export function runCommand(argv = process.argv.slice(2)) {
     revisionParentIds: options["revision-parents"] ? readJsonFile(options["revision-parents"], "Revision parent map") : {},
   });
   if (command === "world-status") return inspectWorldModel({ root });
+  if (command === "world-refresh") return refreshWorldModel({
+    root,
+    triggerKind: "manual",
+    triggerEvidenceIds: options["trigger-evidence"] ? options["trigger-evidence"].split(",").map((item) => item.trim()).filter(Boolean) : [],
+    expectedChangedPaths: options["expect-changed"] == null ? null : options["expect-changed"].split(",").map((item) => item.trim()).filter(Boolean),
+    additionalParentSourceSnapshotIds: options["parent-snapshot"] ? options["parent-snapshot"].split(",").map((item) => item.trim()).filter(Boolean) : [],
+  });
+  if (command === "world-refresh-status") return inspectIncrementalRefresh({ root });
+  if (command === "world-refresh-read") return readIncrementalRefreshReceipt({ root, refreshReceiptId: options.receipt });
   if (command === "world-graph-status") return inspectWorldGraphProjection({ root });
   if (command === "world-docs-build") return materializeWorldMarkdownProjection({ root });
   if (command === "world-docs-status") return inspectWorldMarkdownProjection({ root });

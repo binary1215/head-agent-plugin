@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.21",
+  "version": "0.3.0-alpha.22",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -42,6 +42,8 @@
       "Fresh HEAD Review Projection",
       "Review-driven Plan Generations",
       "Repository World Model",
+      "Incremental Observed-state Refresh Receipts",
+      "Changed-file Analysis Reuse",
       "User-owned Product Model Canon",
       "Product Canon Temporal Projection",
       "ComputeAdapter Contract",
@@ -75,6 +77,7 @@
       "Inspect the current graph projection adapter and verify it remains a rebuildable non-authoritative materialized view.",
       "Generate or inspect deterministic Markdown knowledge projections without treating documents as canon.",
       "Capture edited generated Markdown as review-required DocumentChangeCandidates without changing Product Canon.",
+      "Refresh observed repository state incrementally while preserving active Run inputs and immutable snapshot ancestry.",
       "Inspect onboarding review and promotion receipts; include unreviewed candidates only when explicitly requested.",
       "Infer Feature-to-code mapping candidates, then require explicit review before creating IMPLEMENTS or VERIFIED_BY relationships.",
       "Record an accepted execution as a Git-independent ChangeSet, then review inferred Feature or Capability impact before creating IMPACTS relationships.",

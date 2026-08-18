@@ -2,10 +2,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  buildComputeRequest,
+  buildComputeSuccessResponse,
   DEFAULT_COMPUTE_LIMITS,
   executeComputeOperation,
   JsReferenceComputeAdapter,
   normalizeComputeLimits,
+  validateComputeRequest,
+  validateComputeResponse,
 } from "./compute-adapter.mjs";
 import {
   classifySourcePath,
@@ -124,11 +128,13 @@ function normalizePath(root, file) {
   return path.relative(root, file).replaceAll("\\", "/");
 }
 
-function scanPayload(input, limits) {
+function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = null } = {}) {
   validateRepositoryScanInput(input);
   const normalizedLimits = normalizeComputeLimits(limits);
   const root = input.projectRoot;
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) fail("Repository scan root is not a directory.", "REPOSITORY_SCAN_ROOT_INVALID");
+  if (previousResult) validateRepositoryScanResult(previousResult);
+  const previousFiles = new Map((previousResult?.files || []).map((file) => [file.path, file]));
   const managed = new Set(input.managedRootFiles);
   const files = [];
   const skipped = Object.fromEntries(SKIPPED_FIELDS.map((field) => [field, 0]));
@@ -159,21 +165,46 @@ function scanPayload(input, limits) {
       if (totalBytes + raw.length > normalizedLimits.maxTotalBytes) fail(`Repository scan exceeds ${normalizedLimits.maxTotalBytes} total bytes.`, "REPOSITORY_SCAN_TOTAL_BYTES_LIMIT");
       const content = raw.toString("utf8");
       const language = languageForSource(extension, base);
-      files.push({
+      const classification = classifySourcePath(relative, extension);
+      const contentDigest = digest(raw);
+      const previous = previousFiles.get(relative);
+      const reusable = previous
+        && previous.digest === contentDigest
+        && previous.bytes === raw.length
+        && previous.classification === classification
+        && previous.language === language;
+      files.push(reusable ? {
         path: relative,
-        digest: digest(raw),
+        digest: contentDigest,
         freshness: "active",
         bytes: raw.length,
-        classification: classifySourcePath(relative, extension),
+        classification,
+        language,
+        symbols: previous.symbols,
+        dependencies: previous.dependencies,
+        semanticFacts: previous.semanticFacts,
+      } : {
+        path: relative,
+        digest: contentDigest,
+        freshness: "active",
+        bytes: raw.length,
+        classification,
         language,
         symbols: extractSourceSymbols(content, language, { maxSymbols: REPOSITORY_SCAN_DEFAULTS.maxSymbolsPerFile }),
         dependencies: extractSourceDependencies(content, language, base),
         semanticFacts: extractSemanticSourceFacts(content, language),
       });
+      if (reuseDiagnostics) (reusable ? reuseDiagnostics.reusedPaths : reuseDiagnostics.analyzedPaths).push(relative);
       totalBytes += raw.length;
     }
   }
   files.sort((left, right) => compareText(left.path, right.path));
+  if (reuseDiagnostics) {
+    const currentPaths = new Set(files.map((file) => file.path));
+    reuseDiagnostics.reusedPaths.sort(compareText);
+    reuseDiagnostics.analyzedPaths.sort(compareText);
+    reuseDiagnostics.removedPaths.push(...[...previousFiles.keys()].filter((file) => !currentPaths.has(file)).sort(compareText));
+  }
   return {
     schemaVersion: 1,
     kind: "RepositoryScanResult",
@@ -203,6 +234,89 @@ function withIdentity(payload) {
 export function scanRepositoryReference(input, { limits = DEFAULT_COMPUTE_LIMITS } = {}) {
   const result = withIdentity(scanPayload(input, limits));
   return validateRepositoryScanResult(result);
+}
+
+function resultFromWorldModelSnapshot(snapshot) {
+  return {
+    schemaVersion: 1,
+    kind: "RepositoryScanResult",
+    ...snapshot.repositoryScan,
+    files: snapshot.files,
+    skipped: snapshot.skipped,
+  };
+}
+
+function changesBetweenScans(previous, current) {
+  const before = new Map(previous.files.map((file) => [file.path, file.digest]));
+  const after = new Map(current.files.map((file) => [file.path, file.digest]));
+  return {
+    added: [...after.keys()].filter((file) => !before.has(file)).sort(compareText),
+    changed: [...after.keys()].filter((file) => before.has(file) && before.get(file) !== after.get(file)).sort(compareText),
+    removed: [...before.keys()].filter((file) => !after.has(file)).sort(compareText),
+  };
+}
+
+export function repositoryScanResultFromWorldModel(snapshot) {
+  if (!snapshot?.repositoryScan || !Array.isArray(snapshot.files) || !snapshot.skipped) {
+    fail("World Model snapshot does not contain a repository scan.", "REPOSITORY_SCAN_SNAPSHOT_MISSING");
+  }
+  return validateRepositoryScanResult(resultFromWorldModelSnapshot(snapshot));
+}
+
+export function validateRepositoryScanExecution(execution, { projectRoot, managedRootFiles = [] } = {}) {
+  if (!execution || typeof execution !== "object" || Array.isArray(execution)) fail("Repository scan execution is required.", "INVALID_REPOSITORY_SCAN_EXECUTION");
+  const expectedInput = buildRepositoryScanInput({ projectRoot, managedRootFiles });
+  validateComputeRequest(execution.request);
+  validateComputeResponse(execution.request, execution.response);
+  if (execution.request.operation !== REPOSITORY_SCAN_OPERATION
+    || canonicalJson(execution.request.semanticProducer) !== canonicalJson(REPOSITORY_SCAN_SEMANTIC_PRODUCER)
+    || canonicalJson(execution.request.input) !== canonicalJson(expectedInput)
+    || execution.response.status !== "ok"
+    || canonicalJson(execution.response.result) !== canonicalJson(execution.result)) {
+    fail("Repository scan execution does not match the requested project scan.", "INVALID_REPOSITORY_SCAN_EXECUTION");
+  }
+  validateRepositoryScanResult(execution.result);
+  return execution;
+}
+
+export async function executeIncrementalRepositoryScan({ projectRoot, managedRootFiles = [], previousSnapshot, limits = {} } = {}) {
+  const previousResult = repositoryScanResultFromWorldModel(previousSnapshot);
+  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles });
+  const request = buildComputeRequest({
+    operation: REPOSITORY_SCAN_OPERATION,
+    input,
+    semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER,
+    limits,
+  });
+  const reuse = { reusedPaths: [], analyzedPaths: [], removedPaths: [] };
+  const result = validateRepositoryScanResult(withIdentity(scanPayload(input, request.limits, {
+    previousResult,
+    reuseDiagnostics: reuse,
+  })));
+  const response = buildComputeSuccessResponse(request, result);
+  validateComputeResponse(request, response);
+  const changes = changesBetweenScans(previousResult, result);
+  return validateRepositoryScanExecution({
+    request,
+    response,
+    result,
+    diagnostics: {
+      backend: "javascript-reference",
+      adapterName: "repository-scan-incremental-reference",
+      executionMode: "in-process-incremental-reuse",
+      fallbackUsed: false,
+      fallbackReasonCode: "",
+      workerRelativePath: "",
+      workerSha256: "",
+      reusedFileCount: reuse.reusedPaths.length,
+      analyzedFileCount: reuse.analyzedPaths.length,
+      removedFileCount: reuse.removedPaths.length,
+      reusedPaths: reuse.reusedPaths,
+      analyzedPaths: reuse.analyzedPaths,
+      removedPaths: reuse.removedPaths,
+      changes,
+    },
+  }, { projectRoot, managedRootFiles });
 }
 
 function assertOrderedUnique(values, identity, label) {
