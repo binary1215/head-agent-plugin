@@ -1,0 +1,246 @@
+name: Go Worker Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - "native/head-agent-worker/**"
+      - ".github/workflows/go-worker-build-release.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "native/head-agent-worker/**"
+      - ".github/workflows/go-worker-build-release.yml"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional v-prefixed release tag. Leave empty to build without publishing."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-worker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  GO_WORKER_ROOT: native/head-agent-worker
+  GO_WORKER_COMMAND: ./cmd/head-agent-worker
+
+jobs:
+  prepare:
+    name: Prepare build metadata
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.detect.outputs.enabled }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Detect Go worker source
+        id: detect
+        shell: bash
+        run: |
+          if [[ -f "${GO_WORKER_ROOT}/go.mod" && -d "${GO_WORKER_ROOT}/cmd/head-agent-worker" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Go worker source is not present yet; native build jobs are intentionally skipped."
+          fi
+
+      - name: Resolve one deterministic workflow version
+        id: metadata
+        shell: bash
+        env:
+          MANUAL_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          release_tag=""
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          elif [[ -n "${MANUAL_RELEASE_TAG}" ]]; then
+            release_tag="${MANUAL_RELEASE_TAG}"
+          fi
+
+          if [[ -n "${release_tag}" && ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release_tag must be a v-prefixed semantic version." >&2
+            exit 1
+          fi
+
+          if [[ -n "${release_tag}" ]]; then
+            version="${release_tag#v}"
+          else
+            version="0.0.0-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
+          fi
+
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test Go worker
+    needs: prepare
+    if: ${{ needs.prepare.outputs.enabled == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go from the worker module
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: native/head-agent-worker/go.mod
+          cache-dependency-path: native/head-agent-worker/go.mod
+          check-latest: false
+
+      - name: Verify modules
+        working-directory: native/head-agent-worker
+        run: go mod verify
+
+      - name: Run tests
+        working-directory: native/head-agent-worker
+        run: go test ./...
+
+      - name: Run static analysis
+        working-directory: native/head-agent-worker
+        run: go vet ./...
+
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs:
+      - prepare
+      - test
+    if: ${{ needs.prepare.outputs.enabled == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            package: head-agent-worker-linux-amd64
+            executable: head-agent-worker
+          - goos: linux
+            goarch: arm64
+            package: head-agent-worker-linux-arm64
+            executable: head-agent-worker
+          - goos: darwin
+            goarch: amd64
+            package: head-agent-worker-darwin-amd64
+            executable: head-agent-worker
+          - goos: darwin
+            goarch: arm64
+            package: head-agent-worker-darwin-arm64
+            executable: head-agent-worker
+          - goos: windows
+            goarch: amd64
+            package: head-agent-worker-windows-amd64
+            executable: head-agent-worker.exe
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go from the worker module
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: native/head-agent-worker/go.mod
+          cache-dependency-path: native/head-agent-worker/go.mod
+          check-latest: false
+
+      - name: Build and package worker
+        shell: bash
+        working-directory: native/head-agent-worker
+        env:
+          BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+          PACKAGE_NAME: ${{ matrix.package }}
+          EXECUTABLE_NAME: ${{ matrix.executable }}
+        run: |
+          package_root="${RUNNER_TEMP}/${PACKAGE_NAME}"
+          output_root="${GITHUB_WORKSPACE}/release-assets"
+          mkdir -p "${package_root}" "${output_root}"
+
+          CGO_ENABLED=0 GOOS="${TARGET_GOOS}" GOARCH="${TARGET_GOARCH}" \
+            go build \
+              -trimpath \
+              -buildvcs=false \
+              -ldflags="-s -w -X main.version=${BUILD_VERSION} -X main.commit=${GITHUB_SHA}" \
+              -o "${package_root}/${EXECUTABLE_NAME}" \
+              "${GO_WORKER_COMMAND}"
+
+          if [[ "${TARGET_GOOS}" != "windows" ]]; then
+            chmod 0755 "${package_root}/${EXECUTABLE_NAME}"
+          fi
+
+          printf '{\n  "version": "%s",\n  "commit": "%s",\n  "goos": "%s",\n  "goarch": "%s",\n  "cgoEnabled": false\n}\n' \
+            "${BUILD_VERSION}" "${GITHUB_SHA}" "${TARGET_GOOS}" "${TARGET_GOARCH}" \
+            > "${package_root}/BUILD-METADATA.json"
+
+          if [[ "${TARGET_GOOS}" == "windows" ]]; then
+            (cd "${package_root}" && zip -9 "${output_root}/${PACKAGE_NAME}.zip" "${EXECUTABLE_NAME}" BUILD-METADATA.json)
+          else
+            tar -C "$(dirname "${package_root}")" -czf "${output_root}/${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
+          fi
+
+      - name: Upload immutable matrix artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.package }}
+          path: release-assets/${{ matrix.package }}.*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish one GitHub Release
+    needs:
+      - prepare
+      - build
+    if: ${{ needs.prepare.outputs.enabled == 'true' && needs.prepare.outputs.release_tag != '' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download every platform artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: head-agent-worker-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate release checksums
+        shell: bash
+        working-directory: release-assets
+        run: sha256sum head-agent-worker-* > SHA256SUMS
+
+      - name: Publish release once after all builds succeed
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          name: HEAD Agent Go Worker ${{ needs.prepare.outputs.release_tag }}
+          body: |
+            Provider-neutral HEAD Agent Core native compute-worker packages.
+
+            Source commit: `${{ github.sha }}`
+
+            These binaries accelerate the plugin compute plane. They do not replace Product Canon,
+            ReviewDecision authority, the JavaScript control plane, or the local fallback path.
+          prerelease: ${{ contains(needs.prepare.outputs.release_tag, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/head-agent-worker-*
+            release-assets/SHA256SUMS
