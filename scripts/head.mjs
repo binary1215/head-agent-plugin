@@ -11,7 +11,7 @@ import { finishRun, getPendingReviewContext, reviewRun, startRun } from "./lib/r
 import { buildWorldModel, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 import { inspectOnboarding, readOnboardingCandidateSet, readOnboardingReviewDecision, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping, readFeatureMappingCandidateSet, readFeatureMappingReviewDecision, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
-import { inspectChangeSets, readChangeImpactCandidateSet, readChangeImpactReviewDecision, readChangeSet, recordChangeSet, reviewChangeImpact } from "./lib/change-set.mjs";
+import { attachVcsEvidence, inspectChangeSets, readChangeImpactCandidateSet, readChangeImpactReviewDecision, readChangeSet, readVcsEvidence, recordChangeSet, reviewChangeImpact } from "./lib/change-set.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -51,6 +51,8 @@ export function usage() {
       "head change-impact-candidates <project> --candidate-set <change-impact-candidate-set-id>",
       "head change-impact-review <project> --input <review.json>",
       "head change-impact-review-read <project> --review <change-impact-review-decision-id>",
+      "head change-set-vcs-attach <project> --input <vcs-evidence.json>",
+      "head change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>",
       "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>] [--parent-snapshot <id,id>] [--revision-parents <json-file>]",
       "head world-status <project>",
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
@@ -110,6 +112,8 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "change-impact-candidates") return readChangeImpactCandidateSet({ root, candidateSetId: options["candidate-set"] });
   if (command === "change-impact-review") return reviewChangeImpact({ ...inputJson(options, "Change impact ReviewDecision"), root });
   if (command === "change-impact-review-read") return readChangeImpactReviewDecision({ root, reviewDecisionId: options.review });
+  if (command === "change-set-vcs-attach") return attachVcsEvidence({ ...inputJson(options, "VCS evidence attachment"), root });
+  if (command === "change-set-vcs-read") return readVcsEvidence({ root, vcsEvidenceId: options["vcs-evidence"] });
   if (command === "world-index") return buildWorldModel({
     root,
     persist: true,

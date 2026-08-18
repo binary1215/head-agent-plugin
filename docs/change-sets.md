@@ -33,6 +33,18 @@ Acceptance creates a separate immutable `ReviewedImpact` receipt and a reviewed 
 
 If no reviewed mapping connects changed code or tests to Product Canon, the candidate set records an open Unknown and remains `awaiting-evidence`.
 
+## Optional VCS evidence
+
+VCS evidence protocol `0.1.0` attaches one or more explicitly selected Git commit observations to an existing ChangeSet. The attachment command accepts only commit object IDs present in the current digest-verified `GitDecisionHistory`; it does not infer equivalence from timestamps, messages, diffs, branch names, or executor sessions.
+
+The immutable `VcsEvidence` artifact embeds normalized `GitCommitObservation` records and the Git-history identity that verified them. This permits later GraphSnapshot reconstruction when `.git`, the Git executable, or the original history adapter is unavailable. The attachment never edits the ChangeSet and does not add Git identity to its hash. It projects only:
+
+```text
+ChangeSet -MATERIALIZED_AS-> VcsEvidence -REFERENCES-> GitCommit
+```
+
+These nodes and edges are derived evidence with `instructionAuthority: false`, `promotionAuthority: false`, and `evidence-not-instruction`. A commit is neither a ChangeSet nor proof that the implementation satisfies Product Canon. Missing history, unknown commit IDs, source drift, artifact tampering, and active/pending Run conflicts fail closed for attachment; all Git-independent operations remain available.
+
 ## Commands
 
 ```text
@@ -42,6 +54,8 @@ node scripts/head.mjs change-set-read <project> --change-set <change-set-id>
 node scripts/head.mjs change-impact-candidates <project> --candidate-set <candidate-set-id>
 node scripts/head.mjs change-impact-review <project> --input <review.json>
 node scripts/head.mjs change-impact-review-read <project> --review <review-decision-id>
+node scripts/head.mjs change-set-vcs-attach <project> --input <vcs-evidence.json>
+node scripts/head.mjs change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>
 ```
 
 Minimal recording input:
@@ -67,7 +81,17 @@ Review input:
 }
 ```
 
-The read-only MCP tool `head_change_set_status` exposes verified state without recording or reviewing anything.
+VCS evidence attachment input:
+
+```json
+{
+  "changeSetId": "change-set-<24-hex>",
+  "commitIds": ["<40-or-64-hex-git-object-id>"],
+  "rationale": "This verified commit observation materializes the reviewed logical change."
+}
+```
+
+The read-only MCP tools `head_change_set_status` and `head_vcs_evidence` expose verified state and attachments without recording, reviewing, or promoting anything.
 
 ## Project artifacts
 
@@ -76,10 +100,11 @@ The read-only MCP tool `head_change_set_status` exposes verified state without r
 .head/change-sets/records/change-set-*.json
 .head/change-sets/impact-candidate-sets/change-impact-candidates-*.json
 .head/change-sets/impact-review-decisions/change-impact-review-decision-*.json
+.head/change-sets/vcs-evidence/vcs-evidence-*.json
 ```
 
 Every artifact and pointer is content-derived and digest-verified. Source drift, unaccepted execution review, mismatched ResultPacket/ReviewDecision, missing pinned snapshots, stale candidate identity, tampering, active/pending Run conflict, and empty revision difference fail closed.
 
 ## Deferred boundaries
 
-Optional `VcsEvidence -> GitCommit` attachment, automatic ChangeSet creation from CI or filesystem events, general execution-lineage graph projection, merge automation, imported ticket/backlog adapters, conformance findings, document projection, `GraphProjectionAdapter`, and GraphDB acceleration remain deferred.
+Automatic ChangeSet creation from CI or filesystem events, inferred commit-to-ChangeSet matching, general execution-lineage graph projection, merge automation, imported ticket/backlog adapters, conformance findings, document projection, `GraphProjectionAdapter`, and GraphDB acceleration remain deferred.

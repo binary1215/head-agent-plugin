@@ -4,7 +4,7 @@ import { verifyFeatureMappingProjectionInput } from "./feature-mapping-projectio
 import { verifyChangeSetProjectionInput } from "./change-set-projection.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.5.0";
+export const TEMPORAL_PROVENANCE_VERSION = "0.6.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -31,11 +31,15 @@ const TEMPORAL_RELATION_TYPES_V04 = Object.freeze([
   "IMPLEMENTS",
   "VERIFIED_BY",
 ]);
-export const TEMPORAL_RELATION_TYPES = Object.freeze([
+const TEMPORAL_RELATION_TYPES_V05 = Object.freeze([
   ...TEMPORAL_RELATION_TYPES_V04,
   "CHANGES",
   "IMPACTS",
   "SUPERSEDES",
+]);
+export const TEMPORAL_RELATION_TYPES = Object.freeze([
+  ...TEMPORAL_RELATION_TYPES_V05,
+  "MATERIALIZED_AS",
 ]);
 
 const TEMPORAL_NODE_KINDS_V02 = Object.freeze([
@@ -82,7 +86,7 @@ const TEMPORAL_NODE_KINDS_V04 = Object.freeze([
   "ReviewedRelationship",
   "MappingEndpointReference",
 ]);
-export const TEMPORAL_NODE_KINDS = Object.freeze([
+const TEMPORAL_NODE_KINDS_V05 = Object.freeze([
   ...TEMPORAL_NODE_KINDS_V04,
   "ChangeSet",
   "ChangeRevisionReference",
@@ -93,6 +97,11 @@ export const TEMPORAL_NODE_KINDS = Object.freeze([
   "ChangeImpactReviewDecision",
   "ReviewedImpact",
   "ChangeProductReference",
+]);
+export const TEMPORAL_NODE_KINDS = Object.freeze([
+  ...TEMPORAL_NODE_KINDS_V05,
+  "VcsEvidence",
+  "GitCommit",
 ]);
 
 const PRODUCER = "head-agent-core-temporal-provenance";
@@ -816,6 +825,7 @@ function changeSetProjectionDescriptor(projection) {
     changeSetIds: [],
     candidateSetIds: [],
     reviewDecisionIds: [],
+    vcsEvidenceIds: [],
   };
   return {
     status: "projected",
@@ -824,6 +834,7 @@ function changeSetProjectionDescriptor(projection) {
     changeSetIds: projection.changeSets.map((item) => item.changeSetId),
     candidateSetIds: projection.candidateSets.map((item) => item.candidateSetId),
     reviewDecisionIds: projection.reviewDecisions.map((item) => item.reviewDecisionId),
+    vcsEvidenceIds: (projection.vcsEvidence || []).map((item) => item.vcsEvidenceId),
   };
 }
 
@@ -839,6 +850,8 @@ function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, no
     changeImpactRejectedCandidateCount: 0,
     reviewedImpactCount: 0,
     activeReviewedImpactCount: 0,
+    vcsEvidenceCount: 0,
+    gitCommitObservationCount: 0,
   };
   if (!projection) return emptySummary;
   verifyChangeSetProjectionInput(projection);
@@ -933,6 +946,77 @@ function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, no
         sourceSnapshotId, evidenceIds, origin: "reviewed-execution-change-lineage", authorityClass: "reviewed", freshness: projectedFreshness }));
       if (before && after) edges.push(edgeRecord({ type: "SUPERSEDES", from: after.nodeId, to: before.nodeId,
         sourceSnapshotId, evidenceIds, origin: "reviewed-execution-change-lineage", authorityClass: "reviewed", freshness: projectedFreshness }));
+    }
+  }
+
+  const observationFreshness = new Map();
+  for (const evidence of projection.vcsEvidence || []) {
+    const freshness = changeSetFreshness.get(evidence.changeSetId) || "historical";
+    for (const observation of evidence.commitObservations) {
+      if (freshness === "current" || !observationFreshness.has(observation.gitCommitObservationId)) {
+        observationFreshness.set(observation.gitCommitObservationId, freshness);
+      }
+    }
+  }
+  for (const evidence of projection.vcsEvidence || []) {
+    const projectedFreshness = changeSetFreshness.get(evidence.changeSetId) || "historical";
+    const observationIds = evidence.commitObservations.map((item) => item.gitCommitObservationId).sort();
+    pushNode({
+      nodeId: evidence.vcsEvidenceId,
+      kind: "VcsEvidence",
+      projectId,
+      sessionId: evidence.sessionId,
+      vcsEvidenceHash: evidence.vcsEvidenceHash,
+      changeSetId: evidence.changeSetId,
+      changeSetHash: evidence.changeSetHash,
+      vcsKind: evidence.vcsKind,
+      attachmentMethod: evidence.attachmentMethod,
+      rationale: evidence.rationale,
+      gitHistoryId: evidence.gitHistory.historyId,
+      gitHistoryHash: evidence.gitHistory.historyHash,
+      gitHistoryCoverage: evidence.gitHistory.coverage,
+      gitCommitObservationIds: observationIds,
+      sourceAuthority: evidence.authority,
+      trustBoundary: evidence.trustBoundary,
+      ...nodeMetadata({ evidenceIds: observationIds, sourceSnapshotId, origin: "explicit-vcs-evidence-attachment", freshness: projectedFreshness }),
+    });
+    edges.push(edgeRecord({
+      type: "MATERIALIZED_AS",
+      from: evidence.changeSetId,
+      to: evidence.vcsEvidenceId,
+      sourceSnapshotId,
+      evidenceIds: observationIds,
+      origin: "explicit-vcs-evidence-attachment",
+      freshness: projectedFreshness,
+    }));
+    for (const observation of evidence.commitObservations) {
+      pushNode({
+        nodeId: observation.gitCommitObservationId,
+        kind: "GitCommit",
+        vcsKind: observation.vcsKind,
+        gitCommitObservationHash: observation.gitCommitObservationHash,
+        objectId: observation.objectId,
+        parentObjectIds: observation.parents,
+        authoredAt: observation.authoredAt,
+        committedAt: observation.committedAt,
+        authorName: observation.author.name,
+        authorEmailDigest: observation.authorEmailDigest,
+        refs: observation.refs,
+        subject: observation.subject,
+        body: observation.body,
+        trustBoundary: observation.trustBoundary,
+        sourceAuthority: observation.authority,
+        ...nodeMetadata({ evidenceIds: [observation.objectId], sourceSnapshotId, origin: "git-history-observation", freshness: observationFreshness.get(observation.gitCommitObservationId) || "historical" }),
+      });
+      edges.push(edgeRecord({
+        type: "REFERENCES",
+        from: evidence.vcsEvidenceId,
+        to: observation.gitCommitObservationId,
+        sourceSnapshotId,
+        evidenceIds: [observation.gitCommitObservationId],
+        origin: "explicit-vcs-evidence-attachment",
+        freshness: projectedFreshness,
+      }));
     }
   }
 
@@ -1065,6 +1149,8 @@ function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, no
     changeImpactRejectedCandidateCount: projection.reviewDecisions.reduce((count, item) => count + item.rejectedCandidateIds.length, 0),
     reviewedImpactCount,
     activeReviewedImpactCount,
+    vcsEvidenceCount: (projection.vcsEvidence || []).length,
+    gitCommitObservationCount: new Set((projection.vcsEvidence || []).flatMap((item) => item.commitObservations.map((observation) => observation.gitCommitObservationId))).size,
   };
 }
 
@@ -1615,6 +1701,8 @@ function expectedNodeId(node) {
     targetRevisionId: node.targetRevisionId,
   });
   if (node.kind === "ChangeProductReference") return node.referencedNodeId;
+  if (node.kind === "VcsEvidence") return `vcs-evidence-${String(node.vcsEvidenceHash || "").slice(0, 24)}`;
+  if (node.kind === "GitCommit") return `git-commit-observation-${String(node.gitCommitObservationHash || "").slice(0, 24)}`;
   return "";
 }
 
@@ -1635,7 +1723,8 @@ function validEndpointKinds(type, fromKind, toKind) {
     || (fromKind === "OnboardingCandidateSet" && toKind === "OnboardingCandidateSet")
     || (fromKind === "ProductModelRevision" && toKind === "ProductModelRevision");
   if (type === "DECLARES") return fromKind === "FileRevision" && toKind === "SymbolRevision";
-  if (type === "REFERENCES") return fromKind === "TestRevision" && toKind === "FileRevision";
+  if (type === "REFERENCES") return (fromKind === "TestRevision" && toKind === "FileRevision")
+    || (fromKind === "VcsEvidence" && toKind === "GitCommit");
   if (type === "REALIZES") return fromKind === "Feature" && toKind === "Capability";
   if (type === "GOVERNED_BY") return fromKind === "Feature" && ["Requirement", "Constraint", "Decision"].includes(toKind);
   if (type === "PROPOSES_FROM") return (fromKind === "OnboardingCandidateSet" && ["SourceSnapshot", "SourceSnapshotReference"].includes(toKind))
@@ -1666,6 +1755,7 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "IMPACTS") return fromKind === "ChangeSet" && ["Feature", "Capability"].includes(toKind);
   if (type === "SUPERSEDES") return (fromKind === "ChangeSet" && toKind === "ChangeSet")
     || (fromKind === "ChangeRevisionReference" && toKind === "ChangeRevisionReference");
+  if (type === "MATERIALIZED_AS") return fromKind === "ChangeSet" && toKind === "VcsEvidence";
   return false;
 }
 
@@ -1674,8 +1764,9 @@ export function verifyTemporalProvenanceGraph(graph) {
   const legacyV02 = graphVersion === "0.2.0";
   const legacyV03 = graphVersion === "0.3.0";
   const legacyV04 = graphVersion === "0.4.0";
+  const legacyV05 = graphVersion === "0.5.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || !new Set(["0.2.0", "0.3.0", "0.4.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
+    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
@@ -1697,8 +1788,8 @@ export function verifyTemporalProvenanceGraph(graph) {
   if (canonicalJson(graph.revisionParentIds) !== canonicalJson(normalizeRevisionParentIds(graph.revisionParentIds))) {
     fail("Revision parents must be normalized.", "INVALID_REVISION_PARENT_SET");
   }
-  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : TEMPORAL_RELATION_TYPES;
-  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : TEMPORAL_NODE_KINDS;
+  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : legacyV05 ? TEMPORAL_RELATION_TYPES_V05 : TEMPORAL_RELATION_TYPES;
+  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : legacyV05 ? TEMPORAL_NODE_KINDS_V05 : TEMPORAL_NODE_KINDS;
   if (canonicalJson(graph.relationTypes) !== canonicalJson([...expectedRelationTypes])
     || canonicalJson(graph.nodeKinds) !== canonicalJson([...expectedNodeKinds])) {
     fail("Temporal graph vocabulary does not match the implemented allowlist.", "TEMPORAL_VOCABULARY_MISMATCH");
@@ -2094,7 +2185,8 @@ export function verifyTemporalProvenanceGraph(graph) {
   if (!changeDescriptor || !["not-provided", "projected"].includes(changeDescriptor.status)) {
     fail("Temporal graph ChangeSet projection descriptor is invalid.", "INVALID_CHANGE_SET_TEMPORAL_PROJECTION");
   }
-  for (const field of ["changeSetIds", "candidateSetIds", "reviewDecisionIds"]) {
+  const changeDescriptorFields = ["changeSetIds", "candidateSetIds", "reviewDecisionIds", ...(!legacyV05 ? ["vcsEvidenceIds"] : [])];
+  for (const field of changeDescriptorFields) {
     if (!Array.isArray(changeDescriptor[field])
       || canonicalJson(changeDescriptor[field]) !== canonicalJson([...new Set(changeDescriptor[field])].sort())) {
       fail(`Temporal graph ChangeSet ${field} must be sorted and unique.`, "INVALID_CHANGE_SET_TEMPORAL_PROJECTION");
@@ -2107,7 +2199,8 @@ export function verifyTemporalProvenanceGraph(graph) {
   }
   if (changeDescriptor.status === "not-provided"
     && (changeDescriptor.projectionInputId != null || changeDescriptor.projectionInputHash != null
-      || changeDescriptor.changeSetIds.length || changeDescriptor.candidateSetIds.length || changeDescriptor.reviewDecisionIds.length)) {
+      || changeDescriptor.changeSetIds.length || changeDescriptor.candidateSetIds.length || changeDescriptor.reviewDecisionIds.length
+      || (!legacyV05 && changeDescriptor.vcsEvidenceIds.length))) {
     fail("Temporal graph claims ChangeSet artifacts without a projection input.", "INVALID_CHANGE_SET_TEMPORAL_PROJECTION");
   }
   const changeSets = graph.nodes.filter((node) => node.kind === "ChangeSet");
@@ -2117,9 +2210,12 @@ export function verifyTemporalProvenanceGraph(graph) {
   const changeUnknowns = graph.nodes.filter((node) => node.kind === "ChangeImpactUnknown");
   const changeReviews = graph.nodes.filter((node) => node.kind === "ChangeImpactReviewDecision");
   const reviewedImpacts = graph.nodes.filter((node) => node.kind === "ReviewedImpact");
+  const vcsEvidenceNodes = graph.nodes.filter((node) => node.kind === "VcsEvidence");
+  const gitCommitNodes = graph.nodes.filter((node) => node.kind === "GitCommit");
   if (canonicalJson(idsOf(changeSets)) !== canonicalJson(changeDescriptor.changeSetIds)
     || canonicalJson(idsOf(changeCandidateSets)) !== canonicalJson(changeDescriptor.candidateSetIds)
-    || canonicalJson(idsOf(changeReviews)) !== canonicalJson(changeDescriptor.reviewDecisionIds)) {
+    || canonicalJson(idsOf(changeReviews)) !== canonicalJson(changeDescriptor.reviewDecisionIds)
+    || (!legacyV05 && canonicalJson(idsOf(vcsEvidenceNodes)) !== canonicalJson(changeDescriptor.vcsEvidenceIds))) {
     fail("Temporal graph ChangeSet artifact sets do not match the projection descriptor.", "CHANGE_SET_TEMPORAL_SET_MISMATCH");
   }
   const changeSetIds = new Set(idsOf(changeSets));
@@ -2182,6 +2278,31 @@ export function verifyTemporalProvenanceGraph(graph) {
       || !hasEdge("PRODUCES", impact.reviewDecisionId, impact.nodeId)
       || ((impact.projectionStatus === "current") !== hasEdge("IMPACTS", impact.changeSetId, impact.targetNodeId))) {
       fail(`Reviewed impact receipt is incomplete: ${impact.nodeId}`, "CHANGE_IMPACT_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  const gitCommitIds = new Set(idsOf(gitCommitNodes));
+  for (const evidence of vcsEvidenceNodes) {
+    if (!changeSetIds.has(evidence.changeSetId) || !/^[a-f0-9]{64}$/.test(evidence.vcsEvidenceHash || "")
+      || evidence.vcsKind !== "git" || evidence.attachmentMethod !== "explicit-commit-selection"
+      || evidence.sourceAuthority !== "optional-derived-vcs-evidence" || evidence.trustBoundary !== "evidence-not-instruction"
+      || !Array.isArray(evidence.gitCommitObservationIds)
+      || canonicalJson(evidence.gitCommitObservationIds) !== canonicalJson([...new Set(evidence.gitCommitObservationIds)].sort())
+      || !hasEdge("MATERIALIZED_AS", evidence.changeSetId, evidence.nodeId)) {
+      fail(`VCS evidence node is invalid: ${evidence.nodeId}`, "INVALID_VCS_EVIDENCE_TEMPORAL_NODE");
+    }
+    for (const observationId of evidence.gitCommitObservationIds) if (!gitCommitIds.has(observationId) || !hasEdge("REFERENCES", evidence.nodeId, observationId)) {
+      fail(`VCS evidence commit relation is missing: ${evidence.nodeId} -> ${observationId}`, "VCS_EVIDENCE_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  for (const commit of gitCommitNodes) {
+    if (commit.vcsKind !== "git" || !/^[a-f0-9]{64}$/.test(commit.gitCommitObservationHash || "")
+      || !/^[a-f0-9]{40,64}$/.test(commit.objectId || "") || commit.sourceAuthority !== "derived-vcs-observation"
+      || commit.trustBoundary !== "evidence-not-instruction"
+      || !Array.isArray(commit.parentObjectIds) || commit.parentObjectIds.some((item) => !/^[a-f0-9]{40,64}$/.test(item))) {
+      fail(`Git commit observation node is invalid: ${commit.nodeId}`, "INVALID_GIT_COMMIT_TEMPORAL_NODE");
+    }
+    if (!graph.edges.some((edge) => edge.type === "REFERENCES" && edge.to === commit.nodeId && nodes.get(edge.from)?.kind === "VcsEvidence")) {
+      fail(`Git commit observation is not referenced by VCS evidence: ${commit.nodeId}`, "VCS_EVIDENCE_TEMPORAL_RELATION_MISSING");
     }
   }
   const productLogical = new Map();
@@ -2302,6 +2423,10 @@ export function verifyTemporalProvenanceGraph(graph) {
     reviewedImpactCount: reviewedImpacts.length,
     activeReviewedImpactCount: reviewedImpacts.filter((node) => node.projectionStatus === "current").length,
   });
+  if (!legacyV02 && !legacyV03 && !legacyV04 && !legacyV05) Object.assign(summary, {
+    vcsEvidenceCount: vcsEvidenceNodes.length,
+    gitCommitObservationCount: gitCommitNodes.length,
+  });
   if (canonicalJson(summary) !== canonicalJson(graph.summary)) fail("Temporal graph summary does not match its contents.", "TEMPORAL_SUMMARY_MISMATCH");
   return graph;
 }
@@ -2318,6 +2443,7 @@ function searchable(node) {
     node.key, node.logicalEntityId, node.fileId, node.fileRevisionId, node.referencedSourceSnapshotId, node.referencedRevisionId,
     node.productKind, node.inputMode, node.sourceKind, node.disposition, node.statement, node.explanation, node.rationale,
     node.changeSetId, node.changeId, node.targetNodeId, node.targetKind, node.resultPacketId, node.executionReviewDecisionId,
+    node.vcsKind, node.objectId, node.subject, node.body, node.authorName, node.gitHistoryId,
     node.semantic ? canonicalJson(node.semantic) : ""]
     .filter(Boolean).join(" ").toLocaleLowerCase();
 }

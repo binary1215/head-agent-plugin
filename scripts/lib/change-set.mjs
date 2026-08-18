@@ -15,12 +15,16 @@ import {
   CHANGE_IMPACT_REVIEW_DIRECTORY,
   CHANGE_SET_DIRECTORY,
   CHANGE_SET_VERSION,
+  VCS_EVIDENCE_DIRECTORY,
+  VCS_EVIDENCE_VERSION,
   changeSetCanonicalJson,
   changeSetDigest,
   loadChangeSetProjection,
+  verifyGitCommitObservation,
   verifyChangeImpactCandidateSet,
   verifyChangeImpactReviewDecision,
   verifyChangeSet,
+  verifyVcsEvidence,
 } from "./change-set-projection.mjs";
 
 const STATE_RELATIVE_PATH = ".head/change-sets/current.json";
@@ -101,6 +105,7 @@ function stateArtifact(project, body) {
     worldModelId: body.worldModelId,
     graphSnapshotId: body.graphSnapshotId,
     sourceSnapshotId: body.sourceSnapshotId,
+    vcsEvidenceIds: normalizedIds(body.vcsEvidenceIds || [], "vcsEvidenceIds"),
   };
   const stateHash = changeSetDigest(changeSetCanonicalJson(payload));
   return { ...payload, stateId: `change-set-state-${stateHash.slice(0, 24)}`, stateHash };
@@ -112,6 +117,7 @@ function verifyState(document, project) {
     || !["awaiting-review", "awaiting-evidence", "reviewed", "rejected"].includes(document.phase)) {
     fail("ChangeSet state pointer is invalid.", "INVALID_CHANGE_SET_STATE");
   }
+  if (document.vcsEvidenceIds != null) normalizedIds(document.vcsEvidenceIds, "vcsEvidenceIds");
   const payload = { ...document };
   delete payload.stateId;
   delete payload.stateHash;
@@ -259,15 +265,16 @@ function lineageForChangeSet(projectRoot, resultPacketId, reviewDecisionId) {
   return { result, review, contract, capsule };
 }
 
-async function rebuildProjection({ projectRoot, projectId, sourceWorld, additionalChangeSets = [], additionalCandidateSets = [], additionalReviewDecisions = [] }) {
-  const projection = loadChangeSetProjection({ projectRoot, projectId, additionalChangeSets, additionalCandidateSets, additionalReviewDecisions });
-  return buildWorldModel({
+async function rebuildProjection({ projectRoot, projectId, sourceWorld, additionalChangeSets = [], additionalCandidateSets = [], additionalReviewDecisions = [], additionalVcsEvidence = [] }) {
+  const projection = loadChangeSetProjection({ projectRoot, projectId, additionalChangeSets, additionalCandidateSets, additionalReviewDecisions, additionalVcsEvidence });
+  const built = await buildWorldModel({
     root: projectRoot,
     persist: true,
     changeSetProjectionInput: projection,
     parentSourceSnapshotIds: sourceWorld.temporalProvenanceGraph.parentSourceSnapshotIds,
     revisionParentIds: sourceWorld.temporalProvenanceGraph.revisionParentIds,
   });
+  return { ...built, changeSetProjectionInput: projection };
 }
 
 export function readChangeSet({ root = ".", changeSetId } = {}) {
@@ -293,6 +300,125 @@ export function readChangeImpactReviewDecision({ root = ".", reviewDecisionId } 
   const review = readJson(file, "Change impact ReviewDecision");
   const candidateSet = readChangeImpactCandidateSet({ root: inspected.project.projectRoot, candidateSetId: review.candidateSetId }).candidateSet;
   return { status: "verified", file, reviewDecision: verifyChangeImpactReviewDecision(review, candidateSet, inspected.project.projectId) };
+}
+
+export function readVcsEvidence({ root = ".", vcsEvidenceId } = {}) {
+  const inspected = readyProject(root, "VCS evidence inspection");
+  const file = safeFile(inspected.project.projectRoot, VCS_EVIDENCE_DIRECTORY, vcsEvidenceId, "vcs-evidence");
+  if (!fs.existsSync(file)) fail(`VCS evidence not found: ${vcsEvidenceId}`, "VCS_EVIDENCE_NOT_FOUND");
+  const vcsEvidence = readJson(file, "VCS evidence");
+  const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId: vcsEvidence.changeSetId }).changeSet;
+  return { status: "verified", file, vcsEvidence: verifyVcsEvidence(vcsEvidence, changeSet, inspected.project.projectId) };
+}
+
+function gitCommitObservation(commit) {
+  const payload = {
+    schemaVersion: SCHEMA_VERSION,
+    kind: "GitCommitObservation",
+    protocol: { name: "head-agent-core-git-commit-observation", version: VCS_EVIDENCE_VERSION },
+    vcsKind: "git",
+    objectId: commit.commit,
+    parents: [...commit.parents].sort(),
+    authoredAt: commit.authoredAt,
+    committedAt: commit.committedAt,
+    author: { name: commit.author.name },
+    authorEmailDigest: commit.authorEmailDigest,
+    refs: [...commit.refs].sort(),
+    subject: commit.subject,
+    body: commit.body,
+    evidence: { ...commit.evidence },
+    authority: "derived-vcs-observation",
+    trustBoundary: "evidence-not-instruction",
+    instructionAuthority: false,
+    promotionAuthority: false,
+  };
+  const hash = changeSetDigest(changeSetCanonicalJson(payload));
+  return verifyGitCommitObservation({ ...payload, gitCommitObservationId: `git-commit-observation-${hash.slice(0, 24)}`, gitCommitObservationHash: hash });
+}
+
+function buildVcsEvidence(changeSet, history, commitIds, rationale) {
+  const ids = [...new Set(normalizedIds(commitIds, "commitIds").map((item) => item.toLocaleLowerCase()))].sort();
+  if (!ids.length || ids.some((item) => !/^[a-f0-9]{40,64}$/.test(item))) fail("commitIds must contain one or more Git object ids.", "INVALID_VCS_EVIDENCE_INPUT");
+  const commits = new Map(history.commits.map((commit) => [commit.commit, commit]));
+  const missing = ids.filter((id) => !commits.has(id));
+  if (missing.length) fail(`Selected Git commits are absent from the verified history: ${missing.join(", ")}`, "VCS_EVIDENCE_COMMIT_NOT_FOUND");
+  const commitObservations = ids.map((id) => gitCommitObservation(commits.get(id)))
+    .sort((left, right) => left.gitCommitObservationId.localeCompare(right.gitCommitObservationId));
+  const payload = {
+    schemaVersion: SCHEMA_VERSION,
+    kind: "VcsEvidence",
+    protocol: { name: "head-agent-core-vcs-evidence", version: VCS_EVIDENCE_VERSION },
+    projectId: changeSet.projectId,
+    sessionId: changeSet.sessionId,
+    changeSetId: changeSet.changeSetId,
+    changeSetHash: changeSet.changeSetHash,
+    vcsKind: "git",
+    attachmentMethod: "explicit-commit-selection",
+    rationale: requiredText(rationale, "VCS evidence rationale"),
+    gitHistory: {
+      historyId: history.historyId,
+      historyHash: history.historyHash,
+      coverage: history.coverage,
+    },
+    commitObservations,
+    authority: "optional-derived-vcs-evidence",
+    trustBoundary: "evidence-not-instruction",
+    instructionAuthority: false,
+    promotionAuthority: false,
+  };
+  const hash = changeSetDigest(changeSetCanonicalJson(payload));
+  return verifyVcsEvidence({ ...payload, vcsEvidenceId: `vcs-evidence-${hash.slice(0, 24)}`, vcsEvidenceHash: hash }, changeSet, changeSet.projectId);
+}
+
+export async function attachVcsEvidence({ root = ".", changeSetId, commitIds = [], rationale } = {}) {
+  const inspected = readyProject(root, "VCS evidence attachment");
+  if (inspected.state.activeRunId || inspected.state.pendingReview) {
+    fail("VCS evidence attachment cannot replace the current graph while a Run is active or awaiting review.", "VCS_EVIDENCE_RUN_CONFLICT");
+  }
+  const projectRoot = inspected.project.projectRoot;
+  const changeSet = readChangeSet({ root: projectRoot, changeSetId: requiredText(changeSetId, "ChangeSet id") }).changeSet;
+  const originalIdentity = { changeSetId: changeSet.changeSetId, changeSetHash: changeSet.changeSetHash };
+  const current = inspectWorldModel({ root: projectRoot });
+  if (current.status !== "current") fail("Current repository evidence is stale; index it before attaching VCS evidence.", "VCS_EVIDENCE_SOURCE_DRIFT");
+  const history = current.snapshot.gitDecisionHistory;
+  if (!history || history.status !== "available" || history.coverage !== "all-reachable-commits") {
+    fail(`Verified Git history is unavailable (${history?.reasonCode || history?.status || "missing"}).`, "VCS_EVIDENCE_UNAVAILABLE");
+  }
+  const vcsEvidence = buildVcsEvidence(changeSet, history, commitIds, rationale);
+  const projected = await rebuildProjection({
+    projectRoot,
+    projectId: inspected.project.projectId,
+    sourceWorld: current.snapshot,
+    additionalVcsEvidence: [vcsEvidence],
+  });
+  persistImmutable(safeFile(projectRoot, VCS_EVIDENCE_DIRECTORY, vcsEvidence.vcsEvidenceId, "vcs-evidence"), vcsEvidence, "VCS evidence");
+  let state = null;
+  if (fs.existsSync(stateFile(projectRoot))) {
+    const previous = verifyState(readJson(stateFile(projectRoot), "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId });
+    const vcsEvidenceIds = projected.changeSetProjectionInput.vcsEvidence
+      .filter((item) => item.changeSetId === previous.changeSetId).map((item) => item.vcsEvidenceId).sort();
+    state = writeState(projectRoot, inspected.project, {
+      sessionId: previous.sessionId,
+      phase: previous.phase,
+      changeSetId: previous.changeSetId,
+      candidateSetId: previous.candidateSetId,
+      reviewDecisionId: previous.reviewDecisionId,
+      worldModelId: projected.snapshot.worldModelId,
+      graphSnapshotId: projected.snapshot.temporalProvenanceGraph.graphSnapshotId,
+      sourceSnapshotId: projected.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+      vcsEvidenceIds,
+    });
+  }
+  const unchanged = changeSet.changeSetId === originalIdentity.changeSetId && changeSet.changeSetHash === originalIdentity.changeSetHash;
+  if (!unchanged) fail("VCS evidence attachment changed the provider-neutral ChangeSet identity.", "CHANGE_SET_IDENTITY_DRIFT");
+  return {
+    status: "vcs_evidence_attached",
+    vcsEvidence,
+    state,
+    changeSetIdentity: { ...originalIdentity, unchanged: true },
+    worldModel: { worldModelId: projected.snapshot.worldModelId, ...snapshotReference(projected.snapshot) },
+    authority: "optional-evidence-not-change-lineage-or-project-canon",
+  };
 }
 
 export async function recordChangeSet({ root = ".", resultPacketId, reviewDecisionId, beforeWorldModelId = "", parentChangeSetIds = [] } = {}) {
@@ -355,6 +481,7 @@ export async function recordChangeSet({ root = ".", resultPacketId, reviewDecisi
     worldModelId: projected.snapshot.worldModelId,
     graphSnapshotId: projected.snapshot.temporalProvenanceGraph.graphSnapshotId,
     sourceSnapshotId: projected.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+    vcsEvidenceIds: [],
   });
   return { status: phase === "awaiting-review" ? "awaiting_change_impact_review" : "awaiting_change_impact_evidence", state, changeSet, candidateSet, worldModel: { worldModelId: projected.snapshot.worldModelId, ...snapshotReference(projected.snapshot) }, authority: "impact-candidates-have-no-promotion-authority" };
 }
@@ -416,6 +543,7 @@ export async function reviewChangeImpact({ root = ".", candidateSetId, dispositi
     worldModelId: projected.snapshot.worldModelId,
     graphSnapshotId: projected.snapshot.temporalProvenanceGraph.graphSnapshotId,
     sourceSnapshotId: projected.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+    vcsEvidenceIds: projected.changeSetProjectionInput.vcsEvidence.filter((item) => item.changeSetId === state.changeSetId).map((item) => item.vcsEvidenceId).sort(),
   });
   return { status: nextPhase === "reviewed" ? "change_impacts_reviewed" : "change_impacts_rejected", state: nextState, reviewDecision: review, reviewedImpactCount: review.acceptedCandidateIds.length, worldModel: { worldModelId: projected.snapshot.worldModelId, ...snapshotReference(projected.snapshot) } };
 }
@@ -428,10 +556,12 @@ export function inspectChangeSets({ root = "." } = {}) {
   const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId: state.changeSetId }).changeSet;
   const candidateSet = readChangeImpactCandidateSet({ root: inspected.project.projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
   const reviewDecision = state.reviewDecisionId ? readChangeImpactReviewDecision({ root: inspected.project.projectRoot, reviewDecisionId: state.reviewDecisionId }).reviewDecision : null;
+  const projection = loadChangeSetProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const vcsEvidence = projection.vcsEvidence.filter((item) => item.changeSetId === changeSet.changeSetId);
   const world = inspectWorldModel({ root: inspected.project.projectRoot });
   return {
-    status: state.phase.replaceAll("-", "_"), state, changeSet, candidateSet, reviewDecision,
+    status: state.phase.replaceAll("-", "_"), state, changeSet, candidateSet, reviewDecision, vcsEvidence,
     worldModel: { status: world.status, worldModelId: world.snapshot.worldModelId, graphSnapshotId: world.snapshot.temporalProvenanceGraph.graphSnapshotId, sourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId, matchesState: world.snapshot.worldModelId === state.worldModelId },
-    authority: { changeSet: "reviewed-execution-change-lineage", impactCandidates: "non-authoritative-until-explicit-review", reviewedImpacts: "explicit-user-reviewed-impact-facts", graph: "rebuildable-derived-projection", git: "optional-vcs-evidence-not-required" },
+    authority: { changeSet: "reviewed-execution-change-lineage", impactCandidates: "non-authoritative-until-explicit-review", reviewedImpacts: "explicit-user-reviewed-impact-facts", vcsEvidence: "optional-derived-evidence-not-instruction", graph: "rebuildable-derived-projection", git: "optional-vcs-evidence-not-required" },
   };
 }

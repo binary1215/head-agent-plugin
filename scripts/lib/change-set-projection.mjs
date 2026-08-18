@@ -3,17 +3,22 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const CHANGE_SET_VERSION = "0.1.0";
+export const CHANGE_SET_PROJECTION_VERSION = "0.2.0";
+export const VCS_EVIDENCE_VERSION = "0.1.0";
 export const CHANGE_SET_DIRECTORY = ".head/change-sets/records";
 export const CHANGE_IMPACT_CANDIDATE_DIRECTORY = ".head/change-sets/impact-candidate-sets";
 export const CHANGE_IMPACT_REVIEW_DIRECTORY = ".head/change-sets/impact-review-decisions";
+export const VCS_EVIDENCE_DIRECTORY = ".head/change-sets/vcs-evidence";
 
 const LIMITS = Object.freeze({
   maxChangeSets: 256,
   maxCandidateSets: 256,
   maxReviewDecisions: 256,
+  maxVcsEvidence: 512,
   maxChangesPerSet: 2000,
   maxCandidatesPerSet: 1000,
   maxUnknownsPerSet: 100,
+  maxCommitObservationsPerEvidence: 256,
   maxArtifactBytes: 8 * 1024 * 1024,
   maxTotalBytes: 48 * 1024 * 1024,
 });
@@ -124,6 +129,69 @@ export function verifyChangeSet(document, projectId = "") {
   }
   if (changeSetCanonicalJson(document.changes.map((item) => item.changeId)) !== changeSetCanonicalJson([...ids].sort())) {
     fail("ChangeSet revision changes must use identity order.", "CHANGE_SET_ORDER_MISMATCH");
+  }
+  return document;
+}
+
+export function verifyGitCommitObservation(document) {
+  verifyIdentity(document, {
+    idField: "gitCommitObservationId",
+    hashField: "gitCommitObservationHash",
+    prefix: "git-commit-observation",
+    label: "Git commit observation",
+  });
+  if (document.schemaVersion !== 1 || document.kind !== "GitCommitObservation"
+    || document.protocol?.name !== "head-agent-core-git-commit-observation" || document.protocol?.version !== VCS_EVIDENCE_VERSION
+    || document.vcsKind !== "git" || !/^[a-f0-9]{40,64}$/.test(document.objectId || "")
+    || typeof document.authoredAt !== "string" || Number.isNaN(Date.parse(document.authoredAt))
+    || typeof document.committedAt !== "string" || Number.isNaN(Date.parse(document.committedAt))
+    || !document.author || typeof document.author.name !== "string"
+    || (document.authorEmailDigest && !/^[a-f0-9]{64}$/.test(document.authorEmailDigest))
+    || typeof document.subject !== "string" || typeof document.body !== "string"
+    || document.evidence?.sourceKind !== "git-commit-object"
+    || document.evidence?.uri !== `git:${document.objectId}` || document.evidence?.digest !== document.objectId
+    || document.evidence?.instructionAuthority !== false
+    || document.authority !== "derived-vcs-observation" || document.trustBoundary !== "evidence-not-instruction"
+    || document.instructionAuthority !== false || document.promotionAuthority !== false) {
+    fail("Git commit observation fields or authority are invalid.", "INVALID_GIT_COMMIT_OBSERVATION");
+  }
+  sortedUnique(document.parents, "Git commit observation parents");
+  if (document.parents.some((item) => !/^[a-f0-9]{40,64}$/.test(item))) {
+    fail("Git commit observation parent object id is invalid.", "INVALID_GIT_COMMIT_OBSERVATION");
+  }
+  sortedUnique(document.refs, "Git commit observation refs");
+  return document;
+}
+
+export function verifyVcsEvidence(document, changeSet, projectId = "") {
+  verifyIdentity(document, { idField: "vcsEvidenceId", hashField: "vcsEvidenceHash", prefix: "vcs-evidence", label: "VCS evidence" });
+  if (document.schemaVersion !== 1 || document.kind !== "VcsEvidence"
+    || document.protocol?.name !== "head-agent-core-vcs-evidence" || document.protocol?.version !== VCS_EVIDENCE_VERSION
+    || (projectId && document.projectId !== projectId) || !changeSet || document.changeSetId !== changeSet.changeSetId
+    || document.changeSetHash !== changeSet.changeSetHash || document.sessionId !== changeSet.sessionId
+    || document.vcsKind !== "git" || document.attachmentMethod !== "explicit-commit-selection"
+    || typeof document.rationale !== "string" || !document.rationale
+    || !/^git-history-[a-f0-9]{24}$/.test(document.gitHistory?.historyId || "")
+    || !/^[a-f0-9]{64}$/.test(document.gitHistory?.historyHash || "")
+    || document.gitHistory?.coverage !== "all-reachable-commits"
+    || !Array.isArray(document.commitObservations) || document.commitObservations.length < 1
+    || document.commitObservations.length > LIMITS.maxCommitObservationsPerEvidence
+    || document.authority !== "optional-derived-vcs-evidence" || document.trustBoundary !== "evidence-not-instruction"
+    || document.instructionAuthority !== false || document.promotionAuthority !== false) {
+    fail("VCS evidence fields or authority are invalid.", "INVALID_VCS_EVIDENCE");
+  }
+  const observationIds = new Set();
+  const objectIds = new Set();
+  for (const observation of document.commitObservations) {
+    verifyGitCommitObservation(observation);
+    if (observationIds.has(observation.gitCommitObservationId) || objectIds.has(observation.objectId)) {
+      fail("VCS evidence contains a duplicate commit observation.", "DUPLICATE_GIT_COMMIT_OBSERVATION");
+    }
+    observationIds.add(observation.gitCommitObservationId);
+    objectIds.add(observation.objectId);
+  }
+  if (changeSetCanonicalJson(document.commitObservations.map((item) => item.gitCommitObservationId)) !== changeSetCanonicalJson([...observationIds].sort())) {
+    fail("VCS evidence commit observations must use identity order.", "CHANGE_SET_ORDER_MISMATCH");
   }
   return document;
 }
@@ -241,9 +309,13 @@ function merge(items, additional, idField, label) {
 }
 
 export function verifyChangeSetProjectionInput(projection) {
+  const projectionVersion = projection?.protocol?.version;
+  const legacy = projectionVersion === CHANGE_SET_VERSION;
   if (!projection || projection.kind !== "ChangeSetProjectionInput"
-    || projection.protocol?.name !== "head-agent-core-change-set-projection" || projection.protocol?.version !== CHANGE_SET_VERSION
-    || !Array.isArray(projection.changeSets) || !Array.isArray(projection.candidateSets) || !Array.isArray(projection.reviewDecisions)) {
+    || projection.protocol?.name !== "head-agent-core-change-set-projection"
+    || ![CHANGE_SET_VERSION, CHANGE_SET_PROJECTION_VERSION].includes(projectionVersion)
+    || !Array.isArray(projection.changeSets) || !Array.isArray(projection.candidateSets) || !Array.isArray(projection.reviewDecisions)
+    || (!legacy && !Array.isArray(projection.vcsEvidence))) {
     fail("ChangeSet projection input is invalid.", "INVALID_CHANGE_SET_PROJECTION");
   }
   const changeSets = new Map();
@@ -281,6 +353,14 @@ export function verifyChangeSetProjectionInput(projection) {
     if (reviewIds.has(review.reviewDecisionId)) fail("Duplicate Change impact ReviewDecision.", "DUPLICATE_CHANGE_IMPACT_REVIEW");
     reviewIds.add(review.reviewDecisionId);
   }
+  const vcsEvidenceIds = new Set();
+  for (const evidence of projection.vcsEvidence || []) {
+    const changeSet = changeSets.get(evidence.changeSetId);
+    if (!changeSet) fail("VCS evidence references an unknown ChangeSet.", "UNKNOWN_CHANGE_SET");
+    verifyVcsEvidence(evidence, changeSet, projection.projectId);
+    if (vcsEvidenceIds.has(evidence.vcsEvidenceId)) fail("Duplicate VCS evidence.", "DUPLICATE_VCS_EVIDENCE");
+    vcsEvidenceIds.add(evidence.vcsEvidenceId);
+  }
   const payload = { ...projection };
   delete payload.projectionInputId;
   delete payload.projectionInputHash;
@@ -291,18 +371,20 @@ export function verifyChangeSetProjectionInput(projection) {
   return projection;
 }
 
-export function loadChangeSetProjection({ projectRoot, projectId, additionalChangeSets = [], additionalCandidateSets = [], additionalReviewDecisions = [] } = {}) {
+export function loadChangeSetProjection({ projectRoot, projectId, additionalChangeSets = [], additionalCandidateSets = [], additionalReviewDecisions = [], additionalVcsEvidence = [] } = {}) {
   const changeSets = merge(readArtifacts(projectRoot, CHANGE_SET_DIRECTORY, "ChangeSet", LIMITS.maxChangeSets), additionalChangeSets, "changeSetId", "ChangeSet");
   const candidateSets = merge(readArtifacts(projectRoot, CHANGE_IMPACT_CANDIDATE_DIRECTORY, "Change impact candidate set", LIMITS.maxCandidateSets), additionalCandidateSets, "candidateSetId", "Change impact candidate set");
   const reviewDecisions = merge(readArtifacts(projectRoot, CHANGE_IMPACT_REVIEW_DIRECTORY, "Change impact ReviewDecision", LIMITS.maxReviewDecisions), additionalReviewDecisions, "reviewDecisionId", "Change impact ReviewDecision");
+  const vcsEvidence = merge(readArtifacts(projectRoot, VCS_EVIDENCE_DIRECTORY, "VCS evidence", LIMITS.maxVcsEvidence), additionalVcsEvidence, "vcsEvidenceId", "VCS evidence");
   const payload = {
     schemaVersion: 1,
     kind: "ChangeSetProjectionInput",
-    protocol: { name: "head-agent-core-change-set-projection", version: CHANGE_SET_VERSION },
+    protocol: { name: "head-agent-core-change-set-projection", version: CHANGE_SET_PROJECTION_VERSION },
     projectId,
     changeSets,
     candidateSets,
     reviewDecisions,
+    vcsEvidence,
     authority: "derived-projection-input-not-change-lineage-authority",
     instructionAuthority: false,
     promotionAuthority: false,

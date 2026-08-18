@@ -51,11 +51,11 @@ The read-only MCP tool `head_world_model` exposes the same digest and freshness 
 
 ## Temporal provenance graph
 
-World Model version `0.7.0` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding projection protocol `0.1.0`, Feature mapping protocol `0.1.0`, ChangeSet protocol `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.5.0`. The temporal graph adds immutable onboarding history, Feature/code/test mapping candidates, reviewed provider-neutral ChangeSets, exact revision deltas, and review-gated Feature/Capability impact. Mapping and impact inference remain hidden non-authoritative candidates; only their scoped explicit ReviewDecisions create separate reviewed receipts and canonical `IMPLEMENTS`, `VERIFIED_BY`, or `IMPACTS` edges.
+World Model version `0.8.0` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding projection protocol `0.1.0`, Feature mapping protocol `0.1.0`, ChangeSet protocol `0.1.0`, ChangeSet projection protocol `0.2.0`, VCS evidence protocol `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.6.0`. The temporal graph adds immutable onboarding history, Feature/code/test mapping candidates, reviewed provider-neutral ChangeSets, exact revision deltas, review-gated Feature/Capability impact, and optional explicit ChangeSet-to-Git evidence. Mapping and impact inference remain hidden non-authoritative candidates; only their scoped explicit ReviewDecisions create separate reviewed receipts and canonical `IMPLEMENTS`, `VERIFIED_BY`, or `IMPACTS` edges. VCS attachment is evidence-only and never changes ChangeSet identity.
 
 The repository scan is the first built-in `ComputeAdapter` operation. Its semantic output contains only normalized relative paths and deterministic source facts. The scan root is operational input and is excluded from the repository-scan result; backend identity, execution mode, timing, and process details remain pointer diagnostics outside World Model identity. A Go implementation now produces byte-equivalent complete responses on the tracked corpus and limit/error fixtures, but release manifests intentionally do not advertise it because measured small and medium scans regress and the large-input gain is marginal. The default adapter therefore probes the verified distribution, discloses `GO_WORKER_OPERATION_NOT_INSTALLED`, and runs the JavaScript reference. The World Model continues to record its separately validated canonical project root.
 
-The temporal graph consumes no Git state. A project without `.git` constructs and queries the same temporal identities from the same project ID, source scan, explicit parent sets, and producer version. Optional Git history remains a separate World Model evidence plane. See [`temporal-provenance.md`](temporal-provenance.md) for identity, ancestry, validation, and bounded traversal contracts.
+The temporal graph never reads live Git state. A project without `.git` constructs and queries the same required temporal identities from the same project ID, source scan, explicit parent sets, and producer version. When an operator explicitly attaches commits already present in verified Git history, the graph consumes only the resulting immutable `VcsEvidence` artifact and embedded commit observations. The same optional evidence plane therefore rebuilds after Git disappears. See [`temporal-provenance.md`](temporal-provenance.md) for identity, ancestry, validation, and bounded traversal contracts.
 
 ## Git decision evidence
 
@@ -95,6 +95,7 @@ The adapter descriptor and physical source path live only in the World Model poi
 - bounded Feature/Capability-to-File/Symbol/Test mapping candidates, explicit accept/reject ReviewDecisions, separate reviewed relationship receipts, and canonical-direction `IMPLEMENTS`/`VERIFIED_BY` edges;
 - accepted-execution ChangeSets with exact before/after SourceSnapshot and File/Symbol/Test revision differences, sorted zero-or-more ChangeSet parents, and Git-independent identity;
 - immutable Change-impact candidates derived only through reviewed mappings, explicit accept/reject ReviewDecisions, separate ReviewedImpact receipts, and canonical `IMPACTS` edges;
+- optional immutable VCS evidence attachments with explicit commit selection, embedded Git commit observations, unchanged ChangeSet identity, and `MATERIALIZED_AS` / `REFERENCES` graph relations;
 - validated `CONTAINS`, `REALIZES`, and `GOVERNED_BY` product relationships independent from repository directory structure;
 - zero-or-more SourceSnapshot and Revision parents with no automatic merge claim;
 - provenance-complete product/repository edges plus `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, and `PROMOTED_FROM` onboarding edges;
@@ -129,7 +130,7 @@ This prevents a stale index from silently directing execution while still allowi
 - generated/vendor source classification beyond the current exclusion rules;
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
-- optional VcsEvidence attachment, conformance, complete execution-lineage, and document-projection graph planes;
+- inferred commit-to-ChangeSet matching, conformance, complete execution-lineage, and document-projection graph planes;
 - dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
 - the replaceable `GraphProjectionAdapter` contract;

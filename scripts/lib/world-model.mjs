@@ -13,7 +13,12 @@ import { buildSemanticGraph, querySemanticGraph, SEMANTIC_GRAPH_VERSION, verifyS
 import { normalizeProductModelDocument, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
 import { loadOnboardingGraphProjection, ONBOARDING_GRAPH_PROJECTION_VERSION } from "./onboarding-projection.mjs";
 import { FEATURE_MAPPING_VERSION, loadFeatureMappingProjection } from "./feature-mapping-projection.mjs";
-import { CHANGE_SET_VERSION, loadChangeSetProjection } from "./change-set-projection.mjs";
+import {
+  CHANGE_SET_PROJECTION_VERSION,
+  CHANGE_SET_VERSION,
+  loadChangeSetProjection,
+  VCS_EVIDENCE_VERSION,
+} from "./change-set-projection.mjs";
 import {
   buildRepositoryScanInput,
   createRepositoryScanComputeAdapter,
@@ -44,7 +49,7 @@ import {
   WORLD_MODEL_STORAGE_CONTRACT,
 } from "./world-model-store.mjs";
 
-export const WORLD_MODEL_VERSION = "0.7.0";
+export const WORLD_MODEL_VERSION = "0.8.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
@@ -237,7 +242,8 @@ function verifiedSnapshot(snapshot, expectedId = "") {
       || changeProjection.projectionInputHash !== graphChangeProjection?.projectionInputHash
       || canonicalJson(changeProjection.changeSetIds) !== canonicalJson(graphChangeProjection?.changeSetIds)
       || canonicalJson(changeProjection.candidateSetIds) !== canonicalJson(graphChangeProjection?.candidateSetIds)
-      || canonicalJson(changeProjection.reviewDecisionIds) !== canonicalJson(graphChangeProjection?.reviewDecisionIds)) {
+      || canonicalJson(changeProjection.reviewDecisionIds) !== canonicalJson(graphChangeProjection?.reviewDecisionIds)
+      || canonicalJson(changeProjection.vcsEvidenceIds) !== canonicalJson(graphChangeProjection?.vcsEvidenceIds)) {
       fail("World Model ChangeSet projection and temporal graph disagree.", "CHANGE_SET_TEMPORAL_IDENTITY_MISMATCH");
     }
   }
@@ -270,6 +276,8 @@ function indexerState() {
     onboardingGraphProjectionVersion: ONBOARDING_GRAPH_PROJECTION_VERSION,
     featureMappingVersion: FEATURE_MAPPING_VERSION,
     changeSetVersion: CHANGE_SET_VERSION,
+    changeSetProjectionVersion: CHANGE_SET_PROJECTION_VERSION,
+    vcsEvidenceVersion: VCS_EVIDENCE_VERSION,
     temporalProvenanceVersion: TEMPORAL_PROVENANCE_VERSION,
     gitDecisionHistoryVersion: GIT_DECISION_HISTORY_VERSION,
     gitHistoryAdapterVersion: GIT_HISTORY_ADAPTER_VERSION,
@@ -544,7 +552,7 @@ export async function buildWorldModel({
       productModel: "user-owned-feature-capability-requirement-constraint-decision-canon-projected-into-temporal-graph",
       onboardingProjection: "immutable-candidates-evidence-unknowns-reviews-and-product-model-revision-receipts-projected-without-authority-escalation",
       featureMappingProjection: "immutable-feature-mapping-candidates-and-explicit-review-decisions-with-separate-reviewed-relationship-promotion",
-      changeSetProjection: "reviewed-provider-neutral-changesets-with-review-gated-feature-impact-relations",
+      changeSetProjection: "reviewed-provider-neutral-changesets-with-review-gated-feature-impact-and-optional-vcs-evidence-relations",
       gitHistory: gitDecisionHistory.coverage,
       runtimeState: "canonical-head-lifecycle-state",
       externalRuntimeState: externalRuntimeState.coverage,
@@ -580,6 +588,7 @@ export async function buildWorldModel({
       changeSetIds: changeSetProjection.changeSets.map((item) => item.changeSetId),
       candidateSetIds: changeSetProjection.candidateSets.map((item) => item.candidateSetId),
       reviewDecisionIds: changeSetProjection.reviewDecisions.map((item) => item.reviewDecisionId),
+      vcsEvidenceIds: changeSetProjection.vcsEvidence.map((item) => item.vcsEvidenceId),
       authority: "derived-projection-manifest-not-change-lineage-authority",
       instructionAuthority: false,
       promotionAuthority: false,

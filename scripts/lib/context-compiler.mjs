@@ -5,7 +5,7 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryTemporalProvenanceGraph } from "./temporal-provenance.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.6.0";
+export const CONTEXT_COMPILER_VERSION = "0.7.0";
 
 const fail = (message, code = "CONTEXT_COMPILER_ERROR") => {
   const error = new Error(message);
@@ -305,13 +305,13 @@ function productContextCandidates(worldModel, task) {
       "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
       "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision",
       "File", "Symbol", "Test", "ReviewedRelationship", "FeatureMappingReviewDecision",
-      "ChangeSet", "ReviewedImpact", "ChangeImpactReviewDecision",
+      "ChangeSet", "ReviewedImpact", "ChangeImpactReviewDecision", "VcsEvidence", "GitCommit",
     ],
-    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "PROMOTED_FROM", "PRODUCES", "REVIEWED_BY"],
+    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "MATERIALIZED_AS", "REFERENCES", "PROMOTED_FROM", "PRODUCES", "REVIEWED_BY"],
     authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
     freshness: ["current"],
     includeUnreviewedCandidates: false,
-    depth: 2,
+    depth: 3,
     maxNodes: 100,
     maxEdges: 200,
   });
@@ -329,6 +329,9 @@ function productContextCandidates(worldModel, task) {
     changeSetId: node.changeSetId || null,
     changeIds: node.changeIds || null,
     targetNodeId: node.targetNodeId || null,
+    objectId: node.objectId || null,
+    subject: node.subject || null,
+    gitHistoryId: node.gitHistoryId || null,
     semantic: node.semantic || null,
     authorityClass: node.authorityClass,
     evidenceIds: node.evidenceIds,

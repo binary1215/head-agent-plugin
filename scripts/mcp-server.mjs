@@ -9,7 +9,7 @@ import { getPendingReviewContext } from "./lib/run-lineage.mjs";
 import { inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 import { inspectOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
-import { inspectChangeSets } from "./lib/change-set.mjs";
+import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 
 const protocolVersion = "2024-11-05";
 export const tools = [
@@ -50,11 +50,24 @@ export const tools = [
   },
   {
     name: "head_change_set_status",
-    description: "Read and digest-verify the current provider-neutral ChangeSet and its non-authoritative or reviewed Feature impact state without mutating project state.",
+    description: "Read and digest-verify the current provider-neutral ChangeSet, Feature impact state, and optional VCS evidence without mutating project state.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
       required: ["project_root"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "head_vcs_evidence",
+    description: "Read and digest-verify one optional VCS evidence attachment and its immutable Git commit observations without treating commits as ChangeSet or project authority.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        vcs_evidence_id: { type: "string", pattern: "^vcs-evidence-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "vcs_evidence_id"],
       additionalProperties: false,
     },
   },
@@ -192,7 +205,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.18" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.19" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -210,6 +223,8 @@ export async function dispatch(request) {
           ? inspectFeatureMapping({ root: args.project_root })
         : name === "head_change_set_status"
           ? inspectChangeSets({ root: args.project_root })
+        : name === "head_vcs_evidence"
+          ? readVcsEvidence({ root: args.project_root, vcsEvidenceId: args.vcs_evidence_id })
         : name === "head_context_preview"
           ? compileContext({ root: args.project_root, task: args.task, budget: args.budget ?? 4000, persist: false })
           : name === "head_context_capsule"
