@@ -53,6 +53,12 @@ import {
   materializeGraphProjection,
   queryGraphProjection,
 } from "./graph-projection-adapter.mjs";
+import {
+  captureDocumentChangeCandidates,
+  inspectMarkdownProjection,
+  materializeMarkdownProjection,
+  readDocumentChangeCandidateSet,
+} from "./document-projection-adapter.mjs";
 
 export const WORLD_MODEL_VERSION = "0.9.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
@@ -827,6 +833,66 @@ export function inspectWorldGraphProjection({ root = ".", storeAdapter = null, g
     projection,
     authority: "rebuildable-derived-projection-not-project-canon",
   };
+}
+
+export function materializeWorldMarkdownProjection({ root = ".", storeAdapter = null, documentProjectionAdapter = null } = {}) {
+  const inspected = inspectWorldModel({ root, storeAdapter });
+  if (inspected.status !== "current") fail("Repository World Model is stale and cannot regenerate document projections.", "WORLD_MODEL_STALE");
+  const materialized = materializeMarkdownProjection({
+    projectRoot: inspected.snapshot.projectRoot,
+    graph: inspected.snapshot.temporalProvenanceGraph,
+    adapter: documentProjectionAdapter,
+  });
+  return {
+    status: materialized.status,
+    worldModelStatus: inspected.status,
+    worldModelId: inspected.snapshot.worldModelId,
+    graphSnapshotId: inspected.snapshot.temporalProvenanceGraph.graphSnapshotId,
+    documentProjectionId: materialized.projection.documentProjectionId,
+    projection: materialized,
+    authority: "rebuildable-derived-human-view-not-project-canon",
+  };
+}
+
+export function inspectWorldMarkdownProjection({ root = ".", storeAdapter = null, documentProjectionAdapter = null } = {}) {
+  const inspected = inspectWorldModel({ root, storeAdapter });
+  const projection = inspectMarkdownProjection({
+    projectRoot: inspected.snapshot.projectRoot,
+    graph: inspected.snapshot.temporalProvenanceGraph,
+    adapter: documentProjectionAdapter,
+  });
+  const status = inspected.status !== "current" && projection.status === "current" ? "source-stale" : projection.status;
+  return {
+    status,
+    worldModelStatus: inspected.status,
+    worldModelId: inspected.snapshot.worldModelId,
+    graphSnapshotId: inspected.snapshot.temporalProvenanceGraph.graphSnapshotId,
+    projection,
+    authority: "rebuildable-derived-human-view-not-project-canon",
+  };
+}
+
+export function captureWorldMarkdownChanges({ root = ".", storeAdapter = null, documentProjectionAdapter = null, persist = true } = {}) {
+  const inspected = inspectWorldModel({ root, storeAdapter });
+  if (inspected.status !== "current") fail("Repository World Model is stale and cannot anchor document change candidates.", "WORLD_MODEL_STALE");
+  const captured = captureDocumentChangeCandidates({
+    projectRoot: inspected.snapshot.projectRoot,
+    graph: inspected.snapshot.temporalProvenanceGraph,
+    adapter: documentProjectionAdapter,
+    persist,
+  });
+  return {
+    status: captured.status,
+    worldModelId: inspected.snapshot.worldModelId,
+    graphSnapshotId: inspected.snapshot.temporalProvenanceGraph.graphSnapshotId,
+    ...captured,
+    authority: "unreviewed-document-change-candidates-not-project-canon",
+  };
+}
+
+export function readWorldDocumentChangeCandidateSet({ root = ".", candidateSetId: id } = {}) {
+  const inspected = readyProject(root);
+  return readDocumentChangeCandidateSet({ projectRoot: inspected.project.projectRoot, id });
 }
 
 export function queryWorldHistory({ root = ".", query = "", limit = 50, storeAdapter = null } = {}) {

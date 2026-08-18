@@ -24,7 +24,7 @@ The active dependency-free local JSON adapter stores:
 
 `current.json` points to the Hot snapshot, records the physical adapter descriptor, and records added, changed, and removed paths as the Warm tier. Previous content-addressed snapshots form the Cold tier. The physical adapter descriptor is not part of the semantic snapshot hash, so the same canonical inputs produce the same World Model ID through a conforming local, memory, or future GraphDB adapter.
 
-GraphDB is not required and no remote database is queried or mutated. Graph traversal now uses a separate `GraphProjectionAdapter`; the World Model store continues to preserve the complete recoverable snapshot independently of the graph backend. See [`graph-projection-adapter.md`](graph-projection-adapter.md).
+GraphDB is not required and no remote database is queried or mutated. Graph traversal now uses a separate `GraphProjectionAdapter`; the World Model store continues to preserve the complete recoverable snapshot independently of the graph backend. A separate `DocumentProjectionAdapter` explicitly renders the current verified GraphSnapshot as deterministic Markdown without placing document adapter or filesystem identity in the World Model. See [`graph-projection-adapter.md`](graph-projection-adapter.md) and [`document-projection-adapter.md`](document-projection-adapter.md).
 
 ## Commands
 
@@ -36,6 +36,10 @@ node scripts/head.mjs world-index <project> --parent-snapshot <source-snapshot-i
 node scripts/head.mjs world-index <project> --revision-parents <logical-entity-to-parent-revisions.json>
 node scripts/head.mjs world-status <project>
 node scripts/head.mjs world-graph-status <project>
+node scripts/head.mjs world-docs-build <project>
+node scripts/head.mjs world-docs-status <project>
+node scripts/head.mjs world-docs-capture <project>
+node scripts/head.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
 node scripts/head.mjs world-query <project> --query <symbol-or-path> --depth 1 --limit 100
 node scripts/head.mjs world-temporal <project> --query <path-or-symbol> --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
 node scripts/head.mjs world-temporal <project> --query <candidate-id> --include-candidates true --depth 1 --limit 100 --edge-limit 200
@@ -52,7 +56,7 @@ The read-only MCP tools `head_world_model` and `head_graph_projection_status` ex
 
 ## Temporal provenance graph
 
-World Model version `0.9.0` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding projection protocol `0.1.0`, Feature mapping protocol `0.1.0`, ChangeSet protocol `0.1.0`, ChangeSet projection protocol `0.2.0`, VCS evidence protocol `0.1.0`, GraphProjectionAdapter `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.6.0`. The temporal graph adds immutable onboarding history, Feature/code/test mapping candidates, reviewed provider-neutral ChangeSets, exact revision deltas, review-gated Feature/Capability impact, and optional explicit ChangeSet-to-Git evidence. Mapping and impact inference remain hidden non-authoritative candidates; only their scoped explicit ReviewDecisions create separate reviewed receipts and canonical `IMPLEMENTS`, `VERIFIED_BY`, or `IMPACTS` edges. VCS attachment is evidence-only and never changes ChangeSet identity.
+World Model version `0.9.0` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding projection protocol `0.1.0`, Feature mapping protocol `0.1.0`, ChangeSet protocol `0.1.0`, ChangeSet projection protocol `0.2.0`, VCS evidence protocol `0.1.0`, GraphProjectionAdapter `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.6.0`. The temporal graph adds immutable onboarding history, Feature/code/test mapping candidates, reviewed provider-neutral ChangeSets, exact revision deltas, review-gated Feature/Capability impact, and optional explicit ChangeSet-to-Git evidence. Mapping and impact inference remain hidden non-authoritative candidates; only their scoped explicit ReviewDecisions create separate reviewed receipts and canonical `IMPLEMENTS`, `VERIFIED_BY`, or `IMPACTS` edges. VCS attachment is evidence-only and never changes ChangeSet identity. DocumentProjectionAdapter `0.1.0` operates after this verified snapshot and therefore does not change World Model or GraphSnapshot identity.
 
 The repository scan is the first built-in `ComputeAdapter` operation. Its semantic output contains only normalized relative paths and deterministic source facts. The scan root is operational input and is excluded from the repository-scan result; backend identity, execution mode, timing, and process details remain pointer diagnostics outside World Model identity. A Go implementation now produces byte-equivalent complete responses on the tracked corpus and limit/error fixtures, but release manifests intentionally do not advertise it because measured small and medium scans regress and the large-input gain is marginal. The default adapter therefore probes the verified distribution, discloses `GO_WORKER_OPERATION_NOT_INSTALLED`, and runs the JavaScript reference. The World Model continues to record its separately validated canonical project root.
 
@@ -132,7 +136,8 @@ This prevents a stale index from silently directing execution while still allowi
 - generated/vendor source classification beyond the current exclusion rules;
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
-- inferred commit-to-ChangeSet matching, conformance, complete execution-lineage, and document-projection graph planes;
+- inferred commit-to-ChangeSet matching, conformance, complete execution-lineage, and projection of document artifacts/review receipts back into later graph snapshots;
+- DocumentChangeCandidate review/application, automatic regeneration, Obsidian, and Notion adapters;
 - dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
 - the optional remote GraphDB projection adapter and server-side graph expansion;

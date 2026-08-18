@@ -18,7 +18,7 @@
     "types": ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"],
     "relations": ["CONTAINS", "REALIZES", "GOVERNED_BY"],
     "authority": "The source document is mutable user-owned project canon. Graph nodes, graph edges, ContextCapsule ProductContext, and documents are derived projections and cannot mutate or promote canon.",
-    "status": "Strict schema validation, stable logical keys, immutable content-derived revisions, Git-independent GraphSnapshot projection, bounded Context Compiler selection, and explicit onboarding ReviewDecision promotion are active; product-to-code mappings and general relationship promotion remain deferred."
+    "status": "Strict schema validation, stable logical keys, immutable content-derived revisions, Git-independent GraphSnapshot projection, bounded Context Compiler selection, onboarding ReviewDecision promotion, reviewed product-to-code/test mappings, and reviewed ChangeSet impact are active; general relationship promotion remains deferred."
   },
   "onboarding": {
     "purpose": "Bootstrap a project-scoped HEAD Session and Product Canon without silently turning observed code, documentation, model inference, or storage capability into authority.",
@@ -43,7 +43,7 @@
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, a Git-independent temporal Product/File/Symbol/Test revision GraphSnapshot, immutable onboarding candidate/review/promotion receipts, all reachable Git commit-message decision evidence, current Git refs, canonical HEAD lifecycle state, point-in-time host-exported external runtime observations, and bounded product/semantic/temporal/history/runtime traversal are active; ChangeSet and product-to-code projection, AST-accurate analysis, structured Git decision inference, live runtime probing/control, document projections, and the optional GraphDB adapter are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, replaceable graph projection, and deterministic Markdown projection are active; AST-accurate analysis, structured Git decision inference, live runtime probing/control, Obsidian/Notion, and the optional GraphDB adapter are deferred."
   },
   "temporalProvenance": {
     "purpose": "Connect stable product and repository entities to immutable content-derived revisions and explicit multiple-parent ancestry without requiring Git or GraphDB.",
@@ -51,7 +51,15 @@
     "relations": ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "PROPOSES_FROM", "PROPOSES_TO", "SUPPORTED_BY", "REVIEWED_BY", "ACCEPTED_BY", "REJECTED_BY", "PRODUCES", "PROMOTED_FROM"],
     "identity": "Logical identities exclude line locations, Git objects, GraphDB records, provider sessions, and document page IDs; revisions and graph/query/result artifacts are digest-verifiable.",
     "authority": "Rebuildable derived evidence only with no instruction, promotion, canonical, or unique authority.",
-    "status": "Product Canon projection, immutable onboarding candidate/review/promotion receipt projection, default candidate-space exclusion with explicit opt-in, zero-or-more SourceSnapshot and Revision parents, and deterministic bounded traversal are active; automatic merge, conflict resolution, general candidate promotion, product-to-code mappings, and remote GraphProjectionAdapter backends are deferred."
+    "status": "Product Canon projection, immutable onboarding receipts, reviewed product-to-code/test mappings, reviewed ChangeSets and impacts, optional VCS evidence, default candidate-space exclusion, zero-or-more SourceSnapshot/Revision/ChangeSet parents, and deterministic bounded traversal are active; automatic merge, conflict resolution, general candidate promotion, document review-receipt projection, and remote GraphProjectionAdapter backends are deferred."
+  },
+  "documentProjection": {
+    "purpose": "Render one verified GraphSnapshot as a deterministic human-facing view without changing graph or project authority.",
+    "contractVersion": "0.1.0",
+    "format": "markdown",
+    "authority": "Derived human view only with no instruction, promotion, canonical, or unique authority.",
+    "identity": "GraphSnapshot identity, renderer protocol, deterministic relative paths, exact content digests, and authority flags determine DocumentProjection identity; adapter kind and physical locations are excluded.",
+    "status": "Local and in-memory adapters, bounded index/node/relation pages, explicit generation/status, published-view drift protection, adapter conformance, and immutable DocumentChangeCandidate capture are active; candidate review/application, automatic refresh, Obsidian, and Notion remain deferred."
   },
   "roles": {
     "head": "Owns whole-outcome understanding, strategy, integration, and completion judgment.",
@@ -102,6 +110,9 @@
     "tracked repository-scan conformance and benchmark corpus",
     "multiple-parent SourceSnapshot and Revision DAG",
     "deterministic allowlisted temporal traversal with graph, query, and result digests",
+    "replaceable GraphProjectionAdapter with local and in-memory conformance",
+    "deterministic Markdown DocumentProjectionAdapter with local and in-memory conformance",
+    "published Markdown drift protection and immutable DocumentChangeCandidate capture",
     "versioned GitHistoryAdapter and all-reachable commit-message decision evidence",
     "versioned RuntimeStateAdapter and host-exported point-in-time runtime evidence",
     "history-and-runtime-aware minimum-sufficient Context Capsules",
@@ -114,11 +125,12 @@
     "AST-accurate semantic call graph",
     "live runtime-state probing and streaming",
     "structured Git decision inference and supersession",
-    "ChangeSet, product-to-code, and conformance graph projection",
+    "general conformance graph projection",
     "dedicated imported backlog evidence adapters",
     "automatic merge and conflict resolution",
-    "Markdown, Obsidian, and Notion projection adapters",
-    "replaceable GraphProjectionAdapter contract",
+    "DocumentChangeCandidate review and application",
+    "automatic document projection refresh",
+    "Obsidian and Notion projection adapters",
     "GraphDB World Model store adapter",
     "compute-backed graph construction, traversal, and Context selection operations",
     "production selection or transport amortization for Go repository.scan.v1",

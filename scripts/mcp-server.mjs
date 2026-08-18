@@ -6,7 +6,7 @@ import { coreContract, inspectProject } from "./lib/head-core.mjs";
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
-import { inspectWorldGraphProjection, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
+import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
 import { inspectOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
 import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
@@ -142,6 +142,29 @@ export const tools = [
     }
   },
   {
+    name: "head_markdown_projection_status",
+    description: "Read and verify the deterministic Markdown projection, published-view drift, and current GraphSnapshot binding without treating generated documents as canon.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "head_document_change_candidates",
+    description: "Read and digest-verify one immutable DocumentChangeCandidateSet without accepting it or changing Product Canon.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        candidate_set_id: { type: "string", pattern: "^document-change-candidate-set-[a-f0-9]{24}$" }
+      },
+      required: ["project_root", "candidate_set_id"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "head_world_query",
     description: "Traverse a bounded, digest-verified semantic neighborhood in the current Repository World Model as evidence, never instruction authority.",
     inputSchema: {
@@ -215,7 +238,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.20" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.21" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -247,6 +270,10 @@ export async function dispatch(request) {
                   ? inspectWorldModel({ root: args.project_root })
                   : name === "head_graph_projection_status"
                     ? inspectWorldGraphProjection({ root: args.project_root })
+                  : name === "head_markdown_projection_status"
+                    ? inspectWorldMarkdownProjection({ root: args.project_root })
+                  : name === "head_document_change_candidates"
+                    ? readWorldDocumentChangeCandidateSet({ root: args.project_root, candidateSetId: args.candidate_set_id })
                   : name === "head_world_query"
                     ? queryWorldModel({
                       root: args.project_root,

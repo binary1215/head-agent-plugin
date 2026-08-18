@@ -8,7 +8,7 @@ import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSn
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "./lib/run-lineage.mjs";
-import { buildWorldModel, inspectWorldGraphProjection, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
+import { buildWorldModel, captureWorldMarkdownChanges, inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
 import { inspectOnboarding, readOnboardingCandidateSet, readOnboardingReviewDecision, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping, readFeatureMappingCandidateSet, readFeatureMappingReviewDecision, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
 import { attachVcsEvidence, inspectChangeSets, readChangeImpactCandidateSet, readChangeImpactReviewDecision, readChangeSet, readVcsEvidence, recordChangeSet, reviewChangeImpact } from "./lib/change-set.mjs";
@@ -56,6 +56,10 @@ export function usage() {
       "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>] [--parent-snapshot <id,id>] [--revision-parents <json-file>]",
       "head world-status <project>",
       "head world-graph-status <project>",
+      "head world-docs-build <project>",
+      "head world-docs-status <project>",
+      "head world-docs-capture <project>",
+      "head world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>",
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
       "head world-temporal <project> --query <text> [--kind <kind,kind>] [--relations <type,type>] [--include-candidates <true|false>] [--depth <0-3>] [--limit <1-500>] [--edge-limit <0-1000>] [--min-confidence <0-1>]",
       "head world-history <project> [--query <text>] [--limit <1-500>]",
@@ -125,6 +129,10 @@ export function runCommand(argv = process.argv.slice(2)) {
   });
   if (command === "world-status") return inspectWorldModel({ root });
   if (command === "world-graph-status") return inspectWorldGraphProjection({ root });
+  if (command === "world-docs-build") return materializeWorldMarkdownProjection({ root });
+  if (command === "world-docs-status") return inspectWorldMarkdownProjection({ root });
+  if (command === "world-docs-capture") return captureWorldMarkdownChanges({ root, persist: true });
+  if (command === "world-docs-candidates") return readWorldDocumentChangeCandidateSet({ root, candidateSetId: options["candidate-set"] });
   if (command === "world-query") return queryWorldModel({
     root,
     query: options.query,

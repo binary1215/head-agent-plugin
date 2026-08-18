@@ -1,0 +1,117 @@
+# DocumentProjectionAdapter and deterministic Markdown projection
+
+Status: active alpha contract
+
+Protocol versions:
+
+- `DocumentProjectionAdapter`: `0.1.0`
+- deterministic Markdown renderer: `0.1.0`
+- `DocumentChangeCandidateSet`: `0.1.0`
+
+## Purpose and authority boundary
+
+`DocumentProjectionAdapter` turns one verified temporal `GraphSnapshot` into a deterministic human-facing view. The source direction remains:
+
+```text
+User-owned Product Canon + observed code + verified lineage
+  -> rebuildable GraphSnapshot
+  -> verified DocumentProjection
+  -> published Markdown view
+```
+
+The projection and every published Markdown file are `derived-human-view-only`. They are rebuildable, are not unique authority, and have neither instruction nor promotion authority. A document does not become Product Canon because a person edits it, a provider hosts it, or an agent reads it. Physical paths, adapter names, and future Obsidian vault or Notion page identifiers remain outside `DocumentProjection` semantic identity.
+
+## Active adapter contract
+
+Every adapter must implement:
+
+- `describe()`;
+- `readPointer()` / `writePointer()`;
+- `readProjection(id)` / `writeProjection(id, projection)`;
+- `listProjectionIds()`;
+- `readPublishedDocuments()`;
+- `publishDocuments(documents, options)`.
+
+Its descriptor must declare:
+
+```text
+authority: derived-human-view-only
+rebuildable: true
+uniqueAuthority: false
+instructionAuthority: false
+promotionAuthority: false
+publishedViewIsCanon: false
+inboundEdits: document-change-candidates-only
+```
+
+The core rejects missing methods, incompatible versions, authority claims, altered immutable projections, changed rendered bytes, digest-invalid pointers, unsafe relative paths, symlinks in the published tree, and bounded-size violations.
+
+## Deterministic Markdown model
+
+The reference renderer verifies the input `GraphSnapshot`, sorts nodes and edges canonically, and produces:
+
+- `index.md`, containing the exact Project, SourceSnapshot, and GraphSnapshot identities plus node/relation summaries;
+- chunked `nodes/*.md` pages grouped by semantic node kind;
+- chunked `relations/*.md` pages grouped by canonical relation type;
+- deterministic node anchors and links from relation endpoints back to their node pages;
+- an explicit warning that the view is derived and non-authoritative.
+
+Every output document records its relative path, title, exact UTF-8 content, SHA-256 content digest, and byte length inside an immutable `DocumentProjection`. The content-derived projection identity includes the renderer protocol, GraphSnapshot identity, all rendered content, summary, and authority flags. It excludes the adapter kind and physical location. Rendering is bounded to 500 rows per page, 4,096 documents, 1 MiB per document, and 64 MiB total.
+
+The local adapter stores:
+
+```text
+.head/document-projection/markdown/current.json
+.head/document-projection/markdown/snapshots/document-projection-<digest>.json
+.head/generated/knowledge/index.md
+.head/generated/knowledge/nodes/*.md
+.head/generated/knowledge/relations/*.md
+```
+
+The snapshot and pointer are verification artifacts. `.head/generated/knowledge/` is the replaceable human working view. The pointer advances only after the immutable projection and every published document verify successfully.
+
+## Explicit generation and status
+
+Markdown generation is explicit in this alpha so a projection failure or unreviewed human edit cannot prevent core World Model indexing:
+
+```text
+node scripts/head.mjs world-docs-build <project>
+node scripts/head.mjs world-docs-status <project>
+```
+
+`world-docs-build` requires a current, digest-verified World Model. `world-docs-status` separately reports World Model freshness, GraphSnapshot binding, immutable projection verification, and published-view drift. Important states are:
+
+- `not-materialized`: no pointer or published Markdown exists;
+- `unmanaged`: Markdown exists without a verified base projection;
+- `current`: projection, published bytes, and current graph agree;
+- `stale`: the projection belongs to a different GraphSnapshot;
+- `source-stale`: the projection matches the stored graph but the working project changed since indexing;
+- `modified`: the published view differs from its immutable base projection.
+
+Missing output can be regenerated. Digest mismatch, semantic divergence, unsafe paths, or adapter authority escalation fail closed. A newer verified graph may replace a clean published view, but the core never overwrites a modified view.
+
+## Inbound edits are candidates
+
+When the published Markdown differs from its immutable base, regeneration fails with `DOCUMENT_PROJECTION_UNREVIEWED_DRIFT`. The user can explicitly capture the differences:
+
+```text
+node scripts/head.mjs world-docs-capture <project>
+node scripts/head.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
+```
+
+Capture creates an immutable, content-derived `DocumentChangeCandidateSet` under `.head/document-changes/candidate-sets/`. Each added, modified, or removed path records the exact base/proposed content and digests, source projection, GraphSnapshot, and false instruction/promotion flags. The candidate set requires a future scoped `ReviewDecision`; capture itself does not change Product Canon, the graph, source code, or an execution artifact. The read-only MCP surface can inspect projection status and a named candidate set but cannot generate documents, capture edits, or accept a candidate.
+
+## Conformance and deferred work
+
+`LocalMarkdownProjectionAdapter` is the durable reference implementation. `InMemoryMarkdownProjectionAdapter` is the non-durable conformance implementation. `verifyDocumentProjectionAdapterConformance` proves identical content-derived projection identity and published content digests across both adapters.
+
+The following remain deferred:
+
+- a scoped ReviewDecision and application contract for `DocumentChangeCandidateSet`;
+- projection of document artifacts and their later review receipts into a subsequent GraphSnapshot;
+- automatic regeneration after debounced filesystem or CI refresh;
+- `ObsidianVaultProjectionAdapter` and `NotionProjectionAdapter`;
+- bidirectional synchronization or conflict resolution;
+- treating generated pages as Context Compiler input.
+
+Future adapters must preserve this renderer's semantic identities or declare a separately versioned format/renderer contract. Provider page IDs, vault roots, timestamps, and transport diagnostics cannot enter core projection identity.

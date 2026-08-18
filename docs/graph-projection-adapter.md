@@ -83,6 +83,7 @@ The reference comparison intentionally favors correctness over acceleration in t
 - `world-graph-status`: read and verify projection state;
 - `head_graph_projection_status`: read-only MCP equivalent;
 - `world-temporal`, MCP temporal traversal, and Context Compiler temporal expansion use the adapter boundary while preserving result identity.
+- the separate [`DocumentProjectionAdapter`](document-projection-adapter.md) consumes the verified GraphSnapshot for deterministic Markdown without changing graph identity.
 
 ## Deferred
 
@@ -91,6 +92,6 @@ The reference comparison intentionally favors correctness over acceleration in t
 - remote pointer compare-and-swap and transaction receipts;
 - compute-backed graph construction or traversal;
 - GraphDB-specific indexes, migrations, and operational observability;
-- document projection adapters.
+- Obsidian/Notion document adapters and document-candidate review/application.
 
 No remote endpoint was queried or mutated by this implementation.
