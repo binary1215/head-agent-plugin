@@ -104,11 +104,66 @@ The temporal provenance boundary adds these semantic entities:
 - conformance: evidence-linked mappings and findings such as `IMPLEMENTS`, `VERIFIED_BY`, `IMPACTS`, `SUPERSEDES`, `ALIGNED_WITH`, and `DRIFTS_FROM`;
 - knowledge projection: `GraphSnapshot`, `DocumentProjection`, and `DocumentChangeCandidate`.
 
+The product and implementation concepts have distinct meanings:
+
+- `FeatureGroup` is a human-owned product taxonomy and navigation group. It is independent of repository directories and must never be inferred from directory structure as an authoritative mapping;
+- `Capability` is a stable user-visible ability or behavior;
+- `Feature` is a concrete product unit that realizes one or more Capabilities;
+- `Component` is an implementation-structure unit that contains or coordinates code artifacts;
+- `ChangeSet` is one logical provider-neutral change, independent of how many VCS commits or executor attempts materialize it;
+- `Revision` is one immutable content-derived state of a logical entity;
+- `SourceSnapshot` is one immutable content-derived view of the relevant executable project state;
+- `VcsEvidence` is optional external evidence about a ChangeSet and is never required to construct or verify it.
+
+Product-to-implementation and change-impact mappings are many-to-many. A Feature may be implemented by many Files or Symbols; one File or Symbol may implement many Features; a Feature may be verified by many Tests; and one ChangeSet may change many revisions and affect many Features or Capabilities. The schema must not collapse these mappings into a directory tree or a single-owner relation.
+
 Stable logical entities and immutable revisions are separate. A `Feature` or `File` keeps a stable project identity while `FeatureRevision`, `FileRevision`, and `SymbolRevision` use content-derived identities. Current-state pointers are replaceable projections; revision nodes and their zero-or-more parent links are immutable.
 
-`ChangeSet` is the provider-neutral logical change unit. It connects before/after `SourceSnapshot` nodes, changed revisions, affected Features, ResultPacket evidence, and ReviewDecision disposition. A Git commit may be attached as optional `VcsEvidence`, but a commit is neither required nor identical to a ChangeSet.
+`ChangeSet` is the provider-neutral logical change unit. It connects before/after `SourceSnapshot` nodes, changed revisions, affected Features, ResultPacket evidence, and ReviewDecision disposition. When VCS data exists, `ChangeSet -MATERIALIZED_AS-> VcsEvidence -REFERENCES-> GitCommit` may be projected. Both edges and the GitCommit node are omitted without weakening the ChangeSet when Git is unavailable; a commit is neither required nor identical to a ChangeSet.
 
 Graph traversal uses a separate replaceable `GraphProjectionAdapter`. Its local/in-memory conformance implementation and a future GraphDB implementation must produce and verify the same semantic node, edge, and snapshot identities from the same canonical inputs. GraphDB can be the primary traversal implementation but cannot become the only recoverable copy of canon or lineage.
+
+### Graph semantic contract
+
+The graph itself is always derived. It may contain `canon-projected`, `reviewed`, `derived`, `heuristic`, and `runtime-observed` entities and relations, but no node or edge becomes canon merely because it is stored in GraphDB. The initial relation vocabulary is typed and allowlisted:
+
+- product: `CONTAINS`, `REALIZES`, and `GOVERNED_BY`;
+- implementation: `DECLARES`, `IMPORTS`, `CALLS`, and `DEPENDS_ON`;
+- conformance: `IMPLEMENTS`, `VERIFIED_BY`, `ALIGNED_WITH`, and `DRIFTS_FROM`;
+- change: `CHANGES`, `IMPACTS`, `SUPERSEDES`, `MATERIALIZED_AS`, and `REFERENCES`;
+- candidate, evidence, and review: `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, `EVIDENCED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, and `PROMOTED_FROM`.
+
+Every projected edge must include:
+
+```text
+edgeId, type, from, to,
+authorityClass, origin, evidenceIds,
+freshness, sourceSnapshotId,
+producer, producerVersion,
+instructionAuthority, promotionAuthority
+```
+
+Heuristic or inferred edges also require a `confidence` value from zero through one. The content-derived edge identity includes the typed endpoints, authority class, origin, sorted evidence identities, source snapshot identity, producer and producer version, authority flags, and confidence when present. Volatile observation time, GraphDB record IDs, filesystem cache paths, provider session IDs, and document-provider page IDs are excluded from semantic identity. A GraphProjectionAdapter must reject unsupported relation types, dangling endpoints, missing provenance, invalid authority flags, digest mismatch, and attempts to return stale relations as current.
+
+### Candidate promotion contract
+
+Automatic analysis never creates an approved `IMPLEMENTS`, `VERIFIED_BY`, `IMPACTS`, or other authority-bearing mapping directly. It creates an immutable `FeatureMappingCandidate` or `RelationshipCandidate` with `instructionAuthority: false`, `promotionAuthority: false`, producer identity and version, confidence, Evidence links, and the source GraphSnapshot.
+
+Candidate relations use `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, and `REVIEWED_BY`. An accepting ReviewDecision does not mutate or relabel the candidate. It creates a separate reviewed relation linked back with `PROMOTED_FROM`; rejection remains separately linked with `REJECTED_BY`. This preserves the proposal, evidence, reviewer disposition, and accepted projection as distinct immutable facts. Unreviewed candidates are excluded from normal canonical and execution context unless the task explicitly asks to inspect candidates.
+
+### Bounded traversal contract
+
+Every Context Compiler graph expansion must use a deterministic `TraversalQuery` that records:
+
+- an allowlist of relation types and authority classes;
+- maximum depth and maximum node/edge counts;
+- accepted freshness states and minimum confidence where applicable;
+- whether unreviewed candidates are eligible;
+- anchor identities, task relevance inputs, and deterministic ordering;
+- inclusion and exclusion reasons;
+- the GraphSnapshot, query, and result digests included in Capsule provenance.
+
+The compiler must reject or exclude stale graph evidence, deny unsupported relations, and avoid candidate traversal by default. A graph backend may accelerate the query but cannot widen its scope, change ordering, silently promote evidence, or alter the resulting semantic digest.
 
 Human-facing knowledge uses a replaceable projection plane in this order:
 
@@ -214,7 +269,7 @@ Current v0.5 alpha progress, verified on 2026-08-18; milestone remains active:
 - normalized runtime observations are content-addressed, adapter-neutral, and freshness-gated; raw provider IDs and non-project workspace paths are reduced to digests, while raw commands, endpoints, environment, prompts, transcripts, and credentials are rejected;
 - CLI, read-only MCP, and task-specific Context Capsules expose bounded runtime evidence, and source changes make the entire repository evidence layer stale until rebuild;
 - the existing Git history capability is optional evidence and already fails open when Git is unavailable; it is not the future change-lineage authority;
-- temporal Feature/Capability/ChangeSet revision graphs, multiple-parent source DAGs, GraphProjectionAdapter, deterministic document projections, AST-accurate/dynamic call resolution, live runtime probing/control, and authorized knowledge promotion remain explicitly deferred.
+- temporal Feature/Capability/ChangeSet revision graphs, multiple-parent source DAGs, GraphProjectionAdapter, typed relationship allowlists, candidate promotion, deterministic bounded traversal, deterministic document projections, AST-accurate/dynamic call resolution, live runtime probing/control, and authorized knowledge promotion remain explicitly deferred.
 
 ## Roadmap
 
@@ -228,7 +283,7 @@ Implement planning generations `a -> plan1 -> a1 -> plan2 -> a2`, bounded result
 
 ### v0.5 — Repository World Model
 
-Add incremental file, symbol, dependency, Feature/Capability, provider-neutral ChangeSet/revision, optional VCS evidence, and runtime-state indexing with claim-level freshness and Hot/Warm/Cold history. Introduce a multiple-parent temporal provenance DAG, a replaceable `GraphProjectionAdapter`, and deterministic Markdown-first knowledge projections. GraphDB and Git remain optional adapters; neither may become the unique authority or a prerequisite for core operation.
+Add incremental file, symbol, dependency, Feature/Capability, provider-neutral ChangeSet/revision, optional VCS evidence, and runtime-state indexing with claim-level freshness and Hot/Warm/Cold history. Introduce a multiple-parent temporal provenance DAG, a replaceable `GraphProjectionAdapter`, typed and provenance-complete relationship allowlists, immutable mapping candidates with ReviewDecision-gated promotion, deterministic bounded traversal, and Markdown-first knowledge projections. GraphDB and Git remain optional adapters; neither may become the unique authority or a prerequisite for core operation.
 
 ### v0.6 — Runtime adapters
 
@@ -255,6 +310,9 @@ Before every material milestone, answer all of these:
 11. Would the same core lineage and semantic identities be available in a project with no `.git` directory?
 12. Are generated Markdown, Obsidian, or Notion pages still projections, with inbound edits treated as reviewable candidates?
 13. Does the revision model accept multiple parents without pretending automatic merge is implemented?
+14. Does every graph edge carry typed provenance, freshness, producer, evidence, and authority metadata without volatile provider identity?
+15. Are inferred mappings still immutable candidates until an authorized ReviewDecision creates a separate reviewed relation?
+16. Is every graph expansion bounded by an explicit relation allowlist, freshness and confidence policy, depth, size, ordering, and recorded inclusion/exclusion rationale?
 
 If any answer is “no” or “unknown,” record the gap before proceeding.
 
@@ -276,3 +334,5 @@ If any answer is “no” or “unknown,” record the gap before proceeding.
 - 2026-08-18: adopted a provider-neutral temporal provenance graph connecting FeatureGroup, Capability, Feature, code and test revisions, ChangeSets, execution lineage, evidence, conformance, and explicit Unknowns.
 - 2026-08-18: required revision schemas to support zero-or-more parents from the start, while deferring automatic merge and conflict resolution.
 - 2026-08-18: adopted deterministic Graph-to-Markdown, Obsidian, and Notion knowledge projections; documents remain derived views and inbound edits become candidates requiring authorized review.
+- 2026-08-18: defined FeatureGroup taxonomy as independent from code directories, required many-to-many Feature/Capability/code/test/change mappings, and separated logical entities from immutable revisions.
+- 2026-08-18: adopted typed provenance-complete graph edges, immutable mapping candidates, ReviewDecision-created promoted relations, and deterministic allowlisted Context Compiler traversal as semantic contracts.
