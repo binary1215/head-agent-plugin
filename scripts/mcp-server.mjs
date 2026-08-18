@@ -11,6 +11,7 @@ import { inspectOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
 import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, readIncrementalRefreshReceipt } from "./lib/incremental-refresh.mjs";
+import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
 
 const protocolVersion = "2024-11-05";
 export const tools = [
@@ -156,6 +157,29 @@ export const tools = [
     }
   },
   {
+    name: "head_refresh_trigger_status",
+    description: "Read and digest-verify the latest debounced filesystem or CI trigger batch, serialized delivery receipt, World Model binding, and writer state without starting a watcher or triggering refresh.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "head_refresh_trigger_delivery",
+    description: "Read and digest-verify one immutable refresh trigger delivery and its linked incremental refresh evidence without mutating observed state or Product Canon.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        trigger_delivery_id: { type: "string", pattern: "^refresh-trigger-delivery-[a-f0-9]{24}$" }
+      },
+      required: ["project_root", "trigger_delivery_id"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "head_graph_projection_status",
     description: "Read and verify the current replaceable graph projection adapter state without treating the graph backend as canon or unique authority.",
     inputSchema: {
@@ -262,7 +286,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.22" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.23" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -296,6 +320,10 @@ export async function dispatch(request) {
                     ? inspectIncrementalRefresh({ root: args.project_root })
                     : name === "head_incremental_refresh_receipt"
                       ? readIncrementalRefreshReceipt({ root: args.project_root, refreshReceiptId: args.refresh_receipt_id })
+                    : name === "head_refresh_trigger_status"
+                      ? inspectRefreshTriggers({ root: args.project_root })
+                    : name === "head_refresh_trigger_delivery"
+                      ? readRefreshTriggerDelivery({ root: args.project_root, triggerDeliveryId: args.trigger_delivery_id })
                   : name === "head_graph_projection_status"
                     ? inspectWorldGraphProjection({ root: args.project_root })
                   : name === "head_markdown_projection_status"

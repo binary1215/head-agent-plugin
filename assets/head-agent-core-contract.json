@@ -43,17 +43,18 @@
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, replaceable graph projection, deterministic Markdown projection, and explicit incremental refresh are active; AST-accurate analysis, structured Git decision inference, live runtime probing/control, debounced event ingestion, Obsidian/Notion, and the optional GraphDB adapter are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, replaceable graph projection, deterministic Markdown projection, explicit incremental refresh, and debounced filesystem/CI trigger ingestion are active; AST-accurate analysis, structured Git decision inference, live runtime probing/control, Obsidian/Notion, automatic document regeneration, and the optional GraphDB adapter are deferred."
   },
   "incrementalRefresh": {
     "purpose": "Reconstruct changed observed project state as a new immutable World Model and GraphSnapshot without mutating canon or accepted execution inputs.",
     "contractVersion": "0.1.0",
     "triggers": ["manual", "filesystem", "ci", "change-set", "runtime-observation"],
-    "activeTrigger": "manual",
+    "activeTriggers": ["manual", "filesystem", "ci"],
+    "triggerProtocolVersion": "0.1.0",
     "identity": "The request binds the verified base World Model and SourceSnapshot, trigger evidence, exact or discovered path expectation, and explicit additional source parents. The receipt binds verified before/after World Model, SourceSnapshot, GraphSnapshot, change, revision-transition, and execution-drift evidence.",
     "incrementalBoundary": "Every eligible file is rediscovered and byte-hashed; semantic analysis is reused only when path, digest, byte length, classification, language, and source-analysis protocol match the verified prior snapshot. The resulting RepositoryScanResult must equal a complete reference scan.",
     "authority": "Refresh updates observed derived state only. It cannot mutate Product Canon, promote candidates, grant instruction authority, regenerate documents automatically, or replace an active Run's pinned ContextCapsule.",
-    "status": "Explicit CLI refresh, immutable request/receipt artifacts, automatic current-source parent linkage, unchanged-revision identity reuse, changed-revision parent linkage, exact changed-path expectations, active-Run drift disclosure, and read-only CLI/MCP inspection are active; debounced filesystem/CI ingestion and automatic document regeneration remain deferred."
+    "status": "Explicit CLI refresh, immutable request/receipt artifacts, automatic current-source parent linkage, unchanged-revision identity reuse, changed-revision parent linkage, exact changed-path expectations, active-Run drift disclosure, deterministic bounded filesystem/CI trigger batches, a foreground filesystem watcher, structured CI ingestion, single-writer serialization, immutable delivery receipts, and read-only CLI/MCP inspection are active; automatic document regeneration and remote GraphDB refresh remain deferred."
   },
   "temporalProvenance": {
     "purpose": "Connect stable product and repository entities to immutable content-derived revisions and explicit multiple-parent ancestry without requiring Git or GraphDB.",
@@ -108,6 +109,8 @@
     "explicit incremental observed-state refresh with immutable request and receipt artifacts",
     "digest-gated unchanged-file analysis reuse with full-scan semantic equivalence",
     "automatic SourceSnapshot parent linkage and active-Run drift disclosure",
+    "debounced filesystem watcher and structured CI refresh trigger ingestion",
+    "single-writer World Model lease with immutable trigger batch and delivery receipts",
     "replaceable WorldModelStoreAdapter contract",
     "heuristic evidence-linked semantic call graph and bounded traversal",
     "Git-independent temporal Product, File, Symbol, and Test revision GraphSnapshot",
@@ -141,7 +144,6 @@
     "general conformance graph projection",
     "dedicated imported backlog evidence adapters",
     "automatic merge and conflict resolution",
-    "debounced filesystem and CI refresh event ingestion",
     "DocumentChangeCandidate review and application",
     "automatic document projection refresh",
     "Obsidian and Notion projection adapters",

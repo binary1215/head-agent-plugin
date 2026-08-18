@@ -60,6 +60,7 @@ import {
   materializeMarkdownProjection,
   readDocumentChangeCandidateSet,
 } from "./document-projection-adapter.mjs";
+import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
 export const WORLD_MODEL_VERSION = "0.9.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
@@ -514,7 +515,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   };
 }
 
-export async function buildWorldModel({
+async function buildWorldModelLocked({
   root = ".",
   persist = true,
   storeAdapter = null,
@@ -530,6 +531,7 @@ export async function buildWorldModel({
   repositoryScanExecution = null,
   expectedWorldModelId = "",
   expectedCurrentWorldModelId = "",
+  writerLease = null,
 } = {}) {
   const inspected = readyProject(root);
   const project = inspected.project;
@@ -826,6 +828,17 @@ export async function buildWorldModel({
       runtimeState: externalRuntimeResult.diagnostics,
     },
   };
+}
+
+export async function buildWorldModel(options = {}) {
+  const persist = options.persist ?? true;
+  if (!persist) return buildWorldModelLocked(options);
+  const inspected = readyProject(options.root ?? ".");
+  return withRefreshWriterLease({
+    projectRoot: inspected.project.projectRoot,
+    projectId: inspected.project.projectId,
+    lease: options.writerLease || null,
+  }, (writerLease) => buildWorldModelLocked({ ...options, writerLease }));
 }
 
 export function queryWorldModel({ root = ".", query, depth = 1, maxResults = 100, storeAdapter = null } = {}) {

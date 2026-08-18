@@ -1,17 +1,19 @@
 # Incremental observed-state refresh
 
-Status: explicit manual refresh contract active; event ingestion deferred
+Status: explicit refresh and debounced filesystem/CI trigger ingestion active
 
 Protocol version: `0.1.0`
 
 ## Purpose
 
-Incremental refresh reconstructs observed project state without granting a watcher, compute backend, graph, or document authority over Product Canon. It is the verified bridge between explicit full indexing and future debounced filesystem or CI ingestion.
+Incremental refresh reconstructs observed project state without granting a watcher, compute backend, graph, or document authority over Product Canon. Manual, debounced filesystem, and structured CI triggers now enter the same verified refresh pipeline.
 
 The active pipeline is:
 
 ```text
-verified current World Model
+manual request or verified RefreshTriggerBatch
+  -> exclusive project World Model writer lease
+  -> verified current World Model
   -> content-derived IncrementalRefreshRequest
   -> rediscover and byte-hash every eligible file
   -> reuse analysis only for digest-identical verified files
@@ -23,7 +25,7 @@ verified current World Model
   -> advance the refresh receipt pointer
 ```
 
-Filesystem watchers, CI event adapters, GraphDB event projection, and automatic document regeneration are not active in this slice.
+The filesystem and CI adapters never provide the changed-file truth. They supply bounded evidence that causes this complete discovery and hashing pipeline to run. GraphDB event projection and automatic document regeneration are not active in this slice. See [`refresh-trigger.md`](refresh-trigger.md).
 
 ## Authority boundary
 
@@ -74,7 +76,7 @@ Reuse counts, analyzed paths, backend name, and execution mode are operational d
 - optional explicit additional SourceSnapshot parents;
 - false instruction, promotion, and canon-mutation authority.
 
-The active CLI emits `trigger.kind: manual`. The protocol reserves `filesystem`, `ci`, `change-set`, and `runtime-observation` for later verified trigger adapters. Reserving a kind does not claim that its adapter exists.
+The explicit CLI emits `trigger.kind: manual`. The active filesystem watcher and structured CI ingestion emit `filesystem` and `ci`; each request names exactly one immutable `RefreshTriggerBatch` as evidence. `change-set` and `runtime-observation` remain reserved for later verified adapters. Event paths are hints and never become an exact change expectation.
 
 An exact changed-path expectation fails before any World Model pointer mutation when the observed added, changed, and removed path union differs.
 
@@ -113,6 +115,9 @@ The local reference implementation stores:
 .head/refresh/requests/incremental-refresh-request-*.json
 .head/refresh/receipts/incremental-refresh-receipt-*.json
 .head/refresh/current.json
+.head/refresh/triggers/batches/refresh-trigger-batch-*.json
+.head/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
+.head/refresh/triggers/current.json
 ```
 
 Requests and receipts are content-derived immutable artifacts. The current file is a digest-verified replaceable pointer. A later full index or refresh can make the latest receipt stale without invalidating its historical evidence.
@@ -124,6 +129,10 @@ node scripts/head.mjs world-refresh <project>
 node scripts/head.mjs world-refresh <project> --expect-changed src/a.mjs,src/b.mjs
 node scripts/head.mjs world-refresh-status <project>
 node scripts/head.mjs world-refresh-read <project> --receipt incremental-refresh-receipt-<24-hex>
+node scripts/head.mjs world-refresh-events <project> --input refresh-events.json
+node scripts/head.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
+node scripts/head.mjs world-refresh-trigger-status <project>
+node scripts/head.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
 ```
 
 `--trigger-evidence` adds sorted evidence identities. `--parent-snapshot` declares additional SourceSnapshot parents; it does not request or perform a merge.
@@ -131,7 +140,9 @@ node scripts/head.mjs world-refresh-read <project> --receipt incremental-refresh
 Read-only MCP exposes:
 
 - `head_incremental_refresh_status`;
-- `head_incremental_refresh_receipt`.
+- `head_incremental_refresh_receipt`;
+- `head_refresh_trigger_status`;
+- `head_refresh_trigger_delivery`.
 
 MCP does not expose refresh mutation.
 
@@ -144,6 +155,8 @@ Refresh fails closed on:
 - exact changed-path expectation mismatch;
 - invalid path or parent identities;
 - World Model preview drift or concurrent pointer conflict;
+- active, unknown, unsafe, or mismatched project World Model writer lease ownership;
+- trigger batch, delivery, incremental-link, or trigger-pointer mismatch;
 - graph projection failure or semantic divergence;
 - request, receipt, or pointer digest mismatch;
 - active Run state that disagrees with its Run or Capsule artifacts.
@@ -152,4 +165,4 @@ The existing verified World Model pointer remains authoritative for current deri
 
 ## Deferred next stage
 
-The next stage is a provider-neutral debounced trigger queue. It must coalesce bounded filesystem or CI events into this same request contract, rescan rather than trust event payloads, enforce single-writer pointer transitions, record dropped/coalesced trigger evidence, and never regenerate documents until refresh succeeds. Automatic document regeneration, remote GraphDB refresh, and bidirectional document synchronization remain later stages.
+The verified trigger queue now coalesces bounded filesystem or CI events, rescans instead of trusting event payloads, serializes writers through an exclusive project lease plus pointer comparison, records dropped/coalesced evidence, and leaves document projection disconnected. The next ordered stage may regenerate deterministic Markdown only after a successful delivery and must preserve published-view drift protection. Remote GraphDB refresh, background service installation, provider-specific CI webhooks, Obsidian/Notion publication, and bidirectional document synchronization remain later stages.

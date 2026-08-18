@@ -14,6 +14,7 @@ import {
   readWorldModel,
   readWorldModelSnapshot,
 } from "./world-model.mjs";
+import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
 export const INCREMENTAL_REFRESH_VERSION = "0.1.0";
 const REQUEST_PATTERN = /^incremental-refresh-request-[a-f0-9]{24}$/;
@@ -452,7 +453,7 @@ export function inspectIncrementalRefresh({ root = ".", storeAdapter = null } = 
   };
 }
 
-export async function refreshWorldModel({
+async function refreshWorldModelLocked({
   root = ".",
   triggerKind = "manual",
   triggerEvidenceIds = [],
@@ -462,6 +463,7 @@ export async function refreshWorldModel({
   graphProjectionAdapter = null,
   gitHistoryAdapter = null,
   runtimeStateAdapter = null,
+  writerLease = null,
 } = {}) {
   const inspected = readyProject(root);
   const projectRoot = inspected.project.projectRoot;
@@ -540,6 +542,7 @@ export async function refreshWorldModel({
       revisionParentIds,
       expectedWorldModelId: nextPreview.snapshot.worldModelId,
       expectedCurrentWorldModelId: previousSnapshot.worldModelId,
+      writerLease,
     });
     if (world.snapshot.worldModelId !== receipt.next.worldModelId || world.snapshot.temporalProvenanceGraph.sourceSnapshotId !== receipt.next.sourceSnapshotId) {
       fail("Persisted World Model does not match the verified refresh receipt.", "REFRESH_PERSISTENCE_MISMATCH");
@@ -569,4 +572,14 @@ export async function refreshWorldModel({
       semanticConformance: "validated-by-repository-scan-contract; full-reference equivalence is covered by conformance tests",
     },
   };
+}
+
+export async function refreshWorldModel(options = {}) {
+  const root = options.root ?? ".";
+  const inspected = readyProject(root);
+  return withRefreshWriterLease({
+    projectRoot: inspected.project.projectRoot,
+    projectId: inspected.project.projectId,
+    lease: options.writerLease || null,
+  }, (writerLease) => refreshWorldModelLocked({ ...options, writerLease }));
 }

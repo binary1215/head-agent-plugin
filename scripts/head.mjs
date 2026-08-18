@@ -13,6 +13,7 @@ import { inspectOnboarding, readOnboardingCandidateSet, readOnboardingReviewDeci
 import { inspectFeatureMapping, readFeatureMappingCandidateSet, readFeatureMappingReviewDecision, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
 import { attachVcsEvidence, inspectChangeSets, readChangeImpactCandidateSet, readChangeImpactReviewDecision, readChangeSet, readVcsEvidence, recordChangeSet, reviewChangeImpact } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, readIncrementalRefreshReceipt, refreshWorldModel } from "./lib/incremental-refresh.mjs";
+import { inspectRefreshTriggers, processRefreshTriggerBatch, readRefreshTriggerDelivery, runFileSystemRefreshWatcher } from "./lib/refresh-trigger.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -59,6 +60,10 @@ export function usage() {
       "head world-refresh <project> [--expect-changed <path,path>] [--trigger-evidence <id,id>] [--parent-snapshot <id,id>]",
       "head world-refresh-status <project>",
       "head world-refresh-read <project> --receipt <incremental-refresh-receipt-id>",
+      "head world-refresh-events <project> --input <refresh-events.json>",
+      "head world-refresh-watch <project> [--debounce-ms <25-60000>] [--max-events <1-4096>]",
+      "head world-refresh-trigger-status <project>",
+      "head world-refresh-trigger-read <project> --delivery <refresh-trigger-delivery-id>",
       "head world-graph-status <project>",
       "head world-docs-build <project>",
       "head world-docs-status <project>",
@@ -141,6 +146,20 @@ export function runCommand(argv = process.argv.slice(2)) {
   });
   if (command === "world-refresh-status") return inspectIncrementalRefresh({ root });
   if (command === "world-refresh-read") return readIncrementalRefreshReceipt({ root, refreshReceiptId: options.receipt });
+  if (command === "world-refresh-events") {
+    const input = inputJson(options, "Refresh trigger event ingestion");
+    const unexpected = Object.keys(input).filter((key) => !["sourceKind", "events", "maxEvents"].includes(key));
+    if (unexpected.length) throw new Error(`Refresh trigger event ingestion contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    if (input.sourceKind !== "ci") throw new Error("world-refresh-events accepts only sourceKind ci; use world-refresh-watch for filesystem events.");
+    return processRefreshTriggerBatch({ root, ...input });
+  }
+  if (command === "world-refresh-watch") return runFileSystemRefreshWatcher({
+    root,
+    debounceMs: options["debounce-ms"] == null ? undefined : Number(options["debounce-ms"]),
+    maxEvents: options["max-events"] == null ? undefined : Number(options["max-events"]),
+  });
+  if (command === "world-refresh-trigger-status") return inspectRefreshTriggers({ root });
+  if (command === "world-refresh-trigger-read") return readRefreshTriggerDelivery({ root, triggerDeliveryId: options.delivery });
   if (command === "world-graph-status") return inspectWorldGraphProjection({ root });
   if (command === "world-docs-build") return materializeWorldMarkdownProjection({ root });
   if (command === "world-docs-status") return inspectWorldMarkdownProjection({ root });
