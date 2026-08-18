@@ -92,6 +92,6 @@ The reference comparison intentionally favors correctness over acceleration in t
 - remote pointer compare-and-swap and transaction receipts;
 - compute-backed graph construction or traversal;
 - GraphDB-specific indexes, migrations, and operational observability;
-- Obsidian/Notion document adapters and document-candidate review/application.
+- Obsidian/Notion document adapters and temporal projection of document-review artifacts.
 
 No remote endpoint was queried or mutated by this implementation.

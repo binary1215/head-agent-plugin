@@ -12,6 +12,7 @@ import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
 import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
 import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
+import { inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision } from "./lib/document-change-review.mjs";
 
 const protocolVersion = "2024-11-05";
 export const tools = [
@@ -236,6 +237,45 @@ export const tools = [
     }
   },
   {
+    name: "head_document_change_review_status",
+    description: "Read the explicit review and application status for one immutable DocumentChangeCandidateSet without accepting, applying, or mutating Product Canon.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        candidate_set_id: { type: "string", pattern: "^document-change-candidate-set-[a-f0-9]{24}$" }
+      },
+      required: ["project_root", "candidate_set_id"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "head_document_change_review",
+    description: "Read and digest-verify one explicit document-to-Product-Canon ReviewDecision and its exact candidate and resulting Product Model revision bindings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        review_decision_id: { type: "string", pattern: "^document-change-review-decision-[a-f0-9]{24}$" }
+      },
+      required: ["project_root", "review_decision_id"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "head_document_change_application",
+    description: "Read and digest-verify one document-change application receipt linking the user ReviewDecision to exact before/after World, Graph, Canon, and Markdown projection identities.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        application_receipt_id: { type: "string", pattern: "^document-change-application-[a-f0-9]{24}$" }
+      },
+      required: ["project_root", "application_receipt_id"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "head_world_query",
     description: "Traverse a bounded, digest-verified semantic neighborhood in the current Repository World Model as evidence, never instruction authority.",
     inputSchema: {
@@ -309,7 +349,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.24" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.25" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -357,6 +397,12 @@ export async function dispatch(request) {
                     ? readPostRefreshProjectionReceipt({ root: args.project_root, postRefreshProjectionReceiptId: args.post_refresh_projection_receipt_id })
                   : name === "head_document_change_candidates"
                     ? readWorldDocumentChangeCandidateSet({ root: args.project_root, candidateSetId: args.candidate_set_id })
+                  : name === "head_document_change_review_status"
+                    ? inspectDocumentChangeReviewStatus({ root: args.project_root, candidateSetId: args.candidate_set_id })
+                  : name === "head_document_change_review"
+                    ? readDocumentChangeReviewDecision({ root: args.project_root, reviewDecisionId: args.review_decision_id })
+                  : name === "head_document_change_application"
+                    ? readDocumentChangeApplicationReceipt({ root: args.project_root, applicationReceiptId: args.application_receipt_id })
                   : name === "head_world_query"
                     ? queryWorldModel({
                       root: args.project_root,

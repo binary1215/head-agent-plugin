@@ -53,7 +53,7 @@ The policy produces one of these bounded outcomes:
 - `blocked-unmanaged-view`: Markdown exists without a verified base projection and is preserved;
 - `failed`: policy, adapter, projection, or persistence verification failed without changing Product Canon or active execution inputs.
 
-Automatic mode never overwrites edited or unmanaged Markdown. A current edited view is captured before source refresh so its candidate evidence stays anchored to the exact GraphSnapshot that produced the base content. Candidate review and application remain deferred; capture alone grants no authority.
+Automatic mode never overwrites edited or unmanaged Markdown. A current edited view is captured before source refresh so its candidate evidence stays anchored to the exact GraphSnapshot that produced the base content. Capture alone grants no authority. A separate explicit document-change review may later reject the set or accept it only with a complete user-supplied Product Model; see [`document-change-review.md`](document-change-review.md).
 
 If the policy is digest-invalid, observed-state refresh still proceeds and the post-refresh outcome is `failed`. The invalid policy cannot acquire authority by preventing or altering the verified World Model transition. A projection failure also does not roll the World Model pointer back; it leaves the generated view absent, stale, or modified and records the failure reason.
 
@@ -84,7 +84,7 @@ Read-only MCP exposes:
 - `head_post_refresh_projection_status`;
 - `head_post_refresh_projection_receipt`.
 
-MCP cannot change the policy, trigger refresh, regenerate documents, review candidates, or mutate Canon.
+MCP cannot change the policy, trigger refresh, regenerate documents, review candidates, apply decisions, or mutate Canon. Separate read-only document-review MCP tools inspect status and immutable artifacts.
 
 ## Authority and optional infrastructure
 
@@ -94,7 +94,6 @@ Git and GraphDB are not consulted by this protocol. The local Markdown adapter i
 
 ## Deferred
 
-- `DocumentChangeCandidate` ReviewDecision and application;
 - projection of document-review receipts into later GraphSnapshots;
 - automatic Obsidian or Notion publication;
 - bidirectional document synchronization and conflict resolution;

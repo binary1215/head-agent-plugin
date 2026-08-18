@@ -15,6 +15,7 @@ import { attachVcsEvidence, inspectChangeSets, readChangeImpactCandidateSet, rea
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel } from "./lib/incremental-refresh.mjs";
 import { inspectRefreshTriggers, processRefreshTriggerBatch, readRefreshTriggerDelivery, runFileSystemRefreshWatcher } from "./lib/refresh-trigger.mjs";
 import { inspectPostRefreshProjectionPolicy, setPostRefreshProjectionPolicy } from "./lib/post-refresh-projection.mjs";
+import { applyDocumentChangeReview, inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision, reviewDocumentChanges } from "./lib/document-change-review.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -70,6 +71,11 @@ export function usage() {
       "head world-docs-status <project>",
       "head world-docs-capture <project>",
       "head world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>",
+      "head world-docs-review <project> --input <review.json>",
+      "head world-docs-apply <project> --review <document-change-review-decision-id>",
+      "head world-docs-review-status <project> --candidate-set <document-change-candidate-set-id>",
+      "head world-docs-review-read <project> --review <document-change-review-decision-id>",
+      "head world-docs-application-read <project> --application <document-change-application-id>",
       "head world-docs-policy-set <project> --input <policy.json>",
       "head world-docs-policy-status <project>",
       "head world-docs-refresh-status <project>",
@@ -170,6 +176,17 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "world-docs-status") return inspectWorldMarkdownProjection({ root });
   if (command === "world-docs-capture") return captureWorldMarkdownChanges({ root, persist: true });
   if (command === "world-docs-candidates") return readWorldDocumentChangeCandidateSet({ root, candidateSetId: options["candidate-set"] });
+  if (command === "world-docs-review") {
+    const input = inputJson(options, "Document-change ReviewDecision");
+    const allowed = new Set(["candidateSetId", "disposition", "acceptedCandidateIds", "resultingProductModel", "rationale", "apply"]);
+    const unexpected = Object.keys(input).filter((key) => !allowed.has(key));
+    if (unexpected.length) throw new Error(`Document-change ReviewDecision contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    return reviewDocumentChanges({ ...input, root });
+  }
+  if (command === "world-docs-apply") return applyDocumentChangeReview({ root, reviewDecisionId: options.review });
+  if (command === "world-docs-review-status") return inspectDocumentChangeReviewStatus({ root, candidateSetId: options["candidate-set"] });
+  if (command === "world-docs-review-read") return readDocumentChangeReviewDecision({ root, reviewDecisionId: options.review });
+  if (command === "world-docs-application-read") return readDocumentChangeApplicationReceipt({ root, applicationReceiptId: options.application });
   if (command === "world-docs-policy-set") {
     const input = inputJson(options, "Post-refresh document projection policy");
     const unexpected = Object.keys(input).filter((key) => key !== "mode");

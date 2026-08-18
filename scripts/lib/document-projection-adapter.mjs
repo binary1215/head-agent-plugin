@@ -614,6 +614,11 @@ export function materializeMarkdownProjection({ projectRoot, graph, adapter = nu
     if (drift.length) fail("Published Markdown contains unreviewed edits; capture DocumentChangeCandidates before rebuilding.", "DOCUMENT_PROJECTION_UNREVIEWED_DRIFT");
   }
 
+  return persistMarkdownProjection({ selected, graph, next, current });
+}
+
+function persistMarkdownProjection({ selected, graph, next, current }) {
+
   const existing = selected.readProjection(next.documentProjectionId);
   let projectionEntry;
   if (existing) {
@@ -826,6 +831,82 @@ export function readDocumentChangeCandidateSet({ projectRoot, id } = {}) {
   const file = candidateDocument(projectRoot, id);
   if (!fs.existsSync(file)) fail(`DocumentChangeCandidateSet is missing: ${id}`, "DOCUMENT_CHANGE_CANDIDATE_SET_NOT_FOUND");
   return { status: "verified", file, candidateSet: verifyDocumentChangeCandidateSet(parseDocument(file, "DocumentChangeCandidateSet")) };
+}
+
+export function verifyDocumentChangeCandidateSetAgainstPublished({ projectRoot, candidateSet, adapter = null } = {}) {
+  const verified = verifyDocumentChangeCandidateSet(candidateSet);
+  const selected = createDocumentProjectionAdapter({ projectRoot, adapter });
+  const current = loadCurrentProjection(selected);
+  if (!current.projection
+    || current.projection.documentProjectionId !== verified.documentProjectionId
+    || current.projection.documentProjectionHash !== verified.documentProjectionHash
+    || current.projection.graphSnapshotId !== verified.graphSnapshotId
+    || current.projection.graphSnapshotHash !== verified.graphSnapshotHash) {
+    fail("DocumentChangeCandidateSet no longer matches the current published projection base.", "DOCUMENT_CHANGE_CANDIDATE_BASE_DRIFT");
+  }
+  const expected = new Map(current.projection.documents.map((item) => [item.relativePath, item]));
+  const actualDocuments = selected.readPublishedDocuments();
+  const actual = new Map(actualDocuments.map((item) => [item.relativePath, item]));
+  const drift = publishedDrift(current.projection, actualDocuments);
+  const derived = drift.map((item) => ({
+    relativePath: item.relativePath,
+    changeType: item.changeType,
+    baseContentHash: expected.get(item.relativePath)?.contentHash || null,
+    proposedContentHash: actual.get(item.relativePath)?.contentHash || null,
+    baseContent: expected.get(item.relativePath)?.content || null,
+    proposedContent: actual.get(item.relativePath)?.content || null,
+  }));
+  const recorded = verified.candidates.map((candidate) => ({
+    relativePath: candidate.relativePath,
+    changeType: candidate.changeType,
+    baseContentHash: candidate.baseContentHash,
+    proposedContentHash: candidate.proposedContentHash,
+    baseContent: candidate.baseContent,
+    proposedContent: candidate.proposedContent,
+  }));
+  if (documentProjectionCanonicalJson(derived) !== documentProjectionCanonicalJson(recorded)) {
+    fail("Published Markdown changed after DocumentChangeCandidateSet capture.", "DOCUMENT_CHANGE_CANDIDATE_PUBLISHED_DRIFT");
+  }
+  return { status: "verified", candidateSet: verified, projection: current.projection, publishedDocuments: actualDocuments, adapter: selected.describe() };
+}
+
+export function materializeReviewedMarkdownProjection({ projectRoot, graph, candidateSet, reviewDecision, adapter = null } = {}) {
+  verifyTemporalProvenanceGraph(graph);
+  const verified = verifyDocumentChangeCandidateSet(candidateSet);
+  if (!reviewDecision || reviewDecision.kind !== "ReviewDecision"
+    || reviewDecision.decisionScope !== "document-to-product-canon"
+    || reviewDecision.candidateSetId !== verified.candidateSetId
+    || reviewDecision.candidateSetHash !== verified.candidateSetHash
+    || reviewDecision.authority !== "explicit-user-document-change-review"
+    || reviewDecision.instructionAuthority !== true
+    || !Array.isArray(reviewDecision.acceptedCandidateIds)
+    || !Array.isArray(reviewDecision.rejectedCandidateIds)) {
+    fail("A verified explicit document-change ReviewDecision is required to reconcile published Markdown.", "DOCUMENT_CHANGE_REVIEW_REQUIRED");
+  }
+  const known = verified.candidates.map((candidate) => candidate.candidateId).sort(compare);
+  const partition = [...reviewDecision.acceptedCandidateIds, ...reviewDecision.rejectedCandidateIds].sort(compare);
+  if (documentProjectionCanonicalJson(known) !== documentProjectionCanonicalJson(partition)
+    || new Set(partition).size !== partition.length) {
+    fail("Document-change ReviewDecision does not partition the candidate set.", "DOCUMENT_CHANGE_REVIEW_SELECTION_MISMATCH");
+  }
+  verifyDocumentChangeCandidateSetAgainstPublished({ projectRoot, candidateSet: verified, adapter });
+  const selected = createDocumentProjectionAdapter({ projectRoot, adapter });
+  const current = loadCurrentProjection(selected);
+  const next = buildMarkdownDocumentProjection(graph);
+  const publishedBefore = selected.readPublishedDocuments();
+  const pointerBefore = current.pointer;
+  try {
+    const materialized = persistMarkdownProjection({ selected, graph, next, current });
+    return { ...materialized, reviewDecisionId: reviewDecision.reviewDecisionId, candidateSetId: verified.candidateSetId };
+  } catch (error) {
+    const after = selected.readPublishedDocuments();
+    const beforePaths = new Set(publishedBefore.map((item) => item.relativePath));
+    selected.publishDocuments(publishedBefore.map((item) => ({ relativePath: item.relativePath, content: item.content })), {
+      removeRelativePaths: after.map((item) => item.relativePath).filter((relativePath) => !beforePaths.has(relativePath)),
+    });
+    if (pointerBefore) selected.writePointer(pointerBefore);
+    throw error;
+  }
 }
 
 export function verifyDocumentProjectionAdapterConformance({ projectRoot, graph, referenceAdapter, candidateAdapter } = {}) {

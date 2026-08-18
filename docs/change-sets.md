@@ -107,4 +107,4 @@ Every artifact and pointer is content-derived and digest-verified. Source drift,
 
 ## Deferred boundaries
 
-Automatic ChangeSet creation from CI or filesystem events, inferred commit-to-ChangeSet matching, general execution-lineage graph projection, merge automation, imported ticket/backlog adapters, conformance findings, projection of document review receipts into later graphs, DocumentChangeCandidate review/application, Obsidian/Notion projection, and GraphDB acceleration remain deferred. Local/in-memory GraphProjectionAdapter traversal and deterministic Markdown projection are active derived layers and do not change ChangeSet authority.
+Automatic ChangeSet creation from CI or filesystem events, inferred commit-to-ChangeSet matching, general execution-lineage graph projection, merge automation, imported ticket/backlog adapters, conformance findings, projection of document review receipts into later graphs, Obsidian/Notion projection, and GraphDB acceleration remain deferred. Explicit DocumentChangeCandidate review/application is active but does not create a ChangeSet or alter ChangeSet authority.

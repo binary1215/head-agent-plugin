@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.24",
+  "version": "0.3.0-alpha.25",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -61,6 +61,7 @@
       "Replaceable DocumentProjectionAdapter Contract",
       "Deterministic Markdown Knowledge Projection",
       "Document Change Candidate Capture",
+      "Explicit Document-to-Canon Review and Application",
       "Explicit Post-refresh Markdown Policy",
       "Opt-in Automatic Markdown Projection Refresh",
       "Immutable Post-refresh Projection Receipts",
@@ -82,6 +83,7 @@
       "Inspect the current graph projection adapter and verify it remains a rebuildable non-authoritative materialized view.",
       "Generate or inspect deterministic Markdown knowledge projections without treating documents as canon.",
       "Capture edited generated Markdown as review-required DocumentChangeCandidates without changing Product Canon.",
+      "Review a DocumentChangeCandidateSet with an explicit complete Product Model, then apply it through a digest-verifiable Canon, GraphSnapshot, and Markdown receipt.",
       "Configure or inspect safe post-refresh Markdown projection without overwriting edited documents.",
       "Refresh observed repository state incrementally while preserving active Run inputs and immutable snapshot ancestry.",
       "Coalesce filesystem or CI observations into a bounded refresh trigger batch without trusting path hints or changing Product Canon.",

@@ -146,7 +146,7 @@ This prevents a stale index from silently directing execution while still allowi
 
 ## Explicitly deferred
 
-Debounced filesystem and CI trigger ingestion plus single-writer event coalescing are active and both terminate in the same incremental refresh mutation path. Explicitly enabled automatic Markdown regeneration is active through the separate safe post-refresh policy. Background service installation, provider-specific CI webhook adapters, automatic GraphDB refresh, DocumentChangeCandidate review/application, and automatic Obsidian/Notion publication remain deferred.
+Debounced filesystem and CI trigger ingestion plus single-writer event coalescing are active and both terminate in the same incremental refresh mutation path. Explicitly enabled automatic Markdown regeneration is active through the separate safe post-refresh policy. Explicit DocumentChangeCandidate review/application is also active as a separate user-authorized mutation path. Background service installation, provider-specific CI webhook adapters, automatic GraphDB refresh, temporal projection of document-review receipts, and automatic Obsidian/Notion publication remain deferred.
 
 - AST-accurate semantic symbols, dynamic dispatch, and complete call resolution;
 - structured decision inference, supersession modeling, and authorized promotion from Git evidence;
@@ -155,7 +155,7 @@ Debounced filesystem and CI trigger ingestion plus single-writer event coalescin
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
 - inferred commit-to-ChangeSet matching, conformance, complete execution-lineage, and projection of document artifacts/review receipts back into later graph snapshots;
-- DocumentChangeCandidate review/application, automatic regeneration, Obsidian, and Notion adapters;
+- temporal projection of document-review artifacts, Obsidian, and Notion adapters;
 - dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
 - the optional remote GraphDB projection adapter and server-side graph expansion;

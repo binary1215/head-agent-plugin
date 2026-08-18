@@ -8,6 +8,7 @@ Protocol versions:
 - deterministic Markdown renderer: `0.1.0`
 - `DocumentChangeCandidateSet`: `0.1.0`
 - `PostRefreshProjectionPolicy` and receipt: `0.1.0`
+- document-change review and application: `0.1.0`
 
 ## Purpose and authority boundary
 
@@ -102,7 +103,7 @@ node scripts/head.mjs world-docs-capture <project>
 node scripts/head.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
 ```
 
-Capture creates an immutable, content-derived `DocumentChangeCandidateSet` under `.head/document-changes/candidate-sets/`. Each added, modified, or removed path records the exact base/proposed content and digests, source projection, GraphSnapshot, and false instruction/promotion flags. The candidate set requires a future scoped `ReviewDecision`; capture itself does not change Product Canon, the graph, source code, or an execution artifact. The read-only MCP surface can inspect projection status and a named candidate set but cannot generate documents, capture edits, or accept a candidate.
+Capture creates an immutable, content-derived `DocumentChangeCandidateSet` under `.head/document-changes/candidate-sets/`. Each added, modified, or removed path records the exact base/proposed content and digests, source projection, GraphSnapshot, and false instruction/promotion flags. Capture itself does not change Product Canon, the graph, source code, or an execution artifact. A separate scoped ReviewDecision can reject the set or accept it only alongside a complete explicit Product Model; see [`document-change-review.md`](document-change-review.md). The read-only MCP surface can inspect projection, candidate, review, and application status but cannot generate documents, capture edits, review candidates, or apply a decision.
 
 ## Conformance and deferred work
 
@@ -110,7 +111,6 @@ Capture creates an immutable, content-derived `DocumentChangeCandidateSet` under
 
 The following remain deferred:
 
-- a scoped ReviewDecision and application contract for `DocumentChangeCandidateSet`;
 - projection of document artifacts and their later review receipts into a subsequent GraphSnapshot;
 - `ObsidianVaultProjectionAdapter` and `NotionProjectionAdapter`;
 - bidirectional synchronization or conflict resolution;
