@@ -2,10 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
-import { queryTemporalProvenanceGraph } from "./temporal-provenance.mjs";
+import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.7.0";
+export const CONTEXT_COMPILER_VERSION = "0.8.0";
 
 const fail = (message, code = "CONTEXT_COMPILER_ERROR") => {
   const error = new Error(message);
@@ -193,7 +193,16 @@ function activeCandidates(knowledge, task, historyClass) {
   return candidates.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
 }
 
-function repositoryCandidates(worldModel, task) {
+function queryTemporalProjection(worldModel, graphProjectionAdapter, query) {
+  return queryGraphProjection({
+    projectRoot: worldModel.snapshot.projectRoot,
+    graph: worldModel.snapshot.temporalProvenanceGraph,
+    adapter: graphProjectionAdapter,
+    query,
+  }).result;
+}
+
+function repositoryCandidates(worldModel, task, graphProjectionAdapter = null) {
   if (!worldModel || worldModel.status !== "current") return [];
   const taskTerms = terms(task);
   const graph = worldModel.snapshot.semanticGraph || null;
@@ -209,7 +218,7 @@ function repositoryCandidates(worldModel, task) {
     line: node.line,
   } : null;
   return worldModel.snapshot.files.map((file) => {
-    const temporalTraversal = temporalGraph ? queryTemporalProvenanceGraph(temporalGraph, {
+    const temporalTraversal = temporalGraph ? queryTemporalProjection(worldModel, graphProjectionAdapter, {
       query: file.path,
       relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "CHANGES"],
       authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
@@ -288,7 +297,7 @@ function repositoryCandidates(worldModel, task) {
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
-function productContextCandidates(worldModel, task) {
+function productContextCandidates(worldModel, task, graphProjectionAdapter = null) {
   if (!worldModel || worldModel.status !== "current") return [];
   const graph = worldModel.snapshot.temporalProvenanceGraph;
   const productModel = worldModel.snapshot.productModel;
@@ -299,7 +308,7 @@ function productContextCandidates(worldModel, task) {
     .sort((left, right) => right.length - left.length || left.localeCompare(right));
   if (matchingTerms.length === 0) return [];
   const anchorTerm = matchingTerms[0];
-  const traversal = queryTemporalProvenanceGraph(graph, {
+  const traversal = queryTemporalProjection(worldModel, graphProjectionAdapter, {
     query: anchorTerm,
     kinds: [
       "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
@@ -487,7 +496,7 @@ function selectCandidates(candidates, budget, baseTokens) {
   return { included, excluded, used };
 }
 
-export function compileContext({ root = ".", task, budget = 4000, persist = false } = {}) {
+export function compileContext({ root = ".", task, budget = 4000, persist = false, graphProjectionAdapter = null } = {}) {
   if (typeof task !== "string" || !task.trim()) fail("Context compilation requires a task.", "TASK_REQUIRED");
   const maxApproxTokens = Number(budget);
   if (!Number.isInteger(maxApproxTokens) || maxApproxTokens < 256 || maxApproxTokens > 50_000) {
@@ -508,8 +517,8 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
   };
   const candidates = [
     ...activeCandidates(sources.knowledge, task, historyClass),
-    ...productContextCandidates(sources.worldModel, task),
-    ...repositoryCandidates(sources.worldModel, task),
+    ...productContextCandidates(sources.worldModel, task, graphProjectionAdapter),
+    ...repositoryCandidates(sources.worldModel, task, graphProjectionAdapter),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
   ].sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));

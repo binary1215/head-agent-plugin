@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.19",
+  "version": "0.3.0-alpha.20",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -52,6 +52,8 @@
       "Conformance-ready Go Repository Scan Candidate",
       "Compute-backed Repository Scan v1",
       "Temporal Provenance Graph",
+      "Replaceable GraphProjectionAdapter Contract",
+      "Local JSON and In-memory Graph Projection",
       "Multiple-parent Source and Revision DAG",
       "Deterministic Allowlisted Graph Traversal",
       "Git Decision Evidence",
@@ -67,6 +69,7 @@
       "Inspect task-relevant Git decision evidence without promoting it to canon.",
       "Inspect a bounded derived projection of the user-owned Product Model without changing canon.",
       "Inspect content-addressed File, Symbol, and Test revisions through a bounded temporal graph query.",
+      "Inspect the current graph projection adapter and verify it remains a rebuildable non-authoritative materialized view.",
       "Inspect onboarding review and promotion receipts; include unreviewed candidates only when explicitly requested.",
       "Infer Feature-to-code mapping candidates, then require explicit review before creating IMPLEMENTS or VERIFIED_BY relationships.",
       "Record an accepted execution as a Git-independent ChangeSet, then review inferred Feature or Capability impact before creating IMPACTS relationships.",

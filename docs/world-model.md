@@ -24,7 +24,7 @@ The active dependency-free local JSON adapter stores:
 
 `current.json` points to the Hot snapshot, records the physical adapter descriptor, and records added, changed, and removed paths as the Warm tier. Previous content-addressed snapshots form the Cold tier. The physical adapter descriptor is not part of the semantic snapshot hash, so the same canonical inputs produce the same World Model ID through a conforming local, memory, or future GraphDB adapter.
 
-GraphDB is not required and no remote database is queried or mutated. A future GraphDB adapter may accelerate traversal, but the local canon must always be sufficient to rebuild it.
+GraphDB is not required and no remote database is queried or mutated. Graph traversal now uses a separate `GraphProjectionAdapter`; the World Model store continues to preserve the complete recoverable snapshot independently of the graph backend. See [`graph-projection-adapter.md`](graph-projection-adapter.md).
 
 ## Commands
 
@@ -35,6 +35,7 @@ node scripts/head.mjs world-index <project> --runtime-state <host-exported-json-
 node scripts/head.mjs world-index <project> --parent-snapshot <source-snapshot-id,source-snapshot-id>
 node scripts/head.mjs world-index <project> --revision-parents <logical-entity-to-parent-revisions.json>
 node scripts/head.mjs world-status <project>
+node scripts/head.mjs world-graph-status <project>
 node scripts/head.mjs world-query <project> --query <symbol-or-path> --depth 1 --limit 100
 node scripts/head.mjs world-temporal <project> --query <path-or-symbol> --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
 node scripts/head.mjs world-temporal <project> --query <candidate-id> --include-candidates true --depth 1 --limit 100 --edge-limit 200
@@ -47,11 +48,11 @@ node scripts/head.mjs change-set-status <project>
 
 Repository file changes, current Git refs, semantic HEAD lifecycle state, and indexer protocol versions all participate in the source digest. Volatile timestamps and physical store identity are excluded.
 
-The read-only MCP tool `head_world_model` exposes the same digest and freshness verification. `head_world_query` returns a bounded zero-to-three-hop heuristic semantic neighborhood. `head_temporal_graph` returns a deterministic allowlisted temporal traversal with graph/query/result digests. `head_git_history` performs a bounded query over verified current Git evidence. `head_runtime_state` performs a bounded query over verified point-in-time runtime observations. All reject a stale index.
+The read-only MCP tools `head_world_model` and `head_graph_projection_status` expose World Model and graph-projection verification. `head_world_query` returns a bounded zero-to-three-hop heuristic semantic neighborhood. `head_temporal_graph` returns a deterministic allowlisted temporal traversal with graph/query/result digests through the current projection adapter, or a disclosed embedded-graph fallback when no projection exists. `head_git_history` performs a bounded query over verified current Git evidence. `head_runtime_state` performs a bounded query over verified point-in-time runtime observations. All reject a stale index.
 
 ## Temporal provenance graph
 
-World Model version `0.8.0` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding projection protocol `0.1.0`, Feature mapping protocol `0.1.0`, ChangeSet protocol `0.1.0`, ChangeSet projection protocol `0.2.0`, VCS evidence protocol `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.6.0`. The temporal graph adds immutable onboarding history, Feature/code/test mapping candidates, reviewed provider-neutral ChangeSets, exact revision deltas, review-gated Feature/Capability impact, and optional explicit ChangeSet-to-Git evidence. Mapping and impact inference remain hidden non-authoritative candidates; only their scoped explicit ReviewDecisions create separate reviewed receipts and canonical `IMPLEMENTS`, `VERIFIED_BY`, or `IMPACTS` edges. VCS attachment is evidence-only and never changes ChangeSet identity.
+World Model version `0.9.0` includes repository scan protocol `0.2.0`, source-analysis protocol `0.2.0`, semantic graph protocol `0.2.0`, onboarding projection protocol `0.1.0`, Feature mapping protocol `0.1.0`, ChangeSet protocol `0.1.0`, ChangeSet projection protocol `0.2.0`, VCS evidence protocol `0.1.0`, GraphProjectionAdapter `0.1.0`, and a separate `GraphSnapshot` built by temporal provenance protocol `0.6.0`. The temporal graph adds immutable onboarding history, Feature/code/test mapping candidates, reviewed provider-neutral ChangeSets, exact revision deltas, review-gated Feature/Capability impact, and optional explicit ChangeSet-to-Git evidence. Mapping and impact inference remain hidden non-authoritative candidates; only their scoped explicit ReviewDecisions create separate reviewed receipts and canonical `IMPLEMENTS`, `VERIFIED_BY`, or `IMPACTS` edges. VCS attachment is evidence-only and never changes ChangeSet identity.
 
 The repository scan is the first built-in `ComputeAdapter` operation. Its semantic output contains only normalized relative paths and deterministic source facts. The scan root is operational input and is excluded from the repository-scan result; backend identity, execution mode, timing, and process details remain pointer diagnostics outside World Model identity. A Go implementation now produces byte-equivalent complete responses on the tracked corpus and limit/error fixtures, but release manifests intentionally do not advertise it because measured small and medium scans regress and the large-input gain is marginal. The default adapter therefore probes the verified distribution, discloses `GO_WORKER_OPERATION_NOT_INSTALLED`, and runs the JavaScript reference. The World Model continues to record its separately validated canonical project root.
 
@@ -100,6 +101,7 @@ The adapter descriptor and physical source path live only in the World Model poi
 - zero-or-more SourceSnapshot and Revision parents with no automatic merge claim;
 - provenance-complete product/repository edges plus `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, and `PROMOTED_FROM` onboarding edges;
 - deterministic bounded temporal traversal with kind/relation/authority/freshness allowlists, confidence policy, inclusion/exclusion reasons, and graph/query/result digests;
+- local JSON and in-memory graph projection adapters with identical GraphSnapshot and traversal identities, verified pointer/snapshot materialization, embedded-graph fallback disclosure, and stale/tamper/authority rejection;
 - file digest and line provenance, heuristic confidence, unresolved counts, and bounded traversal;
 - local `.git/HEAD` and in-repository ref resolution without following external gitdir pointers;
 - content-addressed all-reachable Git commit-message evidence through replaceable CLI and host-export adapters;
@@ -133,8 +135,7 @@ This prevents a stale index from silently directing execution while still allowi
 - inferred commit-to-ChangeSet matching, conformance, complete execution-lineage, and document-projection graph planes;
 - dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
-- the replaceable `GraphProjectionAdapter` contract;
-- the optional GraphDB storage adapter and remote graph expansion.
+- the optional remote GraphDB projection adapter and server-side graph expansion;
 - production selection or transport amortization for the conformant Go `repository.scan.v1` candidate, plus benchmark-gated migration of graph/traversal/Context operations;
 - descendant process-tree supervision beyond the worker manifest's enforced no-descendant contract.
 

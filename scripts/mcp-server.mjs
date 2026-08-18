@@ -6,7 +6,7 @@ import { coreContract, inspectProject } from "./lib/head-core.mjs";
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
-import { inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
+import { inspectWorldGraphProjection, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 import { inspectOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
 import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
@@ -132,6 +132,16 @@ export const tools = [
     }
   },
   {
+    name: "head_graph_projection_status",
+    description: "Read and verify the current replaceable graph projection adapter state without treating the graph backend as canon or unique authority.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "head_world_query",
     description: "Traverse a bounded, digest-verified semantic neighborhood in the current Repository World Model as evidence, never instruction authority.",
     inputSchema: {
@@ -205,7 +215,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.19" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.20" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -235,6 +245,8 @@ export async function dispatch(request) {
                 ? getPendingReviewContext({ root: args.project_root })
                 : name === "head_world_model"
                   ? inspectWorldModel({ root: args.project_root })
+                  : name === "head_graph_projection_status"
+                    ? inspectWorldGraphProjection({ root: args.project_root })
                   : name === "head_world_query"
                     ? queryWorldModel({
                       root: args.project_root,

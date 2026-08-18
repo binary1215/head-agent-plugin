@@ -32,7 +32,6 @@ import {
 } from "./repository-scan.mjs";
 import {
   buildTemporalProvenanceGraph,
-  queryTemporalProvenanceGraph,
   TEMPORAL_PROVENANCE_VERSION,
   verifyTemporalProvenanceGraph,
 } from "./temporal-provenance.mjs";
@@ -48,8 +47,14 @@ import {
   createWorldModelStoreAdapter,
   WORLD_MODEL_STORAGE_CONTRACT,
 } from "./world-model-store.mjs";
+import {
+  GRAPH_PROJECTION_ADAPTER_VERSION,
+  inspectGraphProjection,
+  materializeGraphProjection,
+  queryGraphProjection,
+} from "./graph-projection-adapter.mjs";
 
-export const WORLD_MODEL_VERSION = "0.8.0";
+export const WORLD_MODEL_VERSION = "0.9.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
@@ -279,6 +284,7 @@ function indexerState() {
     changeSetProjectionVersion: CHANGE_SET_PROJECTION_VERSION,
     vcsEvidenceVersion: VCS_EVIDENCE_VERSION,
     temporalProvenanceVersion: TEMPORAL_PROVENANCE_VERSION,
+    graphProjectionAdapterVersion: GRAPH_PROJECTION_ADAPTER_VERSION,
     gitDecisionHistoryVersion: GIT_DECISION_HISTORY_VERSION,
     gitHistoryAdapterVersion: GIT_HISTORY_ADAPTER_VERSION,
     externalRuntimeStateVersion: EXTERNAL_RUNTIME_STATE_VERSION,
@@ -456,6 +462,7 @@ export async function buildWorldModel({
   root = ".",
   persist = true,
   storeAdapter = null,
+  graphProjectionAdapter = null,
   gitHistoryAdapter = null,
   runtimeStateAdapter = null,
   computeAdapter = null,
@@ -671,6 +678,11 @@ export async function buildWorldModel({
     snapshotEntry = adapter.writeSnapshot(worldModelId, snapshot);
   }
   verifiedSnapshot(snapshotEntry.document, worldModelId);
+  const graphProjection = materializeGraphProjection({
+    projectRoot: project.projectRoot,
+    graph: temporalProvenanceGraph,
+    adapter: graphProjectionAdapter,
+  });
   const changed = !previous || previous.worldModelId !== worldModelId;
   const fileChanges = changed ? changesBetween(previous, snapshot) : { added: [], changed: [], removed: [] };
   const changes = {
@@ -706,6 +718,12 @@ export async function buildWorldModel({
         workerSha256: repositoryScanExecution.diagnostics.workerSha256 || "",
       },
       runtimeState: externalRuntimeResult.adapter,
+      graphProjection: {
+        ...graphProjection.adapter,
+        pointerId: graphProjection.pointer.pointerId,
+        graphSnapshotId: graphProjection.pointer.graphSnapshotId,
+        graphSnapshotHash: graphProjection.pointer.graphSnapshotHash,
+      },
     },
     tiers: {
       hot: worldModelId,
@@ -725,10 +743,12 @@ export async function buildWorldModel({
     pointer,
     snapshot,
     storeAdapter: adapter.describe(),
+    graphProjection,
     sourceAdapters: {
       compute: pointer.sourceAdapters.compute,
       gitHistory: gitHistoryResult.adapter,
       runtimeState: externalRuntimeResult.adapter,
+      graphProjection: pointer.sourceAdapters.graphProjection,
     },
     sourceDiagnostics: {
       compute: repositoryScanExecution.diagnostics,
@@ -762,14 +782,16 @@ export function queryWorldTemporalGraph({
   maxNodes = 100,
   maxEdges = 200,
   storeAdapter = null,
+  graphProjectionAdapter = null,
 } = {}) {
   const inspected = inspectWorldModel({ root, storeAdapter });
   if (inspected.status !== "current") fail("Repository World Model is stale and cannot answer temporal provenance queries.", "WORLD_MODEL_STALE");
   if (!inspected.snapshot.temporalProvenanceGraph) fail("Repository World Model has no temporal provenance graph.", "TEMPORAL_PROVENANCE_NOT_BUILT");
-  return {
-    status: "current",
-    worldModelId: inspected.snapshot.worldModelId,
-    ...queryTemporalProvenanceGraph(inspected.snapshot.temporalProvenanceGraph, {
+  const projected = queryGraphProjection({
+    projectRoot: inspected.snapshot.projectRoot,
+    graph: inspected.snapshot.temporalProvenanceGraph,
+    adapter: graphProjectionAdapter,
+    query: {
       query,
       kinds,
       relations,
@@ -780,7 +802,30 @@ export function queryWorldTemporalGraph({
       depth,
       maxNodes,
       maxEdges,
-    }),
+    },
+  });
+  return {
+    status: "current",
+    worldModelId: inspected.snapshot.worldModelId,
+    ...projected.result,
+    graphProjection: projected.diagnostics,
+  };
+}
+
+export function inspectWorldGraphProjection({ root = ".", storeAdapter = null, graphProjectionAdapter = null } = {}) {
+  const inspected = inspectWorldModel({ root, storeAdapter });
+  const projection = inspectGraphProjection({
+    projectRoot: inspected.snapshot.projectRoot,
+    graph: inspected.snapshot.temporalProvenanceGraph,
+    adapter: graphProjectionAdapter,
+  });
+  return {
+    status: projection.status,
+    worldModelStatus: inspected.status,
+    worldModelId: inspected.snapshot.worldModelId,
+    graphSnapshotId: inspected.snapshot.temporalProvenanceGraph.graphSnapshotId,
+    projection,
+    authority: "rebuildable-derived-projection-not-project-canon",
   };
 }
 
