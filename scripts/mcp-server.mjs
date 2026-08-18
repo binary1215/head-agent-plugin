@@ -158,7 +158,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
   if (request.method === "initialize") {
-    return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.12" } });
+    return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.13" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });

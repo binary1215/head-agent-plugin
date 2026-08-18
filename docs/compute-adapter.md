@@ -4,9 +4,9 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this plane.
 
 ## Purpose and current boundary
 
-`ComputeAdapter` separates deterministic heavy computation from the JavaScript control plane without transferring product authority, runtime authority, or semantic identity to an implementation language. Contract version `0.2.0` and WorkerProtocol version `0.2.0` are active.
+`ComputeAdapter` separates deterministic heavy computation from the JavaScript control plane without transferring product authority, runtime authority, or semantic identity to an implementation language. Contract version `0.3.0` and WorkerProtocol version `0.2.0` are active.
 
-The only active backend is `JsReferenceComputeAdapter`. It runs deterministic reference operations in-process and establishes the canonical request, response, error, limit, cancellation, and conformance behavior that a future Go worker must match. `repository.scan.v1` is the first built-in operation. No Go binary is selected or launched in this version. No user project receives native source or binaries.
+`JsReferenceComputeAdapter` runs deterministic reference operations in-process and remains the semantic oracle and local fallback. `GoWorkerComputeAdapter` now provides a verified native stdio transport. The packaged worker implements `worker.health.v1` only; `repository.scan.v1` remains a JavaScript operation until its Go implementation passes the existing corpus, complete-response conformance, identity, and benchmark gates. No user project receives native source or binaries.
 
 ## Authority boundary
 
@@ -22,7 +22,7 @@ Every adapter descriptor must declare:
 
 Every request and response records `authorityEffect: none`. Result validation recursively rejects any instruction, promotion, control, canonical, or unique-authority flag unless its value is exactly `false`. This is a defense-in-depth boundary; operation-specific validators must still reject output that falls outside the operation schema.
 
-The JavaScript control plane remains responsible for Product Canon writes, ReviewDecision, candidate promotion, Context policy, CLI/MCP integration, backend selection, and eventual worker process supervision.
+The JavaScript control plane remains responsible for Product Canon writes, ReviewDecision, candidate promotion, Context policy, CLI/MCP integration, backend selection, worker integrity verification, and process lifecycle enforcement.
 
 ## Canonical WorkerProtocol
 
@@ -55,13 +55,29 @@ Normalized limits record:
 - maximum bytes per file;
 - maximum total source bytes.
 
-The control-plane executor applies timeout and external cancellation to an `AbortSignal`, clears timers and listeners in all outcomes, and returns elapsed time only as operational diagnostics outside the protocol response. JavaScript reference handlers must cooperatively observe that signal; therefore untrusted or non-cooperative work is not eligible for the in-process backend. A future native adapter must additionally own and terminate its exact child process tree and bound stdout/stderr before returning.
+The control-plane executor applies timeout and external cancellation to an `AbortSignal`, clears timers and listeners in all outcomes, and returns elapsed time only as operational diagnostics outside the protocol response. JavaScript reference handlers must cooperatively observe that signal; therefore untrusted or non-cooperative work is not eligible for the in-process backend.
+
+The Go adapter starts one executable directly with `shell: false`, a minimal environment, and the verified binary directory as its working directory. The manifest forbids descendants, network access, and project writes. Stdout is bounded by the request output limit plus framing, stderr is bounded separately, and timeout or cancellation targets the exact recorded child PID with graceful termination followed by bounded forced termination. Completion is not reported until the PID exits. Descendant-tree supervision for a future worker that is allowed to spawn children remains deferred.
 
 ## Conformance
 
 `verifyComputeAdapterConformance` sends the exact same immutable request to the JavaScript reference adapter and a candidate adapter. The complete canonical protocol responses must match, not only a selected field. Its content-derived report records fixture names, operations, request IDs, statuses, and result digests.
 
 Conformance proves equivalence only for the supplied fixtures. An operation cannot move to Go until its operation-specific schema, deterministic JavaScript implementation, failure fixtures, representative benchmark corpus, and semantic identity checks exist.
+
+`worker.health.v1` is the first native conformance operation. Both backends return the same canonical authority-free readiness result. A test-only `worker.lifecycle.v1` fixture waits until the adapter timeout and proves cancellation plus PID exit; production manifests do not advertise that lifecycle operation.
+
+## Distribution and selection
+
+Each supported platform package contains the executable and a strict `WORKER-MANIFEST.json`. The manifest binds the WorkerProtocol version, platform, architecture, normalized plugin-relative executable path, byte size, SHA-256 digest, advertised operations, process restrictions, and all-false authority flags to a content-derived manifest ID.
+
+Selection permits only the exact platform directory and executable beneath the plugin root. The adapter rejects symlinked manifests or binaries, path traversal, realpath escape, size or digest mismatch, incompatible protocols, unsupported targets, and missing executable permission on non-Windows hosts. Platform packages are built for Windows x64, Linux x64/arm64, and macOS x64/arm64. The release workflow tests Go code, runs vet, builds a host fixture, verifies JS/Go health conformance and cancellation cleanup, and only then creates platform archives and one tag-driven release.
+
+## Fallback policy
+
+The adapter may use the JavaScript reference path when the manifest or binary is absent, incompatible, corrupt, or does not advertise the requested operation, or when the native process cannot start, crashes, or fails during stdin delivery. The operational diagnostics record the backend, execution mode, whether fallback occurred, a bounded reason code, and verified worker identity when available. They are excluded from semantic output and content-derived identities.
+
+Malformed or digest-invalid native responses, stdout limit violations, timeouts, and caller cancellation fail closed instead of being retried in-process. This avoids hiding an integrity failure or repeating work after the caller has explicitly stopped it.
 
 ## Repository scan v1
 
@@ -74,11 +90,7 @@ The tracked corpus under `benchmarks/repository-scan-v1/basic` covers file, symb
 ## Explicitly deferred
 
 - compute-backed graph construction, traversal, or Context selection operations;
-- `GoWorkerComputeAdapter` and native WorkerProtocol transport;
-- OS/architecture selection and distribution manifest verification;
-- process spawn, stdout/stderr limits, exact PID-tree cleanup, and crash recovery;
-- automatic JavaScript fallback after a disclosed native failure;
+- the Go implementation and migration of `repository.scan.v1`;
+- worker descendants and descendant process-tree supervision;
 - benchmark-based migration of file scanning, parsing, World Model construction, graph traversal, or Context selection;
 - Rust or other native backends.
-
-The automatic Go build workflow remains intentionally no-op until a real conformance-gated Go worker module and command exist.

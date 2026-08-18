@@ -13,7 +13,7 @@ import { buildSemanticGraph, querySemanticGraph, SEMANTIC_GRAPH_VERSION, verifyS
 import { normalizeProductModelDocument, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
 import {
   buildRepositoryScanInput,
-  createRepositoryScanReferenceAdapter,
+  createRepositoryScanComputeAdapter,
   executeRepositoryScan,
   managedRootFilesForProject,
   REPOSITORY_SCAN_DEFAULTS,
@@ -352,7 +352,7 @@ export async function buildWorldModel({
   const inspected = readyProject(root);
   const project = inspected.project;
   const repositoryScanExecution = await executeRepositoryScan({
-    adapter: computeAdapter || createRepositoryScanReferenceAdapter(),
+    adapter: computeAdapter || createRepositoryScanComputeAdapter(),
     projectRoot: project.projectRoot,
     managedRootFiles: managedRootFilesForProject(project),
   });
@@ -511,6 +511,10 @@ export async function buildWorldModel({
         executionMode: repositoryScanExecution.diagnostics.executionMode,
         requestId: repositoryScanExecution.request.requestId,
         resultDigest: repositoryScanExecution.response.resultDigest,
+        fallbackUsed: repositoryScanExecution.diagnostics.fallbackUsed || false,
+        fallbackReasonCode: repositoryScanExecution.diagnostics.fallbackReasonCode || "",
+        workerRelativePath: repositoryScanExecution.diagnostics.workerRelativePath || "",
+        workerSha256: repositoryScanExecution.diagnostics.workerSha256 || "",
       },
       runtimeState: externalRuntimeResult.adapter,
     },

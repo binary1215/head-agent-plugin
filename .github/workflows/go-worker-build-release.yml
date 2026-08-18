@@ -8,12 +8,18 @@ on:
       - "v*"
     paths:
       - "native/head-agent-worker/**"
+      - "scripts/generate-go-worker-manifest.mjs"
+      - "scripts/lib/compute-adapter.mjs"
+      - "scripts/lib/go-worker-adapter.mjs"
       - ".github/workflows/go-worker-build-release.yml"
   pull_request:
     branches:
       - main
     paths:
       - "native/head-agent-worker/**"
+      - "scripts/generate-go-worker-manifest.mjs"
+      - "scripts/lib/compute-adapter.mjs"
+      - "scripts/lib/go-worker-adapter.mjs"
       - ".github/workflows/go-worker-build-release.yml"
   workflow_dispatch:
     inputs:
@@ -115,6 +121,29 @@ jobs:
         working-directory: native/head-agent-worker
         run: go vet ./...
 
+      - name: Verify native stdio and JavaScript conformance
+        shell: bash
+        working-directory: native/head-agent-worker
+        env:
+          NATIVE_TEST_ROOT: ${{ runner.temp }}/head-agent-native-test
+        run: |
+          binary_root="${NATIVE_TEST_ROOT}/dist/linux-x64"
+          mkdir -p "${binary_root}"
+          CGO_ENABLED=0 go build \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }} -X main.commit=${GITHUB_SHA}" \
+            -o "${binary_root}/head-agent-worker" \
+            ./cmd/head-agent-worker
+          chmod 0755 "${binary_root}/head-agent-worker"
+          node ../../scripts/generate-go-worker-manifest.mjs \
+            --platform linux \
+            --arch x64 \
+            --binary "${binary_root}/head-agent-worker" \
+            --output "${binary_root}/WORKER-MANIFEST.json" \
+            --operations "worker.health.v1,worker.lifecycle.v1"
+          node ../../scripts/verify-go-worker.mjs --plugin-root "${NATIVE_TEST_ROOT}"
+
   build:
     name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
     needs:
@@ -128,22 +157,37 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
+            runtime_platform: linux
+            runtime_arch: x64
+            runtime_dir: linux-x64
             package: head-agent-worker-linux-amd64
             executable: head-agent-worker
           - goos: linux
             goarch: arm64
+            runtime_platform: linux
+            runtime_arch: arm64
+            runtime_dir: linux-arm64
             package: head-agent-worker-linux-arm64
             executable: head-agent-worker
           - goos: darwin
             goarch: amd64
+            runtime_platform: darwin
+            runtime_arch: x64
+            runtime_dir: darwin-x64
             package: head-agent-worker-darwin-amd64
             executable: head-agent-worker
           - goos: darwin
             goarch: arm64
+            runtime_platform: darwin
+            runtime_arch: arm64
+            runtime_dir: darwin-arm64
             package: head-agent-worker-darwin-arm64
             executable: head-agent-worker
           - goos: windows
             goarch: amd64
+            runtime_platform: win32
+            runtime_arch: x64
+            runtime_dir: windows-x64
             package: head-agent-worker-windows-amd64
             executable: head-agent-worker.exe
 
@@ -169,8 +213,11 @@ jobs:
           TARGET_GOARCH: ${{ matrix.goarch }}
           PACKAGE_NAME: ${{ matrix.package }}
           EXECUTABLE_NAME: ${{ matrix.executable }}
+          RUNTIME_PLATFORM: ${{ matrix.runtime_platform }}
+          RUNTIME_ARCH: ${{ matrix.runtime_arch }}
+          RUNTIME_DIRECTORY: ${{ matrix.runtime_dir }}
         run: |
-          package_root="${RUNNER_TEMP}/${PACKAGE_NAME}"
+          package_root="${RUNNER_TEMP}/${RUNTIME_DIRECTORY}"
           output_root="${GITHUB_WORKSPACE}/release-assets"
           mkdir -p "${package_root}" "${output_root}"
 
@@ -190,10 +237,16 @@ jobs:
             "${BUILD_VERSION}" "${GITHUB_SHA}" "${TARGET_GOOS}" "${TARGET_GOARCH}" \
             > "${package_root}/BUILD-METADATA.json"
 
+          node ../../scripts/generate-go-worker-manifest.mjs \
+            --platform "${RUNTIME_PLATFORM}" \
+            --arch "${RUNTIME_ARCH}" \
+            --binary "${package_root}/${EXECUTABLE_NAME}" \
+            --output "${package_root}/WORKER-MANIFEST.json"
+
           if [[ "${TARGET_GOOS}" == "windows" ]]; then
-            (cd "${package_root}" && zip -9 "${output_root}/${PACKAGE_NAME}.zip" "${EXECUTABLE_NAME}" BUILD-METADATA.json)
+            (cd "$(dirname "${package_root}")" && zip -9 -r "${output_root}/${PACKAGE_NAME}.zip" "${RUNTIME_DIRECTORY}")
           else
-            tar -C "$(dirname "${package_root}")" -czf "${output_root}/${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
+            tar -C "$(dirname "${package_root}")" -czf "${output_root}/${PACKAGE_NAME}.tar.gz" "${RUNTIME_DIRECTORY}"
           fi
 
       - name: Upload immutable matrix artifact

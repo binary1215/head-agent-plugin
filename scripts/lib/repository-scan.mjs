@@ -15,6 +15,7 @@ import {
   languageForSource,
   SOURCE_ANALYSIS_VERSION,
 } from "./source-analysis.mjs";
+import { GoWorkerComputeAdapter } from "./go-worker-adapter.mjs";
 
 export const REPOSITORY_SCAN_VERSION = "0.1.0";
 export const REPOSITORY_SCAN_OPERATION = "repository.scan.v1";
@@ -290,7 +291,14 @@ export function createRepositoryScanReferenceAdapter() {
   });
 }
 
-export async function executeRepositoryScan({ adapter = createRepositoryScanReferenceAdapter(), projectRoot, managedRootFiles = [], limits = {} } = {}) {
+export function createRepositoryScanComputeAdapter({ pluginRoot = path.resolve(import.meta.dirname, "../..") } = {}) {
+  return new GoWorkerComputeAdapter({
+    pluginRoot,
+    fallbackAdapter: createRepositoryScanReferenceAdapter(),
+  });
+}
+
+export async function executeRepositoryScan({ adapter = createRepositoryScanComputeAdapter(), projectRoot, managedRootFiles = [], limits = {} } = {}) {
   const input = buildRepositoryScanInput({ projectRoot, managedRootFiles });
   const execution = await executeComputeOperation({
     adapter,

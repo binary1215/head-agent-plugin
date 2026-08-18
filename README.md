@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.12` routes deterministic repository scanning and source-fact extraction through the provider-neutral `ComputeAdapter`. A tracked corpus, failure cases, canonical-result validation, and cross-adapter conformance now establish the semantic gate that a future Go worker must match; the worker itself remains deferred.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.13` adds a verified Go worker transport, content-addressed platform manifests, bounded direct process execution, and disclosed JavaScript fallback. The worker currently implements only an authority-free health operation; deterministic repository scanning still runs through the JavaScript semantic reference.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 
@@ -24,6 +24,8 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Canon-projected immutable product revisions and bounded Product Context retrieval without granting the derived graph instruction or promotion authority.
 - Versioned `ComputeAdapter` and WorkerProtocol contracts with canonical request/response validation, structured errors, resource bounds, timeout/cancellation, and no authority effect.
 - `JsReferenceComputeAdapter` as the deterministic semantic baseline plus fixture-driven backend conformance verification.
+- `GoWorkerComputeAdapter` with OS/architecture selection, plugin-root path confinement, SHA-256/size verification, bounded stdio, timeout/cancellation, exact child-PID cleanup, and operational-only diagnostics.
+- Cross-platform Go source and a release workflow that tests conformance before packaging per-platform worker manifests and binaries.
 - Deterministic `TraversalQuery` results with relation/kind/authority/freshness allowlists, confidence policy, bounded depth and size, inclusion/exclusion reasons, and graph/query/result digests.
 - Versioned `WorldModelStoreAdapter` contract whose storage identity is excluded from content-derived World Model identity; local JSON is the active adapter.
 - Versioned `GitHistoryAdapter` contract with content-addressed, all-reachable Git commit evidence. Commit messages remain non-authoritative evidence and are never promoted into canonical `Decision` records.
@@ -37,7 +39,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 
 ## What is intentionally deferred
 
-Automatic Feature discovery, onboarding candidate sets and ReviewDecision promotion, Feature-to-code/test mapping candidates, ChangeSet and conformance projection, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal and the Go worker backend, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and authorized candidate-knowledge promotion are not active yet. Native worker process launch, binary selection/integrity verification, live caller fencing, role messaging, service installation, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+Automatic Feature discovery, onboarding candidate sets and ReviewDecision promotion, Feature-to-code/test mapping candidates, ChangeSet and conformance projection, automatic merge and conflict resolution, Markdown/Obsidian/Notion projection adapters, compute-backed graph construction/traversal, native migration of `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional GraphDB adapter, automatic provider runtime hydration, and authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
 
 ## Use from source
 

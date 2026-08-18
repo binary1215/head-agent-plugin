@@ -22,12 +22,12 @@
   },
   "computeAdapter": {
     "purpose": "Delegate deterministic heavy computation without changing semantic identity or transferring authority from the JavaScript control plane.",
-    "contractVersion": "0.2.0",
+    "contractVersion": "0.3.0",
     "workerProtocolVersion": "0.2.0",
-    "activeBackend": "javascript-reference",
+    "activeBackend": "verified-go-transport-with-javascript-semantic-fallback",
     "identity": "Canonical operation, input digest, semantic producer, and normalized limits determine the request; canonical complete output determines the result digest. Backend diagnostics are excluded.",
     "authority": "Computation only with no instruction, promotion, control, project-mutation, or canon-mutation authority.",
-    "status": "Strict request/response validation, resource limits, timeout/cancellation, structured errors, authority-escalation rejection, fixture-driven conformance reports, and repository.scan.v1 with a tracked benchmark corpus are active; Go transport, binary integrity checks, process supervision, fallback, and native migration are deferred."
+    "status": "Strict request/response validation, resource limits, timeout/cancellation, structured errors, authority-escalation rejection, verified Go stdio transport, platform manifest integrity checks, bounded exact-child lifecycle, disclosed JavaScript fallback, and health-response conformance are active. repository.scan.v1 remains on the JavaScript reference pending operation-specific native conformance and benchmark evidence."
   },
   "worldModel": {
     "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
@@ -79,6 +79,8 @@
     "bounded product-canon Context Compiler projection",
     "versioned ComputeAdapter and WorkerProtocol contracts",
     "deterministic JavaScript reference compute backend",
+    "verified Go worker stdio transport and platform manifest",
+    "native worker integrity, bounded lifecycle, and disclosed JavaScript fallback",
     "backend-neutral compute conformance reports",
     "validated compute-backed repository.scan.v1 operation",
     "tracked repository-scan conformance and benchmark corpus",
@@ -103,9 +105,8 @@
     "replaceable GraphProjectionAdapter contract",
     "GraphDB World Model store adapter",
     "compute-backed graph construction, traversal, and Context selection operations",
-    "Go worker backend",
-    "native worker binary selection and integrity verification",
-    "native worker process launch, supervision, and JavaScript fallback",
+    "Go implementation of repository.scan.v1",
+    "native worker descendant-tree supervision beyond the no-descendant contract",
     "live caller fencing",
     "role messaging",
     "service installation",

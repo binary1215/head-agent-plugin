@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export const COMPUTE_ADAPTER_CONTRACT_VERSION = "0.2.0";
+export const COMPUTE_ADAPTER_CONTRACT_VERSION = "0.3.0";
 export const WORKER_PROTOCOL_VERSION = "0.2.0";
 
 export const DEFAULT_COMPUTE_LIMITS = Object.freeze({
@@ -60,6 +60,23 @@ function compareText(left, right) {
 
 function byteLength(value) {
   return Buffer.byteLength(canonicalJson(value), "utf8");
+}
+
+function consumeAdapterDiagnostics(adapter, requestId) {
+  if (typeof adapter.consumeExecutionDiagnostics !== "function") return {};
+  const value = adapter.consumeExecutionDiagnostics(requestId);
+  if (value == null) return {};
+  assertJsonValue(value, "Compute adapter diagnostics");
+  assertFields(value, [
+    "backend", "adapterName", "executionMode", "fallbackUsed", "fallbackReasonCode",
+    "workerPid", "workerRelativePath", "workerSha256",
+  ], "Compute adapter diagnostics");
+  if (![value.backend, value.adapterName, value.executionMode, value.fallbackReasonCode, value.workerRelativePath, value.workerSha256]
+    .every((item) => typeof item === "string") || typeof value.fallbackUsed !== "boolean"
+    || (value.workerPid !== null && (!Number.isInteger(value.workerPid) || value.workerPid < 1))) {
+    fail("Compute adapter diagnostics are invalid.", "INVALID_COMPUTE_ADAPTER_DIAGNOSTICS");
+  }
+  return canonical(value);
 }
 
 function requiredText(value, label) {
@@ -395,15 +412,17 @@ export async function executeComputeOperation({ adapter, operation, input, seman
     if (cancellationPromise) racers.push(cancellationPromise);
     const response = await Promise.race(racers);
     validateComputeResponse(request, response);
-    if (response.status !== "ok") fail("Compute operation failed.", "COMPUTE_OPERATION_FAILED", { requestId: request.requestId, errors: response.errors, warnings: response.warnings });
+    const adapterDiagnostics = consumeAdapterDiagnostics(adapter, request.requestId);
+    if (response.status !== "ok") fail("Compute operation failed.", "COMPUTE_OPERATION_FAILED", { requestId: request.requestId, errors: response.errors, warnings: response.warnings, diagnostics: adapterDiagnostics });
     return {
       request,
       response,
       result: response.result,
       diagnostics: {
-        backend: descriptor.backend,
-        adapterName: descriptor.name,
-        executionMode: descriptor.executionMode,
+        backend: adapterDiagnostics.backend || descriptor.backend,
+        adapterName: adapterDiagnostics.adapterName || descriptor.name,
+        executionMode: adapterDiagnostics.executionMode || descriptor.executionMode,
+        ...adapterDiagnostics,
         elapsedMs: Math.max(0, performance.now() - started),
       },
     };
@@ -432,6 +451,8 @@ export async function verifyComputeAdapterConformance({ referenceAdapter, candid
     const candidateResponse = await candidateAdapter.execute(request);
     validateComputeResponse(request, referenceResponse);
     validateComputeResponse(request, candidateResponse);
+    if (typeof referenceAdapter.consumeExecutionDiagnostics === "function") referenceAdapter.consumeExecutionDiagnostics(request.requestId);
+    if (typeof candidateAdapter.consumeExecutionDiagnostics === "function") candidateAdapter.consumeExecutionDiagnostics(request.requestId);
     if (canonicalJson(referenceResponse) !== canonicalJson(candidateResponse)) {
       fail(`Compute adapters disagree for fixture: ${name}`, "COMPUTE_CONFORMANCE_MISMATCH", {
         requestId: request.requestId,

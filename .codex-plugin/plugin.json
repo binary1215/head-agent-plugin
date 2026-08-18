@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.12",
+  "version": "0.3.0-alpha.13",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -35,6 +35,9 @@
       "Product Canon Temporal Projection",
       "ComputeAdapter Contract",
       "JavaScript Reference Compute Backend",
+      "Verified Go Worker Transport",
+      "Native Worker Integrity and Lifecycle Checks",
+      "Disclosed JavaScript Compute Fallback",
       "Compute-backed Repository Scan v1",
       "Temporal Provenance Graph",
       "Multiple-parent Source and Revision DAG",
