@@ -2,7 +2,7 @@
 
 Status: active direction authority
 
-Current milestone: v0.5 Repository World Model
+Current milestone: v0.5 Temporal Repository World Model and knowledge projections
 
 Last reviewed: 2026-08-18
 
@@ -19,6 +19,8 @@ Complete the design philosophy of `head-agent-core` as a provider-neutral plugin
 The plugin must preserve the user's objective and project canon as the highest project authority; maintain a Whole-plan HEAD that owns strategy, integration, and completion judgment; compile deterministic minimum-sufficient context for bounded execution; return evidence-linked execution results to a fresh review context; and preserve a reproducible, auditable lineage from objective to plan, contract, execution, result, review, and next plan.
 
 Runtime failure, context pollution, or provider-session loss must not erase the whole intent or sever the evidence chain. The same canonical inputs, compiler version, and budget must reproduce the same Context Capsule and lineage identities.
+
+Source-control availability is not a product prerequisite. The core must initialize, preserve change lineage, build its World Model, compile context, review execution, and regenerate projections without Git. Git may enrich evidence through an optional adapter and is used to publish this plugin's development progress, but no core semantic identity, authority decision, or recovery path may depend on a Git commit, branch, tag, repository, or hosting service.
 
 ## Product identity
 
@@ -50,7 +52,7 @@ The direction comes from the following inputs:
 - Shared Context Compiler discussion: <https://chatgpt.com/share/6a84529c-d400-83e8-aa76-08c77d12c19e>.
 - `C:\Users\ccolt\Documents\카카오톡 받은 파일\context-lineage-explainer.html`: the Whole-plan HEAD / Executor / Result Packet / Fresh HEAD lineage model.
 - <https://webgraphdb.binaryexp.com/>: an optional future graph backend. Credentials are intentionally not recorded in this repository.
-- <https://github.com/binary1215/head-agent-plugin>: the user-designated progress repository. Verified implementation slices are committed here without treating Git publication as product authority.
+- <https://github.com/binary1215/head-agent-plugin>: the user-designated progress repository. Verified implementation slices are committed here to record plugin development; this publication workflow must not make the plugin itself Git-dependent or treat Git history as product authority.
 
 The original HEAD runtime is a Node distribution and coordination system, not merely a prompt bundle. Cross-runtime support must therefore use a single provider-neutral core plus explicit platform, runtime, and workspace-host adapters. HEAD Session and Run identities remain distinct from Codex, OpenCode, or other provider session identifiers.
 
@@ -67,6 +69,11 @@ The original HEAD runtime is a Node distribution and coordination system, not me
 9. **Graph storage is replaceable.** A World Model or GraphDB is a rebuildable materialized view over canon and events, never the unique authority.
 10. **Honest capability boundaries.** Adapter/compiler unavailability may fail open with disclosure; identity drift, canon drift, invalid promoted knowledge, and digest mismatch fail closed.
 11. **Verified progress history.** Commit tested milestone slices to the designated repository. Git history records implementation progress but does not override user direction, this direction document, or project canon.
+12. **Domain-scoped sources of truth.** User-owned canon is authoritative for intent; executable code and configuration are authoritative for observed implementation; verified Results and Reviews are authoritative for recorded execution outcome. A graph records alignment, drift, and Unknowns instead of silently resolving conflicts between those domains.
+13. **Git is optional evidence.** Change lineage and graph identity derive from HEAD artifacts, content-addressed source snapshots, and ChangeSets. Git is an optional VCS evidence/import-export adapter, and Git object identities never become required core identities.
+14. **Temporal provenance is a DAG.** Source and entity revisions are immutable and content-addressed. Every revision accepts zero or more parents from the first schema version. Multiple-parent DAGs are supported; automatic merge and conflict resolution remain deferred.
+15. **Graph before documents, never above canon.** Canon, executable project state, and verified lineage rebuild a typed temporal graph. Markdown, Obsidian, and Notion are deterministic human-facing projections of that graph and do not become independent authority.
+16. **Document edits are proposals.** Generated-document changes enter as `DocumentChangeCandidate` evidence. Only an authorized ReviewDecision may change project canon, after which the graph and documents are regenerated.
 
 ## Semantic contracts
 
@@ -88,6 +95,56 @@ The Execution Lineage boundary is:
 - `LineageLink`: typed parent relationship connecting artifacts without relying on provider session state.
 
 The Repository World Model storage boundary is `WorldModelStoreAdapter`: a versioned interface for pointer reads/writes, immutable snapshot reads/writes, and snapshot listing. Every implementation must declare derived-evidence-only authority, rebuildability, and that it is not unique authority. Physical adapter identity must not change the content-derived semantic snapshot identity.
+
+The temporal provenance boundary adds these semantic entities:
+
+- product intent: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, and `Constraint`;
+- implementation: `Repository`, `Component`, `File`, `Symbol`, `Test`, and their immutable revisions;
+- change history: `SourceSnapshot`, `ChangeSet`, `RevisionLink`, and optional `VcsEvidence`;
+- conformance: evidence-linked mappings and findings such as `IMPLEMENTS`, `VERIFIED_BY`, `IMPACTS`, `SUPERSEDES`, `ALIGNED_WITH`, and `DRIFTS_FROM`;
+- knowledge projection: `GraphSnapshot`, `DocumentProjection`, and `DocumentChangeCandidate`.
+
+Stable logical entities and immutable revisions are separate. A `Feature` or `File` keeps a stable project identity while `FeatureRevision`, `FileRevision`, and `SymbolRevision` use content-derived identities. Current-state pointers are replaceable projections; revision nodes and their zero-or-more parent links are immutable.
+
+`ChangeSet` is the provider-neutral logical change unit. It connects before/after `SourceSnapshot` nodes, changed revisions, affected Features, ResultPacket evidence, and ReviewDecision disposition. A Git commit may be attached as optional `VcsEvidence`, but a commit is neither required nor identical to a ChangeSet.
+
+Graph traversal uses a separate replaceable `GraphProjectionAdapter`. Its local/in-memory conformance implementation and a future GraphDB implementation must produce and verify the same semantic node, edge, and snapshot identities from the same canonical inputs. GraphDB can be the primary traversal implementation but cannot become the only recoverable copy of canon or lineage.
+
+Human-facing knowledge uses a replaceable projection plane in this order:
+
+1. `MarkdownProjectionAdapter` is the deterministic baseline;
+2. `ObsidianVaultProjectionAdapter` adds vault paths and backlinks without changing semantic identity;
+3. `NotionProjectionAdapter` maps the same projections to remote pages while keeping provider page IDs outside core identity.
+
+The initial projection flow is one-way: canon and executable state -> verified lineage -> GraphSnapshot -> documents. Inbound edits create candidates for review; automatic bidirectional synchronization and conflict resolution remain deferred.
+
+## Agreed authority and derivation model
+
+There is no single source that outranks every other source for every question. Authority is scoped by the kind of truth being requested:
+
+| Question | Authoritative source |
+| --- | --- |
+| What should be built? | user objective and approved Feature, Decision, Requirement, and Constraint canon |
+| What is currently implemented? | current code, configuration, and content-addressed source snapshot |
+| What was verified? | verification evidence and accepted ResultPacket |
+| Why and under what authority did it change? | ExecutionContract, ChangeSet, ReviewDecision, and lineage links |
+| How are intent, implementation, change, and evidence connected? | rebuildable GraphSnapshot |
+| How do people browse and understand it? | Markdown, Obsidian, and Notion document projections |
+
+The derivation flow is:
+
+```text
+User objective and approved project canon ----+
+Executable code, tests, and configuration -----+-> typed temporal GraphSnapshot
+Execution Lineage and ChangeSet DAG -----------+              |
+                                                              +-> Markdown
+                                                              +-> Obsidian
+                                                              +-> Notion
+```
+
+When approved intent and observed code disagree, the graph must preserve both statements and emit an evidence-linked conformance finding. It must not promote observed implementation into intended behavior or overwrite code evidence with documentation.
+
+The first implementation slice for this direction will stop at `File`, `Symbol`, and `Test` revisions. Line and diff-hunk detail remains Evidence location metadata rather than first-class graph nodes until scale and query needs justify promotion.
 
 ## Current verified baseline
 
@@ -156,7 +213,8 @@ Current v0.5 alpha progress, verified on 2026-08-18; milestone remains active:
 - a versioned read-only `RuntimeStateAdapter` imports strict host-exported observations without granting instruction or control authority;
 - normalized runtime observations are content-addressed, adapter-neutral, and freshness-gated; raw provider IDs and non-project workspace paths are reduced to digests, while raw commands, endpoints, environment, prompts, transcripts, and credentials are rejected;
 - CLI, read-only MCP, and task-specific Context Capsules expose bounded runtime evidence, and source changes make the entire repository evidence layer stale until rebuild;
-- AST-accurate/dynamic call resolution, structured Git decision inference and supersession, live runtime probing/control, authorized knowledge promotion, and the optional GraphDB adapter remain explicitly deferred.
+- the existing Git history capability is optional evidence and already fails open when Git is unavailable; it is not the future change-lineage authority;
+- temporal Feature/Capability/ChangeSet revision graphs, multiple-parent source DAGs, GraphProjectionAdapter, deterministic document projections, AST-accurate/dynamic call resolution, live runtime probing/control, and authorized knowledge promotion remain explicitly deferred.
 
 ## Roadmap
 
@@ -170,7 +228,7 @@ Implement planning generations `a -> plan1 -> a1 -> plan2 -> a2`, bounded result
 
 ### v0.5 — Repository World Model
 
-Add incremental file, symbol, dependency, Git-decision, and runtime-state indexing with claim-level freshness and Hot/Warm/Cold history. Introduce graph storage only behind replaceable interfaces.
+Add incremental file, symbol, dependency, Feature/Capability, provider-neutral ChangeSet/revision, optional VCS evidence, and runtime-state indexing with claim-level freshness and Hot/Warm/Cold history. Introduce a multiple-parent temporal provenance DAG, a replaceable `GraphProjectionAdapter`, and deterministic Markdown-first knowledge projections. GraphDB and Git remain optional adapters; neither may become the unique authority or a prerequisite for core operation.
 
 ### v0.6 — Runtime adapters
 
@@ -194,6 +252,9 @@ Before every material milestone, answer all of these:
 8. Does the design remain provider-neutral and avoid TUI scraping or hidden-session dependence?
 9. Is GraphDB optional and reconstructable?
 10. Are incomplete capabilities still described as deferred?
+11. Would the same core lineage and semantic identities be available in a project with no `.git` directory?
+12. Are generated Markdown, Obsidian, or Notion pages still projections, with inbound edits treated as reviewable candidates?
+13. Does the revision model accept multiple parents without pretending automatic merge is implemented?
 
 If any answer is “no” or “unknown,” record the gap before proceeding.
 
@@ -211,3 +272,7 @@ If any answer is “no” or “unknown,” record the gap before proceeding.
 - 2026-08-18: added a versioned Git history source contract, all-reachable content-addressed commit evidence, current-ref validation, host-export fallback, bounded CLI/MCP queries, and history-aware Context Capsules; kept v0.5 active for external runtime state, AST-accurate analysis, structured decision inference, and the optional GraphDB adapter.
 - 2026-08-18: added a versioned read-only RuntimeStateAdapter, strict privacy-bounded host exports, content-addressed point-in-time observations, freshness-gated CLI/MCP/Context retrieval, and explicit separation from v0.6 runtime control; kept v0.5 active for AST-accurate analysis, structured decision inference, and the optional GraphDB adapter.
 - 2026-08-18: designated `binary1215/head-agent-plugin` as the progress repository and required verified implementation slices to be committed without promoting remote Git history above user direction or project canon.
+- 2026-08-18: clarified that Git records plugin development and may contribute optional VCS evidence, but the plugin must preserve ChangeSets, snapshots, lineage, graph identity, and recovery without Git.
+- 2026-08-18: adopted a provider-neutral temporal provenance graph connecting FeatureGroup, Capability, Feature, code and test revisions, ChangeSets, execution lineage, evidence, conformance, and explicit Unknowns.
+- 2026-08-18: required revision schemas to support zero-or-more parents from the start, while deferring automatic merge and conflict resolution.
+- 2026-08-18: adopted deterministic Graph-to-Markdown, Obsidian, and Notion knowledge projections; documents remain derived views and inbound edits become candidates requiring authorized review.
