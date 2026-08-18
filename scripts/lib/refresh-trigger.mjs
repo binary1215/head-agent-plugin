@@ -2,12 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
-import { readIncrementalRefreshReceipt, refreshWorldModel } from "./incremental-refresh.mjs";
+import { readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel } from "./incremental-refresh.mjs";
 import { inspectRefreshWriterLease, withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 import { managedRootFilesForProject, REPOSITORY_SCAN_EXCLUDED_DIRECTORIES } from "./repository-scan.mjs";
 import { inspectWorldModel, readWorldModel, readWorldModelSnapshot } from "./world-model.mjs";
 
-export const REFRESH_TRIGGER_VERSION = "0.1.0";
+export const REFRESH_TRIGGER_VERSION = "0.2.0";
+const LEGACY_REFRESH_TRIGGER_VERSION = "0.1.0";
 export const DEFAULT_REFRESH_DEBOUNCE_MS = 350;
 export const DEFAULT_REFRESH_EVENT_LIMIT = 1024;
 export const MAX_REFRESH_EVENT_LIMIT = 4096;
@@ -211,10 +212,12 @@ export function verifyRefreshTriggerBatch(batch) {
   assertFields(batch, ["schemaVersion", "kind", "protocol", "projectId", "source", "events", "eventSummary", "requiresRescan", "rescanPolicy", "authority", "instructionAuthority", "promotionAuthority", "canonMutationAuthority", "triggerBatchId", "triggerBatchHash"], "Refresh trigger batch");
   assertFields(batch.source, ["kind", "adapter", "adapterVersion"], "Refresh trigger source");
   assertFields(batch.eventSummary, ["inputEventCount", "acceptedEventCount", "coalescedEventCount", "droppedEventCount", "discardedReasons"], "Refresh trigger event summary");
+  const protocolVersion = batch.protocol?.version;
   if (batch.schemaVersion !== SCHEMA_VERSION || batch.kind !== "RefreshTriggerBatch"
-    || canonicalJson(batch.protocol) !== canonicalJson({ name: "head-agent-core-refresh-trigger", version: REFRESH_TRIGGER_VERSION })
+    || batch.protocol?.name !== "head-agent-core-refresh-trigger"
+    || ![LEGACY_REFRESH_TRIGGER_VERSION, REFRESH_TRIGGER_VERSION].includes(protocolVersion)
     || !/^head-[a-f0-9]{20}$/.test(batch.projectId || "") || !BATCH_PATTERN.test(batch.triggerBatchId || "")
-    || !SOURCE_KINDS.has(batch.source.kind) || batch.source.adapterVersion !== REFRESH_TRIGGER_VERSION
+    || !SOURCE_KINDS.has(batch.source.kind) || batch.source.adapterVersion !== protocolVersion
     || batch.source.adapter !== (batch.source.kind === "filesystem" ? "node-filesystem-watch" : "structured-ci-event-file")
     || batch.rescanPolicy !== "complete-discovery-read-and-byte-hash; event paths are hints only"
     || batch.authority !== "observed-refresh-trigger-evidence-only" || batch.instructionAuthority !== false
@@ -269,7 +272,7 @@ function snapshotBinding(snapshot) {
   };
 }
 
-function buildDelivery({ batch, status, base, next, refreshRequestId = null, refreshReceiptId = null }) {
+function buildDelivery({ batch, status, base, next, refreshRequestId = null, refreshReceiptId = null, postRefreshProjection = null }) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "RefreshTriggerDeliveryReceipt",
@@ -285,7 +288,15 @@ function buildDelivery({ batch, status, base, next, refreshRequestId = null, ref
     serialization: "exclusive-project-world-model-writer-lease-and-expected-pointer-check",
     projectionDisposition: {
       graph: status === "ignored" ? "unchanged" : "verified-by-incremental-refresh",
-      documents: "not-regenerated-explicit-follow-up-only",
+      documents: status === "ignored" ? {
+        status: "not-evaluated-no-refresh",
+        postRefreshProjectionReceiptId: null,
+        policyId: null,
+      } : {
+        status: postRefreshProjection.receipt.outcome.status,
+        postRefreshProjectionReceiptId: postRefreshProjection.receipt.postRefreshProjectionReceiptId,
+        policyId: postRefreshProjection.receipt.policy?.policyId || null,
+      },
     },
     authority: "verified-refresh-trigger-delivery-evidence",
     instructionAuthority: false,
@@ -309,15 +320,19 @@ export function verifyRefreshTriggerDelivery(delivery) {
   assertFields(delivery, ["schemaVersion", "kind", "protocol", "projectId", "triggerBatchId", "triggerBatchHash", "sourceKind", "status", "base", "next", "incrementalRefresh", "serialization", "projectionDisposition", "authority", "instructionAuthority", "promotionAuthority", "canonMutation", "triggerDeliveryId", "triggerDeliveryHash"], "Refresh trigger delivery");
   assertFields(delivery.incrementalRefresh, ["refreshRequestId", "refreshReceiptId"], "Refresh trigger delivery incremental refresh");
   assertFields(delivery.projectionDisposition, ["graph", "documents"], "Refresh trigger delivery projection disposition");
+  const protocolVersion = delivery.protocol?.version;
+  const legacy = protocolVersion === LEGACY_REFRESH_TRIGGER_VERSION;
+  if (!legacy) assertFields(delivery.projectionDisposition.documents, ["status", "postRefreshProjectionReceiptId", "policyId"], "Refresh trigger delivery document projection disposition");
   validBinding(delivery.base, "Refresh trigger delivery base");
   validBinding(delivery.next, "Refresh trigger delivery next");
   if (delivery.schemaVersion !== SCHEMA_VERSION || delivery.kind !== "RefreshTriggerDeliveryReceipt"
-    || canonicalJson(delivery.protocol) !== canonicalJson({ name: "head-agent-core-refresh-trigger", version: REFRESH_TRIGGER_VERSION })
+    || delivery.protocol?.name !== "head-agent-core-refresh-trigger"
+    || ![LEGACY_REFRESH_TRIGGER_VERSION, REFRESH_TRIGGER_VERSION].includes(protocolVersion)
     || !/^head-[a-f0-9]{20}$/.test(delivery.projectId || "") || !BATCH_PATTERN.test(delivery.triggerBatchId || "")
     || !DELIVERY_PATTERN.test(delivery.triggerDeliveryId || "") || !SOURCE_KINDS.has(delivery.sourceKind)
     || !["ignored", "unchanged", "refreshed"].includes(delivery.status)
     || delivery.serialization !== "exclusive-project-world-model-writer-lease-and-expected-pointer-check"
-    || delivery.projectionDisposition.documents !== "not-regenerated-explicit-follow-up-only"
+    || (legacy && delivery.projectionDisposition.documents !== "not-regenerated-explicit-follow-up-only")
     || delivery.authority !== "verified-refresh-trigger-delivery-evidence" || delivery.instructionAuthority !== false
     || delivery.promotionAuthority !== false || delivery.canonMutation !== "none") {
     fail("Refresh trigger delivery contract is invalid.", "INVALID_REFRESH_TRIGGER_DELIVERY");
@@ -331,6 +346,16 @@ export function verifyRefreshTriggerDelivery(delivery) {
     || !/^incremental-refresh-receipt-[a-f0-9]{24}$/.test(delivery.incrementalRefresh.refreshReceiptId || "")
     || delivery.projectionDisposition.graph !== "verified-by-incremental-refresh") {
     fail("Applied refresh trigger delivery is missing incremental refresh evidence.", "INVALID_REFRESH_TRIGGER_DELIVERY");
+  }
+  if (!legacy) {
+    const documents = delivery.projectionDisposition.documents;
+    const allowedStatuses = new Set(["not-evaluated-no-refresh", "manual-deferred", "projected", "unchanged", "blocked-edited-view", "blocked-stale-edited-view", "blocked-unmanaged-view", "failed"]);
+    if (!allowedStatuses.has(documents.status)
+      || (delivery.status === "ignored" && (documents.status !== "not-evaluated-no-refresh" || documents.postRefreshProjectionReceiptId !== null || documents.policyId !== null))
+      || (delivery.status !== "ignored" && (!/^post-refresh-projection-receipt-[a-f0-9]{24}$/.test(documents.postRefreshProjectionReceiptId || "")
+        || (documents.policyId !== null && !/^post-refresh-projection-policy-[a-f0-9]{24}$/.test(documents.policyId || ""))))) {
+      fail("Refresh trigger document projection disposition is invalid.", "INVALID_REFRESH_TRIGGER_DELIVERY");
+    }
   }
   const payload = { ...delivery };
   delete payload.triggerDeliveryId;
@@ -411,7 +436,7 @@ export function readRefreshTriggerBatch({ root = ".", triggerBatchId } = {}) {
   return { status: "verified", file, batch };
 }
 
-export function readRefreshTriggerDelivery({ root = ".", triggerDeliveryId, storeAdapter = null } = {}) {
+export function readRefreshTriggerDelivery({ root = ".", triggerDeliveryId, storeAdapter = null, documentProjectionAdapter = null } = {}) {
   const inspected = readyProject(root);
   const file = deliveryFile(inspected.project.projectRoot, triggerDeliveryId);
   if (!fs.existsSync(file)) fail(`Refresh trigger delivery is missing: ${triggerDeliveryId}`, "REFRESH_TRIGGER_DELIVERY_NOT_FOUND");
@@ -425,6 +450,7 @@ export function readRefreshTriggerDelivery({ root = ".", triggerDeliveryId, stor
     fail("Refresh trigger batch rescan disposition does not match its delivery.", "REFRESH_TRIGGER_BATCH_DELIVERY_MISMATCH");
   }
   let refreshEntry = null;
+  let postRefreshProjection = null;
   if (delivery.status !== "ignored") {
     refreshEntry = readIncrementalRefreshReceipt({
       root: inspected.project.projectRoot,
@@ -441,14 +467,28 @@ export function readRefreshTriggerDelivery({ root = ".", triggerDeliveryId, stor
       || refreshEntry.receipt.next.graphSnapshotId !== delivery.next.graphSnapshotId) {
       fail("Refresh trigger delivery does not match its incremental refresh receipt.", "REFRESH_TRIGGER_DELIVERY_REFRESH_MISMATCH");
     }
+    if (delivery.protocol.version === REFRESH_TRIGGER_VERSION) {
+      postRefreshProjection = readPostRefreshProjectionReceipt({
+        root: inspected.project.projectRoot,
+        postRefreshProjectionReceiptId: delivery.projectionDisposition.documents.postRefreshProjectionReceiptId,
+        storeAdapter,
+        documentProjectionAdapter,
+      });
+      if (postRefreshProjection.receipt.refresh.refreshRequestId !== refreshEntry.request.refreshRequestId
+        || postRefreshProjection.receipt.refresh.refreshReceiptId !== refreshEntry.receipt.refreshReceiptId
+        || postRefreshProjection.receipt.outcome.status !== delivery.projectionDisposition.documents.status
+        || (postRefreshProjection.receipt.policy?.policyId || null) !== delivery.projectionDisposition.documents.policyId) {
+        fail("Refresh trigger delivery does not match its post-refresh projection receipt.", "REFRESH_TRIGGER_DELIVERY_DOCUMENT_PROJECTION_MISMATCH");
+      }
+    }
   } else {
     const snapshot = readWorldModelSnapshot({ root: inspected.project.projectRoot, worldModelId: delivery.base.worldModelId, storeAdapter }).snapshot;
     if (canonicalJson(snapshotBinding(snapshot)) !== canonicalJson(delivery.base)) fail("Ignored refresh trigger delivery snapshot is missing or inconsistent.", "REFRESH_TRIGGER_DELIVERY_SNAPSHOT_MISMATCH");
   }
-  return { status: "verified", file, delivery, batchFile: batchEntry.file, batch: batchEntry.batch, refresh: refreshEntry };
+  return { status: "verified", file, delivery, batchFile: batchEntry.file, batch: batchEntry.batch, refresh: refreshEntry, postRefreshProjection };
 }
 
-export function inspectRefreshTriggers({ root = ".", storeAdapter = null } = {}) {
+export function inspectRefreshTriggers({ root = ".", storeAdapter = null, documentProjectionAdapter = null } = {}) {
   const inspected = readyProject(root);
   const file = currentFile(inspected.project.projectRoot);
   const world = readWorldModel({ root: inspected.project.projectRoot, storeAdapter });
@@ -461,7 +501,7 @@ export function inspectRefreshTriggers({ root = ".", storeAdapter = null } = {})
   };
   const pointer = verifyPointer(readJson(file, "Refresh trigger pointer"));
   if (pointer.projectId !== inspected.project.projectId) fail("Refresh trigger pointer belongs to another project.", "REFRESH_TRIGGER_PROJECT_MISMATCH");
-  const deliveryEntry = readRefreshTriggerDelivery({ root: inspected.project.projectRoot, triggerDeliveryId: pointer.triggerDeliveryId, storeAdapter });
+  const deliveryEntry = readRefreshTriggerDelivery({ root: inspected.project.projectRoot, triggerDeliveryId: pointer.triggerDeliveryId, storeAdapter, documentProjectionAdapter });
   if (deliveryEntry.delivery.triggerBatchId !== pointer.triggerBatchId || deliveryEntry.delivery.next.worldModelId !== pointer.worldModelId
     || deliveryEntry.delivery.next.sourceSnapshotId !== pointer.sourceSnapshotId) fail("Refresh trigger pointer and delivery disagree.", "REFRESH_TRIGGER_POINTER_MISMATCH");
   const freshness = inspectWorldModel({ root: inspected.project.projectRoot, storeAdapter });
@@ -487,6 +527,7 @@ async function processRefreshTriggerBatchInternal({
   overflowRescanRequired = false,
   storeAdapter = null,
   graphProjectionAdapter = null,
+  documentProjectionAdapter = null,
   gitHistoryAdapter = null,
   runtimeStateAdapter = null,
 } = {}) {
@@ -512,6 +553,7 @@ async function processRefreshTriggerBatchInternal({
         triggerEvidenceIds: [batch.triggerBatchId],
         storeAdapter,
         graphProjectionAdapter,
+        documentProjectionAdapter,
         gitHistoryAdapter,
         runtimeStateAdapter,
         writerLease,
@@ -529,6 +571,7 @@ async function processRefreshTriggerBatchInternal({
       } : snapshotBinding(after),
       refreshRequestId: refresh?.request.refreshRequestId || null,
       refreshReceiptId: refresh?.receipt.refreshReceiptId || null,
+      postRefreshProjection: refresh?.postRefreshProjection || null,
     });
     const deliveryEntry = persistImmutable(deliveryFile(projectRoot, delivery.triggerDeliveryId), delivery, verifyRefreshTriggerDelivery, "Refresh trigger delivery");
     const pointer = buildPointer(delivery);
@@ -549,7 +592,7 @@ async function processRefreshTriggerBatchInternal({
 }
 
 export async function processRefreshTriggerBatch(options = {}) {
-  assertFields(options, ["root", "sourceKind", "events", "maxEvents", "overflowEventCount", "overflowRescanRequired", "storeAdapter", "graphProjectionAdapter", "gitHistoryAdapter", "runtimeStateAdapter"], "Refresh trigger ingestion options");
+  assertFields(options, ["root", "sourceKind", "events", "maxEvents", "overflowEventCount", "overflowRescanRequired", "storeAdapter", "graphProjectionAdapter", "documentProjectionAdapter", "gitHistoryAdapter", "runtimeStateAdapter"], "Refresh trigger ingestion options");
   return processRefreshTriggerBatchInternal(options);
 }
 
@@ -560,6 +603,7 @@ export class DebouncedRefreshTriggerQueue {
     debounceMs = DEFAULT_REFRESH_DEBOUNCE_MS,
     maxEvents = DEFAULT_REFRESH_EVENT_LIMIT,
     deliverBatch = processRefreshTriggerBatch,
+    documentProjectionAdapter = null,
     onDelivery = () => {},
     onError = () => {},
   } = {}) {
@@ -573,6 +617,7 @@ export class DebouncedRefreshTriggerQueue {
     this.debounceMs = debounceMs;
     this.maxEvents = normalizedEventLimit(maxEvents);
     this.deliverBatch = deliverBatch;
+    this.documentProjectionAdapter = documentProjectionAdapter;
     this.onDelivery = onDelivery;
     this.onError = onError;
     this.buffer = [];
@@ -634,6 +679,7 @@ export class DebouncedRefreshTriggerQueue {
       maxEvents: this.maxEvents,
       overflowEventCount,
       overflowRescanRequired,
+      documentProjectionAdapter: this.documentProjectionAdapter,
     }));
     const operation = delivery.then((result) => {
       this.consecutiveBusyRetries = 0;
@@ -700,10 +746,11 @@ export function createFileSystemRefreshWatcher({
   root = ".",
   debounceMs = DEFAULT_REFRESH_DEBOUNCE_MS,
   maxEvents = DEFAULT_REFRESH_EVENT_LIMIT,
+  documentProjectionAdapter = null,
   onDelivery = () => {},
   onError = () => {},
 } = {}) {
-  const queue = new DebouncedRefreshTriggerQueue({ root, sourceKind: "filesystem", debounceMs, maxEvents, onDelivery, onError });
+  const queue = new DebouncedRefreshTriggerQueue({ root, sourceKind: "filesystem", debounceMs, maxEvents, documentProjectionAdapter, onDelivery, onError });
   const reportError = (error) => {
     try { onError(error); } catch {}
   };

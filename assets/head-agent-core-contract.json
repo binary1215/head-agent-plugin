@@ -43,18 +43,18 @@
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, replaceable graph projection, deterministic Markdown projection, explicit incremental refresh, and debounced filesystem/CI trigger ingestion are active; AST-accurate analysis, structured Git decision inference, live runtime probing/control, Obsidian/Notion, automatic document regeneration, and the optional GraphDB adapter are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, replaceable graph projection, deterministic Markdown projection, explicit incremental refresh, debounced filesystem/CI trigger ingestion, and opt-in safe automatic Markdown regeneration are active; AST-accurate analysis, structured Git decision inference, live runtime probing/control, Obsidian/Notion, document-candidate review/application, and the optional GraphDB adapter are deferred."
   },
   "incrementalRefresh": {
     "purpose": "Reconstruct changed observed project state as a new immutable World Model and GraphSnapshot without mutating canon or accepted execution inputs.",
-    "contractVersion": "0.1.0",
+    "contractVersion": "0.2.0",
     "triggers": ["manual", "filesystem", "ci", "change-set", "runtime-observation"],
     "activeTriggers": ["manual", "filesystem", "ci"],
-    "triggerProtocolVersion": "0.1.0",
+    "triggerProtocolVersion": "0.2.0",
     "identity": "The request binds the verified base World Model and SourceSnapshot, trigger evidence, exact or discovered path expectation, and explicit additional source parents. The receipt binds verified before/after World Model, SourceSnapshot, GraphSnapshot, change, revision-transition, and execution-drift evidence.",
     "incrementalBoundary": "Every eligible file is rediscovered and byte-hashed; semantic analysis is reused only when path, digest, byte length, classification, language, and source-analysis protocol match the verified prior snapshot. The resulting RepositoryScanResult must equal a complete reference scan.",
-    "authority": "Refresh updates observed derived state only. It cannot mutate Product Canon, promote candidates, grant instruction authority, regenerate documents automatically, or replace an active Run's pinned ContextCapsule.",
-    "status": "Explicit CLI refresh, immutable request/receipt artifacts, automatic current-source parent linkage, unchanged-revision identity reuse, changed-revision parent linkage, exact changed-path expectations, active-Run drift disclosure, deterministic bounded filesystem/CI trigger batches, a foreground filesystem watcher, structured CI ingestion, single-writer serialization, immutable delivery receipts, and read-only CLI/MCP inspection are active; automatic document regeneration and remote GraphDB refresh remain deferred."
+    "authority": "Refresh updates observed derived state only. A separate explicit post-refresh policy may regenerate an unedited derived Markdown view, but neither layer can mutate Product Canon, promote candidates, grant instruction authority, or replace an active Run's pinned ContextCapsule.",
+    "status": "Explicit CLI refresh, immutable request/receipt artifacts, automatic current-source parent linkage, unchanged-revision identity reuse, changed-revision parent linkage, exact changed-path expectations, active-Run drift disclosure, deterministic bounded filesystem/CI trigger batches, a foreground filesystem watcher, structured CI ingestion, single-writer serialization, immutable delivery receipts, opt-in automatic Markdown projection, and read-only CLI/MCP inspection are active; remote GraphDB refresh remains deferred."
   },
   "temporalProvenance": {
     "purpose": "Connect stable product and repository entities to immutable content-derived revisions and explicit multiple-parent ancestry without requiring Git or GraphDB.",
@@ -70,7 +70,8 @@
     "format": "markdown",
     "authority": "Derived human view only with no instruction, promotion, canonical, or unique authority.",
     "identity": "GraphSnapshot identity, renderer protocol, deterministic relative paths, exact content digests, and authority flags determine DocumentProjection identity; adapter kind and physical locations are excluded.",
-    "status": "Local and in-memory adapters, bounded index/node/relation pages, explicit generation/status, published-view drift protection, adapter conformance, and immutable DocumentChangeCandidate capture are active; candidate review/application, automatic refresh, Obsidian, and Notion remain deferred."
+    "postRefreshPolicyVersion": "0.1.0",
+    "status": "Local and in-memory adapters, bounded index/node/relation pages, explicit generation/status, published-view drift protection, adapter conformance, immutable DocumentChangeCandidate capture, a manual safe default, explicit automatic mode, and immutable post-refresh receipts are active; candidate review/application, Obsidian, and Notion remain deferred."
   },
   "roles": {
     "head": "Owns whole-outcome understanding, strategy, integration, and completion judgment.",
@@ -129,6 +130,8 @@
     "replaceable GraphProjectionAdapter with local and in-memory conformance",
     "deterministic Markdown DocumentProjectionAdapter with local and in-memory conformance",
     "published Markdown drift protection and immutable DocumentChangeCandidate capture",
+    "explicit post-refresh Markdown policy and opt-in automatic regeneration",
+    "immutable post-refresh projection receipts linked to incremental refresh evidence",
     "versioned GitHistoryAdapter and all-reachable commit-message decision evidence",
     "versioned RuntimeStateAdapter and host-exported point-in-time runtime evidence",
     "history-and-runtime-aware minimum-sufficient Context Capsules",
@@ -145,7 +148,6 @@
     "dedicated imported backlog evidence adapters",
     "automatic merge and conflict resolution",
     "DocumentChangeCandidate review and application",
-    "automatic document projection refresh",
     "Obsidian and Notion projection adapters",
     "GraphDB World Model store adapter",
     "compute-backed graph construction, traversal, and Context selection operations",

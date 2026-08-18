@@ -2,7 +2,7 @@
 
 Status: filesystem and structured CI trigger ingestion active
 
-Protocol version: `0.1.0`
+Protocol version: `0.2.0`; digest-verified `0.1.0` batches and deliveries remain readable
 
 ## Purpose
 
@@ -15,6 +15,7 @@ filesystem or CI observations
   -> exclusive project refresh-writer lease
   -> IncrementalRefreshRequest / complete repository rescan
   -> IncrementalRefreshReceipt
+  -> PostRefreshProjectionPolicy / PostRefreshProjectionReceipt
   -> RefreshTriggerDeliveryReceipt
   -> replaceable trigger pointer
 ```
@@ -89,7 +90,7 @@ If another process owns the World Model writer lease, only `REFRESH_WRITER_BUSY`
 - linked incremental request and receipt identities when a rescan ran;
 - `ignored`, `unchanged`, or `refreshed` disposition;
 - exclusive World Model writer and expected-pointer-check serialization evidence;
-- the fact that documents were not regenerated.
+- the exact post-refresh projection receipt, policy identity, and `manual-deferred`, `projected`, `unchanged`, blocked, or failed document disposition for an applied delivery.
 
 The local reference stores:
 
@@ -97,6 +98,7 @@ The local reference stores:
 .head/refresh/triggers/batches/refresh-trigger-batch-*.json
 .head/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
 .head/refresh/triggers/current.json
+.head/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
 ```
 
 Batch and delivery files are immutable and content-derived. `current.json` is a replaceable digest-verified pointer.
@@ -161,7 +163,7 @@ Trigger batches and deliveries are evidence without instruction or promotion aut
 - infer an accepted ChangeSet or merge;
 - change an accepted ExecutionContract or ContextCapsule;
 - rewrite an active Run or pending ResultPacket;
-- regenerate Markdown, Obsidian, or Notion;
+- grant itself document-publication authority; only the separately selected post-refresh policy may regenerate clean Markdown;
 - make Git or GraphDB required.
 
 When a triggered refresh creates a newer SourceSnapshot during an active Run, the linked incremental receipt records the same explicit continue, recompile, revise, or cancel requirement as a manual refresh.
@@ -175,11 +177,12 @@ The trigger path fails closed on:
 - content digest mismatch or immutable artifact conflict;
 - active, unknown, unsafe, or mismatched writer lease ownership;
 - incremental request/receipt mismatch;
+- post-refresh policy, receipt, candidate, or DocumentProjection binding mismatch;
 - World Model preview drift, pointer conflict, or graph materialization failure;
 - stale or tampered linked snapshots.
 
-A trigger batch may remain as immutable evidence if downstream refresh fails, but no delivery pointer is advanced. A writer-busy failure is boundedly requeued; all other failures require correction or a new explicit trigger. The last verified World Model remains current.
+A trigger batch may remain as immutable evidence if downstream refresh fails, but no delivery pointer is advanced. A writer-busy failure is boundedly requeued; all other refresh failures require correction or a new explicit trigger. A downstream document-projection failure is instead recorded in a linked delivery and does not invalidate or roll back the successful observed-state refresh.
 
 ## Deferred next stages
 
-This slice does not install a background service or connect a provider-specific CI webhook. Hosts invoke the foreground watcher or create the strict CI event file. Automatic Markdown regeneration remains the next ordered projection stage only after a trigger delivery succeeds. Remote GraphDB projection refresh, DocumentChangeCandidate review/application, Obsidian/Notion publication, bidirectional synchronization, automatic merge, and semantic promotion remain deferred.
+This slice does not install a background service or connect a provider-specific CI webhook. Hosts invoke the foreground watcher or create the strict CI event file. Safe opt-in automatic Markdown regeneration is active through the separate post-refresh policy. Remote GraphDB projection refresh, DocumentChangeCandidate review/application, Obsidian/Notion publication, bidirectional synchronization, automatic merge, and semantic promotion remain deferred.

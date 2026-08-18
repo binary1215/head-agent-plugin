@@ -14,9 +14,16 @@ import {
   readWorldModel,
   readWorldModelSnapshot,
 } from "./world-model.mjs";
+import {
+  completePostRefreshProjection,
+  inspectPostRefreshProjection as inspectPostRefreshProjectionArtifact,
+  preparePostRefreshProjection,
+  readPostRefreshProjectionReceipt as readPostRefreshProjectionReceiptArtifact,
+} from "./post-refresh-projection.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
-export const INCREMENTAL_REFRESH_VERSION = "0.1.0";
+export const INCREMENTAL_REFRESH_VERSION = "0.2.0";
+const LEGACY_INCREMENTAL_REFRESH_VERSION = "0.1.0";
 const REQUEST_PATTERN = /^incremental-refresh-request-[a-f0-9]{24}$/;
 const RECEIPT_PATTERN = /^incremental-refresh-receipt-[a-f0-9]{24}$/;
 const SOURCE_SNAPSHOT_PATTERN = /^source-snapshot-[a-f0-9]{24}$/;
@@ -104,7 +111,7 @@ function identity(kind, payload) {
   return { id: `${kind}-${hash.slice(0, 24)}`, hash };
 }
 
-export function buildIncrementalRefreshRequest({
+function buildIncrementalRefreshRequestVersion({
   projectId,
   baseWorldModelId,
   baseSourceSnapshotId,
@@ -112,7 +119,7 @@ export function buildIncrementalRefreshRequest({
   triggerEvidenceIds = [],
   expectedChangedPaths = null,
   additionalParentSourceSnapshotIds = [],
-} = {}) {
+} = {}, protocolVersion = INCREMENTAL_REFRESH_VERSION) {
   if (typeof projectId !== "string" || !/^head-[a-f0-9]{20}$/.test(projectId)) fail("Refresh projectId is invalid.", "INVALID_REFRESH_SCHEMA");
   if (typeof baseWorldModelId !== "string" || !/^world-model-[a-f0-9]{24}$/.test(baseWorldModelId)) fail("Refresh base World Model id is invalid.", "INVALID_REFRESH_SCHEMA");
   normalizedSourceSnapshotId(baseSourceSnapshotId, "baseSourceSnapshotId");
@@ -126,7 +133,7 @@ export function buildIncrementalRefreshRequest({
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "IncrementalRefreshRequest",
-    protocol: { name: "head-agent-core-incremental-refresh", version: INCREMENTAL_REFRESH_VERSION },
+    protocol: { name: "head-agent-core-incremental-refresh", version: protocolVersion },
     projectId,
     baseWorldModelId,
     baseSourceSnapshotId,
@@ -142,9 +149,16 @@ export function buildIncrementalRefreshRequest({
   return { ...payload, refreshRequestId: requestIdentity.id, refreshRequestHash: requestIdentity.hash };
 }
 
+export function buildIncrementalRefreshRequest(options = {}) {
+  return buildIncrementalRefreshRequestVersion(options, INCREMENTAL_REFRESH_VERSION);
+}
+
 export function verifyIncrementalRefreshRequest(request) {
   if (!request || typeof request !== "object" || Array.isArray(request)) fail("Incremental refresh request is invalid.", "INVALID_REFRESH_SCHEMA");
-  const rebuilt = buildIncrementalRefreshRequest({
+  const protocolVersion = request.protocol?.version;
+  if (![LEGACY_INCREMENTAL_REFRESH_VERSION, INCREMENTAL_REFRESH_VERSION].includes(protocolVersion)
+    || request.protocol?.name !== "head-agent-core-incremental-refresh") fail("Incremental refresh request protocol is unsupported.", "INVALID_REFRESH_SCHEMA");
+  const rebuilt = buildIncrementalRefreshRequestVersion({
     projectId: request.projectId,
     baseWorldModelId: request.baseWorldModelId,
     baseSourceSnapshotId: request.baseSourceSnapshotId,
@@ -152,7 +166,7 @@ export function verifyIncrementalRefreshRequest(request) {
     triggerEvidenceIds: request.trigger?.evidenceIds,
     expectedChangedPaths: request.expectation?.mode === "exact" ? request.expectation.paths : null,
     additionalParentSourceSnapshotIds: request.additionalParentSourceSnapshotIds,
-  });
+  }, protocolVersion);
   if (!REQUEST_PATTERN.test(request.refreshRequestId || "") || canonicalJson(rebuilt) !== canonicalJson(request)) fail("Incremental refresh request identity verification failed.", "REFRESH_REQUEST_DIGEST_MISMATCH");
   return request;
 }
@@ -256,7 +270,7 @@ function buildReceipt({ request, previousSnapshot, nextSnapshot, status, inspect
     executionDrift: runBinding(inspected, nextSnapshot.temporalProvenanceGraph.sourceSnapshotId),
     projectionDisposition: {
       graph: "verified-before-world-pointer-advance",
-      documents: "not-regenerated-explicit-follow-up-only",
+      documents: "not-regenerated-by-refresh-core-post-policy-evaluated-separately",
     },
     authority: "verified-observed-state-refresh-evidence",
     instructionAuthority: false,
@@ -276,10 +290,12 @@ export function verifyIncrementalRefreshReceipt(receipt) {
   assertFields(receipt.revisionTransition, ["reusedRevisionCount", "createdRevisionCount", "parentedRevisionCount"], "Incremental refresh receipt revision transition");
   assertFields(receipt.executionDrift, ["status", "activeRunId", "wholePlanId", "executionContractId", "capsuleId", "pinnedWorldModelId", "pinnedSourceSnapshotId", "refreshedSourceSnapshotId", "driftDetected", "requiredHeadAction"], "Incremental refresh receipt execution drift");
   assertFields(receipt.projectionDisposition, ["graph", "documents"], "Incremental refresh receipt projection disposition");
+  const protocolVersion = receipt.protocol?.version;
   if (!RECEIPT_PATTERN.test(receipt.refreshReceiptId || "") || !REQUEST_PATTERN.test(receipt.refreshRequestId || "")
     || !["unchanged", "refreshed"].includes(receipt.status)
     || receipt.schemaVersion !== SCHEMA_VERSION
-    || canonicalJson(receipt.protocol) !== canonicalJson({ name: "head-agent-core-incremental-refresh", version: INCREMENTAL_REFRESH_VERSION })
+    || receipt.protocol?.name !== "head-agent-core-incremental-refresh"
+    || ![LEGACY_INCREMENTAL_REFRESH_VERSION, INCREMENTAL_REFRESH_VERSION].includes(protocolVersion)
     || receipt.authority !== "verified-observed-state-refresh-evidence"
     || receipt.instructionAuthority !== false || receipt.promotionAuthority !== false || receipt.canonMutation !== "none") {
     fail("Incremental refresh receipt contract is invalid.", "INVALID_REFRESH_RECEIPT");
@@ -298,12 +314,15 @@ export function verifyIncrementalRefreshReceipt(receipt) {
     "pending-review-result-frozen": "review-result-against-recorded-contract-and-current-drift",
     "no-active-execution": "none",
   };
+  const expectedDocumentDisposition = protocolVersion === LEGACY_INCREMENTAL_REFRESH_VERSION
+    ? "not-regenerated-explicit-follow-up-only"
+    : "not-regenerated-by-refresh-core-post-policy-evaluated-separately";
   if (!(receipt.executionDrift.status in driftActions)
     || receipt.executionDrift.requiredHeadAction !== driftActions[receipt.executionDrift.status]
     || typeof receipt.executionDrift.driftDetected !== "boolean"
     || receipt.executionDrift.refreshedSourceSnapshotId !== receipt.next.sourceSnapshotId
     || receipt.projectionDisposition.graph !== "verified-before-world-pointer-advance"
-    || receipt.projectionDisposition.documents !== "not-regenerated-explicit-follow-up-only") {
+    || receipt.projectionDisposition.documents !== expectedDocumentDisposition) {
     fail("Incremental refresh execution or projection disposition is invalid.", "INVALID_REFRESH_RECEIPT");
   }
   const payload = { ...receipt };
@@ -453,6 +472,38 @@ export function inspectIncrementalRefresh({ root = ".", storeAdapter = null } = 
   };
 }
 
+export function readPostRefreshProjectionReceipt({ root = ".", postRefreshProjectionReceiptId, storeAdapter = null, documentProjectionAdapter = null } = {}) {
+  const post = readPostRefreshProjectionReceiptArtifact({ root, postRefreshProjectionReceiptId, documentProjectionAdapter });
+  const refresh = readIncrementalRefreshReceipt({ root, refreshReceiptId: post.receipt.refresh.refreshReceiptId, storeAdapter });
+  if (post.receipt.refresh.refreshRequestId !== refresh.request.refreshRequestId
+    || post.receipt.refresh.refreshRequestHash !== refresh.request.refreshRequestHash
+    || post.receipt.refresh.refreshReceiptHash !== refresh.receipt.refreshReceiptHash
+    || post.receipt.refresh.status !== refresh.receipt.status
+    || canonicalJson({
+      worldModelId: post.receipt.base.worldModelId,
+      sourceSnapshotId: post.receipt.base.sourceSnapshotId,
+      graphSnapshotId: post.receipt.base.graphSnapshotId,
+    }) !== canonicalJson(refresh.receipt.base)
+    || post.receipt.target.worldModelId !== refresh.receipt.next.worldModelId
+    || post.receipt.target.sourceSnapshotId !== refresh.receipt.next.sourceSnapshotId
+    || post.receipt.target.graphSnapshotId !== refresh.receipt.next.graphSnapshotId) {
+    fail("Post-refresh projection receipt does not match its incremental refresh lineage.", "POST_REFRESH_PROJECTION_REFRESH_MISMATCH");
+  }
+  return { ...post, refresh };
+}
+
+export function inspectPostRefreshProjectionStatus({ root = ".", storeAdapter = null, documentProjectionAdapter = null } = {}) {
+  const status = inspectPostRefreshProjectionArtifact({ root, documentProjectionAdapter });
+  if (!status.receipt) return status;
+  const verified = readPostRefreshProjectionReceipt({
+    root,
+    postRefreshProjectionReceiptId: status.receipt.postRefreshProjectionReceiptId,
+    storeAdapter,
+    documentProjectionAdapter,
+  });
+  return { ...status, receipt: verified.receipt, refresh: verified.refresh };
+}
+
 async function refreshWorldModelLocked({
   root = ".",
   triggerKind = "manual",
@@ -581,5 +632,26 @@ export async function refreshWorldModel(options = {}) {
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
     lease: options.writerLease || null,
-  }, (writerLease) => refreshWorldModelLocked({ ...options, writerLease }));
+  }, async (writerLease) => {
+    const beforeSnapshot = readWorldModel({ root: inspected.project.projectRoot, storeAdapter: options.storeAdapter || null }).snapshot;
+    const preflight = preparePostRefreshProjection({
+      projectRoot: inspected.project.projectRoot,
+      projectId: inspected.project.projectId,
+      graph: beforeSnapshot.temporalProvenanceGraph,
+      documentProjectionAdapter: options.documentProjectionAdapter || null,
+    });
+    const refreshed = await refreshWorldModelLocked({ ...options, writerLease });
+    const afterSnapshot = readWorldModel({ root: inspected.project.projectRoot, storeAdapter: options.storeAdapter || null }).snapshot;
+    const postRefreshProjection = completePostRefreshProjection({
+      projectRoot: inspected.project.projectRoot,
+      projectId: inspected.project.projectId,
+      beforeSnapshot,
+      afterSnapshot,
+      refreshRequest: refreshed.request,
+      refreshReceipt: refreshed.receipt,
+      preflight,
+      documentProjectionAdapter: options.documentProjectionAdapter || null,
+    });
+    return { ...refreshed, postRefreshProjection };
+  });
 }

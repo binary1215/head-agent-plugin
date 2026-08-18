@@ -7,6 +7,7 @@ Protocol versions:
 - `DocumentProjectionAdapter`: `0.1.0`
 - deterministic Markdown renderer: `0.1.0`
 - `DocumentChangeCandidateSet`: `0.1.0`
+- `PostRefreshProjectionPolicy` and receipt: `0.1.0`
 
 ## Purpose and authority boundary
 
@@ -70,9 +71,9 @@ The local adapter stores:
 
 The snapshot and pointer are verification artifacts. `.head/generated/knowledge/` is the replaceable human working view. The pointer advances only after the immutable projection and every published document verify successfully.
 
-## Explicit generation and status
+## Explicit and policy-driven generation
 
-Markdown generation is explicit in this alpha so a projection failure or unreviewed human edit cannot prevent core World Model indexing:
+Markdown generation remains explicitly available:
 
 ```text
 node scripts/head.mjs world-docs-build <project>
@@ -89,6 +90,8 @@ node scripts/head.mjs world-docs-status <project>
 - `modified`: the published view differs from its immutable base projection.
 
 Missing output can be regenerated. Digest mismatch, semantic divergence, unsafe paths, or adapter authority escalation fail closed. A newer verified graph may replace a clean published view, but the core never overwrites a modified view.
+
+The effective post-refresh policy defaults to `manual`. An explicit user-selected `automatic` policy may invoke the same deterministic materialization only after incremental refresh has verified and advanced the World Model. The policy inspects the base view before refresh, captures current edits as immutable candidates, and records a separate content-derived outcome afterward. Invalid policy or projection state cannot stop or rewrite observed-state refresh. See [`post-refresh-projection.md`](post-refresh-projection.md).
 
 ## Inbound edits are candidates
 
@@ -109,7 +112,6 @@ The following remain deferred:
 
 - a scoped ReviewDecision and application contract for `DocumentChangeCandidateSet`;
 - projection of document artifacts and their later review receipts into a subsequent GraphSnapshot;
-- automatic regeneration after debounced filesystem or CI refresh;
 - `ObsidianVaultProjectionAdapter` and `NotionProjectionAdapter`;
 - bidirectional synchronization or conflict resolution;
 - treating generated pages as Context Compiler input.

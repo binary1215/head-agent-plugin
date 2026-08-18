@@ -1,8 +1,8 @@
 # Incremental observed-state refresh
 
-Status: explicit refresh and debounced filesystem/CI trigger ingestion active
+Status: explicit refresh, debounced filesystem/CI ingestion, and opt-in post-refresh Markdown projection active
 
-Protocol version: `0.1.0`
+Protocol version: `0.2.0`; digest-verified `0.1.0` requests and receipts remain readable
 
 ## Purpose
 
@@ -23,9 +23,11 @@ manual request or verified RefreshTriggerBatch
   -> atomically advance the World Model pointer
   -> persist an immutable IncrementalRefreshReceipt
   -> advance the refresh receipt pointer
+  -> evaluate a separate PostRefreshProjectionPolicy
+  -> persist an immutable PostRefreshProjectionReceipt
 ```
 
-The filesystem and CI adapters never provide the changed-file truth. They supply bounded evidence that causes this complete discovery and hashing pipeline to run. GraphDB event projection and automatic document regeneration are not active in this slice. See [`refresh-trigger.md`](refresh-trigger.md).
+The filesystem and CI adapters never provide the changed-file truth. They supply bounded evidence that causes this complete discovery and hashing pipeline to run. The refresh core itself never publishes documents; a separate safe-default-manual policy may regenerate deterministic Markdown after refresh succeeds. See [`refresh-trigger.md`](refresh-trigger.md) and [`post-refresh-projection.md`](post-refresh-projection.md).
 
 ## Authority boundary
 
@@ -44,7 +46,9 @@ Refresh cannot:
 - grant instruction, promotion, canon-mutation, or control authority;
 - rewrite an existing World Model, SourceSnapshot, revision, Capsule, contract, Run, or ResultPacket;
 - replace the ContextCapsule pinned to an active Run;
-- regenerate Markdown, Obsidian, or Notion automatically.
+- use document publication as Canon, promotion, instruction, or active-Run mutation authority.
+
+An explicit post-refresh operational policy may publish Markdown only after the World Model transition verifies. Edited or unmanaged views are preserved, current edits are captured as non-authoritative candidates against the base graph, and projection failures do not roll the verified World Model pointer back. Automatic Obsidian and Notion publication remain deferred.
 
 The graph remains a rebuildable projection. Git and GraphDB are optional and are not needed for refresh identity, ancestry, or recovery.
 
@@ -118,6 +122,10 @@ The local reference implementation stores:
 .head/refresh/triggers/batches/refresh-trigger-batch-*.json
 .head/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
 .head/refresh/triggers/current.json
+.head/document-projection/post-refresh/policies/post-refresh-projection-policy-*.json
+.head/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
+.head/document-projection/post-refresh/current-policy.json
+.head/document-projection/post-refresh/current.json
 ```
 
 Requests and receipts are content-derived immutable artifacts. The current file is a digest-verified replaceable pointer. A later full index or refresh can make the latest receipt stale without invalidating its historical evidence.
@@ -133,6 +141,10 @@ node scripts/head.mjs world-refresh-events <project> --input refresh-events.json
 node scripts/head.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
 node scripts/head.mjs world-refresh-trigger-status <project>
 node scripts/head.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
+node scripts/head.mjs world-docs-policy-set <project> --input post-refresh-policy.json
+node scripts/head.mjs world-docs-policy-status <project>
+node scripts/head.mjs world-docs-refresh-status <project>
+node scripts/head.mjs world-docs-refresh-read <project> --receipt post-refresh-projection-receipt-<24-hex>
 ```
 
 `--trigger-evidence` adds sorted evidence identities. `--parent-snapshot` declares additional SourceSnapshot parents; it does not request or perform a merge.
@@ -142,7 +154,9 @@ Read-only MCP exposes:
 - `head_incremental_refresh_status`;
 - `head_incremental_refresh_receipt`;
 - `head_refresh_trigger_status`;
-- `head_refresh_trigger_delivery`.
+- `head_refresh_trigger_delivery`;
+- `head_post_refresh_projection_status`;
+- `head_post_refresh_projection_receipt`.
 
 MCP does not expose refresh mutation.
 
@@ -163,6 +177,8 @@ Refresh fails closed on:
 
 The existing verified World Model pointer remains authoritative for current derived state when validation fails before pointer advancement.
 
-## Deferred next stage
+A document policy, adapter, renderer, or publication failure is isolated after the refresh-core transition. It records a `failed` post-refresh receipt and preserves the verified World Model, Product Canon, active execution inputs, and existing published view.
 
-The verified trigger queue now coalesces bounded filesystem or CI events, rescans instead of trusting event payloads, serializes writers through an exclusive project lease plus pointer comparison, records dropped/coalesced evidence, and leaves document projection disconnected. The next ordered stage may regenerate deterministic Markdown only after a successful delivery and must preserve published-view drift protection. Remote GraphDB refresh, background service installation, provider-specific CI webhooks, Obsidian/Notion publication, and bidirectional document synchronization remain later stages.
+## Deferred next stages
+
+The verified trigger queue and opt-in post-refresh Markdown policy now complete the local automatic observed-state-to-human-view path without granting documents authority. Remote GraphDB refresh, background service installation, provider-specific CI webhooks, DocumentChangeCandidate review/application, Obsidian/Notion publication, and bidirectional document synchronization remain later stages.

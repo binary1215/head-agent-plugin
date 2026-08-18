@@ -1,6 +1,6 @@
 # HEAD Agent Core plugin
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.23` adds bounded debounced filesystem and structured CI trigger ingestion on top of the verified incremental refresh contract. Noisy events become immutable content-derived batches, deliveries are serialized by a project-scoped writer lease, and every real trigger still performs complete eligible-file discovery and byte hashing instead of trusting path hints. Product Canon, active Run inputs, generated documents, Git, and GraphDB remain outside trigger authority.
+This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.24` adds an explicit post-refresh Markdown projection policy after the verified incremental and debounced refresh pipeline. The safe default remains manual; user-selected automatic mode regenerates only an unedited derived view, captures edited pages as immutable review-required candidates, and records a digest-verifiable outcome without changing Product Canon, active Run inputs, Git independence, or GraphDB optionality.
 
 Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
 
@@ -43,6 +43,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 - Versioned `GraphProjectionAdapter` contract with local JSON materialization, in-memory conformance, backend-neutral traversal identity, disclosed embedded-graph fallback, and stale/tamper/authority rejection.
 - Versioned `DocumentProjectionAdapter` contract with deterministic graph-to-Markdown rendering, content-derived projection identity, local/in-memory conformance, explicit generation, and stale/tamper/authority rejection.
 - Published Markdown drift protection that never overwrites user edits and captures added/modified/removed pages as immutable, non-authoritative `DocumentChangeCandidateSet` evidence requiring future review.
+- Content-derived `PostRefreshProjectionPolicy` and receipt artifacts with a manual safe default and explicit opt-in automatic Markdown regeneration after verified refresh; edited or unmanaged views are preserved rather than overwritten.
 - Versioned `GitHistoryAdapter` contract with content-addressed, all-reachable Git commit evidence. Commit messages remain non-authoritative evidence and are never promoted into canonical `Decision` records.
 - Default asynchronous Git CLI collection plus a byte-preserving host-export adapter for constrained runtimes where child-process Git is unavailable.
 - Bounded CLI/MCP semantic graph traversal that fails closed when the index is stale.
@@ -54,7 +55,7 @@ Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material
 
 ## What is intentionally deferred
 
-Dedicated imported-backlog connectors, inferred commit-to-ChangeSet matching, conformance projection, general relationship promotion beyond Feature mapping and Change impact, automatic ChangeSet ancestry inference, automatic merge and conflict resolution, background watcher service installation, provider-specific CI webhooks, Obsidian/Notion projection adapters, DocumentChangeCandidate review/application, automatic document regeneration, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional remote GraphDB implementation, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+Dedicated imported-backlog connectors, inferred commit-to-ChangeSet matching, conformance projection, general relationship promotion beyond Feature mapping and Change impact, automatic ChangeSet ancestry inference, automatic merge and conflict resolution, background watcher service installation, provider-specific CI webhooks, Obsidian/Notion projection adapters, DocumentChangeCandidate review/application, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, live runtime probing/streaming, the optional remote GraphDB implementation, automatic provider runtime hydration, and general authorized candidate-knowledge promotion are not active yet. Full descendant-tree supervision beyond the worker's enforced no-descendant contract, live caller fencing, role messaging, service installation, Rust backends, and Herdr integration also remain deferred. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
 
 ## Use from source
 
@@ -85,6 +86,10 @@ node .\scripts\head.mjs world-docs-build C:\path\to\project
 node .\scripts\head.mjs world-docs-status C:\path\to\project
 node .\scripts\head.mjs world-docs-capture C:\path\to\project
 node .\scripts\head.mjs world-docs-candidates C:\path\to\project --candidate-set document-change-candidate-set-<24-hex>
+node .\scripts\head.mjs world-docs-policy-set C:\path\to\project --input .\post-refresh-policy.json
+node .\scripts\head.mjs world-docs-policy-status C:\path\to\project
+node .\scripts\head.mjs world-docs-refresh-status C:\path\to\project
+node .\scripts\head.mjs world-docs-refresh-read C:\path\to\project --receipt post-refresh-projection-receipt-<24-hex>
 node .\scripts\head.mjs world-query C:\path\to\project --query "symbol or path" --depth 1 --limit 100
 node .\scripts\head.mjs world-temporal C:\path\to\project --query "file or symbol" --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
 node .\scripts\head.mjs world-temporal C:\path\to\project --query "Message delivery" --kind Feature,FeatureRevision,Capability --relations REALIZES,HAS_REVISION,CURRENT_REVISION --depth 2 --limit 100 --edge-limit 200

@@ -12,8 +12,9 @@ import { buildWorldModel, captureWorldMarkdownChanges, inspectWorldGraphProjecti
 import { inspectOnboarding, readOnboardingCandidateSet, readOnboardingReviewDecision, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping, readFeatureMappingCandidateSet, readFeatureMappingReviewDecision, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
 import { attachVcsEvidence, inspectChangeSets, readChangeImpactCandidateSet, readChangeImpactReviewDecision, readChangeSet, readVcsEvidence, recordChangeSet, reviewChangeImpact } from "./lib/change-set.mjs";
-import { inspectIncrementalRefresh, readIncrementalRefreshReceipt, refreshWorldModel } from "./lib/incremental-refresh.mjs";
+import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel } from "./lib/incremental-refresh.mjs";
 import { inspectRefreshTriggers, processRefreshTriggerBatch, readRefreshTriggerDelivery, runFileSystemRefreshWatcher } from "./lib/refresh-trigger.mjs";
+import { inspectPostRefreshProjectionPolicy, setPostRefreshProjectionPolicy } from "./lib/post-refresh-projection.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -69,6 +70,10 @@ export function usage() {
       "head world-docs-status <project>",
       "head world-docs-capture <project>",
       "head world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>",
+      "head world-docs-policy-set <project> --input <policy.json>",
+      "head world-docs-policy-status <project>",
+      "head world-docs-refresh-status <project>",
+      "head world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>",
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
       "head world-temporal <project> --query <text> [--kind <kind,kind>] [--relations <type,type>] [--include-candidates <true|false>] [--depth <0-3>] [--limit <1-500>] [--edge-limit <0-1000>] [--min-confidence <0-1>]",
       "head world-history <project> [--query <text>] [--limit <1-500>]",
@@ -165,6 +170,15 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "world-docs-status") return inspectWorldMarkdownProjection({ root });
   if (command === "world-docs-capture") return captureWorldMarkdownChanges({ root, persist: true });
   if (command === "world-docs-candidates") return readWorldDocumentChangeCandidateSet({ root, candidateSetId: options["candidate-set"] });
+  if (command === "world-docs-policy-set") {
+    const input = inputJson(options, "Post-refresh document projection policy");
+    const unexpected = Object.keys(input).filter((key) => key !== "mode");
+    if (unexpected.length) throw new Error(`Post-refresh document projection policy contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    return setPostRefreshProjectionPolicy({ root, mode: input.mode });
+  }
+  if (command === "world-docs-policy-status") return inspectPostRefreshProjectionPolicy({ root });
+  if (command === "world-docs-refresh-status") return inspectPostRefreshProjectionStatus({ root });
+  if (command === "world-docs-refresh-read") return readPostRefreshProjectionReceipt({ root, postRefreshProjectionReceiptId: options.receipt });
   if (command === "world-query") return queryWorldModel({
     root,
     query: options.query,

@@ -10,7 +10,7 @@ import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWor
 import { inspectOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
 import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
-import { inspectIncrementalRefresh, readIncrementalRefreshReceipt } from "./lib/incremental-refresh.mjs";
+import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
 import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
 
 const protocolVersion = "2024-11-05";
@@ -200,6 +200,29 @@ export const tools = [
     }
   },
   {
+    name: "head_post_refresh_projection_status",
+    description: "Read the effective manual-or-automatic Markdown projection policy and verify the latest post-refresh outcome without changing policy, documents, Product Canon, or active Run inputs.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "head_post_refresh_projection_receipt",
+    description: "Read and digest-verify one immutable post-refresh projection receipt with its linked incremental refresh, policy, DocumentProjection, or document-change candidate evidence.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        post_refresh_projection_receipt_id: { type: "string", pattern: "^post-refresh-projection-receipt-[a-f0-9]{24}$" }
+      },
+      required: ["project_root", "post_refresh_projection_receipt_id"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "head_document_change_candidates",
     description: "Read and digest-verify one immutable DocumentChangeCandidateSet without accepting it or changing Product Canon.",
     inputSchema: {
@@ -286,7 +309,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.23" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.24" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -328,6 +351,10 @@ export async function dispatch(request) {
                     ? inspectWorldGraphProjection({ root: args.project_root })
                   : name === "head_markdown_projection_status"
                     ? inspectWorldMarkdownProjection({ root: args.project_root })
+                  : name === "head_post_refresh_projection_status"
+                    ? inspectPostRefreshProjectionStatus({ root: args.project_root })
+                  : name === "head_post_refresh_projection_receipt"
+                    ? readPostRefreshProjectionReceipt({ root: args.project_root, postRefreshProjectionReceiptId: args.post_refresh_projection_receipt_id })
                   : name === "head_document_change_candidates"
                     ? readWorldDocumentChangeCandidateSet({ root: args.project_root, candidateSetId: args.candidate_set_id })
                   : name === "head_world_query"
