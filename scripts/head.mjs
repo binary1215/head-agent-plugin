@@ -28,6 +28,7 @@ import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtim
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const packageMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
 
 export function parse(argv) {
   const [command = "help", root = ".", ...rest] = argv;
@@ -47,6 +48,7 @@ export function usage() {
   return {
     commands: [
       "head init <project> [--runtime codex,opencode]",
+      "head --version",
       "head status <project>",
       "head doctor <project>",
       "head runtime-adapters <project>",
@@ -142,6 +144,7 @@ function readJsonFile(file, label) {
 export function runCommand(argv = process.argv.slice(2)) {
   const { command, root, options } = parse(argv);
   if (command === "help" || command === "--help" || command === "-h") return usage();
+  if (command === "--version" || command === "version") return { name: "head-agent-core", version: packageMetadata.version };
   if (command === "init") return initializeProject({ root, pluginRoot, runtimes: options.runtime?.split(",") });
   if (command === "status" || command === "doctor") return inspectProject(root);
   if (command === "runtime-adapters") return inspectRuntimeAdapters(root);

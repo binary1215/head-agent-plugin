@@ -238,13 +238,13 @@ Status terms in this README have exact meanings:
 | Local graph and Markdown projections | **Available** |
 | ArcadeDB graph projection | **Experimental** |
 | OpenCode project projection | **Available** |
-| OpenCode live execution | **Planned** |
+| OpenCode one-shot Session and Run execution | **Experimental** |
 | Codex marketplace distribution | **Planned** |
-| `install.ps1` and `install.sh` | **Planned** |
-| Global `head-agent` command | **Planned** |
-| `head-agent --version` and `head-agent doctor` | **Planned** |
+| `install.ps1` and `install.sh` | **Available** |
+| User-scoped global `head-agent` command | **Available** |
+| `head-agent --version` and project `head-agent doctor` | **Available** |
 | Automatic native binary installation | **Planned** |
-| Atomic upgrade, rollback, and safe removal | **Planned** |
+| Recoverable upgrade, verified rollback, and safe removal | **Available** |
 | Provider resume and durable attachment | **Deferred** |
 | Obsidian and Notion projection adapters | **Deferred** |
 
@@ -253,26 +253,33 @@ Status terms in this README have exact meanings:
 ### Requirements
 
 - a current Node.js LTS release;
-- Git to clone this source distribution;
-- Codex for the currently verified provider execution path;
+- Git or a downloaded source archive for the initial source distribution;
+- Codex or OpenCode only when using the corresponding live execution adapter;
 - Go only when building native worker and supervisor binaries locally;
 - ArcadeDB only when explicitly enabling the optional remote graph projection.
 
-Git, Go, and GraphDB are not prerequisites for HEAD project identity, local
-lineage, or recovery after the corresponding installation step is complete.
+Git, Go, GraphDB, and a provider runtime are not prerequisites for HEAD project
+identity, local lineage, installation rollback, or local recovery. The
+JavaScript reference path remains available when native compute is absent.
 
-### Install and run from source — available now
+### User-scoped installation — available now
 
-The current alpha runs directly from the cloned repository.
+The installer copies a verified, content-identified release into the current
+user's data directory and writes `head-agent` launchers to `~/.local/bin`. It
+does not edit a Codex cache, shell profile, project `.head` directory, or remote
+GraphDB. Add `~/.local/bin` to `PATH` once if the installer reports
+`pathConfigured: false`.
 
 #### Windows PowerShell
 
 ```powershell
 git clone https://github.com/binary1215/head-agent-plugin.git
 Set-Location .\head-agent-plugin
+.\scripts\install.ps1
 
-node .\scripts\head.mjs init C:\path\to\project --runtime codex
-node .\scripts\head.mjs status C:\path\to\project
+head-agent --version
+head-agent init C:\path\to\project --runtime codex,opencode
+head-agent doctor C:\path\to\project
 ```
 
 #### macOS or Linux
@@ -280,47 +287,78 @@ node .\scripts\head.mjs status C:\path\to\project
 ```bash
 git clone https://github.com/binary1215/head-agent-plugin.git
 cd head-agent-plugin
+./scripts/install.sh
 
-node ./scripts/head.mjs init /path/to/project --runtime codex
-node ./scripts/head.mjs status /path/to/project
+head-agent --version
+head-agent init /path/to/project --runtime codex,opencode
+head-agent doctor /path/to/project
+```
+
+Installation defaults can be overridden without changing product canon:
+
+```powershell
+.\scripts\install.ps1 --install-root C:\user-data\head-agent --bin-dir C:\user-bin
+```
+
+```bash
+./scripts/install.sh --install-root "$HOME/.head-agent" --bin-dir "$HOME/bin"
+```
+
+These locations are operational configuration only. They never participate in
+project, graph, Context Capsule, or execution-lineage semantic identity.
+
+### Upgrade, status, rollback, and removal
+
+Run lifecycle commands from the newly downloaded source tree. `install` and
+`upgrade` stage and verify an immutable release before replacing the active
+pointer. If staging or verification fails, the previous pointer remains active.
+
+```powershell
+node .\scripts\distribution.mjs upgrade
+node .\scripts\distribution.mjs status
+node .\scripts\distribution.mjs rollback
+node .\scripts\distribution.mjs uninstall
+```
+
+```bash
+node ./scripts/distribution.mjs upgrade
+node ./scripts/distribution.mjs status
+node ./scripts/distribution.mjs rollback
+node ./scripts/distribution.mjs uninstall
+```
+
+Normal removal deletes the active pointer and launchers but preserves immutable
+release files so recovery remains possible. `uninstall --purge` also removes
+the user-scoped release store. Neither form traverses or deletes any project's
+`.head` canon, lineage, document projection, Git repository, or GraphDB data.
+
+The source tree remains directly runnable when a global installation is not
+desired:
+
+```powershell
+node .\scripts\head.mjs init C:\path\to\project --runtime codex
 ```
 
 The native compute worker is optional. When a verified binary is unavailable,
 supported operations use the JavaScript reference path and disclose the
-fallback instead of changing semantic identity or authority.
+fallback instead of changing semantic identity or authority. Automatic native
+artifact selection/download and Codex marketplace publication remain planned;
+the installer does not claim either capability today.
 
-### Simplified plugin installer — planned
+The current installer:
 
-The intended installation interface is shown below for roadmap clarity. These
-scripts and the global command are **not included in the current alpha**.
+1. validates matching plugin/package versions and rejects symlinked input;
+2. hashes every included file into one content-derived release identity;
+3. stages, verifies, and activates the release without in-place source edits;
+4. installs PowerShell/cmd and POSIX-compatible command launchers;
+5. keeps prior verified releases available for explicit rollback;
+6. preserves the JavaScript fallback when native compute is unavailable.
+
+Verify the full isolated lifecycle without touching the real user installation:
 
 ```powershell
-# Planned Windows interface — not currently runnable
-git clone https://github.com/binary1215/head-agent-plugin.git
-Set-Location .\head-agent-plugin
-.\scripts\install.ps1
+npm run verify:distribution
 ```
-
-```bash
-# Planned macOS/Linux interface — not currently runnable
-git clone https://github.com/binary1215/head-agent-plugin.git
-cd head-agent-plugin
-./scripts/install.sh
-```
-
-The planned installer will:
-
-1. verify Node.js, Git, and Codex;
-2. configure a user-scoped Codex marketplace;
-3. install `head-agent-core` through the Codex plugin interface;
-4. install a cross-platform `head-agent` command wrapper;
-5. install or build the matching native worker when available;
-6. verify plugin and binary manifests;
-7. preserve the JavaScript fallback when native compute is unavailable.
-
-Planned lifecycle work also includes version reporting, staged diagnostics,
-atomic upgrades with rollback, and removal that never deletes project `.head`
-canon or lineage.
 
 ## Project onboarding
 
