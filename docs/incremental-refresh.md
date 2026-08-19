@@ -181,4 +181,4 @@ A document policy, adapter, renderer, or publication failure is isolated after t
 
 ## Deferred next stages
 
-The verified trigger queue and opt-in post-refresh Markdown policy now complete the local automatic observed-state-to-human-view path without granting documents authority. Explicit DocumentChangeCandidate review/application is a separate user-authorized path and is active. Remote GraphDB refresh, background service installation, provider-specific CI webhooks, temporal projection of document-review receipts, Obsidian/Notion publication, and bidirectional document synchronization remain later stages.
+The verified trigger queue and opt-in post-refresh Markdown policy now complete the local automatic observed-state-to-human-view path without granting documents authority. Explicit DocumentChangeCandidate review/application and its temporal audit projection are active. Automatic remote GraphDB refresh, background service installation, provider-specific CI webhooks, Obsidian/Notion publication, and bidirectional document synchronization remain later stages.

@@ -147,7 +147,7 @@ This prevents a stale index from silently directing execution while still allowi
 
 ## Explicitly deferred
 
-Debounced filesystem and CI trigger ingestion plus single-writer event coalescing are active and both terminate in the same incremental refresh mutation path. Explicitly enabled automatic Markdown regeneration is active through the separate safe post-refresh policy. Explicit DocumentChangeCandidate review/application is also active as a separate user-authorized mutation path. Background service installation, provider-specific CI webhook adapters, automatic GraphDB refresh, temporal projection of document-review receipts, and automatic Obsidian/Notion publication remain deferred.
+Debounced filesystem and CI trigger ingestion plus single-writer event coalescing are active and both terminate in the same incremental refresh mutation path. Explicitly enabled automatic Markdown regeneration is active through the separate safe post-refresh policy. Explicit DocumentChangeCandidate review/application and its temporal audit projection are also active. Background service installation, provider-specific CI webhook adapters, automatic GraphDB refresh, and automatic Obsidian/Notion publication remain deferred.
 
 - AST-accurate semantic symbols, dynamic dispatch, and complete call resolution;
 - structured decision inference, supersession modeling, and authorized promotion from Git evidence;

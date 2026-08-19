@@ -2,9 +2,9 @@
 
 Status: active direction authority
 
-Current milestone: v0.5 Temporal Repository World Model and knowledge projections
+Current milestone: v0.6 provider-neutral Runtime Adapter contracts
 
-Immediate next slice: execute the read-only prepared-traversal benchmark against an already verified live ArcadeDB activation once its environment references are available, record observed latency and transport calls outside semantic identity, then decide whether compare-and-swap publication or the v0.6 runtime-adapter boundary is the next higher-value slice.
+Immediate next slice: execute the integrated graph activation plus read-only prepared-traversal flow only against the user-designated ArcadeDB `sandbox`, then extend the verified non-session Runtime Adapter surface toward provider-specific protocol/capability negotiation and project binding without enabling provider-session control, shell interpretation, or TUI scraping. The live GraphDB evaluation remains derived operational evidence rather than a core prerequisite.
 
 Last reviewed: 2026-08-19
 
@@ -54,7 +54,7 @@ The direction comes from the following inputs:
 - Shared Context Compiler discussion: <https://chatgpt.com/share/6a84529c-d400-83e8-aa76-08c77d12c19e>.
 - `C:\Users\ccolt\Documents\카카오톡 받은 파일\context-lineage-explainer.html`: the Whole-plan HEAD / Executor / Result Packet / Fresh HEAD lineage model.
 - `C:\Users\ccolt\Documents\카카오톡 받은 파일\HEAD-Agent_GraphDB_Brief_v4.pdf` and `.pptx`: an operating-case reference for High/Mid/Low separation, Session-scoped retrieval, evidence-gated review, and Feature-to-code-to-change-reason graph traversal. Its example schemas and queries are evidence, not binding implementation instructions; canonical relation directions and authority boundaries remain defined here.
-- <https://webgraphdb.binaryexp.com/>: an optional future graph backend. Credentials are intentionally not recorded in this repository.
+- <https://webgraphdb.binaryexp.com/>: the user-designated optional graph backend and `sandbox` database E2E target. Remote writes for development validation are confined to that sandbox database; credentials are resolved only at runtime and are intentionally not recorded in this repository, project artifacts, generated documents, or benchmark reports.
 - <https://github.com/binary1215/head-agent-plugin>: the user-designated progress repository. Verified implementation slices are committed here to record plugin development; this publication workflow must not make the plugin itself Git-dependent or treat Git history as product authority.
 
 The original HEAD runtime is a Node distribution and coordination system, not merely a prompt bundle. Cross-runtime support must therefore use a single provider-neutral core plus explicit platform, runtime, and workspace-host adapters. HEAD Session and Run identities remain distinct from Codex, OpenCode, or other provider session identifiers.
@@ -89,6 +89,8 @@ The original HEAD runtime is a Node distribution and coordination system, not me
 26. **Go accelerates the plugin, not the user project.** The first native backend is a bundled Go worker that analyzes projects written in any supported language. It does not translate user code into Go, require the user's project to use Go, or copy Go source and binaries into the user's project state.
 27. **Authority stays outside the compute worker.** A native worker may produce observations, evidence, digests, graph materializations, traversal results, and product candidates. It cannot approve candidates, create an authoritative ReviewDecision, mutate Product Canon, widen an ExecutionContract, or grant itself instruction or promotion authority.
 28. **Native migration is evidence-gated and incremental.** `ComputeAdapter` boundaries are planned before heavy features, but an operation moves to Go only after its semantic contract, deterministic JavaScript reference behavior, conformance fixtures, and benchmark corpus exist. Rust remains a future backend option only when profiling shows a material bottleneck that the Go backend cannot satisfy economically.
+29. **Integrated implementation before exhaustive per-feature validation.** Build coherent provider-neutral vertical flows before expanding exhaustive tests for each small capability. During implementation, retain syntax checks and the minimum fail-closed contract, authority, credential, and process-safety checks needed to prevent invalid state. Concentrate broad behavioral, recovery, cross-runtime, and external-system validation in integrated E2E milestones after the connected implementation exists.
+30. **Remote GraphDB development writes are sandbox-confined.** External GraphDB activation and E2E writes use only the user-designated `sandbox` database. Credential values remain process-local, never become semantic identity or persisted project state, and reports disclose behavior without endpoints, usernames, passwords, or database-internal record identities.
 
 ## Semantic contracts
 
@@ -237,6 +239,20 @@ dist/
 ```
 
 Initial Go migration priority is file discovery/read/hash and source parsing, followed by World Model construction, temporal graph construction, and bounded traversal. Feature inference may use the worker only to create evidence-linked candidates. Context Compiler policy, authority resolution, ReviewDecision, Product Canon mutation, CLI/MCP/runtime integration, and promotion remain in the JavaScript control plane. Context-selection computation moves only if profiling demonstrates a material benefit without weakening minimum-sufficient-context explanations.
+
+### Implementation and E2E sequencing contract
+
+Implementation proceeds by complete vertical capability rather than one exhaustive test suite per micro-feature:
+
+```text
+contract and authority boundary
+  -> connected provider-neutral implementation
+  -> Codex/OpenCode and platform integration
+  -> integrated E2E scenario and recovery validation
+  -> milestone commit
+```
+
+Intermediate code must still parse, preserve content-derived identity, keep secrets out of artifacts, fail closed on authority or digest drift, and clean up owned processes. Those are implementation invariants, not optional late-stage tests. Extensive fixture multiplication, performance matrices, provider permutations, and recovery campaigns are deferred until the full connected flow can be exercised end to end. A milestone commit records a coherent verified slice; Git history is not used as a substitute for product lineage or as a requirement of the plugin.
 
 ### Active v0.5 onboarding and compute implementation plan
 
@@ -460,7 +476,23 @@ Current v0.5 alpha progress, verified through 2026-08-19; milestone remains acti
 - application verifies the candidate's exact published bytes, reviewed Product Canon, current World Model, and inactive Run boundary; accepted review writes the exact reviewed Canon, rebuilds a child SourceSnapshot and GraphSnapshot, verifies the resulting product projection, and reconciles Markdown, while rejection reconciles Markdown without Canon mutation;
 - immutable ProductModelRevision, ReviewDecision, and DocumentChangeApplicationReceipt artifacts bind before/after Product/World/Source/Graph/DocumentProjection identities; CLI performs explicit review/application, MCP remains read-only, and neither Git nor GraphDB is consulted;
 - temporal provenance `0.7.0` and World Model `0.10.0` project immutable document candidate sets, explicit reviews, reviewed Product Model revision receipts, and application receipts into later audit GraphSnapshots; candidate nodes remain opt-in and all graph records retain false instruction/promotion authority, while the application receipt binds the pre-audit result to avoid a content-hash cycle;
-- inferred commit-to-ChangeSet matching, dedicated imported-backlog adapters, conformance, general candidate-promotion beyond implemented review scopes, complete execution-lineage graph projection, an executed live prepared-query evaluation, compare-and-swap remote publication, non-ArcadeDB transports, Obsidian/Notion adapters, automatic Obsidian/Notion publication, background watcher service installation, provider-specific CI webhook adapters, compute-backed graph/traversal/Context operations, production selection or transport amortization for the conformant Go `repository.scan.v1` candidate, descendant-tree supervision beyond the enforced no-descendant worker contract, AST-accurate/dynamic call resolution, live runtime probing/control, and authorized general knowledge promotion remain explicitly deferred.
+- inferred commit-to-ChangeSet matching, dedicated imported-backlog adapters, conformance, general candidate-promotion beyond implemented review scopes, complete execution-lineage graph projection, an executed live prepared-query evaluation, compare-and-swap remote publication, non-ArcadeDB transports, Obsidian/Notion adapters, automatic Obsidian/Notion publication, background watcher service installation, provider-specific CI webhook adapters, compute-backed graph/traversal/Context operations, production selection or transport amortization for the conformant Go `repository.scan.v1` candidate, descendant-tree supervision beyond the enforced no-descendant worker contract, AST-accurate/dynamic call resolution, provider-session runtime invocation/control beyond bounded version evidence, and authorized general knowledge promotion remain explicitly deferred.
+
+Current v0.6 alpha progress, verified on 2026-08-19; milestone remains active:
+
+- runtime-adapter contract `0.1.0` defines separate `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` method and authority surfaces without importing provider-specific behavior into the core;
+- projection-only Codex and OpenCode reference adapters expose deterministic descriptors and static contract probes while excluding provider session IDs, commands, prompts, transcripts, endpoints, credentials, and live process identities;
+- contract-only Windows, macOS, and Linux PlatformAdapter references plus the native-process WorkspaceHostAdapter form a deterministic three-platform/two-runtime composition matrix whose identity is independent of the current host;
+- the matrix explicitly records `actualPlatformExecutionValidated: false`, `actualRuntimeControlValidated: false`, `machineInterfacesVerified: false`, and `runtimeControlEnabled: false`, so contract coverage cannot be mistaken for an installed or controllable runtime;
+- every runtime start/resume/stream/interrupt/close, executable resolution, process spawn/inspection/termination, host attach/send/receive/detach method fails closed with `RUNTIME_ADAPTER_CONTROL_NOT_ENABLED`;
+- descriptors and probes reject canon mutation, instruction, promotion, control authority, TUI scraping, divergent describe/probe identity, unsupported platform/runtime values, explicit empty runtime sets, digest tampering, and capability-derived authorization;
+- HEAD Session and Run identities remain canonical project artifacts while provider sessions remain future operational references only; an accepted ExecutionContract is still required before any consequential control capability may be activated;
+- read-only CLI and MCP inspection expose the current project composition, complete contract matrix, machine discovery, and bounded version evidence without creating or controlling a provider session;
+- runtime-machine-discovery protocol `0.1.0` now inspects only absolute PATH entries and regular Codex/OpenCode executable candidates on the current host, emits content-derived discovered/canonical path identities instead of raw paths, and records launcher kind, byte size, symlink state, and direct-spawn safety without executing a provider;
+- the current Windows observation discovers both Codex and OpenCode candidates, sets `machineInterfaceDiscoveryValidated: true`, and still sets actual platform execution, runtime control, process ownership, caller fencing, and provider session validation to false;
+- runtime-version-evidence protocol `0.1.0` now invokes only the fixed non-session `--version` surface of native, non-symlink candidates through the PlatformAdapter and native-process WorkspaceHostAdapter boundaries with no shell, ignored stdin, a minimal allowlisted environment, bounded output and timeout, and exact-child exit evidence;
+- the current Windows execution verifies both Codex and OpenCode while exposing only normalized versions, output digests and sizes, executable path digests, and lifecycle facts; raw paths, raw stdout/stderr, project content, credentials, provider session IDs, and child PIDs remain outside the evidence artifact;
+- provider-session hydration, project/session binding, caller and process-tree fencing, messaging, and every runtime control operation remain deferred until platform-specific lifecycle conformance is proved.
 
 ## Roadmap
 
@@ -478,7 +510,7 @@ Add a provider-neutral `ComputeAdapter` before new heavy analysis paths, preserv
 
 ### v0.6 — Runtime adapters
 
-Implement and test `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` contracts for Codex and OpenCode before enabling worker launch, resume, interrupt, messaging, or fencing.
+The contract foundation defines and tests `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references for Codex and OpenCode across Windows, macOS, Linux, and the native-process host. Privacy-preserving current-host CLI discovery and bounded direct non-session version evidence are active without raw path or output disclosure, and the current Windows host verifies both runtimes. Next, add provider-specific non-interactive protocol/capability evidence and project/session binding before enabling worker launch, resume, stream, interrupt, close, messaging, process control, or fencing. Capability discovery never grants authorization, and provider sessions never replace HEAD Session or Run identities.
 
 ### v1.0 — Auditable provider-neutral HEAD runtime
 
@@ -515,6 +547,12 @@ Before every material milestone, answer all of these:
 25. Can the core disclose and recover through the JavaScript reference path when the Go binary is absent, incompatible, corrupt, unsupported, unable to start, or crashes, while failing closed after verified PID cleanup on timeout, cancellation, output-bound violation, or protocol/digest-invalid output?
 26. Are worker invocation, input/output, resource limits, PID ownership, cancellation, and binary integrity bounded and verifiable without shell interpretation of project-controlled data?
 27. Is every native migration justified by repeatable benchmark and profiling evidence while concurrent results remain canonically ordered and digest-reproducible?
+28. Does a runtime adapter use a supported machine interface rather than TUI scraping, hidden conversation recovery, or provider-session identity as core state?
+29. Does the runtime contract distinguish static contract coverage from actual platform execution and live runtime-control validation?
+30. Does runtime capability remain separate from authorization, with consequential control still requiring an accepted ExecutionContract and exact project/caller/child ownership?
+31. Do disabled or failed runtime operations preserve WholePlan, Capsule, Contract, ResultPacket, ReviewDecision, and cleanup evidence without mutating canon?
+32. Is work prioritizing a connected end-to-end provider-neutral capability over exhaustive micro-feature test expansion while still preserving mandatory authority, credential, identity, and process-safety invariants?
+33. Are external GraphDB development writes confined to the designated sandbox while credentials and backend record identities remain outside artifacts, logs, reports, and semantic identity?
 
 If any answer is “no” or “unknown,” record the gap before proceeding.
 
@@ -566,3 +604,8 @@ If any answer is “no” or “unknown,” record the gap before proceeding.
 - 2026-08-19: completed the first conformance-gated ArcadeDB server-expansion slice: activation now runs baseline snapshot conformance, materializes and verifies topology, then proves two named queries through snapshot-scoped breadth-first `TRAVERSE` before advancing topology and activation receipts. The client fixes anchors and all semantic policy, requires the exact unfiltered bounded radius, caps responses at 8,192 records, rejects missing/forged/duplicate/out-of-radius/stale/truncated evidence, and returns the unchanged deterministic reference identity. This activates server graph expansion without transferring authority or claiming end-to-end acceleration; prepared query execution that avoids full remote reload remains the next slice.
 - 2026-08-19: completed the provider-neutral prepared-traversal slice: content-derived requests bind the embedded GraphSnapshot, deterministic query/result identities, and exact bounded expansion; adapters return verification receipts rather than semantic results. Newly re-conformed ArcadeDB activations verify the current pointer and topology manifest and fetch only bounded traversal records, with tests proving zero full snapshot/topology query reads and fail-closed manifest, coverage, forgery, and truncation handling. Legacy activations retain their prior full verification path, local/in-memory implementations preserve identical results, and complete remote status remains the full-audit boundary. Live transport-cost and latency evidence is the next slice.
 - 2026-08-19: completed deterministic prepared-traversal cost evidence and the safe live benchmark boundary: protocol `0.1.0` binds canonical payload-component counts to exact graph/request/query/result identities while excluding latency and transport diagnostics from semantic identity. The reviewed 64-file fixture proves 20,478 prepared bytes versus an 833,590-byte conservative full-reload baseline (813,112 bytes and 9,754 basis points saved), with zero query-phase writes and zero full snapshot/topology reads. The optional live path requires an already verified prepared activation, resolves credentials only through stored environment reference names, accepts no credential flags, rejects fallback or identity drift, guards every write method, and omits endpoints, database names, paths, and secrets from reports. No such activation or environment references are currently present in this process, so an executed live result remains the immediate next slice rather than a claimed completion.
+- 2026-08-19: moved the active implementation milestone to the required v0.6 runtime-adapter boundary while retaining the unavailable live ArcadeDB run as an explicit v0.5 evidence gap. Runtime-adapter contract `0.1.0` now proves deterministic provider/platform/host contract composition for Codex and OpenCode across Windows, macOS, Linux, and native-process without claiming live availability: every machine-interface and control capability remains disabled, provider sessions remain external operational references, capability grants no authorization, and the CLI/MCP surfaces are static read-only inspection only.
+- 2026-08-19: adopted implementation-first validation sequencing by user direction: build the connected provider-neutral plugin and runtime verticals before expanding exhaustive tests for each small feature, retain mandatory fail-closed authority/credential/identity/process checks during construction, then concentrate cross-runtime, recovery, GraphDB sandbox, and full-lineage proof in integrated E2E milestones.
+- 2026-08-19: designated the remote ArcadeDB `sandbox` database as the only external write target for plugin development E2E. Credentials remain runtime-only and unpersisted; the remote graph stays a replaceable derived projection and cannot become Product Canon, unique lineage storage, or a plugin prerequisite.
+- 2026-08-19: completed the first read-only runtime machine-discovery implementation beyond the static contract matrix. The current host discovers Codex and OpenCode through absolute PATH inspection and emits only hashed path identities plus launcher safety facts; no executable is invoked, no provider session is opened, all controls remain disabled, and actual platform execution remains the next gate.
+- 2026-08-19: completed the bounded non-session runtime version-evidence slice. The PlatformAdapter resolves only native non-symlink candidates, the native-process WorkspaceHostAdapter directly executes a fixed version flag with no shell or stdin under strict timeout/output/environment limits, and the AgentRuntimeAdapter returns normalized version and digest/lifecycle evidence without raw paths, raw output, credentials, project content, provider sessions, or PID identity. The current Windows host verifies Codex and OpenCode; capability still grants no authorization and all provider-session/runtime control remains disabled.

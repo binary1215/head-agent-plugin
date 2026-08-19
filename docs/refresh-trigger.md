@@ -185,4 +185,4 @@ A trigger batch may remain as immutable evidence if downstream refresh fails, bu
 
 ## Deferred next stages
 
-This slice does not install a background service or connect a provider-specific CI webhook. Hosts invoke the foreground watcher or create the strict CI event file. Safe opt-in automatic Markdown regeneration is active through the separate post-refresh policy, and explicit DocumentChangeCandidate review/application is active through a separate user-authorized command. Remote GraphDB projection refresh, temporal projection of document-review receipts, Obsidian/Notion publication, bidirectional synchronization, automatic merge, and general semantic promotion remain deferred.
+This slice does not install a background service or connect a provider-specific CI webhook. Hosts invoke the foreground watcher or create the strict CI event file. Safe opt-in automatic Markdown regeneration, explicit DocumentChangeCandidate review/application, and its temporal audit projection are active. Automatic remote GraphDB projection refresh, Obsidian/Notion publication, bidirectional synchronization, automatic merge, and general semantic promotion remain deferred.

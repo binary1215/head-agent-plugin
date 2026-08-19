@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCheckpoint, initializeProject, inspectProject } from "./lib/head-core.mjs";
+import { createCheckpoint, initializeProject, inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSnapshot, readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
@@ -40,6 +40,7 @@ export function usage() {
       "head init <project> [--runtime codex,opencode]",
       "head status <project>",
       "head doctor <project>",
+      "head runtime-adapters <project>",
       "head onboarding-start <project> [--input <onboarding.json>]",
       "head onboarding-status <project>",
       "head onboarding-review <project> --input <review.json>",
@@ -124,6 +125,7 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "help" || command === "--help" || command === "-h") return usage();
   if (command === "init") return initializeProject({ root, pluginRoot, runtimes: options.runtime?.split(",") });
   if (command === "status" || command === "doctor") return inspectProject(root);
+  if (command === "runtime-adapters") return inspectRuntimeAdapters(root);
   if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
   if (command === "onboarding-status") return inspectOnboarding({ root });
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });

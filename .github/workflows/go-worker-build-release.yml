@@ -23,7 +23,11 @@ on:
       - "scripts/lib/graph-projection-adapter.mjs"
       - "scripts/lib/graphdb-projection-activation.mjs"
       - "scripts/lib/prepared-traversal-benchmark.mjs"
+      - "scripts/lib/runtime-adapter.mjs"
+      - "scripts/lib/runtime-machine-discovery.mjs"
+      - "scripts/lib/runtime-machine-execution.mjs"
       - "scripts/benchmark-prepared-traversal.mjs"
+      - "scripts/verify-runtime-adapters.mjs"
       - "scripts/head.mjs"
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
@@ -51,7 +55,11 @@ on:
       - "scripts/lib/graph-projection-adapter.mjs"
       - "scripts/lib/graphdb-projection-activation.mjs"
       - "scripts/lib/prepared-traversal-benchmark.mjs"
+      - "scripts/lib/runtime-adapter.mjs"
+      - "scripts/lib/runtime-machine-discovery.mjs"
+      - "scripts/lib/runtime-machine-execution.mjs"
       - "scripts/benchmark-prepared-traversal.mjs"
+      - "scripts/verify-runtime-adapters.mjs"
       - "scripts/head.mjs"
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
@@ -164,6 +172,9 @@ jobs:
 
       - name: Verify prepared traversal cost identity and no-full-read boundary
         run: node scripts/benchmark-prepared-traversal.mjs --iterations 3
+
+      - name: Verify provider-neutral runtime adapter contract matrix
+        run: node scripts/verify-runtime-adapters.mjs
 
       - name: Verify native stdio and JavaScript conformance
         shell: bash

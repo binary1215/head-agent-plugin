@@ -38,12 +38,22 @@
     "authority": "Computation only with no instruction, promotion, control, project-mutation, or canon-mutation authority.",
     "status": "Strict request/response validation, resource limits, timeout/cancellation, structured errors, authority-escalation rejection, verified Go stdio transport, platform manifest integrity checks, bounded exact-child lifecycle, disclosed JavaScript fallback, and health-response conformance are active. A Go repository.scan.v1 candidate is complete-response conformant, but production manifests retain the JavaScript path because measured benefit is not yet material across repository sizes."
   },
+  "runtimeAdapters": {
+    "purpose": "Define a provider-neutral runtime, platform, and workspace-host boundary for privacy-bounded discovery and non-session observation before provider control.",
+    "contractVersion": "0.1.0",
+    "runtimes": ["codex", "opencode"],
+    "platforms": ["darwin", "linux", "win32"],
+    "workspaceHosts": ["native-process"],
+    "identity": "Static descriptor, discovery, bounded version observation, composition, and matrix identities are content-derived; provider sessions, raw commands and output, prompts, transcripts, endpoints, credentials, live process IDs, and physical adapter identity are excluded.",
+    "authority": "Capability contract only with no instruction, promotion, control, or canon-mutation authority. Consequential runtime control still requires an accepted ExecutionContract and exact project, caller, and child-process ownership.",
+    "status": "Projection-only Codex/OpenCode, contract-only platform, and native-process host references are active for deterministic inspection. Privacy-preserving current-host discovery and bounded fixed version invocation are active; the current Windows host verifies both runtimes without creating provider sessions. Provider hydration, messaging, caller fencing, process-tree control, and all runtime control operations remain disabled and deferred."
+  },
   "worldModel": {
     "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, replaceable graph projection, deterministic Markdown projection, explicit incremental refresh, debounced filesystem/CI trigger ingestion, opt-in safe automatic Markdown regeneration, and explicit document-candidate review/application are active; AST-accurate analysis, structured Git decision inference, live runtime probing/control, Obsidian/Notion, temporal projection of document-review receipts, and the optional GraphDB adapter are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding and document-review receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, local/in-memory/activated-ArcadeDB graph projection, prepared traversal, deterministic Markdown projection, explicit incremental refresh, debounced filesystem/CI trigger ingestion, opt-in safe automatic Markdown regeneration, explicit document-candidate review/application, privacy-preserving current-host runtime CLI discovery, and bounded non-session version evidence are active; AST-accurate analysis, structured Git decision inference, provider-session runtime control, Obsidian/Notion, live ArcadeDB performance evaluation, and compare-and-swap remote publication are deferred."
   },
   "incrementalRefresh": {
     "purpose": "Reconstruct changed observed project state as a new immutable World Model and GraphSnapshot without mutating canon or accepted execution inputs.",
@@ -62,7 +72,7 @@
     "relations": ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "PROPOSES_FROM", "PROPOSES_TO", "SUPPORTED_BY", "REVIEWED_BY", "ACCEPTED_BY", "REJECTED_BY", "PRODUCES", "PROMOTED_FROM"],
     "identity": "Logical identities exclude line locations, Git objects, GraphDB records, provider sessions, and document page IDs; revisions and graph/query/result artifacts are digest-verifiable.",
     "authority": "Rebuildable derived evidence only with no instruction, promotion, canonical, or unique authority.",
-    "status": "Product Canon projection, immutable onboarding receipts, reviewed product-to-code/test mappings, reviewed ChangeSets and impacts, optional VCS evidence, default candidate-space exclusion, zero-or-more SourceSnapshot/Revision/ChangeSet parents, and deterministic bounded traversal are active; automatic merge, conflict resolution, general candidate promotion, document review-receipt projection, and remote GraphProjectionAdapter backends are deferred."
+    "status": "Product Canon projection, immutable onboarding and document-review receipts, reviewed product-to-code/test mappings, reviewed ChangeSets and impacts, optional VCS evidence, default candidate-space exclusion, zero-or-more SourceSnapshot/Revision/ChangeSet parents, deterministic bounded traversal, and local/in-memory/ArcadeDB GraphProjectionAdapter backends are active; automatic merge, conflict resolution, general candidate promotion, compare-and-swap publication, and non-ArcadeDB remote backends are deferred."
   },
   "documentProjection": {
     "purpose": "Render one verified GraphSnapshot as a deterministic human-facing view without changing graph or project authority.",
@@ -72,7 +82,7 @@
     "identity": "GraphSnapshot identity, renderer protocol, deterministic relative paths, exact content digests, and authority flags determine DocumentProjection identity; adapter kind and physical locations are excluded.",
     "postRefreshPolicyVersion": "0.1.0",
     "documentChangeReviewVersion": "0.1.0",
-    "status": "Local and in-memory adapters, bounded index/node/relation pages, explicit generation/status, published-view drift protection, adapter conformance, immutable DocumentChangeCandidate capture, a manual safe default, explicit automatic mode, immutable post-refresh receipts, explicit document review, exact structured Product Canon application, and immutable application receipts are active; temporal projection of document review receipts, Obsidian, and Notion remain deferred."
+    "status": "Local and in-memory adapters, bounded index/node/relation pages, explicit generation/status, published-view drift protection, adapter conformance, immutable DocumentChangeCandidate capture, a manual safe default, explicit automatic mode, immutable post-refresh receipts, explicit document review, exact structured Product Canon application, immutable application receipts, and temporal audit projection are active; Obsidian and Notion remain deferred."
   },
   "roles": {
     "head": "Owns whole-outcome understanding, strategy, integration, and completion judgment.",
@@ -133,10 +143,17 @@
     "published Markdown drift protection and immutable DocumentChangeCandidate capture",
     "explicit document-to-Product-Canon ReviewDecision and application receipts",
     "review-gated Canon, GraphSnapshot, and Markdown reconciliation",
+    "temporal audit projection of document candidate, review, Product Model revision, and application receipts",
     "explicit post-refresh Markdown policy and opt-in automatic regeneration",
     "immutable post-refresh projection receipts linked to incremental refresh evidence",
     "versioned GitHistoryAdapter and all-reachable commit-message decision evidence",
     "versioned RuntimeStateAdapter and host-exported point-in-time runtime evidence",
+    "contract-only PlatformAdapter, AgentRuntimeAdapter, and WorkspaceHostAdapter references",
+    "deterministic Codex/OpenCode and Windows/macOS/Linux runtime contract matrix",
+    "privacy-bounded Codex/OpenCode executable discovery and non-session version evidence",
+    "fail-closed disabled runtime and workspace-host control operations",
+    "conformance-gated ArcadeDB snapshot, topology, server-expansion, and prepared-traversal projection",
+    "content-derived prepared-traversal cost evidence and read-only live benchmark boundary",
     "history-and-runtime-aware minimum-sufficient Context Capsules",
     "freshness-gated repository Context Compiler candidates",
     "read-only MCP inspection"
@@ -145,12 +162,11 @@
     "automatic provider runtime hydration from Fresh HEAD review",
     "authorized knowledge promotion into project canon",
     "AST-accurate semantic call graph",
-    "live runtime-state probing and streaming",
+    "provider-session runtime invocation and control beyond bounded non-session version evidence",
     "structured Git decision inference and supersession",
     "general conformance graph projection",
     "dedicated imported backlog evidence adapters",
     "automatic merge and conflict resolution",
-    "DocumentChangeCandidate review and application temporal projection",
     "Obsidian and Notion projection adapters",
     "GraphDB World Model store adapter",
     "compute-backed graph construction, traversal, and Context selection operations",

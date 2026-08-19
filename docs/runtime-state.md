@@ -6,6 +6,8 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this boundary.
 
 `RuntimeStateAdapter` version `0.1.0` imports a point-in-time host observation into the Repository World Model. It is a read-only evidence adapter, not an `AgentRuntimeAdapter`, process controller, session restorer, or authority source.
 
+The separate runtime-control plane has `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references plus privacy-preserving current-host CLI discovery. It records candidate availability and content-derived path identities without exposing raw paths. A distinct bounded version-evidence probe may execute the fixed non-session version surface and retain only normalized version, output digest/size, and lifecycle facts; it creates no provider session and grants no control. See [`runtime-adapters.md`](runtime-adapters.md).
+
 Every adapter must declare:
 
 - `authority: derived-evidence-only`;
@@ -77,10 +79,10 @@ Stale observations and their metadata are excluded. A Capsule can request expans
 
 ## Explicitly deferred
 
-- live runtime probing, streaming, and subscription;
+- live runtime execution probing, streaming, and subscription beyond read-only executable discovery;
 - provider-session hydration or restoration;
 - process launch, resume, interrupt, close, messaging, or fencing;
 - caller identity and child-process ownership enforcement;
-- Codex/OpenCode `AgentRuntimeAdapter` implementations.
+- live Codex/OpenCode machine-interface implementations beyond the projection-only contract references.
 
-Those belong to v0.6 runtime adapters and require platform-specific capability and process-ownership QA.
+Those remain v0.6 activation work and require platform-specific capability, project-binding, process-ownership, and lifecycle-cleanup QA.

@@ -17,7 +17,7 @@ A Run cannot start from a free-form goal. It requires a persisted and digest-ver
 
 A Run cannot finish with only a success string. Completion creates a `ResultPacket` containing evidence and verification. The project enters Review mode and blocks the next Run until HEAD records a `ReviewDecision`.
 
-The current implementation builds a deterministic Fresh HEAD review projection but does not yet launch or hydrate a provider runtime automatically. The calling HEAD must consume the verified projection and provide the decision.
+The current implementation builds a deterministic Fresh HEAD review projection but does not yet launch or hydrate a provider session automatically. The runtime-adapter layer makes the boundary inspectable and can perform a bounded non-session version observation without enabling provider control. The calling HEAD must consume the verified projection and provide the decision.
 
 ## Explicit mutation commands
 

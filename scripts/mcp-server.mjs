@@ -2,7 +2,7 @@
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { coreContract, inspectProject } from "./lib/head-core.mjs";
+import { coreContract, inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
@@ -25,6 +25,16 @@ export const tools = [
   {
     name: "head_project_status",
     description: "Read canonical HEAD project and Session/Run status without modifying the project.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "head_runtime_adapters",
+    description: "Inspect provider-neutral runtime contracts, privacy-bounded executable discovery, and fixed non-session version evidence without creating or controlling a provider session.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
@@ -360,7 +370,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.31" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.32" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -368,10 +378,12 @@ export async function dispatch(request) {
   try {
     const name = request.params?.name;
     const args = request.params?.arguments || {};
-    const value = name === "head_core_contract"
+    const value = await (name === "head_core_contract"
       ? coreContract()
       : name === "head_project_status"
         ? inspectProject(args.project_root)
+        : name === "head_runtime_adapters"
+          ? inspectRuntimeAdapters(args.project_root)
         : name === "head_onboarding_status"
           ? inspectOnboarding({ root: args.project_root })
         : name === "head_feature_mapping_status"
@@ -450,7 +462,7 @@ export async function dispatch(request) {
                             kind: args.kind || "",
                             limit: args.limit ?? 50,
                           })
-                          : (() => { throw new Error(`Unknown tool: ${name}`); })();
+                          : (() => { throw new Error(`Unknown tool: ${name}`); })());
     return success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
   } catch (error) {
     return failure(id, error.message);
