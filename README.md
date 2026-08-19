@@ -69,9 +69,12 @@ flowchart TB
     GS -->|bounded evidence| CC
     CC --> RA[Runtime Adapter]
     RA --> FR[Result + Fresh HEAD Review]
-    FR -->|accepted evidence| GS
     GS --> P[Local / ArcadeDB / Markdown projections]
 ```
+
+An accepted review is recorded as new lineage and can produce the next verified
+World Model and GraphSnapshot. That feedback step is described here instead of
+drawn as a loop so the primary execution path stays easy to read.
 
 ### What is a GraphSnapshot?
 
