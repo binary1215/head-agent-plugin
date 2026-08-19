@@ -81,6 +81,20 @@ function runResultApplicationFile(projectRoot, authorizationId) {
   return path.join(runtimeInvocationRecordDirectory(projectRoot, authorizationId), "application.json");
 }
 
+export function normalizeRuntimeRunResultTextProjection({ outcome, planDelta, impactRadius, unknowns } = {}) {
+  if (typeof outcome !== "string" || typeof planDelta !== "string"
+    || !Array.isArray(impactRadius) || impactRadius.some((item) => typeof item !== "string")
+    || !Array.isArray(unknowns) || unknowns.some((item) => typeof item !== "string")) {
+    fail("Runtime Run result text projection is invalid.", "INVALID_RUNTIME_RUN_RESULT_APPLICATION");
+  }
+  return {
+    outcome: outcome.trim(),
+    planDelta: planDelta.trim(),
+    impactRadius: impactRadius.map((item) => item.trim()),
+    unknowns: unknowns.map((item) => item.trim()),
+  };
+}
+
 function canonicalRunResultFields(record) {
   const { authorization, receipt, draft } = record;
   const lifecycleEvidence = draft.evidence[0];
@@ -93,8 +107,18 @@ function canonicalRunResultFields(record) {
     || lifecycleVerification.status !== "passed") {
     fail("Only a completed, native-supervised actual-provider Run result can enter canonical Execution Lineage.", "RUNTIME_RUN_RESULT_NOT_APPLICABLE");
   }
-  return {
+  const normalizedText = normalizeRuntimeRunResultTextProjection({
     outcome: draft.outcome,
+    planDelta: draft.planDelta,
+    impactRadius: draft.impactRadius,
+    unknowns: draft.unknowns,
+  });
+  return {
+    // Execution Lineage canonicalizes the user-facing text boundary before it
+    // hashes a ResultPacket. Mirror that normalization here so harmless model
+    // whitespace cannot make an otherwise exact verified draft conflict with
+    // its canonical projection.
+    outcome: normalizedText.outcome,
     evidence: [{
       kind: "RuntimeInvocationResultEvidence",
       runtime: authorization.runtime,
@@ -113,8 +137,8 @@ function canonicalRunResultFields(record) {
       rawTranscriptIncluded: false,
       instructionAuthority: false,
     }],
-    planDelta: draft.planDelta,
-    impactRadius: [...draft.impactRadius],
+    planDelta: normalizedText.planDelta,
+    impactRadius: normalizedText.impactRadius,
     verification: [{
       kind: "RuntimeInvocationResultVerification",
       runtime: authorization.runtime,
@@ -126,24 +150,27 @@ function canonicalRunResultFields(record) {
       inputDigestMatched: lifecycleVerification.inputDigestMatched,
       providerVerification: [...draft.providerResult.verification],
     }],
-    unknowns: [...draft.unknowns],
+    unknowns: normalizedText.unknowns,
     knowledgeProposals: [],
   };
 }
 
 function verifyCanonicalRunResultPacket(resultPacket, fields, authorization) {
-  if (resultPacket?.kind !== "ResultPacket"
-    || resultPacket.executionContractId !== authorization.scope.executionContractId
-    || canonicalJson({
-      outcome: resultPacket.outcome,
-      evidence: resultPacket.evidence,
-      planDelta: resultPacket.planDelta,
-      impactRadius: resultPacket.impactRadius,
-      verification: resultPacket.verification,
-      unknowns: resultPacket.unknowns,
-      knowledgeProposals: resultPacket.knowledgeProposals,
-    }) !== canonicalJson(fields)) {
-    fail("Canonical ResultPacket does not exactly match the verified runtime draft.", "RUNTIME_RUN_RESULT_PACKET_CONFLICT");
+  const packetFields = {
+    outcome: resultPacket?.outcome,
+    evidence: resultPacket?.evidence,
+    planDelta: resultPacket?.planDelta,
+    impactRadius: resultPacket?.impactRadius,
+    verification: resultPacket?.verification,
+    unknowns: resultPacket?.unknowns,
+    knowledgeProposals: resultPacket?.knowledgeProposals,
+  };
+  const mismatchedFields = Object.keys(fields)
+    .filter((field) => canonicalJson(packetFields[field]) !== canonicalJson(fields[field]));
+  if (resultPacket?.kind !== "ResultPacket") mismatchedFields.push("kind");
+  if (resultPacket?.executionContractId !== authorization.scope.executionContractId) mismatchedFields.push("executionContractId");
+  if (mismatchedFields.length) {
+    fail(`Canonical ResultPacket does not exactly match the verified runtime draft (fields: ${[...new Set(mismatchedFields)].sort(compareText).join(", ")}).`, "RUNTIME_RUN_RESULT_PACKET_CONFLICT");
   }
   return resultPacket;
 }

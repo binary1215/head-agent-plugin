@@ -38,7 +38,11 @@ import {
   executeCodexRuntimeInvocation,
   verifyCodexExecWireResultSchema,
 } from "./lib/runtime-codex-exec.mjs";
-import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
+import {
+  applyRuntimeRunResult,
+  normalizeRuntimeRunResultTextProjection,
+  readRuntimeInvocationResult,
+} from "./lib/runtime-run-result-application.mjs";
 import { resolveVerifiedProcessSupervisor } from "./lib/runtime-process-supervisor.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -201,6 +205,18 @@ async function main() {
       "codex.turn-failed",
     ]), "Codex provider diagnostics were not classified deterministically.");
     assert(!JSON.stringify(classifiedCodexDiagnostics).includes("private"), "Codex provider diagnostics retained raw error content.");
+    const normalizedRunText = normalizeRuntimeRunResultTextProjection({
+      outcome: "  completed  ",
+      planDelta: "  wrote one file  ",
+      impactRadius: ["  run-output.txt  "],
+      unknowns: ["  none beyond bounded verification  "],
+    });
+    assert(JSON.stringify(normalizedRunText) === JSON.stringify({
+      outcome: "completed",
+      planDelta: "wrote one file",
+      impactRadius: ["run-output.txt"],
+      unknowns: ["none beyond bounded verification"],
+    }), "Runtime Run result text projection diverged from Execution Lineage normalization.");
     fs.writeFileSync(path.join(resolvedRoot, "example.mjs"), "export const answer = 42;\n", "utf8");
     const initialized = initializeProject({ root: resolvedRoot, pluginRoot, runtimes: ["codex", "opencode"] });
     assert(initialized.status === "ready", "Fixture project initialization failed.");
@@ -501,8 +517,10 @@ async function main() {
       limits: { timeoutMs: 5_000 },
       persist: true,
     }).authorization;
-    assert(defaultEventAuthorization.limits.maxEventBytes === 1024 * 1024,
-      "Current default did not reserve the bounded 1 MiB Codex event envelope.");
+    assert(defaultEventAuthorization.limits.maxEventBytes === 2 * 1024 * 1024,
+      "Current default did not reserve the bounded 2 MiB Codex event envelope.");
+    assert(defaultEventAuthorization.limits.maxStdoutBytes === 8 * 1024 * 1024,
+      "Current default did not retain the bounded 8 MiB total stdout envelope.");
     const defaultEventExecution = await executeCodexRuntimeInvocation({
       root: resolvedRoot,
       authorization: defaultEventAuthorization,

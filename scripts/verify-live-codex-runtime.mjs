@@ -23,6 +23,12 @@ const nonce = `${process.pid}-${Date.now()}`;
 const projectRoot = path.join(pluginRoot, `.qa-live-codex-${nonce}`);
 const operationalRoot = path.join(pluginRoot, `.qa-live-codex-operational-${nonce}`);
 const liveOptIn = "HEAD_AGENT_LIVE_CODEX_E2E";
+const liveModeEnv = "HEAD_AGENT_LIVE_CODEX_E2E_MODE";
+const LIVE_MODE_PLANS = Object.freeze({
+  "run-only": Object.freeze({ mode: "run-only", includeSession: false }),
+  "session-and-run": Object.freeze({ mode: "session-and-run", includeSession: true }),
+});
+let activeLivePlan = null;
 
 function assert(condition, message) {
   if (!condition) throw Object.assign(new Error(message), { code: "LIVE_CODEX_E2E_ASSERTION" });
@@ -46,6 +52,17 @@ function safeExecutionFailureSummary(execution) {
 
 function digest(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function resolveLivePlan(environment = process.env) {
+  const mode = String(environment[liveModeEnv] || "run-only").trim().toLowerCase();
+  const plan = LIVE_MODE_PLANS[mode];
+  if (!plan) {
+    throw Object.assign(new Error(`${liveModeEnv} must be run-only or session-and-run when provided.`), {
+      code: "LIVE_CODEX_E2E_MODE_INVALID",
+    });
+  }
+  return plan;
 }
 
 function recordProcess(event) {
@@ -101,8 +118,9 @@ async function buildActualRuntimeEvidence(root) {
 }
 
 async function main() {
+  activeLivePlan = resolveLivePlan();
   if (process.env[liveOptIn] !== "1") {
-    throw Object.assign(new Error(`${liveOptIn}=1 is required because this verifier performs two real Codex model calls.`), { code: "LIVE_CODEX_E2E_OPT_IN_REQUIRED" });
+    throw Object.assign(new Error(`${liveOptIn}=1 is required because ${activeLivePlan.mode} performs real Codex model calls.`), { code: "LIVE_CODEX_E2E_OPT_IN_REQUIRED" });
   }
   for (const [root, prefix] of [[projectRoot, ".qa-live-codex-"], [operationalRoot, ".qa-live-codex-operational-"]]) {
     assert(root.startsWith(`${pluginRoot}${path.sep}`) && path.basename(root).startsWith(prefix), "Live Codex fixture root escaped the plugin workspace.");
@@ -121,46 +139,58 @@ async function main() {
     const initialized = initializeProject({ root: projectRoot, pluginRoot, runtimes: ["codex"] });
     assert(initialized.status === "ready", "Live Codex fixture project did not initialize.");
 
-    const sessionEvidence = await buildActualRuntimeEvidence(projectRoot);
-    const sessionRequest = [
-      "Read fixture.txt and report the marker as bounded evidence.",
-      "Do not change any file, do not perform network or external writes, and use only relative paths in the result.",
-      "Because this is a Session result, return an empty planDelta and an empty impactRadius.",
-    ].join(" ");
-    const sessionAuthorization = buildRuntimeInvocationAuthorization({
-      root: projectRoot,
-      runtime: "codex",
-      scope: { kind: "session", request: sessionRequest, contextCapsuleId: null },
-      workspaceMode: "read-only",
-      protocolEvidence: sessionEvidence.protocolEvidence,
-      projectBinding: sessionEvidence.projectBinding,
-      limits: {
-        timeoutMs: 600_000,
-        maxStdoutBytes: 2 * 1024 * 1024,
-        maxStderrBytes: 512 * 1024,
-        maxEvents: 4_096,
-        maxEventBytes: 1024 * 1024,
-      },
-      persist: true,
-    }).authorization;
-    const sessionExecution = await executeCodexRuntimeInvocation({
-      root: projectRoot,
-      authorization: sessionAuthorization,
-      sessionRequest,
-      protocolEvidence: sessionEvidence.protocolEvidence,
-      projectBinding: sessionEvidence.projectBinding,
-      supervisorSelection,
-      onProcessEvent: recordProcess,
-      persist: true,
-    });
-    assert(sessionExecution.receipt.status === "completed" && sessionExecution.actualProviderInvoked === true,
-      `Live Codex Session did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(sessionExecution))}`);
-    assert(sessionExecution.descendantTreeOwnershipValidated === true, "Live Codex Session did not prove descendant-tree ownership.");
-    assert(sessionExecution.draft.scopeKind === "session" && sessionExecution.draft.freshHeadReviewRequired === false, "Live Codex Session acquired Run review semantics.");
-    assert(sessionExecution.draft.providerResult?.planDelta === "" && sessionExecution.draft.providerResult?.impactRadius.length === 0, "Live Codex Session returned a Run-shaped result.");
-    assert(digest(fs.readFileSync(fixtureFile)) === fixtureDigest, "Live Codex Session changed the read-only fixture.");
-    const afterSession = inspectProject(projectRoot);
-    assert(afterSession.state.mode === "session" && !afterSession.state.activeRunId && !afterSession.state.pendingReview, "Live Codex Session manufactured Run or Review state.");
+    let sessionSummary = null;
+    if (activeLivePlan.includeSession) {
+      const sessionEvidence = await buildActualRuntimeEvidence(projectRoot);
+      const sessionRequest = [
+        "Read fixture.txt and report the marker as bounded evidence.",
+        "Do not change any file, do not perform network or external writes, and use only relative paths in the result.",
+        "Because this is a Session result, return an empty planDelta and an empty impactRadius.",
+      ].join(" ");
+      const sessionAuthorization = buildRuntimeInvocationAuthorization({
+        root: projectRoot,
+        runtime: "codex",
+        scope: { kind: "session", request: sessionRequest, contextCapsuleId: null },
+        workspaceMode: "read-only",
+        protocolEvidence: sessionEvidence.protocolEvidence,
+        projectBinding: sessionEvidence.projectBinding,
+        limits: {
+          timeoutMs: 600_000,
+          maxStdoutBytes: 8 * 1024 * 1024,
+          maxStderrBytes: 512 * 1024,
+          maxEvents: 4_096,
+          maxEventBytes: 2 * 1024 * 1024,
+        },
+        persist: true,
+      }).authorization;
+      const sessionExecution = await executeCodexRuntimeInvocation({
+        root: projectRoot,
+        authorization: sessionAuthorization,
+        sessionRequest,
+        protocolEvidence: sessionEvidence.protocolEvidence,
+        projectBinding: sessionEvidence.projectBinding,
+        supervisorSelection,
+        onProcessEvent: recordProcess,
+        persist: true,
+      });
+      assert(sessionExecution.receipt.status === "completed" && sessionExecution.actualProviderInvoked === true,
+        `Live Codex Session did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(sessionExecution))}`);
+      assert(sessionExecution.descendantTreeOwnershipValidated === true, "Live Codex Session did not prove descendant-tree ownership.");
+      assert(sessionExecution.draft.scopeKind === "session" && sessionExecution.draft.freshHeadReviewRequired === false, "Live Codex Session acquired Run review semantics.");
+      assert(sessionExecution.draft.providerResult?.planDelta === "" && sessionExecution.draft.providerResult?.impactRadius.length === 0, "Live Codex Session returned a Run-shaped result.");
+      assert(digest(fs.readFileSync(fixtureFile)) === fixtureDigest, "Live Codex Session changed the read-only fixture.");
+      const afterSession = inspectProject(projectRoot);
+      assert(afterSession.state.mode === "session" && !afterSession.state.activeRunId && !afterSession.state.pendingReview, "Live Codex Session manufactured Run or Review state.");
+      sessionSummary = {
+        authorizationId: sessionAuthorization.authorizationId,
+        lifecycleReceiptId: sessionExecution.receipt.receiptId,
+        draftId: sessionExecution.draft.draftId,
+        actualProviderInvoked: true,
+        descendantTreeOwnershipValidated: true,
+        freshHeadReviewRequired: false,
+        projectMutationObserved: false,
+      };
+    }
 
     const capsule = compileContext({
       root: projectRoot,
@@ -202,10 +232,10 @@ async function main() {
       limits: {
         timeoutMs: 600_000,
         maxInputBytes: 4 * 1024 * 1024,
-        maxStdoutBytes: 4 * 1024 * 1024,
+        maxStdoutBytes: 8 * 1024 * 1024,
         maxStderrBytes: 512 * 1024,
         maxEvents: 8_192,
-        maxEventBytes: 1024 * 1024,
+        maxEventBytes: 2 * 1024 * 1024,
       },
       persist: true,
     }).authorization;
@@ -223,6 +253,7 @@ async function main() {
     assert(runExecution.descendantTreeOwnershipValidated === true, "Live Codex Run did not prove descendant-tree ownership.");
     assert(runExecution.draft.scopeKind === "run" && runExecution.draft.freshHeadReviewRequired === true, "Live Codex Run did not retain Run review semantics.");
     assert(fs.readFileSync(path.join(projectRoot, "run-output.txt"), "utf8") === "HEAD live Run verified\n", "Live Codex Run did not create the exact accepted output.");
+    assert(digest(fs.readFileSync(fixtureFile)) === fixtureDigest, "Live Codex Run changed the protected fixture marker.");
 
     const applied = applyRuntimeRunResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
     assert(applied.status === "runtime_run_result_applied", "Live Codex Run draft was not applied to canonical Execution Lineage.");
@@ -242,18 +273,11 @@ async function main() {
     assert(completed.state.mode === "session" && completed.state.lastReviewDecisionId === reviewed.reviewDecision.reviewDecisionId, "Live Run did not return to the reviewed HEAD Session state.");
 
     process.stdout.write(`${JSON.stringify({
-      status: "live_codex_session_and_run_verified",
+      status: activeLivePlan.includeSession ? "live_codex_session_and_run_verified" : "live_codex_run_verified",
+      mode: activeLivePlan.mode,
       projectId: initialized.project.projectId,
       headSessionId: completed.state.sessionId,
-      session: {
-        authorizationId: sessionAuthorization.authorizationId,
-        lifecycleReceiptId: sessionExecution.receipt.receiptId,
-        draftId: sessionExecution.draft.draftId,
-        actualProviderInvoked: true,
-        descendantTreeOwnershipValidated: true,
-        freshHeadReviewRequired: false,
-        projectMutationObserved: false,
-      },
+      session: sessionSummary,
       run: {
         runId: run.runId,
         authorizationId: runAuthorization.authorizationId,
@@ -284,6 +308,11 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${JSON.stringify({ status: "failed", code: error.code || "LIVE_CODEX_E2E_ERROR", error: error.message })}\n`);
+  process.stderr.write(`${JSON.stringify({
+    status: "failed",
+    mode: activeLivePlan?.mode || "unresolved",
+    code: error.code || "LIVE_CODEX_E2E_ERROR",
+    error: error.message,
+  })}\n`);
   process.exitCode = 1;
 });

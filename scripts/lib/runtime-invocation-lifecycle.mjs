@@ -37,10 +37,10 @@ const DEFAULT_LIMITS = Object.freeze({
   timeoutMs: 60_000,
   terminationGraceMs: 1_000,
   maxInputBytes: 2 * 1024 * 1024,
-  maxStdoutBytes: 4 * 1024 * 1024,
+  maxStdoutBytes: 8 * 1024 * 1024,
   maxStderrBytes: 256 * 1024,
   maxEvents: 4_096,
-  maxEventBytes: 1024 * 1024,
+  maxEventBytes: 2 * 1024 * 1024,
 });
 
 const fail = (message, code = "RUNTIME_INVOCATION_LIFECYCLE_ERROR") => {
@@ -119,7 +119,7 @@ function normalizeLimits(value = {}) {
     maxStdoutBytes: [1_024, 16 * 1024 * 1024],
     maxStderrBytes: [1_024, 2 * 1024 * 1024],
     maxEvents: [1, 16_384],
-    maxEventBytes: [256, 1024 * 1024],
+    maxEventBytes: [256, 2 * 1024 * 1024],
   };
   for (const [key, [minimum, maximum]] of Object.entries(ranges)) {
     if (!Number.isSafeInteger(limits[key]) || limits[key] < minimum || limits[key] > maximum) {
