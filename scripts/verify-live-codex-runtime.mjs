@@ -134,7 +134,13 @@ async function main() {
       workspaceMode: "read-only",
       protocolEvidence: sessionEvidence.protocolEvidence,
       projectBinding: sessionEvidence.projectBinding,
-      limits: { timeoutMs: 600_000, maxStdoutBytes: 2 * 1024 * 1024, maxStderrBytes: 512 * 1024, maxEvents: 4_096 },
+      limits: {
+        timeoutMs: 600_000,
+        maxStdoutBytes: 2 * 1024 * 1024,
+        maxStderrBytes: 512 * 1024,
+        maxEvents: 4_096,
+        maxEventBytes: 1024 * 1024,
+      },
       persist: true,
     }).authorization;
     const sessionExecution = await executeCodexRuntimeInvocation({
@@ -193,7 +199,14 @@ async function main() {
       workspaceMode: "workspace-write",
       protocolEvidence: runEvidence.protocolEvidence,
       projectBinding: runEvidence.projectBinding,
-      limits: { timeoutMs: 600_000, maxInputBytes: 4 * 1024 * 1024, maxStdoutBytes: 4 * 1024 * 1024, maxStderrBytes: 512 * 1024, maxEvents: 8_192 },
+      limits: {
+        timeoutMs: 600_000,
+        maxInputBytes: 4 * 1024 * 1024,
+        maxStdoutBytes: 4 * 1024 * 1024,
+        maxStderrBytes: 512 * 1024,
+        maxEvents: 8_192,
+        maxEventBytes: 1024 * 1024,
+      },
       persist: true,
     }).authorization;
     const runExecution = await executeCodexRuntimeInvocation({

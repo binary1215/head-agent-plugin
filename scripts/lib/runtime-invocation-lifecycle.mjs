@@ -40,7 +40,7 @@ const DEFAULT_LIMITS = Object.freeze({
   maxStdoutBytes: 4 * 1024 * 1024,
   maxStderrBytes: 256 * 1024,
   maxEvents: 4_096,
-  maxEventBytes: 128 * 1024,
+  maxEventBytes: 1024 * 1024,
 });
 
 const fail = (message, code = "RUNTIME_INVOCATION_LIFECYCLE_ERROR") => {
@@ -108,6 +108,10 @@ function normalizeLimits(value = {}) {
   const unexpected = Object.keys(value).filter((key) => !(key in DEFAULT_LIMITS));
   if (unexpected.length) fail(`Invocation limits contain unsupported fields: ${unexpected.sort().join(", ")}.`, "INVALID_RUNTIME_INVOCATION_LIMITS");
   const limits = { ...DEFAULT_LIMITS, ...value };
+  if (!Object.prototype.hasOwnProperty.call(value, "maxEventBytes")
+    && Object.prototype.hasOwnProperty.call(value, "maxStdoutBytes")) {
+    limits.maxEventBytes = Math.min(DEFAULT_LIMITS.maxEventBytes, limits.maxStdoutBytes);
+  }
   const ranges = {
     timeoutMs: [1_000, 3_600_000],
     terminationGraceMs: [100, 10_000],

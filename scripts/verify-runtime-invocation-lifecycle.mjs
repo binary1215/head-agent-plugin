@@ -130,6 +130,30 @@ process.stdin.on('end', () => {
 });
 `;
 
+const CODEX_LARGE_EVENT_PROTOCOL_FIXTURE = String.raw`
+let input = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => { input = Buffer.concat([input, chunk]); });
+process.stdin.on('end', () => {
+  const result = {
+    schemaVersion: 1,
+    kind: 'RuntimeStructuredResult',
+    protocolVersion: '0.1.0',
+    outcome: 'Codex large-event protocol fixture completed.',
+    evidence: ['Structured output preceded one bounded large tool event.'],
+    planDelta: '',
+    impactRadius: [],
+    verification: ['The terminal lifecycle event was observed.'],
+    unknowns: [],
+  };
+  const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
+  write({ type: 'thread.started', thread_id: 'codex-large-event-fixture-thread' });
+  write({ type: 'turn.started' });
+  write({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(result) } });
+  write({ type: 'item.completed', item: { type: 'command_execution', aggregated_output: 'x'.repeat(160 * 1024), exit_code: 0, status: 'completed' } });
+  setTimeout(() => write({ type: 'turn.completed', usage: { input_tokens: input.length, output_tokens: 1 } }), 250);
+});
+`;
+
 async function main() {
   const resolvedRoot = path.resolve(temporaryRoot);
   const resolvedOperationalRoot = path.resolve(temporaryOperationalRoot);
@@ -430,6 +454,79 @@ async function main() {
       },
     });
     assert(mcpCodexProtocolResult.result?.structuredContent?.draft?.draftHash === codexProtocolExecution.draft.draftHash, "Codex invocation MCP read failed.");
+    const legacyEventRequest = "Reproduce the historical Codex large-event boundary with the former explicit 128 KiB limit.";
+    const legacyEventAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      scope: { kind: "session", request: legacyEventRequest },
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000, maxEventBytes: 128 * 1024 },
+      persist: true,
+    }).authorization;
+    const legacyEventExecution = await executeCodexRuntimeInvocation({
+      root: resolvedRoot,
+      authorization: legacyEventAuthorization,
+      sessionRequest: legacyEventRequest,
+      protocolEvidence,
+      projectBinding,
+      targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+      supervisorSelection,
+      providerArguments: ["-e", CODEX_LARGE_EVENT_PROTOCOL_FIXTURE],
+      evidenceMode: "protocol-fixture",
+      onProcessEvent: recordProcess,
+      persist: true,
+    });
+    assert(legacyEventExecution.receipt.status === "invalid-event"
+      && legacyEventExecution.receipt.providerBoundary.structuredResultObserved === true
+      && legacyEventExecution.receipt.providerBoundary.diagnosticCodes.includes("codex.event-byte-limit")
+      && legacyEventExecution.draft.unknowns.includes("Provider diagnostic: codex.event-byte-limit")
+      && !legacyEventExecution.receipt.eventTypes.includes("turn.completed"),
+    "Former 128 KiB event boundary did not reproduce the live Run failure shape.");
+    const recordedLegacyEventExecution = readRuntimeInvocationResult({
+      root: resolvedRoot,
+      authorizationId: legacyEventAuthorization.authorizationId,
+    });
+    assert(!JSON.stringify(recordedLegacyEventExecution).includes("aggregated_output"),
+      "Rejected large event payload was persisted in the invocation record.");
+    const defaultEventRequest = "Accept one bounded Codex large event under the current default and observe terminal completion.";
+    const defaultEventAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      scope: { kind: "session", request: defaultEventRequest },
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000 },
+      persist: true,
+    }).authorization;
+    assert(defaultEventAuthorization.limits.maxEventBytes === 1024 * 1024,
+      "Current default did not reserve the bounded 1 MiB Codex event envelope.");
+    const defaultEventExecution = await executeCodexRuntimeInvocation({
+      root: resolvedRoot,
+      authorization: defaultEventAuthorization,
+      sessionRequest: defaultEventRequest,
+      protocolEvidence,
+      projectBinding,
+      targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+      supervisorSelection,
+      providerArguments: ["-e", CODEX_LARGE_EVENT_PROTOCOL_FIXTURE],
+      evidenceMode: "protocol-fixture",
+      onProcessEvent: recordProcess,
+      persist: true,
+    });
+    assert(defaultEventExecution.receipt.status === "completed"
+      && defaultEventExecution.receipt.providerBoundary.structuredResultObserved === true
+      && defaultEventExecution.receipt.eventTypes.includes("turn.completed")
+      && defaultEventExecution.receipt.providerBoundary.diagnosticCodes.length === 0,
+    "Current bounded large-event default did not preserve structured result and terminal completion.");
+    const recordedDefaultEventExecution = readRuntimeInvocationResult({
+      root: resolvedRoot,
+      authorizationId: defaultEventAuthorization.authorizationId,
+    });
+    assert(!JSON.stringify(recordedDefaultEventExecution).includes("aggregated_output"),
+      "Accepted large event payload was persisted in the invocation record.");
     const sessionWritePreview = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
       runtime: "codex",
@@ -720,6 +817,8 @@ async function main() {
       codexPortableWireSchemaValidated: true,
       semanticResultBoundsRetained: true,
       codexPrivacyReducedDiagnosticsValidated: true,
+      codexLargeEventBoundaryReproduced: true,
+      codexLargeEventDefaultValidated: true,
       providerNeutralInvocationRecordValidated: true,
       opencodeProtocolFixtureModeValidated: true,
       sessionRunResultApplicationRejected: true,
