@@ -14,6 +14,7 @@ import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncr
 import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
 import { inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision } from "./lib/document-change-review.mjs";
 import { inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
+import { readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 
 const protocolVersion = "2024-11-05";
 export const tools = [
@@ -39,6 +40,19 @@ export const tools = [
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
       required: ["project_root"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "head_runtime_invocation_authorization",
+    description: "Read and digest-verify one ExecutionContract-bound runtime invocation authorization without invoking or controlling a provider.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        authorization_id: { type: "string", pattern: "^runtime-invocation-authorization-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "authorization_id"],
       additionalProperties: false,
     },
   },
@@ -370,7 +384,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.33" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.34" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -384,6 +398,8 @@ export async function dispatch(request) {
         ? inspectProject(args.project_root)
         : name === "head_runtime_adapters"
           ? inspectRuntimeAdapters(args.project_root)
+        : name === "head_runtime_invocation_authorization"
+          ? readRuntimeInvocationAuthorization({ root: args.project_root, authorizationId: args.authorization_id })
         : name === "head_onboarding_status"
           ? inspectOnboarding({ root: args.project_root })
         : name === "head_feature_mapping_status"

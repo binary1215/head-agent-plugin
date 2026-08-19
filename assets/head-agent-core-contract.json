@@ -44,16 +44,16 @@
     "runtimes": ["codex", "opencode"],
     "platforms": ["darwin", "linux", "win32"],
     "workspaceHosts": ["native-process"],
-    "identity": "Static descriptor, discovery, bounded version and fixed-help protocol observation, project/Session capability binding, composition, and matrix identities are content-derived; provider sessions, raw commands and output, project paths and content, prompts, transcripts, endpoints, credentials, live process IDs, and physical adapter identity are excluded.",
-    "authority": "Capability contract only with no instruction, promotion, control, or canon-mutation authority. Consequential runtime control still requires an accepted ExecutionContract and exact project, caller, and child-process ownership.",
-    "status": "Projection-only Codex/OpenCode, contract-only platform, and native-process host references are active for deterministic inspection. Privacy-preserving current-host discovery, bounded fixed version invocation, provider-specific fixed-help capability observation, and canonical HEAD project/Session capability binding are active; the current Windows host verifies both runtimes without creating provider sessions. Actual provider-session binding, hydration, messaging, caller fencing, process-tree control, and all runtime control operations remain disabled and deferred."
+    "identity": "Static descriptor, discovery, bounded version/help observation, project/Session binding, invocation authorization, event envelope, lifecycle receipt, and ResultPacket draft identities are content-derived; provider sessions, raw commands/output, project paths, prompts, transcripts, credentials, live process IDs, and physical adapter identity are excluded.",
+    "authority": "Capability never grants authorization. A runtime authorization derives only from an exact active Run and ExecutionContract with explicit runtime/workspace actions; it still cannot execute a provider until a single-use lease and live ownership boundary are active.",
+    "status": "Codex/OpenCode discovery, bounded non-session interface evidence, canonical HEAD project/Session capability binding, ExecutionContract-bound non-executing invocation authorization, privacy-reduced event/receipt/draft schemas, and no-descendant fixture lifecycle conformance are active. Actual provider-session binding, execution leases, live caller/process-tree control, and all provider runtime operations remain disabled."
   },
   "worldModel": {
     "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding and document-review receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, local/in-memory/activated-ArcadeDB graph projection, prepared traversal, deterministic Markdown projection, explicit incremental refresh, debounced filesystem/CI trigger ingestion, opt-in safe automatic Markdown regeneration, explicit document-candidate review/application, privacy-preserving current-host runtime CLI discovery, bounded non-session version and protocol evidence, and canonical HEAD project/Session capability binding are active; AST-accurate analysis, structured Git decision inference, provider-session runtime control, Obsidian/Notion, live ArcadeDB performance evaluation, and compare-and-swap remote publication are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal revisions, reviewed mappings/ChangeSets/impacts, optional VCS evidence, immutable onboarding/document-review receipts, bounded traversal, replaceable graph/document projections, incremental refresh, current-host runtime evidence, canonical HEAD project/Session binding, non-executing runtime invocation authorization, and lifecycle schema conformance are active; actual provider runtime control, AST-accurate analysis, Obsidian/Notion, live ArcadeDB performance evaluation, and compare-and-swap remote publication are deferred."
   },
   "incrementalRefresh": {
     "purpose": "Reconstruct changed observed project state as a new immutable World Model and GraphSnapshot without mutating canon or accepted execution inputs.",
@@ -153,6 +153,10 @@
     "privacy-bounded Codex/OpenCode executable discovery and non-session version evidence",
     "provider-specific fixed-help protocol capability evidence",
     "canonical HEAD project and Session runtime capability binding",
+    "ExecutionContract-bound non-executing runtime invocation authorization",
+    "privacy-reduced runtime event envelopes and lifecycle receipts",
+    "transcript-free RuntimeResultPacketDraft",
+    "no-descendant Codex/OpenCode lifecycle conformance with timeout cleanup",
     "fail-closed disabled runtime and workspace-host control operations",
     "conformance-gated ArcadeDB snapshot, topology, server-expansion, and prepared-traversal projection",
     "content-derived prepared-traversal cost evidence and read-only live benchmark boundary",
@@ -164,8 +168,9 @@
     "automatic provider runtime hydration from Fresh HEAD review",
     "authorized knowledge promotion into project canon",
     "AST-accurate semantic call graph",
-    "actual provider-session project binding, invocation, and control beyond bounded non-session capability evidence",
-    "bounded provider event, ResultPacket, cancellation, and close conformance",
+    "actual provider-session project binding, invocation, and control",
+    "durable single-use provider execution leases",
+    "actual provider event normalization, cancellation, and close conformance",
     "structured Git decision inference and supersession",
     "general conformance graph projection",
     "dedicated imported backlog evidence adapters",

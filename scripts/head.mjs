@@ -17,6 +17,7 @@ import { inspectRefreshTriggers, processRefreshTriggerBatch, readRefreshTriggerD
 import { inspectPostRefreshProjectionPolicy, setPostRefreshProjectionPolicy } from "./lib/post-refresh-projection.mjs";
 import { applyDocumentChangeReview, inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision, reviewDocumentChanges } from "./lib/document-change-review.mjs";
 import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
+import { buildRuntimeInvocationAuthorization, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -41,6 +42,8 @@ export function usage() {
       "head status <project>",
       "head doctor <project>",
       "head runtime-adapters <project>",
+      "head runtime-invocation-authorize <project> --input <authorization.json>",
+      "head runtime-invocation-read <project> --authorization <runtime-invocation-authorization-id>",
       "head onboarding-start <project> [--input <onboarding.json>]",
       "head onboarding-status <project>",
       "head onboarding-review <project> --input <review.json>",
@@ -126,6 +129,20 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "init") return initializeProject({ root, pluginRoot, runtimes: options.runtime?.split(",") });
   if (command === "status" || command === "doctor") return inspectProject(root);
   if (command === "runtime-adapters") return inspectRuntimeAdapters(root);
+  if (command === "runtime-invocation-authorize") {
+    const input = inputJson(options, "Runtime invocation authorization");
+    const allowed = new Set(["runtime", "workspaceMode", "limits"]);
+    const unexpected = Object.keys(input).filter((key) => !allowed.has(key));
+    if (unexpected.length) throw new Error(`Runtime invocation authorization contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    return inspectRuntimeAdapters(root).then((runtimeStatus) => buildRuntimeInvocationAuthorization({
+      ...input,
+      root,
+      protocolEvidence: runtimeStatus.protocolEvidence,
+      projectBinding: runtimeStatus.projectBinding,
+      persist: true,
+    }));
+  }
+  if (command === "runtime-invocation-read") return readRuntimeInvocationAuthorization({ root, authorizationId: options.authorization });
   if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
   if (command === "onboarding-status") return inspectOnboarding({ root });
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });
