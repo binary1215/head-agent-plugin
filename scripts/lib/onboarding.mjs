@@ -37,9 +37,10 @@ import { readRepositorySourceScope, writeRepositorySourceScope } from "./reposit
 
 export const ONBOARDING_CANDIDATE_VERSION = "0.2.0";
 export const ONBOARDING_REVIEW_VERSION = "0.1.0";
-export const ONBOARDING_INFERENCE_VERSION = "0.2.0";
+export const ONBOARDING_INFERENCE_VERSION = "0.3.0";
 
 const MAX_INFERRED_SYMBOLS = 24;
+const MAX_INFERRED_CONCEPTS = 16;
 const MAX_CANDIDATES = 200;
 const MAX_EVIDENCE_RECORDS = 250;
 const MAX_UNKNOWNS = 100;
@@ -426,10 +427,84 @@ function productSymbolScore({ file, symbol }) {
   let score = file.classification === "source" ? 20 : 4;
   score += symbol.kind === "function" ? 14 : symbol.kind === "class" ? 8 : 2;
   if (/\b(?:create|start|stop|open|close|connect|disconnect|read|write|send|receive|process|detect|pick|calibrate|align|capture|preview|serve|control|update|load|save|run|handle|publish|subscribe|transport|infer|verify|track|manage)\w*\b/u.test(words)) score += 16;
+  if (/\b(?:calculate|compute|find|plan|select)\w*\b/u.test(words)) score += 10;
   if (/\b(?:mock|fake|stub|broken|benchmark|spec|descriptor|observation|record|stats?|dict|list|array|batch|base|block|head|queue|reader|writer|fixture)\w*\b/u.test(words)) score -= 24;
+  if (/\b(?:decode|deserialize|discard|encode|expand|legacy|serialize)\w*\b/u.test(words)) score -= 18;
   if (file.classification === "test") score -= 8;
   if (symbol.name.length < 4) score -= 4;
   return score;
+}
+
+const TOKEN_ALIASES = Object.freeze({
+  calib: "calibration",
+  calibrate: "calibration",
+  cam: "camera",
+  cams: "camera",
+  infer: "inference",
+  inferred: "inference",
+  melsec: "plc",
+  pickup: "picking",
+  predictions: "prediction",
+  receiver: "receive",
+  rgbd: "depth",
+});
+
+const CONCEPT_RULES = Object.freeze([
+  Object.freeze({ key: "project-management", name: "Project Management", all: ["project"], any: ["create", "load", "open", "save"] }),
+  Object.freeze({ key: "plc-communication", name: "PLC Communication", any: ["plc"] }),
+  Object.freeze({ key: "point-cloud-processing", name: "Point Cloud Processing", all: ["point", "cloud"] }),
+  Object.freeze({ key: "sensor-alignment", name: "Sensor Alignment", any: ["align", "alignment"] }),
+  Object.freeze({ key: "calibration", name: "Calibration", any: ["calibration"] }),
+  Object.freeze({ key: "inference-model-management", name: "Inference Model Management", any: ["sam2", "transformer"] }),
+  Object.freeze({ key: "robot-configuration", name: "Robot Configuration", all: ["robot"], any: ["config", "configuration", "runtime"] }),
+  Object.freeze({ key: "shared-state-transport", name: "Shared State Transport", any: ["ipc", "shared"], allOneOf: [["memory", "state", "transport"]] }),
+  Object.freeze({ key: "inference", name: "Inference", any: ["detect", "detection", "inference", "model", "predict", "prediction", "recognition"] }),
+  Object.freeze({ key: "image-acquisition", name: "Image Acquisition", all: ["capture"], any: ["camera", "color", "depth", "frame", "image", "infrared", "ir"] }),
+  Object.freeze({ key: "picking-control", name: "Picking Control", any: ["grasp", "pick", "picking"] }),
+  Object.freeze({ key: "request-delivery", name: "Request Delivery", any: ["deliver", "delivery", "request", "serve"] }),
+  Object.freeze({ key: "external-communication", name: "External Communication", any: ["connect", "connection", "receive", "send", "transport"] }),
+]);
+
+const FALLBACK_STOP_WORDS = new Set([
+  "asan", "async", "base", "btn", "button", "callback", "click", "clicked", "config", "configure", "dict", "error", "event",
+  "get", "handle", "handler", "helper", "list", "main", "manager", "object", "processor", "request", "response", "set", "util", "utils",
+]);
+
+function tokenList(value) {
+  return humanName(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/u).filter(Boolean)
+    .map((token) => TOKEN_ALIASES[token] || token);
+}
+
+function productDocumentHeadingEligible(file) {
+  const normalized = file.path.toLowerCase();
+  const base = path.posix.basename(normalized);
+  if (["agents.md", "claude.md", "contributing.md", "license.md", "changelog.md"].includes(base)) return false;
+  return base.startsWith("readme") || normalized.startsWith("docs/");
+}
+
+function obviousNonProductSymbol(symbol) {
+  const words = humanName(symbol.name).toLowerCase();
+  return /^(?:btn|button|click|clicked|close|closed|on close)\b/u.test(words)
+    || /^(?:connect error|fail(?:ure)?|main)(?:\b|$)/u.test(words)
+    || /\b(?:configure|setup)\b.*\b(?:log|logging)\b/u.test(words)
+    || /^(?:align\d+|create|delete|destroy|dispose|exit|init|initialize|open|run|start|stop|update)$/u.test(words);
+}
+
+function conceptFor({ file, symbol }) {
+  if (obviousNonProductSymbol(symbol)) return null;
+  const symbolTokens = tokenList(symbol.name);
+  const contextTokens = tokenList(file.path.replace(/\.[^.\/]+$/u, ""));
+  const tokens = new Set([...symbolTokens, ...contextTokens]);
+  for (const rule of CONCEPT_RULES) {
+    if (rule.all && !rule.all.every((token) => tokens.has(token))) continue;
+    if (rule.any && !rule.any.some((token) => tokens.has(token))) continue;
+    if (rule.allOneOf && !rule.allOneOf.every((choices) => choices.some((token) => tokens.has(token)))) continue;
+    return { key: rule.key, name: rule.name, recognized: true };
+  }
+  if (/^get_.*(?:config|data|path|state|value)$/u.test(symbol.name.toLowerCase())) return null;
+  const meaningful = symbolTokens.filter((token) => !FALLBACK_STOP_WORDS.has(token) && token.length > 2).slice(0, 4);
+  if (!meaningful.length) return null;
+  return { key: meaningful.join("-"), name: humanName(meaningful.join(" ")), recognized: false };
 }
 
 function inferRepositoryCandidates(worldModel) {
@@ -438,7 +513,7 @@ function inferRepositoryCandidates(worldModel) {
   const unknowns = [];
   const sourceSnapshotId = worldModel.temporalProvenanceGraph.sourceSnapshotId;
   const documentationHeadings = worldModel.files.flatMap((file) => (
-    file.classification === "documentation"
+    file.classification === "documentation" && productDocumentHeadingEligible(file)
       ? file.symbols.filter((symbol) => symbol.kind === "heading").map((symbol) => ({ file, symbol }))
       : []
   )).sort((left, right) => compareText(left.file.path, right.file.path) || left.symbol.line - right.symbol.line || compareText(left.symbol.name, right.symbol.name));
@@ -483,7 +558,8 @@ function inferRepositoryCandidates(worldModel) {
     ["source", "test"].includes(file.classification)
       ? file.symbols.filter((symbol) => symbol.kind !== "heading" && !symbol.name.startsWith("_")).map((symbol) => ({ file, symbol }))
       : []
-  )).map((item) => ({ ...item, productScore: productSymbolScore(item) }))
+  )).map((item) => ({ ...item, productScore: productSymbolScore(item), concept: conceptFor(item) }))
+    .filter((item) => item.concept)
     .sort((left, right) => right.productScore - left.productScore
       || compareText(left.symbol.name, right.symbol.name)
       || compareText(left.file.path, right.file.path)
@@ -497,46 +573,67 @@ function inferRepositoryCandidates(worldModel) {
     selectedSymbols.push(item);
     if (selectedSymbols.length >= MAX_INFERRED_SYMBOLS) break;
   }
-  for (const { file, symbol, productScore } of selectedSymbols) {
-    const testEvidence = file.classification === "test";
-    const symbolEvidence = evidenceRecord({
-      sourceKind: testEvidence ? "repository-test-symbol" : "repository-symbol",
-      sourceId: sourceSnapshotId,
-      path: file.path,
-      line: symbol.line,
-      contentDigest: file.digest,
-      statement: `Observed ${testEvidence ? "test " : ""}${symbol.kind} symbol ${symbol.name} may represent a product-visible behavior.`,
-    });
-    evidence.push(symbolEvidence);
-    const name = humanName(symbol.name);
-    const capabilityKey = stableKey("capability", symbol.name);
+  const clusters = new Map();
+  for (const item of selectedSymbols) {
+    const existing = clusters.get(item.concept.key) || { concept: item.concept, members: [] };
+    existing.members.push(item);
+    clusters.set(item.concept.key, existing);
+  }
+  const selectedClusters = [...clusters.values()].sort((left, right) => {
+    const leftScore = Math.max(...left.members.map((item) => item.productScore));
+    const rightScore = Math.max(...right.members.map((item) => item.productScore));
+    return rightScore - leftScore || compareText(left.concept.key, right.concept.key);
+  }).slice(0, MAX_INFERRED_CONCEPTS);
+  for (const cluster of selectedClusters) {
+    const clusterEvidence = [];
+    for (const { file, symbol } of cluster.members.slice(0, 4)) {
+      const testEvidence = file.classification === "test";
+      const symbolEvidence = evidenceRecord({
+        sourceKind: testEvidence ? "repository-test-symbol" : "repository-symbol",
+        sourceId: sourceSnapshotId,
+        path: file.path,
+        line: symbol.line,
+        contentDigest: file.digest,
+        statement: `Observed ${testEvidence ? "test " : ""}${symbol.kind} symbol ${symbol.name} contributes evidence for the candidate behavior cluster ${cluster.concept.name}.`,
+      });
+      evidence.push(symbolEvidence);
+      clusterEvidence.push(symbolEvidence.evidenceId);
+    }
+    const representative = cluster.members[0];
+    const testEvidence = representative.file.classification === "test";
+    const maxScore = Math.max(...cluster.members.map((item) => item.productScore));
+    const capabilityKey = stableKey("capability", cluster.concept.key);
     candidates.push(candidateArtifact({
       kind: "Capability",
-      entity: { key: capabilityKey, name, description: `Candidate capability inferred from observed ${testEvidence ? "test " : ""}${symbol.kind} symbol ${symbol.name}.` },
-      evidenceIds: [symbolEvidence.evidenceId],
-      explanation: "A deterministically ranked public implementation symbol is evidence of behavior, not proof of approved product intent.",
-      confidence: testEvidence ? 0.45 : Math.min(0.7, 0.5 + Math.max(0, productScore) / 200),
+      entity: {
+        key: capabilityKey,
+        name: cluster.concept.name,
+        description: `Candidate capability inferred from ${cluster.members.length} bounded implementation observation${cluster.members.length === 1 ? "" : "s"}; the behavior cluster remains subject to user review.`,
+      },
+      evidenceIds: clusterEvidence,
+      explanation: "Related implementation symbols were clustered into one candidate behavior to avoid treating lifecycle helpers as separate product concepts.",
+      confidence: testEvidence ? 0.45 : Math.min(0.75, 0.5 + Math.max(0, maxScore) / 180),
       sourceSnapshotId,
       origin: testEvidence ? "repository-test-symbol-heuristic" : "repository-symbol-heuristic",
     }));
     candidates.push(candidateArtifact({
       kind: "Feature",
       entity: {
-        key: stableKey("feature", symbol.name),
-        name,
-        description: `Candidate feature inferred from observed ${testEvidence ? "test " : ""}${symbol.kind} symbol ${symbol.name}.`,
-        featureGroupKeys: featureGroup ? [featureGroup.key] : [],
+        key: stableKey("feature", `${cluster.concept.key}-${representative.symbol.name}`),
+        name: humanName(representative.symbol.name),
+        description: `Candidate feature inferred from the ${cluster.concept.name} implementation behavior cluster, represented by ${representative.symbol.name}.`,
+        featureGroupKeys: [],
         capabilityKeys: [capabilityKey],
         governedBy: [],
       },
-      evidenceIds: [symbolEvidence.evidenceId],
-      explanation: "Deterministically ranked implementation behavior can propose a Feature, but only onboarding review can adopt it as Product Canon.",
-      confidence: testEvidence ? 0.4 : Math.min(0.65, 0.45 + Math.max(0, productScore) / 200),
+      evidenceIds: clusterEvidence,
+      explanation: "A clustered implementation behavior can propose one Feature, but only onboarding review can adopt or reshape it as Product Canon.",
+      confidence: testEvidence ? 0.4 : Math.min(0.7, 0.45 + Math.max(0, maxScore) / 180),
       sourceSnapshotId,
       origin: testEvidence ? "repository-test-symbol-heuristic" : "repository-symbol-heuristic",
     }));
   }
-  if (!selectedSymbols.length) {
+  if (!selectedClusters.length) {
     const hash = onboardingDigest(onboardingCanonicalJson({ sourceSnapshotId, kind: "product-behavior" }));
     unknowns.push({
       unknownId: `onboarding-unknown-${hash.slice(0, 24)}`,
@@ -545,11 +642,12 @@ function inferRepositoryCandidates(worldModel) {
       status: "open",
     });
   }
-  if (symbols.length > selectedSymbols.length) {
-    const hash = onboardingDigest(onboardingCanonicalJson({ sourceSnapshotId, kind: "candidate-bound", total: symbols.length, selected: selectedSymbols.length }));
+  if (symbols.length > selectedSymbols.length || clusters.size > selectedClusters.length) {
+    const excluded = Math.max(0, symbols.length - selectedSymbols.length) + Math.max(0, clusters.size - selectedClusters.length);
+    const hash = onboardingDigest(onboardingCanonicalJson({ sourceSnapshotId, kind: "candidate-bound", total: symbols.length, selectedSymbols: selectedSymbols.length, selectedConcepts: selectedClusters.length }));
     unknowns.push({
       unknownId: `onboarding-unknown-${hash.slice(0, 24)}`,
-      statement: `Candidate inference was bounded to ${MAX_INFERRED_SYMBOLS} unique symbols; ${symbols.length - selectedSymbols.length} additional observations were excluded from this review set.`,
+      statement: `Candidate inference was bounded to ${MAX_INFERRED_SYMBOLS} unique symbols and ${MAX_INFERRED_CONCEPTS} behavior clusters; ${excluded} additional observations or clusters were excluded from this review set.`,
       evidenceIds: [],
       status: "open",
     });

@@ -67,7 +67,7 @@ function productDocument({ suffix = "" } = {}) {
 async function verifyExistingProjectPromotion() {
   const root = temporaryProject("existing");
   write(root, "README.md", "# Request Service\n\nObserved repository documentation.\n");
-  write(root, "src/service.mjs", "export function serveRequest(value) { return value; }\n");
+  write(root, "src/service.mjs", "export function serveRequest(value) { return value; }\nexport function closeWindow() { return true; }\nexport function configure_process_logging() { return true; }\n");
   write(root, "tests/service.test.mjs", "export function verifiesDelivery() { return true; }\n");
   write(root, ".omo/draft.md", "# Draft Internal Model\n\nThis is intentionally outside the selected product source scope.\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
@@ -83,7 +83,11 @@ async function verifyExistingProjectPromotion() {
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "FeatureGroup"), true);
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Capability"), true);
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Feature"), true);
-  assert.equal(started.candidateSet.candidates.some((candidate) => candidate.origin === "repository-test-symbol-heuristic"), true);
+  assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Capability" && candidate.proposedEntity.name === "Request Delivery"), true);
+  assert.equal(started.candidateSet.candidates.filter((candidate) => candidate.productKind === "Feature").every((candidate) => candidate.proposedEntity.featureGroupKeys.length === 0), true);
+  assert.equal(started.candidateSet.candidates.some((candidate) => /close|logging/iu.test(candidate.proposedEntity.name)), false);
+  assert.equal(started.candidateSet.evidence.some((record) => /closeWindow|configure_process_logging/iu.test(record.statement)), false);
+  assert.equal(started.candidateSet.evidence.some((record) => record.sourceKind === "repository-test-symbol"), true);
   assert.equal(started.candidateSet.candidates.every((candidate) => candidate.instructionAuthority === false && candidate.promotionAuthority === false), true);
   assert.equal(normalizeProductModelDocument().features.length, 0);
   const candidateGraph = inspectWorldModel({ root });

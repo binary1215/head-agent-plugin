@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.45",
+  "version": "0.3.0-alpha.46",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -27,6 +27,7 @@
       "Project Initialization",
       "Project-scoped Onboarding State",
       "Evidence-linked Product Candidate Review",
+      "Clustered Product Behavior Candidate Inference",
       "User-selected Repository Source Scope",
       "Review-gated Product Canon Bootstrap",
       "Immutable Onboarding Review Graph Projection",

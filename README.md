@@ -10,18 +10,20 @@ connected across Codex, OpenCode, and future runtimes.**
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
 
+[Why HEAD](#why-this-architecture-is-different) ·
+[Architecture](#architecture-at-a-glance) ·
+[GraphSnapshot](#what-is-a-graphsnapshot) ·
+[Try the graph](#try-the-graph) ·
+[Installation](#installation) ·
+[Status](#implementation-status)
+
 </div>
 
 > **Design lineage**
 >
-> This project takes its core design philosophy from
-> [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core).
-> It independently adapts HEAD ownership, authority-preserving context, durable
-> canon, bounded delegation, evidence-based completion, and graph-assisted
-> retrieval into a provider-neutral Codex/OpenCode plugin architecture.
->
-> This repository is an independent plugin-native reworking. It is not an
-> official upstream release or a drop-in replacement for the original runtime.
+> Inspired by [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core)
+> and independently reworked as a provider-neutral plugin. This is not an
+> official upstream release or a drop-in replacement.
 
 ## What is HEAD Agent Core?
 
@@ -59,28 +61,16 @@ not a separate analytics feature: it is the evidence layer that lets each stage
 refer to the same product, source, revision, decision, and execution identities.
 
 ```mermaid
-flowchart TB
+flowchart LR
     U[User objective] --> H[Whole-plan HEAD]
-    PC[User-owned Product Canon] --> WM[Repository World Model]
-    RE[Observed repository evidence] --> WM
-    VR[Verified reviews and lineage] --> WM
-
-    WM --> GS[Embedded immutable GraphSnapshot]
+    PC[Product Canon] --> GS[World Model + GraphSnapshot]
+    RE[Repository evidence] --> GS
     H --> CC[Context Compiler]
-    GS -->|bounded traversal| CC
-    CC --> CAP[Reproducible Context Capsule]
-    CAP --> EC[Execution Contract]
-    EC --> RA[Codex / OpenCode runtime adapter]
-    RA --> RP[Result Packet]
-    RP --> FR[Fresh HEAD Review]
-    FR -->|accepted change and review evidence| VR
-
-    GS --> GP[GraphProjectionAdapter]
-    GP --> LJ[Local JSON]
-    GP --> ADB[Optional ArcadeDB]
-    GS --> DP[DocumentProjectionAdapter]
-    DP --> MD[Markdown]
-    DP -. future .-> ON[Obsidian / Notion]
+    GS -->|bounded evidence| CC
+    CC --> RA[Runtime Adapter]
+    RA --> FR[Result + Fresh HEAD Review]
+    FR -->|accepted evidence| GS
+    GS --> P[Local / ArcadeDB / Markdown projections]
 ```
 
 ### What is a GraphSnapshot?
@@ -102,80 +92,20 @@ endpoint and explore the relationship in either direction.
 
 ```mermaid
 flowchart LR
-    UI[Reviewed user intent] --> RCD
+    UI[User intent] -->|reviewed into| CANON
 
-    subgraph GS["Immutable GraphSnapshot"]
-        subgraph CANON["Product Canon"]
-            RCD[Requirement / Constraint / Decision]
-            FG[FeatureGroup]
-            CAP[Capability]
-            F[Feature]
+    subgraph GS["GraphSnapshot: connected project evidence"]
+        CANON[Product Canon]
+        FEATURE[Features]
+        CODE[Code and Tests]
+        HISTORY[Revisions and ChangeSets]
+        EXEC[Execution and Review]
 
-            FG -->|CONTAINS| CAP
-            F -->|REALIZES| CAP
-            F -->|GOVERNED_BY| RCD
-        end
-
-        subgraph CODE["Repository and implementation"]
-            REPO[Repository]
-            FILE[File]
-            SYMBOL[Symbol]
-            TEST[Test]
-            FREV[FileRevision]
-            SREV[SymbolRevision]
-            TREV[TestRevision]
-
-            REPO -->|CONTAINS| FILE
-            REPO -->|CONTAINS| TEST
-            FILE -->|HAS_REVISION| FREV
-            SYMBOL -->|HAS_REVISION| SREV
-            TEST -->|HAS_REVISION| TREV
-            FREV -->|DECLARES| SREV
-            TREV -->|REFERENCES| FREV
-        end
-
-        subgraph HISTORY["History and execution lineage"]
-            PREVSS[Parent SourceSnapshot]
-            SS[SourceSnapshot]
-            PREVREV[Parent Revision reference]
-            PREVCS[Parent ChangeSet]
-            CS[ChangeSet]
-            RP[Result Packet reference]
-            ERD[Execution ReviewDecision reference]
-
-            PREVSS -->|PARENT_OF| SS
-            PREVREV -->|PARENT_OF| FREV
-            SS -->|CONTAINS| FREV
-            SS -->|CONTAINS| SREV
-            SS -->|CONTAINS| TREV
-            CS -->|CHANGES| FREV
-            CS -->|CHANGES| SREV
-            CS -->|CHANGES| TREV
-            CS -->|SUPERSEDES| PREVCS
-            CS -->|SUPPORTED_BY| RP
-            CS -->|REVIEWED_BY| ERD
-        end
-
-        subgraph REVIEW["Evidence and review"]
-            CSET[CandidateSet]
-            CAND[Candidate]
-            EV[Evidence]
-            RD[ReviewDecision]
-            RR[Reviewed receipt / Product Model Revision]
-
-            CSET -->|CONTAINS| CAND
-            CAND -->|SUPPORTED_BY| EV
-            CSET -->|REVIEWED_BY| RD
-            RD -->|PRODUCES| RR
-            RR -->|PROMOTED_FROM| CAND
-        end
-
-        F -->|reviewed IMPLEMENTS| FILE
-        F -->|reviewed IMPLEMENTS| SYMBOL
-        F -->|reviewed VERIFIED_BY| TEST
-        CS -->|reviewed IMPACTS| F
-        CAND -->|PROPOSES_FROM / TO| F
-        CAND -->|PROPOSES_FROM / TO| SYMBOL
+        CANON <-->|product meaning| FEATURE
+        FEATURE <-->|implements and verifies| CODE
+        CODE <-->|changes over time| HISTORY
+        HISTORY <-->|result evidence| EXEC
+        EXEC <-->|reviewed impact| FEATURE
     end
 ```
 
@@ -183,6 +113,17 @@ flowchart LR
 do not become graph authority. Only intent captured through reviewed Product
 Canon artifacts such as Requirements, Constraints, Decisions, and Features
 enters the snapshot.
+
+The picture stays intentionally semantic. The implementation preserves the
+exact relationship vocabulary underneath it:
+
+| Meaning | Graph relations |
+| --- | --- |
+| Product structure and governance | `CONTAINS`, `REALIZES`, `GOVERNED_BY` |
+| Feature-to-implementation mapping | `IMPLEMENTS`, `VERIFIED_BY` |
+| Immutable state and ancestry | `HAS_REVISION`, `CURRENT_REVISION`, `PARENT_OF` |
+| Change and product impact | `CHANGES`, `SUPERSEDES`, `IMPACTS` |
+| Evidence and review | `SUPPORTED_BY`, `REVIEWED_BY`, `PRODUCES`, `PROMOTED_FROM` |
 
 | Question | GraphSnapshot contract |
 | --- | --- |
@@ -218,6 +159,31 @@ Code → Feature → reviewed impact → ChangeSet → Result Packet / ReviewDec
 Git may attach optional VCS evidence, but it does not define ChangeSet or graph
 identity. Inferred Features, mappings, impacts, and document edits stay in
 explicit candidate surfaces until a scoped user review accepts them.
+
+### Try the graph
+
+After project initialization and onboarding, the source CLI exposes the same
+graph through bounded, digest-verified queries. These commands are available in
+the current alpha:
+
+```text
+# Verify that the indexed World Model and GraphSnapshot are current
+node scripts/head.mjs world-status <project>
+
+# Start from a Feature, symbol, file path, ChangeSet, or ReviewDecision
+node scripts/head.mjs world-temporal <project> --query "<anchor>" --depth 3 --limit 100 --edge-limit 200
+
+# Preview the exact bounded evidence an agent would receive for one task
+node scripts/head.mjs context-preview <project> --task "<task>" --budget 4000
+
+# Render the verified graph as a human-readable Markdown projection
+node scripts/head.mjs world-docs-build <project>
+```
+
+`world-temporal` returns the snapshot, query, and result identities together
+with inclusion, exclusion, and truncation reasons. The same semantic result is
+required whether traversal uses the embedded graph, local JSON, or an activated
+ArcadeDB projection.
 
 ### Graph, database, and documents have different roles
 
@@ -410,8 +376,12 @@ node .\scripts\head.mjs onboarding-status C:\path\to\project
 ```
 
 For an existing project, HEAD indexes the selected source scope and proposes
-evidence-linked FeatureGroup, Capability, and Feature candidates. A new project
-can instead begin from a structured user-authored brief.
+evidence-linked FeatureGroup, Capability, and Feature candidates. Related
+implementation symbols are clustered into bounded behavior concepts while
+generic lifecycle, UI-handler, logging, and serialization helpers are
+deprioritized or excluded. Inferred FeatureGroups are not automatically applied
+to unrelated Features. A new project can instead begin from a structured
+user-authored brief.
 
 ### 4. Review inferred product concepts
 

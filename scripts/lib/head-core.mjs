@@ -362,7 +362,7 @@ export function coreContract() {
   contract.activeCapabilities = [
     ...contract.activeCapabilities,
     "user-selected-repository-source-scope",
-    "behavior-ranked-onboarding-candidates",
+    "clustered-product-behavior-candidate-inference",
     "bounded-large-project-context-retrieval",
     "runtime-structured-result-contract",
     "codex-exec-one-shot-composition",
