@@ -5,12 +5,15 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { resolveReadOnlyRuntimeExecutableTarget } from "./runtime-machine-discovery.mjs";
 import { verifyRuntimeProjectBinding, verifyRuntimeProtocolEvidence } from "./runtime-protocol-evidence.mjs";
+import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
+import { finishRun, getPendingReviewContext } from "./run-lineage.mjs";
 import {
   buildRuntimeInvocationCallerFence,
   buildRuntimeInvocationLifecycleReceipt,
   buildRuntimeResultPacketDraft,
   normalizeRuntimeEvent,
   prepareRuntimeInvocationExecution,
+  readRuntimeInvocationAuthorization,
   verifyRuntimeEventEnvelope,
   verifyRuntimeInvocationAuthorization,
   verifyRuntimeInvocationLifecycleReceipt,
@@ -28,6 +31,7 @@ import {
 } from "./runtime-process-supervisor.mjs";
 
 export const CODEX_EXEC_PROVIDER_VERSION = "0.1.0";
+export const RUNTIME_RUN_RESULT_APPLICATION_VERSION = "0.1.0";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const fail = (message, code = "CODEX_EXEC_PROVIDER_ERROR") => {
@@ -49,6 +53,52 @@ function canonicalValue(value) {
 
 const canonicalJson = (value) => JSON.stringify(canonicalValue(value));
 const prettyJson = (value) => `${JSON.stringify(value, null, 2)}\n`;
+
+function assertExactFields(value, fields, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} is invalid.`, "INVALID_RUNTIME_RUN_RESULT_APPLICATION");
+  const expected = new Set(fields);
+  if (Object.keys(value).some((field) => !expected.has(field)) || fields.some((field) => !(field in value))) {
+    fail(`${label} fields are invalid.`, "INVALID_RUNTIME_RUN_RESULT_APPLICATION");
+  }
+}
+
+function identifyApplication(payload) {
+  const applicationHash = digest(canonicalJson(payload));
+  return {
+    ...payload,
+    applicationId: `runtime-run-result-application-${applicationHash.slice(0, 24)}`,
+    applicationHash,
+  };
+}
+
+export function verifyRuntimeRunResultApplication(document) {
+  assertExactFields(document, [
+    "schemaVersion", "kind", "protocolVersion", "authorizationId", "lifecycleReceiptId", "draftId",
+    "runId", "executionContractId", "resultPacketId", "reviewContextId", "status",
+    "freshHeadReviewRequired", "rawTranscriptIncluded", "authority", "instructionAuthority",
+    "promotionAuthority", "mutatesCanon", "applicationId", "applicationHash",
+  ], "Runtime Run result application");
+  const { applicationId, applicationHash, ...payload } = document;
+  const expectedHash = digest(canonicalJson(payload));
+  if (document.schemaVersion !== 1 || document.kind !== "RuntimeRunResultApplication"
+    || document.protocolVersion !== RUNTIME_RUN_RESULT_APPLICATION_VERSION
+    || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
+    || !/^runtime-lifecycle-receipt-[a-f0-9]{24}$/.test(document.lifecycleReceiptId || "")
+    || !/^runtime-result-draft-[a-f0-9]{24}$/.test(document.draftId || "")
+    || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
+    || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
+    || !/^result-packet-[a-f0-9]{24}$/.test(document.resultPacketId || "")
+    || !/^fresh-head-review-[a-f0-9]{24}$/.test(document.reviewContextId || "")
+    || document.status !== "run-result-applied-awaiting-review"
+    || document.freshHeadReviewRequired !== true || document.rawTranscriptIncluded !== false
+    || document.authority !== "execution-lineage-application-evidence"
+    || document.instructionAuthority !== false || document.promotionAuthority !== false || document.mutatesCanon !== false
+    || applicationHash !== expectedHash
+    || applicationId !== `runtime-run-result-application-${expectedHash.slice(0, 24)}`) {
+    fail("Runtime Run result application is invalid.", "INVALID_RUNTIME_RUN_RESULT_APPLICATION");
+  }
+  return document;
+}
 
 export const CODEX_EXEC_RESULT_SCHEMA = Object.freeze({
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -477,6 +527,107 @@ function persistInvocationRecord({ projectRoot, authorization, events, receipt, 
   return { recorded: true, eventCount: events.length, receiptId: receipt.receiptId, draftId: draft.draftId };
 }
 
+function runResultApplicationFile(projectRoot, authorizationId) {
+  return path.join(invocationRecordDirectory(projectRoot, authorizationId), "application.json");
+}
+
+function canonicalRunResultFields(record) {
+  const { receipt, draft } = record;
+  const lifecycleEvidence = draft.evidence[0];
+  const lifecycleVerification = draft.verification[0];
+  if (draft.scopeKind !== "run" || !draft.providerResult || draft.freshHeadReviewRequired !== true
+    || receipt.status !== "completed" || receipt.exitCode !== 0
+    || receipt.providerBoundary.actualProviderInvoked !== true
+    || receipt.providerBoundary.structuredResultObserved !== true
+    || receipt.processBoundary.descendantTreeOwnershipValidated !== true
+    || lifecycleVerification.status !== "passed") {
+    fail("Only a completed, native-supervised actual-provider Run result can enter canonical Execution Lineage.", "RUNTIME_RUN_RESULT_NOT_APPLICABLE");
+  }
+  return {
+    outcome: draft.outcome,
+    evidence: [{
+      kind: "RuntimeInvocationResultEvidence",
+      runtime: "codex",
+      authorizationId: draft.authorizationId,
+      runtimeResultDraftId: draft.draftId,
+      lifecycleReceiptId: draft.lifecycleReceiptId,
+      executionLeaseConsumptionId: draft.executionLeaseConsumptionId,
+      executionLeaseReleaseId: draft.executionLeaseReleaseId,
+      eventIds: [...lifecycleEvidence.eventIds],
+      eventTypes: [...lifecycleEvidence.eventTypes],
+      providerSessionReferenceDigests: [...lifecycleEvidence.providerSessionReferenceDigests],
+      structuredResultDigest: lifecycleEvidence.structuredResultDigest,
+      providerEvidence: [...draft.providerResult.evidence],
+      actualProviderInvoked: true,
+      rawTranscriptIncluded: false,
+      instructionAuthority: false,
+    }],
+    planDelta: draft.planDelta,
+    impactRadius: [...draft.impactRadius],
+    verification: [{
+      kind: "RuntimeInvocationResultVerification",
+      runtime: "codex",
+      status: "passed",
+      lifecycleReceiptId: draft.lifecycleReceiptId,
+      projectFenceValidated: lifecycleVerification.projectFenceValidated,
+      exactChildExitObserved: lifecycleVerification.exactChildExitObserved,
+      descendantTreeOwnershipValidated: lifecycleVerification.descendantTreeOwnershipValidated,
+      inputDigestMatched: lifecycleVerification.inputDigestMatched,
+      providerVerification: [...draft.providerResult.verification],
+    }],
+    unknowns: [...draft.unknowns],
+    knowledgeProposals: [],
+  };
+}
+
+function verifyCanonicalRunResultPacket(resultPacket, fields, authorization) {
+  if (resultPacket?.kind !== "ResultPacket"
+    || resultPacket.executionContractId !== authorization.scope.executionContractId
+    || canonicalJson({
+      outcome: resultPacket.outcome,
+      evidence: resultPacket.evidence,
+      planDelta: resultPacket.planDelta,
+      impactRadius: resultPacket.impactRadius,
+      verification: resultPacket.verification,
+      unknowns: resultPacket.unknowns,
+      knowledgeProposals: resultPacket.knowledgeProposals,
+    }) !== canonicalJson(fields)) {
+    fail("Canonical ResultPacket does not exactly match the verified runtime draft.", "RUNTIME_RUN_RESULT_PACKET_CONFLICT");
+  }
+  return resultPacket;
+}
+
+function readRuntimeRunResultApplication({ projectRoot, authorizationId, receipt, draft }) {
+  const file = runResultApplicationFile(projectRoot, authorizationId);
+  if (!fs.existsSync(file)) return null;
+  const application = verifyRuntimeRunResultApplication(JSON.parse(fs.readFileSync(file, "utf8")));
+  if (application.authorizationId !== authorizationId || application.lifecycleReceiptId !== receipt.receiptId
+    || application.draftId !== draft.draftId || application.runId !== draft.runId
+    || application.executionContractId !== draft.executionContractId) {
+    fail("Runtime Run result application conflicts with its invocation record.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+  }
+  const resultPacket = readLineageArtifact({ root: projectRoot, artifactId: application.resultPacketId }).artifact;
+  if (resultPacket.kind !== "ResultPacket" || resultPacket.executionContractId !== application.executionContractId) {
+    fail("Runtime Run result application points to an invalid ResultPacket.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+  }
+  const authorization = readRuntimeInvocationAuthorization({ root: projectRoot, authorizationId }).authorization;
+  if (authorization.scope.kind !== "run" || authorization.scope.runId !== application.runId
+    || authorization.scope.executionContractId !== application.executionContractId) {
+    fail("Runtime Run result application does not match its authorization lineage.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+  }
+  const expectedReview = buildFreshHeadReview({
+    root: projectRoot,
+    wholePlanId: authorization.scope.wholePlanId,
+    resultPacketId: resultPacket.resultPacketId,
+    sessionId: authorization.headSessionId,
+    runId: authorization.scope.runId,
+  }).review;
+  if (expectedReview.reviewContextId !== application.reviewContextId) {
+    fail("Runtime Run result application does not match the deterministic Fresh HEAD context.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+  }
+  return application;
+}
+
 export function readCodexRuntimeInvocationResult({ root = ".", authorizationId } = {}) {
   if (!/^execution-authorization-[a-f0-9]{24}$/.test(authorizationId || "")) fail("Runtime invocation authorization id is invalid.", "INVALID_RUNTIME_INVOCATION_AUTHORIZATION_ID");
   const preparedRoot = fs.realpathSync(path.resolve(root));
@@ -496,7 +647,87 @@ export function readCodexRuntimeInvocationResult({ root = ".", authorizationId }
     || canonicalJson(ids) !== canonicalJson(receipt.eventIds)) {
     fail("Runtime invocation record lineage is inconsistent.", "RUNTIME_INVOCATION_RECORD_CONFLICT");
   }
-  return { status: "verified", authorizationId, receipt, draft, events };
+  const application = readRuntimeRunResultApplication({ projectRoot: preparedRoot, authorizationId, receipt, draft });
+  return { status: "verified", authorizationId, receipt, draft, events, application };
+}
+
+export function applyCodexRuntimeRunResult({ root = ".", authorizationId } = {}) {
+  const preparedRoot = fs.realpathSync(path.resolve(root));
+  const authorization = readRuntimeInvocationAuthorization({ root: preparedRoot, authorizationId }).authorization;
+  const record = readCodexRuntimeInvocationResult({ root: preparedRoot, authorizationId });
+  if (authorization.runtime !== "codex" || authorization.scope.kind !== "run"
+    || authorization.scope.runId !== record.draft.runId
+    || authorization.scope.executionContractId !== record.draft.executionContractId) {
+    fail("Runtime invocation is not the exact authorized Codex Run.", "CODEX_RUN_AUTHORIZATION_REQUIRED");
+  }
+  const fields = canonicalRunResultFields(record);
+  if (record.application) {
+    const resultPacket = readLineageArtifact({ root: preparedRoot, artifactId: record.application.resultPacketId }).artifact;
+    verifyCanonicalRunResultPacket(resultPacket, fields, authorization);
+    return {
+      status: "runtime_run_result_already_applied",
+      authorizationId,
+      application: record.application,
+      resultPacket,
+      freshHeadReview: null,
+    };
+  }
+
+  let resultPacket;
+  let freshHead;
+  try {
+    resultPacket = finishRun({ root: preparedRoot, ...fields }).resultPacket;
+    freshHead = getPendingReviewContext({ root: preparedRoot });
+  } catch (error) {
+    if (error.code !== "NO_ACTIVE_RUN") throw error;
+    freshHead = getPendingReviewContext({ root: preparedRoot });
+    if (freshHead.pendingReview.runId !== authorization.scope.runId) {
+      fail("Pending Fresh HEAD review belongs to another Run.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+    }
+    resultPacket = readLineageArtifact({ root: preparedRoot, artifactId: freshHead.pendingReview.resultPacketId }).artifact;
+  }
+  verifyCanonicalRunResultPacket(resultPacket, fields, authorization);
+  if (freshHead.pendingReview.runId !== authorization.scope.runId
+    || freshHead.pendingReview.resultPacketId !== resultPacket.resultPacketId
+    || freshHead.review.reviewContextId === "") {
+    fail("Fresh HEAD review does not match the applied runtime Run result.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+  }
+  const application = verifyRuntimeRunResultApplication(identifyApplication({
+    schemaVersion: 1,
+    kind: "RuntimeRunResultApplication",
+    protocolVersion: RUNTIME_RUN_RESULT_APPLICATION_VERSION,
+    authorizationId,
+    lifecycleReceiptId: record.receipt.receiptId,
+    draftId: record.draft.draftId,
+    runId: authorization.scope.runId,
+    executionContractId: authorization.scope.executionContractId,
+    resultPacketId: resultPacket.resultPacketId,
+    reviewContextId: freshHead.review.reviewContextId,
+    status: "run-result-applied-awaiting-review",
+    freshHeadReviewRequired: true,
+    rawTranscriptIncluded: false,
+    authority: "execution-lineage-application-evidence",
+    instructionAuthority: false,
+    promotionAuthority: false,
+    mutatesCanon: false,
+  }));
+  const applicationFile = runResultApplicationFile(preparedRoot, authorizationId);
+  try {
+    atomicWriteExclusive(applicationFile, prettyJson(application));
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    const concurrent = readCodexRuntimeInvocationResult({ root: preparedRoot, authorizationId }).application;
+    if (!concurrent || concurrent.applicationId !== application.applicationId) {
+      fail("Concurrent runtime Run result application diverged.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+    }
+  }
+  return {
+    status: "runtime_run_result_applied",
+    authorizationId,
+    application,
+    resultPacket,
+    freshHeadReview: freshHead.review,
+  };
 }
 
 export async function executeCodexRuntimeInvocation({

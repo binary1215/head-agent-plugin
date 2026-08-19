@@ -22,7 +22,7 @@ import {
   inspectRuntimeInvocationExecutionLease,
   readRuntimeInvocationAuthorization,
 } from "./lib/runtime-invocation-lifecycle.mjs";
-import { executeCodexRuntimeInvocation, readCodexRuntimeInvocationResult } from "./lib/runtime-codex-exec.mjs";
+import { applyCodexRuntimeRunResult, executeCodexRuntimeInvocation, readCodexRuntimeInvocationResult } from "./lib/runtime-codex-exec.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -52,6 +52,7 @@ export function usage() {
       "head runtime-invocation-lease-status <project> --authorization <execution-authorization-id>",
       "head runtime-invocation-execute <project> --authorization <execution-authorization-id> [--input <execution.json>]",
       "head runtime-invocation-result <project> --authorization <execution-authorization-id>",
+      "head runtime-invocation-apply-run-result <project> --authorization <execution-authorization-id>",
       "head onboarding-start <project> [--input <onboarding.json>]",
       "head onboarding-status <project>",
       "head onboarding-review <project> --input <review.json>",
@@ -167,6 +168,7 @@ export function runCommand(argv = process.argv.slice(2)) {
     }));
   }
   if (command === "runtime-invocation-result") return readCodexRuntimeInvocationResult({ root, authorizationId: options.authorization });
+  if (command === "runtime-invocation-apply-run-result") return applyCodexRuntimeRunResult({ root, authorizationId: options.authorization });
   if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
   if (command === "onboarding-status") return inspectOnboarding({ root });
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });

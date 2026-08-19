@@ -31,6 +31,7 @@ import {
   verifyRuntimeExecutionLeaseRelease,
 } from "./lib/runtime-execution-lease.mjs";
 import {
+  applyCodexRuntimeRunResult,
   executeCodexRuntimeInvocation,
   readCodexRuntimeInvocationResult,
 } from "./lib/runtime-codex-exec.mjs";
@@ -298,6 +299,14 @@ async function main() {
       root: resolvedRoot,
       authorizationId: codexProtocolAuthorization.authorizationId,
     });
+    assert(recordedCodexProtocolExecution.application === null, "Session protocol fixture acquired a Run result application.");
+    let sessionApplicationRejected = false;
+    try {
+      applyCodexRuntimeRunResult({ root: resolvedRoot, authorizationId: codexProtocolAuthorization.authorizationId });
+    } catch (error) {
+      sessionApplicationRejected = error.code === "CODEX_RUN_AUTHORIZATION_REQUIRED";
+    }
+    assert(sessionApplicationRejected, "Session protocol fixture entered canonical Run result application.");
     assert(recordedCodexProtocolExecution.draft.draftHash === codexProtocolExecution.draft.draftHash, "Codex invocation record did not round-trip.");
     assert(!JSON.stringify(recordedCodexProtocolExecution).includes(codexProtocolRequest), "Codex invocation record persisted the raw Session request.");
     const cliCodexProtocolResult = await runCommand([
@@ -571,6 +580,7 @@ async function main() {
       codexExecProtocolFixtureValidated: true,
       codexStructuredResultRecorded: true,
       codexDescendantTreeSupervisionValidated: true,
+      sessionRunResultApplicationRejected: true,
       operationalStateExternalized: true,
       legacyProjectLockRejected,
       rawTranscriptPersisted: false,

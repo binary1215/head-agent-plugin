@@ -66,11 +66,13 @@ After the exact child exits—or the operation throws—the owner lock and empty
 
 Provider-neutral `RuntimeEventEnvelope` records one JSONL event as its type, class, payload digest, byte count, and hashed operational provider-session references. Raw payloads and transcripts are not persisted. `RuntimeInvocationLifecycleReceipt` binds those envelopes and the consumption receipt to exact project, Session, scope, optional Run/contract, caller-fence digest, child-fence digest, exit, timeout/cancellation, and cleanup facts without recording a PID or raw command. `RuntimeResultPacketDraft` binds the release receipt. Run results still require Fresh HEAD review; Session results explicitly do not, unless a later risk transition escalates the work into a Run.
 
+`RuntimeRunResultApplication` protocol `0.1.0` is the narrow bridge from a verified Codex Run draft into canonical Execution Lineage. It accepts only a completed exit-zero actual-provider Run whose structured result, exact input, project fence, and native descendant-tree ownership all passed. The bridge maps the bounded provider result into one canonical `ResultPacket`, transitions the exact Run to `awaiting_review`, builds the deterministic Fresh HEAD context, and writes a content-derived application receipt beside the invocation record. It is idempotent and can recover only the same ResultPacket after an interrupted receipt write; a divergent or Session-scoped result fails closed. The receipt carries no transcript, provider session identity, PID, path, instruction authority, promotion authority, or Product Canon mutation.
+
 ## Bounded Codex exec composition
 
 `runtime-invocation-execute` currently accepts only a persisted Codex `ExecutionAuthorization`. It re-observes the installed protocol and exact executable identity, rejects capability or project-binding drift before lease consumption, and invokes the absolute native executable directly with no shell. The fixed surface is `codex exec` with JSONL output, ephemeral provider storage, no approval prompts, the authorization's exact read-only or workspace-write sandbox, Git-repository independence, project-directory binding, a host-local JSON Schema, and the exact authorized execution input over stdin. This follows the stable non-interactive flags documented in the [official Codex developer command reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
 
-The common `RuntimeStructuredResult` carries bounded `outcome`, evidence statements, `planDelta`, `impactRadius`, verification statements, and explicit Unknowns. Session results must keep plan delta empty and impact radius empty. Raw JSONL and provider messages stay ephemeral; durable project lineage stores only content-derived event envelopes, the lifecycle receipt, and a structured ResultPacket draft under the authorization-specific invocation record. The draft and receipt are available through `runtime-invocation-result` and the read-only `head_runtime_invocation_result` MCP tool. Absolute project or operational roots in the structured result fail the invocation boundary.
+The common `RuntimeStructuredResult` carries bounded `outcome`, evidence statements, `planDelta`, `impactRadius`, verification statements, and explicit Unknowns. Session results must keep plan delta empty and impact radius empty. Raw JSONL and provider messages stay ephemeral; durable project lineage stores only content-derived event envelopes, the lifecycle receipt, and a structured ResultPacket draft under the authorization-specific invocation record. The draft, receipt, and optional verified Run application are available through `runtime-invocation-result` and the read-only `head_runtime_invocation_result` MCP tool. `runtime-invocation-apply-run-result` is the only mutating bridge into canonical Run lineage. Absolute project or operational roots in the structured result fail the invocation boundary.
 
 This is a partial activation, not the v0.6 exit claim. The Codex protocol fixture proves fixed arguments, authorized stdin, `thread.started` reference hashing, `item.completed` structured-result extraction, `turn.completed`, immutable recording, CLI/MCP reads, and OS-enforced process-tree cleanup. The separate integrity-verified `head-agent-supervisor` assigns its provider subtree to a Windows Job Object with kill-on-close or to an isolated POSIX process group; only the native helper manifest digest and bounded cleanup facts enter durable evidence. Windows normal-exit and cancellation fixtures prove that a lingering grandchild is removed, and the Codex protocol fixture passes through the same supervisor. A live model invocation has not yet been executed, so actual Session/Run event, error, cancellation, and result conformance remain unproved. Resume, durable provider-session attachment, general stream/interrupt/close, messaging, and TUI scraping remain unavailable.
 
@@ -110,6 +112,9 @@ The mutation CLI may prepare—but not execute—an authorization for either an 
 node scripts/head.mjs runtime-invocation-authorize <project> --input <authorization.json>
 node scripts/head.mjs runtime-invocation-read <project> --authorization <execution-authorization-id>
 node scripts/head.mjs runtime-invocation-lease-status <project> --authorization <execution-authorization-id>
+node scripts/head.mjs runtime-invocation-execute <project> --authorization <execution-authorization-id> --input <execution.json>
+node scripts/head.mjs runtime-invocation-result <project> --authorization <execution-authorization-id>
+node scripts/head.mjs runtime-invocation-apply-run-result <project> --authorization <execution-authorization-id>
 ```
 
 The input contains `runtime`, `scope`, `workspaceMode`, and optional `limits`. Run scope is `{ "kind": "run" }`. Session scope is `{ "kind": "session", "request": "...", "contextCapsuleId": null }`; the request is used only to derive and later reconstruct the bounded stdin payload. The read-only MCP tools `head_runtime_invocation_authorization` and `head_runtime_invocation_lease_status` verify one persisted authorization and its available/claimed/consumed/released state. No MCP tool creates, claims, consumes, releases, or replays an authorization.
@@ -120,6 +125,14 @@ The tracked verifier is:
 npm run verify:runtime-adapters
 npm run verify:runtime-lifecycle
 ```
+
+The explicit live verifier is intentionally separate from normal regression because it performs exactly two real Codex model calls and one isolated workspace write. It requires a built, integrity-verified native supervisor and deliberate opt-in:
+
+```text
+HEAD_AGENT_LIVE_CODEX_E2E=1 npm run verify:live-codex
+```
+
+Without that environment opt-in it fails before creating a provider invocation. Passing deterministic fixtures or implementing the application bridge does not count as live provider conformance.
 
 The adapter verifier proves deterministic contract identities, Codex/OpenCode coverage, the Windows/macOS/Linux matrix, current-host discovery, version and protocol-evidence schemas, canonical project/Session capability binding, disabled control methods, authority-escalation rejection, tamper rejection, and privacy boundaries. The supervisor verifier proves Windows Job Object normal-exit and cancellation cleanup against a real provider fixture with a lingering grandchild; CI compiles and runs the POSIX process-group implementation on Linux and cross-builds every release target. The lifecycle verifier proves both authorization scopes, Session-request binding, Run/contract/Capsule binding, durable single consumption and release, sequential/concurrent replay rejection, bounded events, native-supervised Codex protocol extraction, timeout, caller cancellation, scope-correct write policy, and transcript-free result drafting without a live provider. A sandbox that denies child creation yields explicit operational failure rather than being mistaken for runtime absence or successful execution.
 
