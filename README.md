@@ -41,6 +41,36 @@ lineage.
 The runtime, unified graph, and projections are shown together in
 [Architecture at a glance](#architecture-at-a-glance).
 
+## Five-minute local quick start
+
+This path needs Node.js and a project directory. It does not require Git inside
+the target project, GraphDB, Go, or an existing Feature catalog.
+
+```powershell
+git clone https://github.com/binary1215/head-agent-plugin.git
+Set-Location .\head-agent-plugin
+.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime codex,opencode
+
+head-agent --version
+head-agent doctor C:\path\to\project
+head-agent onboarding-status C:\path\to\project
+head-agent world-status C:\path\to\project
+```
+
+On first use, `init` observes the repository and returns either
+`awaiting_onboarding_review` with an immutable candidate-set ID or
+`awaiting_onboarding_evidence` when the selected source scope contains too
+little evidence. It does not silently turn inferred Features into Product
+Canon. Inspect the returned candidate set, prepare an explicit review JSON,
+and apply it through `head-agent onboarding-review ... --input <file>` as shown
+in [Project onboarding](#project-onboarding).
+
+If `native.status` reports `javascript-fallback`, onboarding and graph work are
+still available through the semantic-reference implementation. Re-run install
+or upgrade with `--native required` only when a native package is mandatory.
+No command above writes to a remote GraphDB unless that projection is
+separately configured and explicitly activated.
+
 ## Why this architecture is different
 
 | Common failure mode | HEAD Agent Core response |
@@ -245,7 +275,7 @@ Status terms in this README have exact meanings:
 | `install.ps1` and `install.sh` | **Available** |
 | User-scoped global `head-agent` command | **Available** |
 | `head-agent --version` and project `head-agent doctor` | **Available** |
-| Automatic native binary installation | **Planned** |
+| Automatic verified native binary installation | **Available** |
 | Recoverable upgrade, verified rollback, and safe removal | **Available** |
 | Provider resume and durable attachment | **Deferred** |
 | Obsidian and Notion projection adapters | **Deferred** |
@@ -339,11 +369,23 @@ desired:
 node .\scripts\head.mjs init C:\path\to\project --runtime codex
 ```
 
-The native compute worker is optional. When a verified binary is unavailable,
-supported operations use the JavaScript reference path and disclose the
-fallback instead of changing semantic identity or authority. Automatic native
-artifact selection/download and Codex marketplace publication remain planned;
-the installer does not claim either capability today.
+The native compute worker is optional. Installation and upgrade default to
+`--native auto`: the installer selects the current OS/architecture package for
+the exact plugin version, downloads its release checksum and `tar.gz`, rejects
+unsafe archive entries, verifies build metadata plus both native manifests,
+and only then includes the binaries in the immutable release identity. A
+missing release package produces a disclosed JavaScript fallback; a checksum,
+archive, or manifest mismatch fails closed. Use `--native off` for a fully
+offline JavaScript-only install or `--native required` when fallback is not
+acceptable.
+
+```powershell
+node .\scripts\distribution.mjs install --native required
+node .\scripts\distribution.mjs upgrade --native auto
+```
+
+Codex marketplace publication remains planned. Native download success never
+changes Product Canon, graph identity, review authority, or execution lineage.
 
 The current installer:
 
@@ -353,12 +395,14 @@ The current installer:
 4. installs PowerShell/cmd and POSIX-compatible command launchers;
 5. keeps prior verified releases available for explicit rollback;
 6. optionally initializes or resumes one project through the installed release;
-7. preserves the JavaScript fallback when native compute is unavailable.
+7. automatically acquires and verifies the matching native package when one is
+   published, while preserving a disclosed JavaScript fallback in `auto` mode.
 
 Verify the full isolated lifecycle without touching the real user installation:
 
 ```powershell
 npm run verify:distribution
+npm run verify:native-delivery
 ```
 
 ## Project onboarding
@@ -533,10 +577,10 @@ pass fixture-driven conformance before they are advertised for production use.
 
 The current alpha has user-scoped cross-platform launchers, version and project
 diagnostics, one-command installation plus onboarding, content-addressed
-upgrades, rollback, and safe removal. Remaining distribution work is limited to
-Codex marketplace publication, automatic verified native-artifact selection and
-download, and broader platform installation E2E beyond the current Windows and
-CI build evidence.
+upgrades, verified native-artifact selection and download, rollback, and safe
+removal. Remaining distribution work is limited to Codex marketplace
+publication and broader independent newcomer/platform installation E2E beyond
+the current Windows and CI build evidence.
 
 ## Project status and licensing
 

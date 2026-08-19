@@ -72,6 +72,7 @@ try {
     "--source", sourceRoot,
     "--install-root", installRoot,
     "--bin-dir", binDirectory,
+    "--native", "off",
     "--project", projectRoot,
     "--runtime", "codex,opencode",
   ]);
@@ -138,6 +139,7 @@ try {
     "--source", upgradedSource,
     "--install-root", installRoot,
     "--bin-dir", binDirectory,
+    "--native", "off",
     "--project", projectRoot,
     "--runtime", "codex,opencode",
   ]);

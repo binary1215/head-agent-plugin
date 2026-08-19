@@ -39,6 +39,11 @@ on:
       - "scripts/lib/runtime-opencode-run.mjs"
       - "scripts/lib/runtime-one-shot-exec.mjs"
       - "scripts/lib/runtime-supervised-one-shot.mjs"
+      - "scripts/lib/distribution-lifecycle.mjs"
+      - "scripts/lib/native-artifact-delivery.mjs"
+      - "scripts/distribution.mjs"
+      - "scripts/verify-distribution-lifecycle.mjs"
+      - "scripts/verify-native-artifact-delivery.mjs"
       - "scripts/benchmark-prepared-traversal.mjs"
       - "scripts/verify-runtime-adapters.mjs"
       - "scripts/verify-runtime-invocation-lifecycle.mjs"
@@ -88,6 +93,11 @@ on:
       - "scripts/lib/runtime-opencode-run.mjs"
       - "scripts/lib/runtime-one-shot-exec.mjs"
       - "scripts/lib/runtime-supervised-one-shot.mjs"
+      - "scripts/lib/distribution-lifecycle.mjs"
+      - "scripts/lib/native-artifact-delivery.mjs"
+      - "scripts/distribution.mjs"
+      - "scripts/verify-distribution-lifecycle.mjs"
+      - "scripts/verify-native-artifact-delivery.mjs"
       - "scripts/benchmark-prepared-traversal.mjs"
       - "scripts/verify-runtime-adapters.mjs"
       - "scripts/verify-runtime-invocation-lifecycle.mjs"
@@ -213,6 +223,12 @@ jobs:
 
       - name: Verify provider-neutral runtime adapter contract matrix
         run: node scripts/verify-runtime-adapters.mjs
+
+      - name: Verify immutable user distribution lifecycle
+        run: node scripts/verify-distribution-lifecycle.mjs
+
+      - name: Verify automatic native artifact delivery contract
+        run: node scripts/verify-native-artifact-delivery.mjs
 
       - name: Verify native stdio and JavaScript conformance
         shell: bash
@@ -374,11 +390,9 @@ jobs:
             --binary "${package_root}/${SUPERVISOR_EXECUTABLE_NAME}" \
             --output "${package_root}/SUPERVISOR-MANIFEST.json"
 
-          if [[ "${TARGET_GOOS}" == "windows" ]]; then
-            (cd "$(dirname "${package_root}")" && zip -9 -r "${output_root}/${PACKAGE_NAME}.zip" "${RUNTIME_DIRECTORY}")
-          else
-            tar -C "$(dirname "${package_root}")" -czf "${output_root}/${PACKAGE_NAME}.tar.gz" "${RUNTIME_DIRECTORY}"
-          fi
+          # One strict tar.gz shape keeps installer verification identical on every OS,
+          # including Windows binaries cross-compiled on this Linux runner.
+          tar -C "$(dirname "${package_root}")" -czf "${output_root}/${PACKAGE_NAME}.tar.gz" "${RUNTIME_DIRECTORY}"
 
       - name: Upload immutable matrix artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

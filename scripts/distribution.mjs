@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { installDistribution, inspectDistribution, rollbackDistribution, uninstallDistribution } from "./lib/distribution-lifecycle.mjs";
 import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
+import { acquireVerifiedNativeArtifact } from "./lib/native-artifact-delivery.mjs";
 
 function parse(argv) {
   const [command = "help", ...rest] = argv;
@@ -26,8 +27,8 @@ function parse(argv) {
 function usage() {
   return {
     commands: [
-      "distribution install [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--project <directory> --runtime codex,opencode --onboarding-input <json>]",
-      "distribution upgrade [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--project <directory> --runtime codex,opencode --onboarding-input <json>]",
+      "distribution install [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime codex,opencode --onboarding-input <json>]",
+      "distribution upgrade [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime codex,opencode --onboarding-input <json>]",
       "distribution status [--install-root <directory>] [--bin-dir <directory>]",
       "distribution doctor [--install-root <directory>] [--bin-dir <directory>]",
       "distribution rollback [--install-root <directory>] [--bin-dir <directory>]",
@@ -50,16 +51,30 @@ export async function runDistributionCommand(argv = process.argv.slice(2)) {
     if (!options.project && (options.runtime || options["onboarding-input"])) {
       throw new Error("--runtime and --onboarding-input require --project.");
     }
-    const distribution = installDistribution({ ...common, sourceRoot: options.source });
-    if (!options.project) return distribution;
-    const activePluginRoot = path.join(distribution.installRoot, "releases", distribution.releaseId);
-    const project = await initializeOrResumeProject({
-      root: options.project,
-      pluginRoot: activePluginRoot,
-      runtimes: options.runtime?.split(","),
-      onboarding: readOnboardingInput(options["onboarding-input"]),
-    });
-    return { ...distribution, project };
+    const sourceRoot = path.resolve(options.source || path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."));
+    const sourcePackage = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json"), "utf8"));
+    const acquisition = await acquireVerifiedNativeArtifact({ version: sourcePackage.version, mode: options.native || "auto" });
+    try {
+      const distribution = installDistribution({
+        ...common,
+        sourceRoot,
+        nativeOverlayRoot: acquisition.status === "verified" ? acquisition.pluginRoot : null,
+      });
+      distribution.native = acquisition.status === "verified"
+        ? { ...distribution.native, assetName: acquisition.assetName, assetSha256: acquisition.assetSha256, buildCommit: acquisition.buildCommit }
+        : { status: "javascript-fallback", deliveryStatus: acquisition.status, reasonCode: acquisition.reasonCode || null };
+      if (!options.project) return distribution;
+      const activePluginRoot = path.join(distribution.installRoot, "releases", distribution.releaseId);
+      const project = await initializeOrResumeProject({
+        root: options.project,
+        pluginRoot: activePluginRoot,
+        runtimes: options.runtime?.split(","),
+        onboarding: readOnboardingInput(options["onboarding-input"]),
+      });
+      return { ...distribution, project };
+    } finally {
+      acquisition.cleanup();
+    }
   }
   if (command === "status" || command === "doctor") return inspectDistribution(common);
   if (command === "rollback") return rollbackDistribution(common);

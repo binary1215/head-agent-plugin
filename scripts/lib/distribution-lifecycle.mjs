@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyNativeOverlay } from "./native-artifact-delivery.mjs";
 
 const DISTRIBUTION_PROTOCOL = "0.1.0";
 const INCLUDE_ENTRIES = [
@@ -97,9 +98,9 @@ function walkRegularFiles(root, relative = "") {
   return files;
 }
 
-function distributionFiles(sourceRoot) {
+function distributionFiles(sourceRoot, { includeNativeDist = false } = {}) {
   const files = [];
-  for (const entry of INCLUDE_ENTRIES) {
+  for (const entry of includeNativeDist ? [...INCLUDE_ENTRIES, "dist"] : INCLUDE_ENTRIES) {
     const absolute = path.join(sourceRoot, entry);
     if (!fs.existsSync(absolute)) continue;
     const stat = fs.lstatSync(absolute);
@@ -125,9 +126,9 @@ function validateSource(sourceRoot) {
   return { plugin, pkg };
 }
 
-function buildManifest(sourceRoot) {
+function buildManifest(sourceRoot, options = {}) {
   const { plugin, pkg } = validateSource(sourceRoot);
-  const files = distributionFiles(sourceRoot).map((relative) => {
+  const files = distributionFiles(sourceRoot, options).map((relative) => {
     const bytes = fs.readFileSync(path.join(sourceRoot, relative));
     return { path: normalizeRelative(relative), bytes: bytes.byteLength, sha256: sha256(bytes) };
   });
@@ -153,6 +154,27 @@ function copyManifestFiles(sourceRoot, stageRoot, manifest) {
     fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
   }
   atomicWriteJson(path.join(stageRoot, "distribution-manifest.json"), manifest);
+}
+
+function copyVerifiedNativeOverlay(nativeOverlayRoot, stageRoot, platform, arch, version) {
+  const overlay = path.resolve(nativeOverlayRoot);
+  const verified = verifyNativeOverlay({ pluginRoot: overlay, platform, arch, version });
+  const source = path.join(overlay, "dist", verified.targetDirectory);
+  const destination = path.join(stageRoot, "dist", verified.targetDirectory);
+  if (fs.existsSync(destination)) fail("HEAD_DISTRIBUTION_NATIVE_CONFLICT", "Native target already exists in the staged distribution.");
+  ensureDirectory(path.dirname(destination));
+  fs.cpSync(source, destination, {
+    recursive: true,
+    dereference: false,
+    errorOnExist: true,
+    filter: (candidate) => {
+      const stat = fs.lstatSync(candidate);
+      if (stat.isSymbolicLink()) fail("HEAD_DISTRIBUTION_SYMLINK", "Native distribution overlay cannot contain symlinks.");
+      return true;
+    },
+  });
+  verifyNativeOverlay({ pluginRoot: stageRoot, platform, arch, version });
+  return verified;
 }
 
 function verifyRelease(releaseRoot, expectedReleaseId = null) {
@@ -292,28 +314,33 @@ function writeLaunchers(installRoot, binDirectory) {
   return { launcher, commands: [shellLauncher, cmdLauncher] };
 }
 
-export function installDistribution({ sourceRoot, installRoot, binDirectory } = {}) {
+export function installDistribution({ sourceRoot, installRoot, binDirectory, nativeOverlayRoot = null, platform = process.platform, arch = process.arch } = {}) {
   const locations = resolveLocations({ installRoot, binDirectory });
   const source = path.resolve(sourceRoot || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."));
-  const manifest = buildManifest(source);
+  const sourceManifest = buildManifest(source);
   claimInstallRoot(locations.installRoot);
   verifyLauncherOwnership(locations.installRoot, locations.binDirectory);
   ensureDirectory(path.join(locations.installRoot, "releases"));
   ensureDirectory(path.join(locations.installRoot, "staging"));
-  const destination = releaseRoot(locations.installRoot, manifest.releaseId);
-  if (!fs.existsSync(destination)) {
-    const stage = path.join(locations.installRoot, "staging", `${manifest.releaseId}-${crypto.randomUUID()}`);
-    ensureDirectory(stage);
-    try {
-      copyManifestFiles(source, stage, manifest);
-      verifyRelease(stage, manifest.releaseId);
-      fs.renameSync(stage, destination);
-    } catch (error) {
+  const stage = path.join(locations.installRoot, "staging", `preparing-${crypto.randomUUID()}`);
+  let manifest;
+  let native = null;
+  ensureDirectory(stage);
+  try {
+    copyManifestFiles(source, stage, sourceManifest);
+    if (nativeOverlayRoot) native = copyVerifiedNativeOverlay(nativeOverlayRoot, stage, platform, arch, sourceManifest.version);
+    manifest = buildManifest(stage, { includeNativeDist: Boolean(native) });
+    atomicWriteJson(path.join(stage, "distribution-manifest.json"), manifest);
+    verifyRelease(stage, manifest.releaseId);
+    const destination = releaseRoot(locations.installRoot, manifest.releaseId);
+    if (!fs.existsSync(destination)) fs.renameSync(stage, destination);
+    else {
+      verifyRelease(destination, manifest.releaseId);
       fs.rmSync(stage, { recursive: true, force: true });
-      throw error;
     }
-  } else {
-    verifyRelease(destination, manifest.releaseId);
+  } catch (error) {
+    fs.rmSync(stage, { recursive: true, force: true });
+    throw error;
   }
   const previous = readPointer(locations.installRoot, { required: false });
   const history = previous
@@ -340,6 +367,7 @@ export function installDistribution({ sourceRoot, installRoot, binDirectory } = 
     installRoot: locations.installRoot,
     binDirectory: locations.binDirectory,
     commands: launchers.commands,
+    native: native ? { status: "verified", ...native } : { status: "javascript-fallback" },
     pathConfigured: (process.env.PATH || "").split(path.delimiter).some((item) => path.resolve(item || ".") === locations.binDirectory),
   };
 }
@@ -358,6 +386,7 @@ export function inspectDistribution({ installRoot, binDirectory } = {}) {
     installRoot: locations.installRoot,
     binDirectory: locations.binDirectory,
     node: process.version,
+    native: manifest.files.some((file) => file.path.startsWith("dist/")) ? "verified" : "javascript-fallback",
     pathConfigured: (process.env.PATH || "").split(path.delimiter).some((item) => path.resolve(item || ".") === locations.binDirectory),
   };
 }

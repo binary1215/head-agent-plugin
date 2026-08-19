@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.50",
+  "version": "0.3.0-alpha.51",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
@@ -16,6 +16,7 @@
     "verify:live-codex": "node scripts/verify-live-codex-runtime.mjs",
     "verify:onboarding": "node scripts/verify-onboarding.mjs",
     "verify:distribution": "node scripts/verify-distribution-lifecycle.mjs",
+    "verify:native-delivery": "node scripts/verify-native-artifact-delivery.mjs",
     "distribution:status": "node scripts/distribution.mjs status"
   }
 }
