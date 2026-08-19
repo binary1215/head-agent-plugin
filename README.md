@@ -61,6 +61,106 @@ User objective and Project Canon
 | GraphDB is replaceable | The graph is a rebuildable retrieval and provenance projection, not the sole source of truth. |
 | Git is optional | Git may enrich evidence but is not required for HEAD identity, lineage, or recovery. |
 
+## A graph that connects product meaning to execution evidence
+
+HEAD Agent Core does not build only a code dependency graph. It creates a
+content-derived, deterministic `GraphSnapshot` that connects product concepts,
+repository evidence, reviewed relationships, change history, and execution
+lineage while preserving their different authority levels.
+
+```mermaid
+flowchart LR
+    FG[FeatureGroup] --> C[Capability]
+    C --> F[Feature]
+
+    F --- M[Reviewed IMPLEMENTS / VERIFIED_BY]
+    M --- CODE[File / Symbol]
+    M --- TEST[Test]
+
+    WP[WholePlan] --> EC[Execution Contract]
+    EC --> RP[Result Packet]
+    RP --> CS[ChangeSet]
+
+    CS -->|CHANGES| REV[File / Symbol / Test Revision]
+    CS -->|reviewed IMPACTS| F
+
+    EV[Evidence] --> RD[ReviewDecision]
+    RD --> PMR[Product Model Revision]
+
+    PMR --> GS[Unified GraphSnapshot]
+    REV --> GS
+    CS --> GS
+    GS --> MD[Markdown Projection]
+    GS --> DB[Optional ArcadeDB Projection]
+```
+
+### More than a current-state graph
+
+The same immutable snapshot supports complementary traversal views:
+
+| View | Example question |
+| --- | --- |
+| Product and semantic | Which reviewed code and tests relate to this Feature? |
+| Temporal | How did this File, Symbol, Feature, or Decision change? |
+| Provenance | Which evidence and review produced this relationship? |
+| Execution | Which accepted result produced this ChangeSet? |
+| Impact | Which reviewed product concepts does this ChangeSet affect? |
+
+The graph can represent:
+
+- `FeatureGroup → Capability → Feature` product structure;
+- reviewed Feature/Capability-to-File, Symbol, and Test relationships;
+- repository files, symbols, imports, bindings, dependencies, and call evidence;
+- immutable File, Symbol, Test, and Product Model revisions;
+- Git-independent ChangeSets with zero-or-more parent ChangeSets;
+- multiple-parent SourceSnapshot and Revision DAGs;
+- onboarding, mapping, document, and impact candidate review provenance;
+- optional VCS evidence without adding Git identity to the ChangeSet;
+- graph-to-Markdown and optional ArcadeDB materializations.
+
+This enables bounded paths such as:
+
+```text
+Feature
+  → reviewed implementation relationship
+  → Symbol
+  → Symbol revision
+  → ChangeSet
+  → ResultPacket reference
+  → ReviewDecision reference
+```
+
+and:
+
+```text
+ChangeSet
+  → changed File / Symbol / Test revision
+  → reviewed impact
+  → Capability or Feature
+  → FeatureGroup
+```
+
+### Authority-aware by design
+
+The graph is useful for retrieval and audit, but it cannot silently become
+project authority.
+
+- Product intent comes from user-owned Product Canon and explicit reviews.
+- Current behavior comes from repository and runtime evidence.
+- Inferred product concepts and relationships remain candidates until reviewed.
+- Generated Markdown is a human projection, not Canon.
+- ArcadeDB is a replaceable materialization, not the unique source of truth.
+- Git can enrich evidence but is not required for graph identity or lineage.
+- Every graph is bound to exact source and Canon snapshot identities.
+
+### Built for bounded agent context
+
+The Context Compiler does not copy the complete graph into an agent prompt. It
+performs task-specific bounded traversal and records what was included, what was
+excluded, which evidence is stale or missing, and which questions remain
+explicit Unknowns. The resulting Context Capsule remains reproducible from the
+same canonical inputs, compiler version, traversal policy, and token budget.
+
 ## Implementation status
 
 Status terms in this README have exact meanings:
