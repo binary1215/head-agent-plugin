@@ -815,8 +815,8 @@ export async function runRuntimeLifecycleConformance({
     projectRoot,
     authorization: verified,
     ownerFenceDigest: callerFenceDigest,
-  }, async ({ lease, consumption }) => {
-    verifyRuntimeExecutionLeaseOwnership({ projectRoot, authorization: verified, lease, consumption });
+  }, async ({ lease, consumption, operationalStateRoot }) => {
+    verifyRuntimeExecutionLeaseOwnership({ projectRoot, operationalStateRoot, authorization: verified, lease, consumption });
   const ownershipNonce = crypto.randomBytes(32).toString("hex");
   let child;
   let timer;

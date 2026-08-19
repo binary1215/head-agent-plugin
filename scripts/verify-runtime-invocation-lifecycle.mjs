@@ -25,12 +25,16 @@ import {
   verifyRuntimeResultPacketDraft,
 } from "./lib/runtime-invocation-lifecycle.mjs";
 import {
+  RUNTIME_OPERATIONAL_STATE_ENV,
+  resolveRuntimeOperationalStateRoot,
   verifyRuntimeExecutionLeaseConsumption,
   verifyRuntimeExecutionLeaseRelease,
 } from "./lib/runtime-execution-lease.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const temporaryRoot = path.join(pluginRoot, `.test-tmp-runtime-lifecycle-${process.pid}-${Date.now()}`);
+const fixtureNonce = `${process.pid}-${Date.now()}`;
+const temporaryRoot = path.join(pluginRoot, `.test-tmp-runtime-lifecycle-${fixtureNonce}`);
+const temporaryOperationalRoot = path.join(pluginRoot, `.test-tmp-runtime-operational-${fixtureNonce}`);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -84,14 +88,33 @@ function evidenceFixtureSpawn(command, args, options) {
 
 async function main() {
   const resolvedRoot = path.resolve(temporaryRoot);
+  const resolvedOperationalRoot = path.resolve(temporaryOperationalRoot);
   assert(resolvedRoot.startsWith(`${pluginRoot}${path.sep}`) && path.basename(resolvedRoot).startsWith(".test-tmp-runtime-lifecycle-"), "Temporary lifecycle root escaped the plugin workspace.");
+  assert(resolvedOperationalRoot.startsWith(`${pluginRoot}${path.sep}`) && path.basename(resolvedOperationalRoot).startsWith(".test-tmp-runtime-operational-"), "Temporary operational root escaped the plugin workspace.");
+  const previousOperationalRoot = process.env[RUNTIME_OPERATIONAL_STATE_ENV];
+  process.env[RUNTIME_OPERATIONAL_STATE_ENV] = resolvedOperationalRoot;
   fs.mkdirSync(resolvedRoot, { recursive: false });
+  fs.mkdirSync(resolvedOperationalRoot, { recursive: false });
   try {
     fs.writeFileSync(path.join(resolvedRoot, "example.mjs"), "export const answer = 42;\n", "utf8");
     const initialized = initializeProject({ root: resolvedRoot, pluginRoot, runtimes: ["codex", "opencode"] });
     assert(initialized.status === "ready", "Fixture project initialization failed.");
     const initializedProject = inspectProject(resolvedRoot);
     assert(initializedProject.status === "ready", "Fixture project did not remain ready after initialization.");
+    assert(resolveRuntimeOperationalStateRoot({ projectRoot: resolvedRoot, create: false }) === fs.realpathSync(resolvedOperationalRoot), "Host-local operational root did not resolve exactly.");
+    let projectLocalOperationalRootRejected = false;
+    const unsafeProjectLocalOperationalRoot = path.join(resolvedRoot, ".head", "unsafe-operational-state");
+    try {
+      resolveRuntimeOperationalStateRoot({
+        projectRoot: resolvedRoot,
+        environment: { ...process.env, [RUNTIME_OPERATIONAL_STATE_ENV]: unsafeProjectLocalOperationalRoot },
+        create: true,
+      });
+    } catch (error) {
+      projectLocalOperationalRootRejected = error.code === "UNSAFE_RUNTIME_OPERATIONAL_STATE_ROOT";
+    }
+    assert(projectLocalOperationalRootRejected, "Project-local operational root was accepted.");
+    assert(!fs.existsSync(unsafeProjectLocalOperationalRoot), "Rejected project-local operational root was created before validation.");
     const capsule = compileContext({
       root: resolvedRoot,
       task: "Prove bounded provider-neutral runtime lifecycle conformance without changing project files.",
@@ -341,6 +364,14 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const activeLease = inspectRuntimeInvocationExecutionLease({ root: resolvedRoot, authorizationId: cancellationPlan.authorizationId });
     assert(activeLease.lease.status === "consumed-active", "In-flight execution lease was not visible as consumed and active.");
+    assert(activeLease.lease.operationalState.location === "host-local-outside-project"
+      && activeLease.lease.operationalState.pathExposed === false
+      && activeLease.lease.operationalState.ownerLockPersistedInProject === false,
+    "Execution lease inspection did not preserve the external operational-state boundary.");
+    const projectOwnerLock = path.join(resolvedRoot, ".head", "runtime", "execution-leases", cancellationPlan.authorizationId, "owner.lock");
+    const operationalOwnerLock = path.join(resolvedOperationalRoot, "runtime-execution-leases", initialized.project.projectId, cancellationPlan.authorizationId, "owner.lock");
+    assert(!fs.existsSync(projectOwnerLock), "Operational owner lock leaked into project lineage.");
+    assert(fs.existsSync(operationalOwnerLock), "Operational owner lock was not created in host-local state.");
     let concurrentReplayRejected = false;
     try {
       await runRuntimeLifecycleConformance({ root: resolvedRoot, authorization: cancellationPlan, mode: "success", onProcessEvent: recordProcess });
@@ -353,6 +384,7 @@ async function main() {
     assert(cancelled.receipt.status === "cancelled", "Caller cancellation did not fail closed.");
     assert(cancelled.receipt.processBoundary.exactChildExitObserved === true, "Cancelled child exit was not observed.");
     assert(cancelled.executionLease.release.operationStatus === "cancelled", "Cancelled lease release was not recorded.");
+    assert(!fs.existsSync(operationalOwnerLock), "Operational owner lock remained after cancellation cleanup.");
     const spawnFailureAuthorization = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
       runtime: "codex",
@@ -396,6 +428,26 @@ async function main() {
       writeRejected = error.code === "RUNTIME_INVOCATION_NOT_AUTHORIZED";
     }
     assert(writeRejected, "Workspace-write invocation was not rejected by the read-only ExecutionContract.");
+    const legacyLockAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      scope: { kind: "run" },
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000, maxEvents: 4_093 },
+      persist: true,
+    }).authorization;
+    const legacyProjectLock = path.join(resolvedRoot, ".head", "runtime", "execution-leases", legacyLockAuthorization.authorizationId, "owner.lock");
+    fs.mkdirSync(legacyProjectLock, { recursive: true });
+    let legacyProjectLockRejected = false;
+    try {
+      inspectRuntimeInvocationExecutionLease({ root: resolvedRoot, authorizationId: legacyLockAuthorization.authorizationId });
+    } catch (error) {
+      legacyProjectLockRejected = error.code === "LEGACY_PROJECT_OPERATIONAL_STATE_REQUIRES_RECOVERY";
+    }
+    assert(legacyProjectLockRejected, "Legacy project-local owner lock was silently ignored.");
+    fs.rmdirSync(legacyProjectLock);
     process.stdout.write(`${JSON.stringify({
       status: "runtime_invocation_lifecycle_verified",
       projectId: initialized.project.projectId,
@@ -416,16 +468,25 @@ async function main() {
       workspaceWriteRejected: true,
       sessionWorkspaceWriteAuthorized: true,
       sessionFreshHeadReviewRequired: false,
+      operationalStateExternalized: true,
+      legacyProjectLockRejected,
       rawTranscriptPersisted: false,
       actualProviderInvoked: false,
       providerControlEnabled: false,
     }, null, 2)}\n`);
   } finally {
-    const resolved = path.resolve(temporaryRoot);
-    if (!resolved.startsWith(`${pluginRoot}${path.sep}`) || !path.basename(resolved).startsWith(".test-tmp-runtime-lifecycle-")) {
-      throw new Error("Refusing to remove an unverified lifecycle temporary directory.");
+    if (previousOperationalRoot === undefined) delete process.env[RUNTIME_OPERATIONAL_STATE_ENV];
+    else process.env[RUNTIME_OPERATIONAL_STATE_ENV] = previousOperationalRoot;
+    const cleanupTargets = [
+      { resolved: path.resolve(temporaryRoot), prefix: ".test-tmp-runtime-lifecycle-" },
+      { resolved: path.resolve(temporaryOperationalRoot), prefix: ".test-tmp-runtime-operational-" },
+    ];
+    for (const { resolved, prefix } of cleanupTargets) {
+      if (!resolved.startsWith(`${pluginRoot}${path.sep}`) || !path.basename(resolved).startsWith(prefix)) {
+        throw new Error("Refusing to remove an unverified runtime temporary directory.");
+      }
+      fs.rmSync(resolved, { recursive: true, force: true });
     }
-    fs.rmSync(resolved, { recursive: true, force: true });
   }
 }
 
