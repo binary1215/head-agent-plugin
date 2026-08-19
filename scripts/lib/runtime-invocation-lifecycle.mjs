@@ -19,9 +19,11 @@ import {
 export const EXECUTION_AUTHORIZATION_VERSION = "0.2.0";
 export const RUNTIME_INVOCATION_AUTHORIZATION_VERSION = EXECUTION_AUTHORIZATION_VERSION;
 export const RUNTIME_EVENT_ENVELOPE_VERSION = "0.1.0";
-export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.5.0";
-export const RUNTIME_RESULT_DRAFT_VERSION = "0.4.0";
+export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.6.0";
+export const RUNTIME_RESULT_DRAFT_VERSION = "0.5.0";
 export const RUNTIME_STRUCTURED_RESULT_VERSION = "0.1.0";
+const LEGACY_RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.5.0";
+const LEGACY_RUNTIME_RESULT_DRAFT_VERSION = "0.4.0";
 
 const RUNTIMES = Object.freeze(["codex", "opencode"]);
 const WORKSPACE_MODES = Object.freeze(["read-only", "workspace-write"]);
@@ -685,11 +687,17 @@ function providerModeProfile(runtime, providerMode) {
 function lifecycleSummary({ authorization, events, status, exitCode, signal, stdoutBytes, stderrBytes, stdoutDigest, stderrDigest,
   callerFenceDigest, childFenceDigest, childStarted, childExitObserved, terminationRequested, projectFenceValidated,
   inputDigestObserved, noDescendantFixture, descendantTreeOwnershipValidated = false, consumption,
-  providerMode = "conformance-fixture", providerSessionCreated = false, structuredResult = null, supervision = null }) {
+  providerMode = "conformance-fixture", providerSessionCreated = false, providerDiagnosticCodes = [], structuredResult = null,
+  supervision = null }) {
   const eventIds = events.map((item) => item.eventId);
   const eventTypes = [...new Set(events.map((item) => item.eventType))].sort(compareText);
   const unknownEventTypes = [...new Set(events.filter((item) => item.eventClass === "unknown").map((item) => item.eventType))].sort(compareText);
   const providerSessionReferenceDigests = [...new Set(events.flatMap((item) => item.providerSessionReferenceDigests))].sort(compareText);
+  const normalizedProviderDiagnosticCodes = [...new Set(providerDiagnosticCodes)].sort(compareText);
+  if (normalizedProviderDiagnosticCodes.length > 32
+    || normalizedProviderDiagnosticCodes.some((item) => typeof item !== "string" || !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(item))) {
+    fail("Runtime provider diagnostic codes are invalid.", "INVALID_RUNTIME_PROVIDER_DIAGNOSTICS");
+  }
   const { fixtureMode, actualProvider, valid } = providerModeProfile(authorization.runtime, providerMode);
   if (!valid) fail("Runtime provider mode is invalid.", "INVALID_RUNTIME_PROVIDER_MODE");
   const verifiedResult = structuredResult === null ? null : verifyRuntimeStructuredResult(structuredResult, { scopeKind: authorization.scope.kind });
@@ -760,6 +768,7 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
       boundedOneShotInvocationEnabled: actualProvider,
       generalProviderControlEnabled: false,
       lifecycleConformanceEvidenceOnly: fixtureMode,
+      diagnosticCodes: normalizedProviderDiagnosticCodes,
       structuredResultObserved: verifiedResult !== null,
       structuredResultDigest: verifiedResult === null ? "" : digest(canonicalJson(verifiedResult)),
       structuredResultBytes: verifiedResult === null ? 0 : Buffer.byteLength(canonicalJson(verifiedResult)),
@@ -788,6 +797,7 @@ export function buildRuntimeInvocationLifecycleReceipt(input = {}) {
 }
 
 export function verifyRuntimeInvocationLifecycleReceipt(document) {
+  const legacyReceipt = document?.protocolVersion === LEGACY_RUNTIME_LIFECYCLE_RECEIPT_VERSION;
   assertFields(document, [
     "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", "headSessionId", "scopeKind", "runId",
     "executionContractId", "executionLeaseConsumptionId", "runtime", "status", "exitCode", "signal", "eventIds", "eventTypes",
@@ -805,7 +815,7 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
   assertFields(document.providerBoundary, [
     "mode", "conformanceFixtureOnly", "actualProviderInvoked", "actualProviderSessionCreated",
     "boundedOneShotInvocationEnabled", "generalProviderControlEnabled", "lifecycleConformanceEvidenceOnly",
-    "structuredResultObserved", "structuredResultDigest", "structuredResultBytes",
+    ...(legacyReceipt ? [] : ["diagnosticCodes"]), "structuredResultObserved", "structuredResultDigest", "structuredResultBytes",
   ], "Runtime invocation provider boundary");
   assertFields(document.executionLeaseBoundary, [
     "authorizationConsumedBeforeInvocation", "atMostOnce", "replayAllowed", "providerInvokedAtConsumption", "crashRecovery",
@@ -825,12 +835,14 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     boundedOneShotInvocationEnabled: actualProvider,
     generalProviderControlEnabled: false,
     lifecycleConformanceEvidenceOnly: fixtureMode,
+    ...(legacyReceipt ? {} : { diagnosticCodes: document.providerBoundary.diagnosticCodes }),
     structuredResultObserved: document.providerBoundary.structuredResultObserved,
     structuredResultDigest: document.providerBoundary.structuredResultDigest,
     structuredResultBytes: document.providerBoundary.structuredResultBytes,
   };
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeInvocationLifecycleReceipt"
-    || document.protocolVersion !== RUNTIME_LIFECYCLE_RECEIPT_VERSION || !statuses.has(document.status)
+    || !new Set([LEGACY_RUNTIME_LIFECYCLE_RECEIPT_VERSION, RUNTIME_LIFECYCLE_RECEIPT_VERSION]).has(document.protocolVersion)
+    || !statuses.has(document.status)
     || document.runtime !== normalizeRuntime(document.runtime)
     || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
@@ -887,6 +899,9 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     || actualProvider && completed && !document.processBoundary.descendantTreeOwnershipValidated
     || fixtureMode && document.providerBoundary.actualProviderInvoked
     || typeof document.providerBoundary.actualProviderSessionCreated !== "boolean"
+    || !legacyReceipt && (!sortedUnique(document.providerBoundary.diagnosticCodes)
+      || document.providerBoundary.diagnosticCodes.length > 32
+      || document.providerBoundary.diagnosticCodes.some((item) => typeof item !== "string" || !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(item)))
     || typeof document.providerBoundary.structuredResultObserved !== "boolean"
     || (document.providerBoundary.structuredResultObserved
       ? (!/^[a-f0-9]{64}$/.test(document.providerBoundary.structuredResultDigest || "")
@@ -1171,7 +1186,9 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
   const successful = verifiedReceipt.status === "completed" && verifiedReceipt.exitCode === 0
     && verifiedReceipt.inputDigestObserved === verifiedAuthorization.executionInput.digest
     && (!actualProvider || verifiedReceipt.processBoundary.descendantTreeOwnershipValidated);
+  const providerDiagnosticCodes = verifiedReceipt.providerBoundary.diagnosticCodes || [];
   const lifecycleUnknowns = verifiedReceipt.unknownEventTypes.map((type) => `Unrecognized provider event type: ${type}`);
+  lifecycleUnknowns.push(...providerDiagnosticCodes.map((code) => `Provider diagnostic: ${code}`));
   if (actualProvider && !verifiedReceipt.processBoundary.descendantTreeOwnershipValidated) {
     lifecycleUnknowns.push("Actual provider descendant-tree ownership is not yet validated.");
   }
@@ -1195,6 +1212,7 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
       executionLeaseReleaseId: verifiedRelease.releaseId,
       eventIds: verifiedReceipt.eventIds,
       eventTypes: verifiedReceipt.eventTypes,
+      providerDiagnosticCodes,
       providerSessionReferenceDigests: verifiedReceipt.providerSessionReferenceDigests,
       actualProviderInvoked: actualProvider,
       structuredResultDigest: providerResultDigest,
@@ -1224,6 +1242,7 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
 }
 
 export function verifyRuntimeResultPacketDraft(document) {
+  const legacyDraft = document?.protocolVersion === LEGACY_RUNTIME_RESULT_DRAFT_VERSION;
   assertFields(document, [
     "schemaVersion", "kind", "protocolVersion", "authorizationId", "lifecycleReceiptId", "executionLeaseConsumptionId",
     "executionLeaseReleaseId", "scopeKind", "executionContractId",
@@ -1239,7 +1258,8 @@ export function verifyRuntimeResultPacketDraft(document) {
   const verification = document.verification[0];
   assertFields(evidence, [
     "kind", "lifecycleReceiptId", "executionLeaseConsumptionId", "executionLeaseReleaseId", "eventIds", "eventTypes",
-    "providerSessionReferenceDigests", "actualProviderInvoked", "structuredResultDigest", "instructionAuthority",
+    ...(legacyDraft ? [] : ["providerDiagnosticCodes"]), "providerSessionReferenceDigests", "actualProviderInvoked",
+    "structuredResultDigest", "instructionAuthority",
   ], "Runtime ResultPacket draft evidence");
   assertFields(verification, [
     "kind", "status", "projectFenceValidated", "exactChildExitObserved", "descendantTreeOwnershipValidated", "inputDigestMatched",
@@ -1249,7 +1269,7 @@ export function verifyRuntimeResultPacketDraft(document) {
     ? null : verifyRuntimeStructuredResult(document.providerResult, { scopeKind: document.scopeKind });
   const providerResultDigest = providerResult === null ? "" : digest(canonicalJson(providerResult));
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeResultPacketDraft"
-    || document.protocolVersion !== RUNTIME_RESULT_DRAFT_VERSION
+    || !new Set([LEGACY_RUNTIME_RESULT_DRAFT_VERSION, RUNTIME_RESULT_DRAFT_VERSION]).has(document.protocolVersion)
     || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^runtime-lifecycle-receipt-[a-f0-9]{24}$/.test(document.lifecycleReceiptId || "")
     || !/^runtime-execution-consumption-[a-f0-9]{24}$/.test(document.executionLeaseConsumptionId || "")
@@ -1263,7 +1283,11 @@ export function verifyRuntimeResultPacketDraft(document) {
     || evidence.executionLeaseConsumptionId !== document.executionLeaseConsumptionId
     || evidence.executionLeaseReleaseId !== document.executionLeaseReleaseId
     || !sortedUnique(evidence.eventIds) || evidence.eventIds.some((item) => !/^runtime-event-[a-f0-9]{24}$/.test(item))
-    || !sortedUnique(evidence.eventTypes) || !sortedUnique(evidence.providerSessionReferenceDigests)
+    || !sortedUnique(evidence.eventTypes)
+    || !legacyDraft && (!sortedUnique(evidence.providerDiagnosticCodes)
+      || evidence.providerDiagnosticCodes.length > 32
+      || evidence.providerDiagnosticCodes.some((item) => typeof item !== "string" || !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(item)))
+    || !sortedUnique(evidence.providerSessionReferenceDigests)
     || evidence.providerSessionReferenceDigests.some((item) => !/^[a-f0-9]{64}$/.test(item))
     || typeof evidence.actualProviderInvoked !== "boolean" || evidence.structuredResultDigest !== providerResultDigest
     || evidence.instructionAuthority !== false

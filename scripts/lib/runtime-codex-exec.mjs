@@ -227,6 +227,43 @@ export function extractCodexStructuredResult(record, { scopeKind = null } = {}) 
   return null;
 }
 
+const CODEX_DIAGNOSTIC_RULES = Object.freeze([
+  Object.freeze({ code: "codex.structured-output-rejected", pattern: /json schema|output schema|response format|response_format|structured output|invalid schema/ }),
+  Object.freeze({ code: "codex.authentication", pattern: /authentication|unauthorized|not logged in|api key|\b401\b|\b403\b/ }),
+  Object.freeze({ code: "codex.rate-limit", pattern: /rate limit|quota|\b429\b/ }),
+  Object.freeze({ code: "codex.transport", pattern: /network|connection|connect|dns|proxy|tls|certificate|stream disconnected|timed? out/ }),
+  Object.freeze({ code: "codex.model-unavailable", pattern: /model.{0,48}(not found|unsupported|unavailable)|unsupported.{0,24}model/ }),
+  Object.freeze({ code: "codex.context-limit", pattern: /context.{0,32}(length|window|limit)|too many tokens|maximum context/ }),
+  Object.freeze({ code: "codex.sandbox-or-permission", pattern: /access denied|permission denied|sandbox violation/ }),
+]);
+
+const CODEX_INVALID_EVENT_DIAGNOSTIC_CODES = new Set([
+  "codex.event-byte-limit",
+  "codex.event-count-limit",
+  "codex.invalid-event-unclassified",
+  "codex.invalid-json-event",
+  "codex.sensitive-root-exposure",
+]);
+
+export function classifyCodexProviderDiagnostics({ record = null, stderr = "", exitCode = null,
+  structuredResultObserved = null, eventTypes = [] } = {}) {
+  const codes = new Set();
+  const type = record && typeof record === "object" && !Array.isArray(record)
+    ? String(record.type || record.eventType || record.kind || "").trim().toLowerCase() : "";
+  const errorRecord = /error|fail/.test(type);
+  const sources = [];
+  if (errorRecord) sources.push(canonicalJson(record).toLowerCase());
+  if (typeof stderr === "string" && stderr.trim()) sources.push(stderr.slice(0, 512 * 1024).toLowerCase());
+  for (const source of sources) {
+    for (const rule of CODEX_DIAGNOSTIC_RULES) if (rule.pattern.test(source)) codes.add(rule.code);
+  }
+  if (type === "turn.failed" || eventTypes.includes("turn.failed")) codes.add("codex.turn-failed");
+  if (errorRecord && ![...codes].some((code) => code !== "codex.turn-failed")) codes.add("codex.provider-error-unclassified");
+  if (Number.isInteger(exitCode) && exitCode !== 0) codes.add("codex.nonzero-exit");
+  if (structuredResultObserved === false && Number.isInteger(exitCode) && exitCode !== 0) codes.add("codex.missing-structured-result");
+  return [...codes].sort(compareText);
+}
+
 function structuredResultExposesRoot(result, roots) {
   if (!result) return false;
   const content = canonicalJson(result).toLowerCase();
@@ -314,6 +351,7 @@ async function runCodexChild({
   let inputWriteFailed = false;
   let providerResult = null;
   const events = [];
+  const providerDiagnosticCodes = new Set();
   const ownershipNonce = crypto.randomBytes(32).toString("hex");
 
   const receipt = await new Promise((resolve, reject) => {
@@ -372,10 +410,19 @@ async function runCodexChild({
         const record = JSON.parse(line);
         const envelope = normalizeRuntimeEvent({ authorization, sequence: events.length, line });
         events.push(envelope);
+        for (const code of classifyCodexProviderDiagnostics({ record })) providerDiagnosticCodes.add(code);
         const result = extractCodexStructuredResult(record, { scopeKind: authorization.scope.kind });
-        if (result && structuredResultExposesRoot(result, sensitiveRoots)) terminate("invalid-event");
+        if (result && structuredResultExposesRoot(result, sensitiveRoots)) {
+          providerDiagnosticCodes.add("codex.sensitive-root-exposure");
+          terminate("invalid-event");
+        }
         else if (result) providerResult = result;
-      } catch {
+      } catch (error) {
+        const diagnosticCode = error?.code === "RUNTIME_EVENT_LIMIT" ? "codex.event-count-limit"
+          : error?.code === "RUNTIME_EVENT_OUTPUT_LIMIT" ? "codex.event-byte-limit"
+            : error?.code === "INVALID_RUNTIME_EVENT_JSON" || error instanceof SyntaxError ? "codex.invalid-json-event"
+              : "codex.invalid-event-unclassified";
+        providerDiagnosticCodes.add(diagnosticCode);
         terminate("invalid-event");
       }
     };
@@ -427,6 +474,7 @@ async function runCodexChild({
         exactSupervisorExitObserved: state.childExitObserved,
         terminationRequested: state.terminationRequested,
       });
+      if (supervision.controlInvalid) providerDiagnosticCodes.add("codex.supervisor-control-invalid");
       if (!supervision.providerChildExitObserved && supervision.providerPid) {
         onProcessEvent({ type: "exit", pid: supervision.providerPid, parentPid: child.pid, exitCode: null, signal: state.terminationRequested ? "terminated-tree" : "unknown" });
       }
@@ -437,6 +485,16 @@ async function runCodexChild({
       const status = state.cancelled ? "cancelled" : state.timedOut ? "timed-out" : state.outputLimited ? "output-limited"
         : state.invalidEvent || supervision.controlInvalid ? "invalid-event"
           : code === 0 && providerOutputComplete && supervision.ownershipEstablished && supervision.treeCleanupVerified ? "completed" : "failed";
+      if (state.invalidEvent
+        && ![...providerDiagnosticCodes].some((item) => CODEX_INVALID_EVENT_DIAGNOSTIC_CODES.has(item))) {
+        providerDiagnosticCodes.add("codex.invalid-event-unclassified");
+      }
+      for (const diagnosticCode of classifyCodexProviderDiagnostics({
+        stderr: stderr.toString("utf8"),
+        exitCode: Number.isInteger(code) ? code : null,
+        structuredResultObserved: providerResult !== null,
+        eventTypes: events.map((item) => item.eventType),
+      })) providerDiagnosticCodes.add(diagnosticCode);
       const receiptDocument = buildRuntimeInvocationLifecycleReceipt({
         authorization,
         events: events.sort((left, right) => compareText(left.eventId, right.eventId)),
@@ -461,6 +519,7 @@ async function runCodexChild({
         consumption,
         providerMode,
         providerSessionCreated: sessionCreated,
+        providerDiagnosticCodes: [...providerDiagnosticCodes],
         structuredResult: providerResult,
       });
       resolve({ receipt: receiptDocument, events, providerResult });

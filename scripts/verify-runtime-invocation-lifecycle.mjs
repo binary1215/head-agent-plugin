@@ -34,6 +34,7 @@ import {
 } from "./lib/runtime-execution-lease.mjs";
 import {
   CODEX_EXEC_RESULT_SCHEMA,
+  classifyCodexProviderDiagnostics,
   executeCodexRuntimeInvocation,
   verifyCodexExecWireResultSchema,
 } from "./lib/runtime-codex-exec.mjs";
@@ -161,6 +162,21 @@ async function main() {
       semanticResultBoundsRejected = error.code === "INVALID_RUNTIME_STRUCTURED_RESULT";
     }
     assert(semanticResultBoundsRejected, "Provider-neutral structured-result bounds were weakened with the wire schema.");
+    const classifiedCodexDiagnostics = classifyCodexProviderDiagnostics({
+      record: { type: "turn.failed", error: { message: "Invalid JSON schema near C:\\private\\fixture.txt" } },
+      stderr: "stream disconnected before completion",
+      exitCode: 1,
+      structuredResultObserved: false,
+      eventTypes: ["thread.started", "turn.failed"],
+    });
+    assert(JSON.stringify(classifiedCodexDiagnostics) === JSON.stringify([
+      "codex.missing-structured-result",
+      "codex.nonzero-exit",
+      "codex.structured-output-rejected",
+      "codex.transport",
+      "codex.turn-failed",
+    ]), "Codex provider diagnostics were not classified deterministically.");
+    assert(!JSON.stringify(classifiedCodexDiagnostics).includes("private"), "Codex provider diagnostics retained raw error content.");
     fs.writeFileSync(path.join(resolvedRoot, "example.mjs"), "export const answer = 42;\n", "utf8");
     const initialized = initializeProject({ root: resolvedRoot, pluginRoot, runtimes: ["codex", "opencode"] });
     assert(initialized.status === "ready", "Fixture project initialization failed.");
@@ -703,6 +719,7 @@ async function main() {
       codexInvocationSurfaceDriftRejectedBeforeConsumption: true,
       codexPortableWireSchemaValidated: true,
       semanticResultBoundsRetained: true,
+      codexPrivacyReducedDiagnosticsValidated: true,
       providerNeutralInvocationRecordValidated: true,
       opencodeProtocolFixtureModeValidated: true,
       sessionRunResultApplicationRejected: true,

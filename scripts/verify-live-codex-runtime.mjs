@@ -35,6 +35,7 @@ function safeExecutionFailureSummary(execution) {
     exitCode: receipt?.exitCode ?? null,
     eventTypes: receipt?.eventTypes || [],
     unknownEventTypes: receipt?.unknownEventTypes || [],
+    providerDiagnosticCodes: receipt?.providerBoundary?.diagnosticCodes || [],
     stdoutBytes: receipt?.stdoutBytes ?? 0,
     stderrBytes: receipt?.stderrBytes ?? 0,
     actualProviderInvoked: receipt?.providerBoundary?.actualProviderInvoked === true,

@@ -105,6 +105,7 @@ function canonicalRunResultFields(record) {
       executionLeaseReleaseId: draft.executionLeaseReleaseId,
       eventIds: [...lifecycleEvidence.eventIds],
       eventTypes: [...lifecycleEvidence.eventTypes],
+      providerDiagnosticCodes: [...(lifecycleEvidence.providerDiagnosticCodes || [])],
       providerSessionReferenceDigests: [...lifecycleEvidence.providerSessionReferenceDigests],
       structuredResultDigest: lifecycleEvidence.structuredResultDigest,
       providerEvidence: [...draft.providerResult.evidence],
