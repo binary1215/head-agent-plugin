@@ -2,8 +2,8 @@
 
 # HEAD Agent Core Plugin
 
-**Provider-neutral coordination, context compilation, and execution lineage<br>
-for Codex, OpenCode, and future agent runtimes.**
+**Keep user intent, Product Canon, code, change history, and agent execution<br>
+connected across Codex, OpenCode, and future runtimes.**
 
 [![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
@@ -25,28 +25,31 @@ for Codex, OpenCode, and future agent runtimes.**
 
 ## What is HEAD Agent Core?
 
-HEAD Agent Core is an authority-preserving execution-lineage runtime for AI
-coding agents.
+HEAD Agent Core is a provider-neutral control plane for AI coding agents. It
+turns project meaning, repository structure, change history, and execution
+evidence into one reviewable system without making a chat session, Git host, or
+GraphDB the hidden source of truth.
 
-It helps an agent preserve the user's objective across long-running work,
-compile only the context required for the current task, execute within an
-explicit boundary, and review the result without depending on one provider
-conversation.
+Instead of asking every new agent session to reconstruct the project from
+conversation history, HEAD preserves user-owned Product Canon, builds an
+immutable evidence graph, compiles task-bounded context, executes through a
+runtime adapter, and requires a fresh review before a result becomes accepted
+lineage.
 
 The runtime, unified graph, and projections are shown together in
 [Architecture at a glance](#architecture-at-a-glance).
 
-## Core principles
+## Why this architecture is different
 
-| Principle | Meaning |
+| Common failure mode | HEAD Agent Core response |
 | --- | --- |
-| HEAD owns the whole outcome | A local executor cannot silently redefine the parent objective. |
-| User authority comes first | Product, architecture, policy, cost, and external actions remain user-owned. |
-| Minimum sufficient context | Context is selected for one task instead of copying an entire conversation. |
-| Canon survives session loss | Project identity and accepted state live outside provider conversations. |
-| Evidence is not instruction | Repository content, model output, and graph records do not automatically become authority. |
-| Graph storage is replaceable | The World Model retains the recoverable GraphSnapshot; local JSON and ArcadeDB are materializations. |
-| Git is optional | Git may enrich evidence but is not required for HEAD identity, lineage, or recovery. |
+| A provider conversation becomes project memory | Project identity, Canon, graph, and lineage survive provider-session loss. |
+| A code graph cannot explain product meaning | Reviewed Feature-to-code/test relations connect intent to implementation. |
+| Model inference silently becomes authority | Features, mappings, impacts, and document edits remain candidates until explicitly reviewed. |
+| History depends entirely on Git | SourceSnapshot, Revision, and ChangeSet DAGs preserve lineage without requiring Git. |
+| A database backend becomes the real source of truth | The World Model retains a recoverable GraphSnapshot; storage and document backends remain replaceable projections. |
+| More prompt context is treated as better context | The Context Compiler selects bounded, reproducible evidence for one task. |
+| Runtime support forks the core architecture | Provider-neutral HEAD Session and Run identities are executed through runtime adapters. |
 
 ## Architecture at a glance
 
@@ -93,6 +96,94 @@ nodes, edges, and parent identities. The same verified inputs produce the same
 `graphSnapshotId`; any semantic change produces a new snapshot while prior
 snapshots remain immutable.
 
+The snapshot is a connected topology, not a set of isolated catalogs. Canonical
+edge directions preserve meaning, while bounded traversal can start from either
+endpoint and explore the relationship in either direction.
+
+```mermaid
+flowchart LR
+    UI[Reviewed user intent] --> RCD
+
+    subgraph GS["Immutable GraphSnapshot"]
+        subgraph CANON["Product Canon"]
+            RCD[Requirement / Constraint / Decision]
+            FG[FeatureGroup]
+            CAP[Capability]
+            F[Feature]
+
+            FG -->|CONTAINS| CAP
+            F -->|REALIZES| CAP
+            F -->|GOVERNED_BY| RCD
+        end
+
+        subgraph CODE["Repository and implementation"]
+            REPO[Repository]
+            FILE[File]
+            SYMBOL[Symbol]
+            TEST[Test]
+            FREV[FileRevision]
+            SREV[SymbolRevision]
+            TREV[TestRevision]
+
+            REPO -->|CONTAINS| FILE
+            REPO -->|CONTAINS| TEST
+            FILE -->|HAS_REVISION| FREV
+            SYMBOL -->|HAS_REVISION| SREV
+            TEST -->|HAS_REVISION| TREV
+            FREV -->|DECLARES| SREV
+            TREV -->|REFERENCES| FREV
+        end
+
+        subgraph HISTORY["History and execution lineage"]
+            PREVSS[Parent SourceSnapshot]
+            SS[SourceSnapshot]
+            PREVREV[Parent Revision reference]
+            PREVCS[Parent ChangeSet]
+            CS[ChangeSet]
+            RP[Result Packet reference]
+            ERD[Execution ReviewDecision reference]
+
+            PREVSS -->|PARENT_OF| SS
+            PREVREV -->|PARENT_OF| FREV
+            SS -->|CONTAINS| FREV
+            SS -->|CONTAINS| SREV
+            SS -->|CONTAINS| TREV
+            CS -->|CHANGES| FREV
+            CS -->|CHANGES| SREV
+            CS -->|CHANGES| TREV
+            CS -->|SUPERSEDES| PREVCS
+            CS -->|SUPPORTED_BY| RP
+            CS -->|REVIEWED_BY| ERD
+        end
+
+        subgraph REVIEW["Evidence and review"]
+            CSET[CandidateSet]
+            CAND[Candidate]
+            EV[Evidence]
+            RD[ReviewDecision]
+            RR[Reviewed receipt / Product Model Revision]
+
+            CSET -->|CONTAINS| CAND
+            CAND -->|SUPPORTED_BY| EV
+            CSET -->|REVIEWED_BY| RD
+            RD -->|PRODUCES| RR
+            RR -->|PROMOTED_FROM| CAND
+        end
+
+        F -->|reviewed IMPLEMENTS| FILE
+        F -->|reviewed IMPLEMENTS| SYMBOL
+        F -->|reviewed VERIFIED_BY| TEST
+        CS -->|reviewed IMPACTS| F
+        CAND -->|PROPOSES_FROM / TO| F
+        CAND -->|PROPOSES_FROM / TO| SYMBOL
+    end
+```
+
+`Reviewed user intent` is shown outside the snapshot deliberately. Raw prompts
+do not become graph authority. Only intent captured through reviewed Product
+Canon artifacts such as Requirements, Constraints, Decisions, and Features
+enters the snapshot.
+
 | Question | GraphSnapshot contract |
 | --- | --- |
 | What is it bound to? | Exact Project, Product Model, SourceSnapshot, protocol, and parent identities. |
@@ -103,36 +194,25 @@ snapshots remain immutable.
 | Where is it stored? | Recoverably inside the World Model, then optionally materialized through local JSON or ArcadeDB and rendered into documents. |
 | Is it project authority? | No. It is `derived-evidence-only`; Product Canon, observed source, and explicit review records retain their respective authority. |
 
-### One graph, several traversal views
+### Traverse from any anchor
 
-The unified snapshot connects product meaning to implementation and execution
-without flattening their authority differences:
+The graph preserves canonical edge direction in storage and results, but a
+bounded neighborhood traversal can follow incident relationships from either
+endpoint. Product, implementation, history, and provenance therefore remain
+different views of the same verified snapshot.
 
-| View | Example question |
-| --- | --- |
-| Product | Which Capability and Feature express this product intent? |
-| Implementation | Which reviewed File, Symbol, and Test implement or verify it? |
-| Temporal | How did this Feature, source entity, or decision change? |
-| Provenance | Which evidence and ReviewDecision created this relationship? |
-| Execution | Which accepted Result Packet produced this ChangeSet? |
-| Impact | Which reviewed product concepts does this change affect? |
-
-Representative bounded paths include:
+| Start from | Traverse through | Discover |
+| --- | --- | --- |
+| Requirement or Decision | Feature → reviewed mapping | Implementing code, tests, revisions, and change history. |
+| Feature | Canon relations or reviewed mappings | Originating intent, parent Capability, code, tests, and reviewed impacts. |
+| File or Symbol | Revision and reviewed mapping | Related Features, ChangeSets, tests, and review evidence. |
+| ChangeSet | Changed revisions and reviewed impacts | Exact code changes, affected Features, and Product Canon context. |
+| ReviewDecision | Candidate, Evidence, and produced receipt | Why a Feature, mapping, impact, or Canon revision was accepted or rejected. |
 
 ```text
-Feature
-  → reviewed IMPLEMENTS / VERIFIED_BY
-  → File / Symbol / Test
-  → immutable Revision
-  → ChangeSet
-  → execution and review evidence
-
-ChangeSet
-  → CHANGES
-  → File / Symbol / Test Revision
-  → reviewed IMPACTS
-  → Feature / Capability
-  → FeatureGroup
+Reviewed intent → Canon → Feature → Code / Test → Revision → ChangeSet
+ChangeSet → Revision → Code → Feature → Canon → reviewed intent
+Code → Feature → reviewed impact → ChangeSet → Result Packet / ReviewDecision
 ```
 
 Git may attach optional VCS evidence, but it does not define ChangeSet or graph
