@@ -35,11 +35,13 @@ verify or activate it. Never accept a username, password, or token as MCP input
 or copy a value from conversation, goal text, repository files, or generated
 documents.
 
-1. Call `head_graphdb_database_status`. If the process reports unavailable
-   credential references, name only the configured environment-variable
-   references and ask the user to inject them outside the conversation and
-   restart the host. Do not reinterpret local fallback as remote success.
-2. Present the privacy-safe compatibility status. Before any database mutation,
+1. Call `head_graphdb_connection_preflight`. It performs no network request and
+   returns only configured reference names plus presence booleans. If references
+   are unavailable, ask the user to inject them outside the conversation and
+   restart the host. A credential written in goal text or chat is not runtime
+   injection and must never be copied automatically.
+2. After all references are present, call `head_graphdb_database_status` and
+   present the privacy-safe compatibility status. Before any database mutation,
    obtain explicit confirmation and call `head_graphdb_database_initialize` with
    `confirm_initialize: true`.
 3. If and only if the audit proves an incompatible HEAD-reserved schema, explain

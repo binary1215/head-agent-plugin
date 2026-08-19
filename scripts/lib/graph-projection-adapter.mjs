@@ -405,7 +405,7 @@ export class ArcadeDbHttpTransport {
       secretReferenceNames: this.storageSelection.graphdb.secretReferenceNames,
       operation,
       timeoutMs: this.timeoutMs,
-      ...(operation === "ready" ? {} : { language, command, params }),
+      ...(operation === "ready" || operation === "credential-status" ? {} : { language, command, params }),
     };
     const result = childProcess.spawnSync(process.execPath, [BRIDGE_FILE], {
       input: JSON.stringify(input),
@@ -434,6 +434,18 @@ export class ArcadeDbHttpTransport {
   ready() {
     this.invoke("ready");
     return true;
+  }
+
+  credentialStatus() {
+    const body = this.invoke("credential-status")?.body;
+    if (!body || typeof body.usernameReferencePresent !== "boolean"
+      || typeof body.passwordReferencePresent !== "boolean"
+      || typeof body.allReferencesPresent !== "boolean"
+      || body.credentialValuesReturned !== false || body.networkRequestPerformed !== false
+      || body.allReferencesPresent !== (body.usernameReferencePresent && body.passwordReferencePresent)) {
+      fail("ArcadeDB credential-reference status response is invalid.", "ARCADEDB_INVALID_RESPONSE");
+    }
+    return body;
   }
 
   databaseExists() {

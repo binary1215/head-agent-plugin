@@ -15,7 +15,7 @@ import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
 import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
 import { inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision } from "./lib/document-change-review.mjs";
-import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
+import { activateArcadeDbGraphProjection, inspectArcadeDbCredentialPreflight, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
 import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from "./lib/arcadedb-database-lifecycle.mjs";
 import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
@@ -392,6 +392,17 @@ export const tools = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
+    name: "head_graphdb_connection_preflight",
+    description: "Check whether the selected GraphDB credential reference names are visible to the current plugin process without contacting the endpoint or returning credential, endpoint, or database values.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "head_graphdb_database_initialize",
     description: "After explicit user confirmation, reuse a compatible selected ArcadeDB database or create a missing one. Reset is allowed only for a proven incompatible HEAD-reserved schema and an exact selected-database confirmation. Credential values are never accepted as tool input.",
     inputSchema: {
@@ -744,6 +755,8 @@ export async function dispatch(request, { graphDbTransport = null } = {}) {
                   ? inspectArcadeDbGraphProjectionStatus({ root: args.project_root, transport: graphDbTransport })
                 : name === "head_graphdb_database_status"
                   ? inspectArcadeDbDatabaseCompatibility({ root: args.project_root, transport: graphDbTransport })
+                : name === "head_graphdb_connection_preflight"
+                  ? inspectArcadeDbCredentialPreflight({ root: args.project_root, transport: graphDbTransport })
                 : name === "head_graphdb_database_initialize"
                   ? initializeGraphDbFromMcp(args, graphDbTransport)
                 : name === "head_graphdb_projection_activate"

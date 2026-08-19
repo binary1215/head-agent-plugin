@@ -600,6 +600,9 @@ execution receipts. Remote activation must pass local/remote conformance before
 it becomes current.
 
 From a Codex or OpenCode conversation, the bundled onboarding Skill first calls
+`head_graphdb_connection_preflight`. This exact-child check performs no network
+request and returns only reference names and presence booleans—not credential,
+endpoint, or database values. Once references are available, the Skill calls
 `head_graphdb_database_status`, then asks for explicit confirmation before
 `head_graphdb_database_initialize` and a separate remote-write confirmation
 before `head_graphdb_projection_activate`. These typed operations accept no

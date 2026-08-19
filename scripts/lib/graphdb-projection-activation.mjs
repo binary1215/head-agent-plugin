@@ -1,5 +1,7 @@
+import path from "node:path";
 import {
   ArcadeDbGraphProjectionAdapter,
+  ArcadeDbHttpTransport,
   LocalJsonGraphProjectionAdapter,
   buildArcadeDbGraphProjectionActivation,
   buildArcadeDbGraphTopologyActivation,
@@ -22,6 +24,41 @@ const fail = (message, code = "ARCADEDB_ACTIVATION_ERROR") => {
   error.code = code;
   throw error;
 };
+
+export function inspectArcadeDbCredentialPreflight({ root = ".", transport = null } = {}) {
+  const configured = inspectArcadeDbGraphProjectionActivation({ projectRoot: path.resolve(root) });
+  if (!configured.storageSelection || configured.storageSelection.mode !== "graphdb") return {
+    status: "graphdb-not-configured",
+    selectedTargetConfigured: false,
+    references: null,
+    allReferencesPresent: false,
+    hostRestartMayBeRequired: false,
+    credentialValuesReturned: false,
+    targetValuesReturned: false,
+    networkRequestPerformed: false,
+    authorityEffect: "none",
+  };
+  const selectedTransport = transport || new ArcadeDbHttpTransport({ storageSelection: configured.storageSelection });
+  if (typeof selectedTransport.credentialStatus !== "function") {
+    fail("ArcadeDB transport does not expose credential-reference preflight.", "ARCADEDB_CREDENTIAL_PREFLIGHT_UNSUPPORTED");
+  }
+  const status = selectedTransport.credentialStatus();
+  const referenceNames = configured.storageSelection.graphdb.secretReferenceNames;
+  return {
+    status: status.allReferencesPresent ? "credential-references-available" : "credential-references-unavailable",
+    selectedTargetConfigured: true,
+    references: {
+      username: { name: referenceNames.username, present: status.usernameReferencePresent },
+      password: { name: referenceNames.password, present: status.passwordReferencePresent },
+    },
+    allReferencesPresent: status.allReferencesPresent,
+    hostRestartMayBeRequired: !status.allReferencesPresent,
+    credentialValuesReturned: false,
+    targetValuesReturned: false,
+    networkRequestPerformed: false,
+    authorityEffect: "none",
+  };
+}
 
 function activationStage(name, operation) {
   try { return operation(); }

@@ -7,6 +7,7 @@ import { dispatch } from "./mcp-server.mjs";
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-conversation-"));
 const projectRoot = path.join(temporaryRoot, "sample-project");
+const graphProjectRoot = path.join(temporaryRoot, "graph-project");
 
 async function tool(name, args) {
   const response = await dispatch({
@@ -36,6 +37,7 @@ try {
     "head_project_initialize_or_resume",
     "head_onboarding_review",
     "head_markdown_projection_build",
+    "head_graphdb_connection_preflight",
     "head_graphdb_database_initialize",
     "head_graphdb_projection_activate",
   ]) assert(names.has(name), `Missing conversational MCP tool: ${name}`);
@@ -43,6 +45,56 @@ try {
   assert.deepEqual(graphDbActivateTool.inputSchema.required, ["project_root", "confirm_remote_write"]);
   assert.equal(graphDbActivateTool.inputSchema.additionalProperties, false);
   assert.equal(Object.keys(graphDbActivateTool.inputSchema.properties).some((key) => /password|username|credential|token/i.test(key)), false);
+
+  fs.mkdirSync(graphProjectRoot, { recursive: true });
+  fs.writeFileSync(path.join(graphProjectRoot, "service.mjs"), "export function serve() { return true; }\n");
+  await tool("head_project_initialize_or_resume", {
+    project_root: graphProjectRoot,
+    runtimes: ["codex"],
+    mode: "existing",
+    source_scope: { include_roots: [], exclude_roots: [] },
+    storage: {
+      mode: "graphdb",
+      endpoint: "https://fixture-target.invalid",
+      database: "fixture-target-database",
+      username_secret_reference: "HEAD_FIXTURE_GRAPHDB_USERNAME_MISSING",
+      password_secret_reference: "HEAD_FIXTURE_GRAPHDB_PASSWORD_MISSING",
+    },
+  });
+  const graphDbPreflight = await tool("head_graphdb_connection_preflight", { project_root: graphProjectRoot });
+  assert.equal(graphDbPreflight.status, "credential-references-unavailable");
+  assert.equal(graphDbPreflight.allReferencesPresent, false);
+  assert.equal(graphDbPreflight.hostRestartMayBeRequired, true);
+  assert.equal(graphDbPreflight.references.username.name, "HEAD_FIXTURE_GRAPHDB_USERNAME_MISSING");
+  assert.equal(graphDbPreflight.references.username.present, false);
+  assert.equal(graphDbPreflight.references.password.present, false);
+  assert.equal(graphDbPreflight.credentialValuesReturned, false);
+  assert.equal(graphDbPreflight.targetValuesReturned, false);
+  assert.equal(graphDbPreflight.networkRequestPerformed, false);
+  assert.equal(JSON.stringify(graphDbPreflight).includes("fixture-target.invalid"), false);
+  assert.equal(JSON.stringify(graphDbPreflight).includes("fixture-target-database"), false);
+  const fixtureUsernameReference = "HEAD_FIXTURE_GRAPHDB_USERNAME_MISSING";
+  const fixturePasswordReference = "HEAD_FIXTURE_GRAPHDB_PASSWORD_MISSING";
+  const previousFixtureUsername = process.env[fixtureUsernameReference];
+  const previousFixturePassword = process.env[fixturePasswordReference];
+  try {
+    process.env[fixtureUsernameReference] = "fixture-username-value-not-a-secret";
+    process.env[fixturePasswordReference] = "fixture-password-value-not-a-secret";
+    const availablePreflight = await tool("head_graphdb_connection_preflight", { project_root: graphProjectRoot });
+    assert.equal(availablePreflight.status, "credential-references-available");
+    assert.equal(availablePreflight.allReferencesPresent, true);
+    assert.equal(availablePreflight.hostRestartMayBeRequired, false);
+    assert.equal(availablePreflight.references.username.present, true);
+    assert.equal(availablePreflight.references.password.present, true);
+    assert.equal(availablePreflight.networkRequestPerformed, false);
+    assert.equal(JSON.stringify(availablePreflight).includes("fixture-username-value-not-a-secret"), false);
+    assert.equal(JSON.stringify(availablePreflight).includes("fixture-password-value-not-a-secret"), false);
+  } finally {
+    if (previousFixtureUsername == null) delete process.env[fixtureUsernameReference];
+    else process.env[fixtureUsernameReference] = previousFixtureUsername;
+    if (previousFixturePassword == null) delete process.env[fixturePasswordReference];
+    else process.env[fixturePasswordReference] = previousFixturePassword;
+  }
 
   const before = await tool("head_onboarding_guide", { project_root: projectRoot });
   assert.equal(before.status, "not_initialized");
@@ -108,6 +160,8 @@ try {
     explicitReviewRequired: true,
     worldGraphContextDocumentsReady: true,
     optionalGraphDbConversationOperationsDiscoverable: true,
+    graphDbCredentialPreflightNetworkRequests: 0,
+    graphDbTargetValuesReturnedByPreflight: false,
     graphDbCredentialValuesAcceptedByTools: false,
     graphDbRequired: false,
     gitRequired: false,

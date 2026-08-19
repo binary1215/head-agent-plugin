@@ -23,18 +23,33 @@ const endpoint = requiredText(input.endpoint, "ArcadeDB endpoint").replace(/\/$/
 const database = requiredText(input.database, "ArcadeDB database");
 const usernameReference = requiredText(input.secretReferenceNames?.username, "ArcadeDB username reference");
 const passwordReference = requiredText(input.secretReferenceNames?.password, "ArcadeDB password reference");
-const username = process.env[usernameReference];
-const password = process.env[passwordReference];
-if (!username || !password) fail("ArcadeDB credential references are unavailable in the process environment.", "ARCADEDB_CREDENTIALS_UNAVAILABLE", 2);
-
 const operation = requiredText(input.operation, "ArcadeDB operation");
-if (!new Set(["query", "command", "ready", "exists", "create-database", "drop-database"]).has(operation)) {
+if (!new Set(["credential-status", "query", "command", "ready", "exists", "create-database", "drop-database"]).has(operation)) {
   fail("ArcadeDB bridge operation is unsupported.", "ARCADEDB_BRIDGE_INVALID_INPUT");
 }
+const username = process.env[usernameReference];
+const password = process.env[passwordReference];
 const timeoutMs = Number(input.timeoutMs ?? 15000);
 if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) {
   fail("ArcadeDB bridge timeout is invalid.", "ARCADEDB_BRIDGE_INVALID_INPUT");
 }
+if (operation === "credential-status") {
+  const usernameReferencePresent = typeof username === "string" && username.length > 0;
+  const passwordReferencePresent = typeof password === "string" && password.length > 0;
+  fs.writeSync(1, JSON.stringify({
+    ok: true,
+    status: 200,
+    body: {
+      usernameReferencePresent,
+      passwordReferencePresent,
+      allReferencesPresent: usernameReferencePresent && passwordReferencePresent,
+      credentialValuesReturned: false,
+      networkRequestPerformed: false,
+    },
+  }));
+  process.exit(0);
+}
+if (!username || !password) fail("ArcadeDB credential references are unavailable in the process environment.", "ARCADEDB_CREDENTIALS_UNAVAILABLE", 2);
 
 const path = operation === "ready"
   ? "/api/v1/ready"
