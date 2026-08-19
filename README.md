@@ -89,10 +89,10 @@ conversational. Candidate acceptance, rejection, or editing remains an explicit
 user decision. Endpoint values and credentials remain operational inputs and
 are not copied into the project graph or generated documents.
 
-The source installer currently makes this Skill and MCP server available from
-the alpha distribution. Marketplace publication is planned. The CLI quick start
-above remains the recovery and automation interface, not a separate authority
-model.
+The Git-backed Codex marketplace distribution installs this Skill and MCP
+server together. The CLI quick start above remains the recovery and automation
+interface, not a separate authority model. Submission to OpenAI's universal
+public plugin directory is a separate publisher-owned review step.
 
 ## Why this architecture is different
 
@@ -295,7 +295,8 @@ Status terms in this README have exact meanings:
 | OpenCode project projection | **Available** |
 | OpenCode one-shot Session and Run execution | **Available** |
 | Artifact-only Codex-to-OpenCode provider replacement recovery | **Available** |
-| Codex marketplace distribution | **Planned** |
+| Verified Git-backed Codex marketplace distribution | **Available** |
+| OpenAI universal plugin directory publication | **Planned** |
 | `install.ps1` and `install.sh` | **Available** |
 | User-scoped global `head-agent` command | **Available** |
 | `head-agent --version` and project `head-agent doctor` | **Available** |
@@ -368,6 +369,32 @@ Installation defaults can be overridden without changing product canon:
 These locations are operational configuration only. They never participate in
 project, graph, Context Capsule, or execution-lineage semantic identity.
 
+### Codex Git marketplace installation — available now
+
+The `codex-marketplace` branch is generated only after the integrated test job
+and all five native build targets succeed. It contains a minimal marketplace
+catalog plus a content-verified plugin distribution; development-only trees,
+Git metadata, test fixtures, dependency caches, and local build output are not
+published into the plugin snapshot.
+
+```powershell
+codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplace
+codex plugin add head-agent-core@head-agent-plugin
+```
+
+Start a new Codex task after installation so the bundled
+`head-agent-onboarding` Skill and `head_core` MCP server are loaded. Then ask:
+
+```text
+Initialize or resume HEAD Agent onboarding for this project.
+```
+
+The marketplace installs the conversation layer; it does not initialize a
+project, contact GraphDB, select a model, or promote inferred Product Canon.
+Those transitions still occur through the typed Core boundary and explicit
+review. See [Codex marketplace distribution](docs/codex-marketplace.md) for
+upgrade, removal, generated-branch ownership, and public-directory boundaries.
+
 ### Upgrade, status, rollback, and removal
 
 Run lifecycle commands from the newly downloaded source tree. `install` and
@@ -415,8 +442,10 @@ node .\scripts\distribution.mjs install --native required
 node .\scripts\distribution.mjs upgrade --native auto
 ```
 
-Codex marketplace publication remains planned. Native download success never
-changes Product Canon, graph identity, review authority, or execution lineage.
+OpenAI universal plugin-directory submission remains planned and requires a
+publisher-owned review. Git marketplace installation is already available.
+Native download success never changes Product Canon, graph identity, review
+authority, or execution lineage.
 
 The current installer:
 
@@ -434,6 +463,7 @@ Verify the full isolated lifecycle without touching the real user installation:
 ```powershell
 npm run verify:distribution
 npm run verify:native-delivery
+npm run verify:codex-marketplace
 ```
 
 ## Project onboarding

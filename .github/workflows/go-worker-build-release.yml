@@ -42,8 +42,11 @@ on:
       - "scripts/lib/runtime-one-shot-exec.mjs"
       - "scripts/lib/runtime-supervised-one-shot.mjs"
       - "scripts/lib/distribution-lifecycle.mjs"
+      - "scripts/lib/codex-marketplace.mjs"
       - "scripts/lib/native-artifact-delivery.mjs"
       - "scripts/distribution.mjs"
+      - "scripts/build-codex-marketplace.mjs"
+      - "scripts/verify-codex-marketplace.mjs"
       - "scripts/verify-distribution-lifecycle.mjs"
       - "scripts/verify-native-artifact-delivery.mjs"
       - "scripts/verify-newcomer-readme.mjs"
@@ -60,6 +63,10 @@ on:
       - "scripts/verify-arcadedb-database-lifecycle.mjs"
       - "scripts/verify-arcadedb-incremental-sync.mjs"
       - "skills/**"
+      - ".mcp.json"
+      - "README.md"
+      - "assets/**"
+      - "docs/**"
       - "package.json"
       - ".codex-plugin/plugin.json"
       - "benchmarks/repository-scan-v1/**"
@@ -104,8 +111,11 @@ on:
       - "scripts/lib/runtime-one-shot-exec.mjs"
       - "scripts/lib/runtime-supervised-one-shot.mjs"
       - "scripts/lib/distribution-lifecycle.mjs"
+      - "scripts/lib/codex-marketplace.mjs"
       - "scripts/lib/native-artifact-delivery.mjs"
       - "scripts/distribution.mjs"
+      - "scripts/build-codex-marketplace.mjs"
+      - "scripts/verify-codex-marketplace.mjs"
       - "scripts/verify-distribution-lifecycle.mjs"
       - "scripts/verify-native-artifact-delivery.mjs"
       - "scripts/verify-newcomer-readme.mjs"
@@ -122,6 +132,10 @@ on:
       - "scripts/verify-arcadedb-database-lifecycle.mjs"
       - "scripts/verify-arcadedb-incremental-sync.mjs"
       - "skills/**"
+      - ".mcp.json"
+      - "README.md"
+      - "assets/**"
+      - "docs/**"
       - "package.json"
       - ".codex-plugin/plugin.json"
       - "benchmarks/repository-scan-v1/**"
@@ -245,6 +259,9 @@ jobs:
 
       - name: Verify immutable user distribution lifecycle
         run: node scripts/verify-distribution-lifecycle.mjs
+
+      - name: Verify Codex marketplace snapshot packaging
+        run: node scripts/verify-codex-marketplace.mjs
 
       - name: Verify automatic native artifact delivery contract
         run: node scripts/verify-native-artifact-delivery.mjs
@@ -468,3 +485,73 @@ jobs:
           files: |
             release-assets/head-agent-worker-*
             release-assets/SHA256SUMS
+
+  marketplace:
+    name: Publish verified Codex marketplace snapshot
+    needs:
+      - prepare
+      - test
+      - build
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.enabled == 'true' && needs.test.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      MARKETPLACE_BRANCH: codex-marketplace
+      MARKETPLACE_ROOT: ${{ runner.temp }}/head-agent-codex-marketplace
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Build content-verified marketplace snapshot
+        shell: bash
+        run: |
+          node scripts/build-codex-marketplace.mjs \
+            --output "${MARKETPLACE_ROOT}" \
+            --source-repository "${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}"
+          node scripts/verify-codex-marketplace.mjs \
+            --root "${MARKETPLACE_ROOT}" \
+            --expected-repository "${GITHUB_REPOSITORY}" \
+            --expected-marketplace-name "head-agent-plugin"
+
+      - name: Refuse to replace an unowned marketplace branch
+        id: ownership
+        shell: bash
+        run: |
+          expected_sha=""
+          if git ls-remote --exit-code --heads origin "${MARKETPLACE_BRANCH}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/heads/${MARKETPLACE_BRANCH}"
+            expected_sha="$(git rev-parse FETCH_HEAD)"
+            previous_root="${RUNNER_TEMP}/previous-head-agent-marketplace"
+            mkdir -p "${previous_root}"
+            git archive FETCH_HEAD | tar -x -C "${previous_root}"
+            node scripts/verify-codex-marketplace.mjs \
+              --root "${previous_root}" \
+              --expected-repository "${GITHUB_REPOSITORY}" \
+              --expected-marketplace-name "head-agent-plugin"
+          fi
+          echo "expected_sha=${expected_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish one generated marketplace branch
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.ownership.outputs.expected_sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan codex-marketplace-publish
+          git rm -rf .
+          cp -a "${MARKETPLACE_ROOT}/." .
+          git add -A
+          git commit -m "chore: publish Codex marketplace from ${GITHUB_SHA}"
+          if [[ -n "${EXPECTED_SHA}" ]]; then
+            git push \
+              --force-with-lease="refs/heads/${MARKETPLACE_BRANCH}:${EXPECTED_SHA}" \
+              origin "HEAD:refs/heads/${MARKETPLACE_BRANCH}"
+          else
+            git push origin "HEAD:refs/heads/${MARKETPLACE_BRANCH}"
+          fi

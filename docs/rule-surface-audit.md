@@ -48,7 +48,7 @@ and a condition under which it can be narrowed or removed.
 
 Durable provider-session attachment, resume/stream/interrupt/close, role
 messaging, workspace-host integration, automatic DAG merge/conflict resolution,
-Obsidian/Notion publication, and Codex marketplace publication remain optional.
+Obsidian/Notion publication, and OpenAI universal plugin-directory publication remain optional.
 Their absence does not block installation, onboarding, graph recovery, Context,
 Session, Run, provider replacement, or Git/GraphDB-free core operation.
 

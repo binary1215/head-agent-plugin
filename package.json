@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.55",
+  "version": "0.3.0-alpha.56",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
@@ -20,6 +20,8 @@
     "verify:newcomer": "node scripts/verify-newcomer-readme.mjs",
     "verify:conversational-onboarding": "node scripts/verify-conversational-onboarding.mjs",
     "verify:graphdb-sync": "node scripts/verify-arcadedb-incremental-sync.mjs",
+    "build:codex-marketplace": "node scripts/build-codex-marketplace.mjs",
+    "verify:codex-marketplace": "node scripts/verify-codex-marketplace.mjs",
     "distribution:status": "node scripts/distribution.mjs status"
   }
 }

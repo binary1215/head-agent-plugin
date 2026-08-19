@@ -203,6 +203,40 @@ function verifyRelease(releaseRoot, expectedReleaseId = null) {
   return manifest;
 }
 
+export function stageDistributionRelease({ sourceRoot, destinationRoot, includeNativeDist = false } = {}) {
+  if (!sourceRoot || !destinationRoot) {
+    fail("HEAD_DISTRIBUTION_STAGE_ARGUMENTS", "Source and destination roots are required.");
+  }
+  const source = path.resolve(sourceRoot);
+  const destination = path.resolve(destinationRoot);
+  const sourceInsideDestination = source.startsWith(`${destination}${path.sep}`);
+  const destinationInsideSource = destination.startsWith(`${source}${path.sep}`);
+  if (source === destination || sourceInsideDestination || destinationInsideSource) {
+    fail("HEAD_DISTRIBUTION_STAGE_OVERLAP", "Distribution source and destination roots must not overlap.");
+  }
+  if (fs.existsSync(destination)) {
+    fail("HEAD_DISTRIBUTION_STAGE_EXISTS", "Distribution destination already exists.");
+  }
+
+  ensureDirectory(path.dirname(destination));
+  const temporary = fs.mkdtempSync(`${destination}.stage-`);
+  try {
+    const manifest = buildManifest(source, { includeNativeDist });
+    copyManifestFiles(source, temporary, manifest);
+    verifyRelease(temporary, manifest.releaseId);
+    fs.renameSync(temporary, destination);
+    return manifest;
+  } catch (error) {
+    fs.rmSync(temporary, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export function verifyDistributionRelease({ releaseRoot, expectedReleaseId = null } = {}) {
+  if (!releaseRoot) fail("HEAD_DISTRIBUTION_VERIFY_ARGUMENTS", "Release root is required.");
+  return verifyRelease(path.resolve(releaseRoot), expectedReleaseId);
+}
+
 function defaultInstallRoot() {
   const base = process.env.HEAD_AGENT_INSTALL_ROOT;
   if (base) return path.resolve(base);
