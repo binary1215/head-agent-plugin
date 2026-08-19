@@ -76,6 +76,18 @@ The reference runtime is an operational behavior oracle, not a package tree to c
 
 The plugin must not inherit the reference runtime's OpenCode-only, Herdr-only, `.claude`-path, POSIX-service, shell-wrapper, tab/pane, or provider-session coupling as core identity. Herdr or another workspace manager may later implement `WorkspaceHostAdapter`; it remains optional and cannot define HEAD Session, Run, project, or semantic graph identity.
 
+The adoption target is operational completeness through smaller provider-neutral contracts:
+
+| Reference behavior | Current plugin position | Adoption target |
+| --- | --- | --- |
+| initialization and resumable phases | onboarding state, project identity, and recovery artifacts exist | expose one public composition path while retaining transactional phase recovery |
+| exact project/caller fencing | project, Session, authorization, lease, and operational-root boundaries exist | prove the same fence against live Session and Run calls |
+| launch/wait/result/delivery/cleanup | native descendant-tree ownership and transcript-free result evidence exist | complete live Codex conformance, then reuse the contract for OpenCode |
+| canon/checkpoint recovery | content-derived canon, snapshots, Capsules, Results, and Reviews exist | prove recovery after provider-session loss without treating provider state as canon |
+| durable role coordination | authority-generation and idempotency rules are designed but messaging is deferred | add only after the single-provider vertical works; keep it optional and project-scoped |
+| immutable release and rollback | native/plugin files are manifested and content-verified | add atomic install/activation rollback without in-place cache edits |
+| durable/ephemeral state separation | project lineage and host-local operational state are separated | preserve this boundary for every future service or workspace-host adapter |
+
 ## Core and subsystem design decisions
 
 These decisions are not one global ritual. Authority, canon/evidence separation, credential safety, path/process ownership, honest capability disclosure, and optional-adapter recovery are universal invariants. Execution-lineage rules apply to Run and Authority work; graph/canon/document rules apply when those surfaces are read or changed; compute rules apply to native operations; and remote-write rules apply only to external activation. Observe or Session work must not be escalated merely to satisfy an unrelated subsystem contract.
@@ -144,6 +156,31 @@ Completion criteria for this governance goal are:
 4. Session and Run share authorization, process ownership, event, lease, cancellation, cleanup, and Result evidence semantics where their risk boundaries overlap;
 5. ephemeral PID/token/socket/lock state is separated from durable project lineage before service-host or general runtime control activation;
 6. integrated tests prove lane selection, escalation, non-replay, cleanup, and that Session work cannot mutate Product Canon or perform Authority actions without promotion.
+
+## Rule-complexity budget goal
+
+The plugin must become operationally complete without turning every prior failure or subsystem concern into a globally loaded rule. Rules are product mechanisms with maintenance cost, not accumulated documentation trophies.
+
+A new mandatory rule is justified only when it protects a universal invariant, closes a reproduced or credible high-impact failure mode, or defines a provider-neutral interoperability boundary. It must declare its scope, enforcement point, observable failure, and the condition under which it can be narrowed or removed. Provider quirks belong in adapters; operational details belong in host-local state; recommendations and unimplemented ideas remain non-binding guidance.
+
+Complexity is reduced in this order:
+
+1. reuse or narrow an existing semantic contract before creating another artifact, state machine, gate, or authority class;
+2. load universal invariants first, then only the selected execution lane and touched subsystem contracts;
+3. keep `Observe` and reversible `Session` work free of WholePlan, persistent Capsule, ResultPacket, and ReviewDecision requirements unless a concrete risk requires promotion;
+4. keep full lineage for consequential `Run` work and add user approval only at a real `Authority` boundary;
+5. express Codex, OpenCode, operating-system, GraphDB, Git, document, and workspace-host differences behind adapters rather than branching core identity;
+6. prefer one integrated vertical proof over repeated per-feature validation once minimum fail-closed authority, credential, identity, and process checks pass;
+7. delete or demote duplicate rules, unreachable states, speculative gates, and validations that do not change an observable failure outcome.
+
+Completion criteria for this rule-complexity goal are:
+
+1. each mandatory rule maps to one universal invariant, selected lane, or touched subsystem and has one canonical enforcement location;
+2. a bounded Session can complete through the public plugin path without manufacturing Run/Review lineage;
+3. a consequential Run can complete through the same lifecycle safety core with only its additional lineage contracts;
+4. adding a provider or host requires an adapter and conformance evidence, not new core authority identities;
+5. milestone review includes a rule-deletion pass and reports retained, narrowed, deferred, and removed constraints;
+6. rule count, artifact count, and test count are not treated as progress metrics; a connected recoverable user outcome is.
 
 ## Semantic contracts
 
@@ -592,7 +629,7 @@ Every material change answers these six universal questions:
 3. Are credentials, paths, process ownership, external effects, and irreversible actions bounded at the level required by the selected lane?
 4. Can the result return as direct evidence, difference, impact, verification, and explicit Unknowns rather than raw context or an unsupported success claim?
 5. Are incomplete capabilities and optional Git, GraphDB, native, document, host, or provider dependencies disclosed honestly with a safe recovery or fallback boundary?
-6. Does the change preserve provider-neutral HEAD project/Session identity and avoid unrelated procedural gates?
+6. Does the change preserve provider-neutral HEAD project/Session identity, avoid unrelated procedural gates, and replace or narrow an existing rule instead of duplicating it where possible?
 
 Then load only the relevant subsystem questions:
 
@@ -693,3 +730,4 @@ If an applicable answer is “no” or “unknown,” record the gap before proc
 - 2026-08-19: completed the external operational-state boundary required before actual-provider execution. Execution-lease protocol `0.3.0` keeps immutable authorization consumption/release evidence in project lineage while moving PID, token, and owner-lock state to a validated host-local root; unsafe roots and legacy project-local locks fail closed, CLI/MCP disclose no path or owner secrets, and exact-owner cleanup is verified across completion, timeout, cancellation, spawn failure, replay, and concurrent contention. The next milestone is now one actual provider through both bounded Session and consequential Run lanes.
 - 2026-08-19: connected the first Codex one-shot provider composition without claiming live completion. The implementation revalidates exact executable/protocol/project binding, consumes one Session- or Run-scoped authorization, invokes the official non-interactive JSONL/ephemeral surface through direct spawn, extracts a bounded `RuntimeStructuredResult`, and stores only digest-verifiable transcript-free events, lifecycle receipt, and ResultPacket draft for CLI/read-only MCP recovery. A Codex protocol fixture proves thread reference hashing, structured result extraction, Session scope, durable recording, and exact fixture-child cleanup. A live model call, descendant-tree ownership, and canonical Run ResultPacket conversion remain explicit gates; until then actual receipts fail verification rather than overstating control conformance.
 - 2026-08-19: completed the cross-platform runtime descendant-tree supervision slice without widening provider authority. A separately manifested Go helper owns the provider subtree through Windows Job Object kill-on-close or an isolated POSIX process group, receives its bounded request over stdin, writes operational-only control evidence to the external state root, and leaves only manifest/ownership/cleanup digests in project lineage. Windows normal completion and cancellation remove a real lingering grandchild; the Codex JSONL protocol fixture now runs through this supervisor and produces a verification-passed tree boundary. No live model call, canonical Run ResultPacket conversion, OpenCode execution, resume/attachment, or general control is claimed; bounded live Codex Session then Run conformance is the next gate.
+- 2026-08-19: converted the HEAD Core comparison and governance-relaxation decision into explicit adoption and rule-complexity goals. Operationally complete initialization, fencing, lifecycle, recovery, scoped coordination, rollback, and state separation are adopted through provider-neutral contracts; provider/host coupling is not. Every new mandatory rule now needs a bounded scope, enforcement point, observable failure, and narrowing/removal condition, and milestone review includes a rule-deletion pass rather than treating accumulated gates or tests as progress.

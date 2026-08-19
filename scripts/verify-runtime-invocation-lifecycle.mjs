@@ -88,7 +88,10 @@ function evidenceFixtureOutput(command, args) {
 
 function evidenceFixtureSpawn(command, args, options) {
   const output = evidenceFixtureOutput(command, args);
-  return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", output], options);
+  return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", output], {
+    ...options,
+    cwd: pluginRoot,
+  });
 }
 
 const CODEX_EXEC_PROTOCOL_FIXTURE = String.raw`
@@ -130,6 +133,17 @@ async function main() {
     const initializedProject = inspectProject(resolvedRoot);
     assert(initializedProject.status === "ready", "Fixture project did not remain ready after initialization.");
     assert(resolveRuntimeOperationalStateRoot({ projectRoot: resolvedRoot, create: false }) === fs.realpathSync(resolvedOperationalRoot), "Host-local operational root did not resolve exactly.");
+    const runtimeFixtureBin = path.join(resolvedOperationalRoot, "runtime-discovery-fixture");
+    fs.mkdirSync(runtimeFixtureBin, { recursive: false });
+    for (const runtime of ["codex", "opencode"]) {
+      const executableName = process.platform === "win32" ? `${runtime}.exe` : runtime;
+      const executablePath = path.join(runtimeFixtureBin, executableName);
+      fs.writeFileSync(executablePath, `head-agent ${runtime} discovery fixture\n`, "utf8");
+      if (process.platform !== "win32") fs.chmodSync(executablePath, 0o755);
+    }
+    const evidenceEnvironment = { ...process.env, PATH: runtimeFixtureBin };
+    delete evidenceEnvironment.Path;
+    delete evidenceEnvironment.path;
     let projectLocalOperationalRootRejected = false;
     const unsafeProjectLocalOperationalRoot = path.join(resolvedRoot, ".head", "unsafe-operational-state");
     try {
@@ -169,11 +183,13 @@ async function main() {
     }).artifact;
     const versionEvidence = await buildRuntimeVersionEvidence({
       runtimes: ["codex", "opencode"],
+      environment: evidenceEnvironment,
       spawnImplementation: evidenceFixtureSpawn,
     });
     const protocolEvidence = await buildRuntimeProtocolEvidence({
       runtimes: ["codex", "opencode"],
       versionEvidence,
+      environment: evidenceEnvironment,
       spawnImplementation: evidenceFixtureSpawn,
     });
     assert(protocolEvidence.summary.allRequestedProtocolsObserved, `Protocol evidence fixture was partial: ${JSON.stringify(protocolEvidence.observations.map((item) => ({ runtime: item.runtime, negotiated: item.protocolNegotiationObserved, probes: item.probeOutcomes.map((probe) => ({ name: probe.name, status: probe.status, exitCode: probe.exitCode, stdoutBytes: probe.stdoutBytes, stderrBytes: probe.stderrBytes })), capabilities: item.capabilities })))}.`);
