@@ -17,12 +17,17 @@ import {
 import {
   buildRuntimeInvocationAuthorization,
   buildRuntimeResultPacketDraft,
+  inspectRuntimeInvocationExecutionLease,
   readRuntimeInvocationAuthorization,
   runRuntimeLifecycleConformance,
   verifyRuntimeInvocationAuthorization,
   verifyRuntimeInvocationLifecycleReceipt,
   verifyRuntimeResultPacketDraft,
 } from "./lib/runtime-invocation-lifecycle.mjs";
+import {
+  verifyRuntimeExecutionLeaseConsumption,
+  verifyRuntimeExecutionLeaseRelease,
+} from "./lib/runtime-execution-lease.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = path.join(pluginRoot, `.test-tmp-runtime-lifecycle-${process.pid}-${Date.now()}`);
@@ -144,10 +149,41 @@ async function main() {
       assert(success.receipt.status === "completed", `${runtime} success lifecycle did not complete.`);
       assert(success.receipt.processBoundary.descendantTreeOwnershipValidated === true, `${runtime} fixture ownership was not validated.`);
       assert(success.receipt.inputDigestObserved === authorization.executionInput.digest, `${runtime} input digest was not observed.`);
-      const draft = buildRuntimeResultPacketDraft({ authorization, receipt: success.receipt });
+      verifyRuntimeExecutionLeaseConsumption(success.executionLease.consumption);
+      verifyRuntimeExecutionLeaseRelease(success.executionLease.release);
+      const tamperedConsumption = { ...success.executionLease.consumption, consumedAt: new Date(0).toISOString() };
+      let consumptionTamperRejected = false;
+      try { verifyRuntimeExecutionLeaseConsumption(tamperedConsumption); }
+      catch { consumptionTamperRejected = true; }
+      assert(consumptionTamperRejected, `${runtime} execution lease consumption tamper was accepted.`);
+      assert(success.executionLease.release.operationStatus === "completed", `${runtime} execution lease release did not record completion.`);
+      const leaseStatus = inspectRuntimeInvocationExecutionLease({ root: resolvedRoot, authorizationId: authorization.authorizationId });
+      assert(leaseStatus.lease.status === "consumed-released", `${runtime} execution lease did not remain durably consumed.`);
+      assert(leaseStatus.lease.replayAllowed === false, `${runtime} execution authorization remained replayable.`);
+      const cliLeaseStatus = await runCommand(["runtime-invocation-lease-status", resolvedRoot, "--authorization", authorization.authorizationId]);
+      assert(cliLeaseStatus.lease.release.releaseId === success.executionLease.release.releaseId, `${runtime} CLI lease inspection failed.`);
+      const mcpLeaseStatus = await dispatch({
+        jsonrpc: "2.0",
+        id: `${runtime}-lease`,
+        method: "tools/call",
+        params: { name: "head_runtime_invocation_lease_status", arguments: { project_root: resolvedRoot, authorization_id: authorization.authorizationId } },
+      });
+      assert(mcpLeaseStatus.result?.structuredContent?.lease?.release?.releaseId === success.executionLease.release.releaseId, `${runtime} MCP lease inspection failed.`);
+      let replayRejected = false;
+      try {
+        await runRuntimeLifecycleConformance({ root: resolvedRoot, authorization, mode: "success", onProcessEvent: recordProcess });
+      } catch (error) {
+        replayRejected = error.code === "RUNTIME_INVOCATION_AUTHORIZATION_ALREADY_CONSUMED";
+      }
+      assert(replayRejected, `${runtime} consumed authorization was replayed.`);
+      const draft = buildRuntimeResultPacketDraft({
+        authorization,
+        receipt: success.receipt,
+        leaseRelease: success.executionLease.release,
+      });
       verifyRuntimeResultPacketDraft(draft);
       assert(draft.rawTranscriptIncluded === false && draft.finalResultPacketPersisted === false, `${runtime} draft crossed the result boundary.`);
-      const publicArtifacts = JSON.stringify({ authorization, events: success.events, receipt: success.receipt, draft });
+      const publicArtifacts = JSON.stringify({ authorization, events: success.events, receipt: success.receipt, executionLease: success.executionLease, draft });
       assert(!publicArtifacts.includes(resolvedRoot), `${runtime} artifacts exposed the project root.`);
       assert(!publicArtifacts.includes("fixture-session"), `${runtime} artifacts exposed the provider-session reference.`);
       assert(!publicArtifacts.includes("answer = 42"), `${runtime} artifacts exposed project content.`);
@@ -156,8 +192,11 @@ async function main() {
         runtime,
         authorizationId: authorization.authorizationId,
         receiptId: success.receipt.receiptId,
+        consumptionId: success.executionLease.consumption.consumptionId,
+        releaseId: success.executionLease.release.releaseId,
         draftId: draft.draftId,
         eventCount: success.receipt.eventCount,
+        replayRejected,
       });
     }
     const codexAuthorization = readRuntimeInvocationAuthorization({ root: resolvedRoot, authorizationId: results[0].authorizationId }).authorization;
@@ -178,7 +217,7 @@ async function main() {
       protocolEvidence,
       projectBinding,
       limits: { timeoutMs: 1_000 },
-      persist: false,
+      persist: true,
     }).authorization;
     const timedOut = await runRuntimeLifecycleConformance({
       root: resolvedRoot,
@@ -188,18 +227,66 @@ async function main() {
     });
     assert(timedOut.receipt.status === "timed-out", "Timeout lifecycle did not fail closed.");
     assert(timedOut.receipt.processBoundary.exactChildExitObserved === true, "Timed-out child exit was not observed.");
-    const cancellation = new AbortController();
-    const cancellationTimer = setTimeout(() => cancellation.abort(), 100);
-    const cancelled = await runRuntimeLifecycleConformance({
+    assert(timedOut.executionLease.release.operationStatus === "timed-out", "Timed-out lease release was not recorded.");
+    const cancellationPlan = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
-      authorization: codexAuthorization,
+      runtime: "codex",
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000, maxEvents: 4_095 },
+      persist: true,
+    }).authorization;
+    const cancellation = new AbortController();
+    const cancellationRun = runRuntimeLifecycleConformance({
+      root: resolvedRoot,
+      authorization: cancellationPlan,
       mode: "wait",
       signal: cancellation.signal,
       onProcessEvent: recordProcess,
     });
-    clearTimeout(cancellationTimer);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const activeLease = inspectRuntimeInvocationExecutionLease({ root: resolvedRoot, authorizationId: cancellationPlan.authorizationId });
+    assert(activeLease.lease.status === "consumed-active", "In-flight execution lease was not visible as consumed and active.");
+    let concurrentReplayRejected = false;
+    try {
+      await runRuntimeLifecycleConformance({ root: resolvedRoot, authorization: cancellationPlan, mode: "success", onProcessEvent: recordProcess });
+    } catch (error) {
+      concurrentReplayRejected = error.code === "RUNTIME_INVOCATION_AUTHORIZATION_ALREADY_CONSUMED";
+    }
+    assert(concurrentReplayRejected, "Concurrent authorization replay was not rejected.");
+    cancellation.abort();
+    const cancelled = await cancellationRun;
     assert(cancelled.receipt.status === "cancelled", "Caller cancellation did not fail closed.");
     assert(cancelled.receipt.processBoundary.exactChildExitObserved === true, "Cancelled child exit was not observed.");
+    assert(cancelled.executionLease.release.operationStatus === "cancelled", "Cancelled lease release was not recorded.");
+    const spawnFailureAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000, maxEvents: 4_094 },
+      persist: true,
+    }).authorization;
+    let spawnFailureRejected = false;
+    try {
+      await runRuntimeLifecycleConformance({
+        root: resolvedRoot,
+        authorization: spawnFailureAuthorization,
+        spawnImplementation: () => { throw new Error("synthetic spawn failure"); },
+        onProcessEvent: recordProcess,
+      });
+    } catch (error) {
+      spawnFailureRejected = error.code === "RUNTIME_CONFORMANCE_SPAWN_FAILED";
+    }
+    assert(spawnFailureRejected, "Synthetic spawn failure did not fail closed.");
+    const spawnFailureLease = inspectRuntimeInvocationExecutionLease({
+      root: resolvedRoot,
+      authorizationId: spawnFailureAuthorization.authorizationId,
+    });
+    assert(spawnFailureLease.lease.status === "consumed-released", "Spawn failure lease was not durably released.");
+    assert(spawnFailureLease.lease.release.operationStatus === "threw", "Spawn failure lease did not record the thrown operation.");
     let writeRejected = false;
     try {
       buildRuntimeInvocationAuthorization({
@@ -225,6 +312,10 @@ async function main() {
       runtimes: results,
       timeoutReceiptId: timedOut.receipt.receiptId,
       cancellationReceiptId: cancelled.receipt.receiptId,
+      singleUseLeaseVerified: true,
+      replayRejected: true,
+      concurrentReplayRejected,
+      spawnFailureReleased: true,
       exactChildCleanupVerified: true,
       workspaceWriteRejected: true,
       rawTranscriptPersisted: false,

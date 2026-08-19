@@ -17,7 +17,11 @@ import { inspectRefreshTriggers, processRefreshTriggerBatch, readRefreshTriggerD
 import { inspectPostRefreshProjectionPolicy, setPostRefreshProjectionPolicy } from "./lib/post-refresh-projection.mjs";
 import { applyDocumentChangeReview, inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision, reviewDocumentChanges } from "./lib/document-change-review.mjs";
 import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
-import { buildRuntimeInvocationAuthorization, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
+import {
+  buildRuntimeInvocationAuthorization,
+  inspectRuntimeInvocationExecutionLease,
+  readRuntimeInvocationAuthorization,
+} from "./lib/runtime-invocation-lifecycle.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -44,6 +48,7 @@ export function usage() {
       "head runtime-adapters <project>",
       "head runtime-invocation-authorize <project> --input <authorization.json>",
       "head runtime-invocation-read <project> --authorization <runtime-invocation-authorization-id>",
+      "head runtime-invocation-lease-status <project> --authorization <runtime-invocation-authorization-id>",
       "head onboarding-start <project> [--input <onboarding.json>]",
       "head onboarding-status <project>",
       "head onboarding-review <project> --input <review.json>",
@@ -143,6 +148,7 @@ export function runCommand(argv = process.argv.slice(2)) {
     }));
   }
   if (command === "runtime-invocation-read") return readRuntimeInvocationAuthorization({ root, authorizationId: options.authorization });
+  if (command === "runtime-invocation-lease-status") return inspectRuntimeInvocationExecutionLease({ root, authorizationId: options.authorization });
   if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
   if (command === "onboarding-status") return inspectOnboarding({ root });
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });

@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.34",
+  "version": "0.3.0-alpha.35",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -87,6 +87,7 @@
       "Provider-specific Protocol Capability Evidence",
       "HEAD Project and Session Runtime Capability Binding",
       "ExecutionContract-bound Runtime Invocation Authorization",
+      "Durable At-most-once Runtime Execution Lease",
       "Bounded Runtime Event and ResultPacket Draft Schemas",
       "Exact-child Runtime Lifecycle Conformance"
     ],
@@ -114,6 +115,7 @@
       "Inspect external runtime observations without granting runtime control authority.",
       "Inspect the Codex/OpenCode runtime adapter contract, read-only discovery, bounded version and protocol capability evidence, and HEAD project/Session binding without creating, resuming, streaming, interrupting, or closing a provider session.",
       "Prepare an ExecutionContract-bound runtime invocation authorization without starting a provider, then inspect its digest-verifiable project, Session, Run, input, and resource boundaries.",
+      "Inspect whether one runtime invocation authorization is available, actively consumed, incompletely consumed, or durably released without replaying it.",
       "Inspect the current HEAD session and Context Capsule."
     ],
     "brandColor": "#234E70"

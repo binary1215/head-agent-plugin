@@ -54,11 +54,17 @@ The current Windows execution observes the required non-interactive and machine-
 
 `runtime-invocation-authorize` may run only while the exact Run in `.head/sessions/current.json` is active and still matches its digest-verified `WholePlanSnapshot`, `ExecutionContract`, and persisted `ContextCapsule`. The ExecutionContract must explicitly include `runtime.invoke` and either `project.read` or `project.write`; a read-only contract cannot produce a workspace-write authorization. The selected runtime must belong to the project and have an observed protocol binding on the current host.
 
-The resulting immutable `RuntimeInvocationAuthorization` records only canonical HEAD identities, the runtime, workspace mode, exact allowed-action requirements, project-root digest, capability evidence identities, execution-input digest/byte count, and bounded time/input/output/event limits. The actual execution input is deterministically reconstructed from the verified plan, contract, and Capsule and is never stored in the authorization. Authorization requires a future single-use execution lease and does not itself start a provider.
+The resulting immutable `RuntimeInvocationAuthorization` records only canonical HEAD identities, the runtime, workspace mode, exact allowed-action requirements, project-root digest, capability evidence identities, execution-input digest/byte count, and bounded time/input/output/event limits. The actual execution input is deterministically reconstructed from the verified plan, contract, and Capsule and is never stored in the authorization. Authorization does not itself start a provider.
 
-Provider-neutral `RuntimeEventEnvelope` records one JSONL event as its type, class, payload digest, byte count, and hashed operational provider-session references. Raw payloads and transcripts are not persisted. `RuntimeInvocationLifecycleReceipt` binds those envelopes to exact project, Session, Run, contract, caller-fence digest, child-fence digest, exit, timeout/cancellation, and cleanup facts without recording a PID or raw command. `RuntimeResultPacketDraft` converts the receipt to the existing structured return shape but cannot finish the Run or become a reviewed `ResultPacket` by itself.
+## Durable at-most-once execution lease
 
-The tracked lifecycle verifier uses a fixed no-descendant Node fixture, not Codex or OpenCode model execution. It proves bounded stdin input, input-digest observation, JSONL validation, exact-child exit, timeout termination, read-only action enforcement, and transcript-free ResultPacket drafts for both runtime identities. This proves the provider-neutral boundary while honestly leaving live provider process-tree ownership, execution leases, provider event normalization, provider-session attachment, and runtime control disabled.
+The execution path first requires the exact digest-verified persisted authorization, then claims an authorization-specific `owner.lock` with an exact PID/token owner only for operational serialization. Before any child starts, it atomically creates an immutable `RuntimeExecutionLeaseConsumption` receipt. That receipt binds the authorization hash, project, HEAD Session, Run, ExecutionContract, runtime, caller-fence digest, claim/consumption deadline, and the explicit boundary `atMostOnce: true` / `replayAllowed: false`. A crash after consumption never makes the authorization reusable; recovery requires a new HEAD decision rather than silent replay.
+
+After the exact child exits—or the operation throws—the owner lock is removed and an immutable `RuntimeExecutionLeaseRelease` records the operation status, optional lifecycle-receipt identity, and exact-owner cleanup. A pre-consumption dead owner can be recovered only when its PID is proven absent. A live or ambiguous owner remains busy even after its hold deadline; the plugin never kills an unknown process. PID and token values exist only in the short-lived operational owner file and are excluded from consumption, release, lifecycle, ResultPacket-draft, CLI, and MCP artifacts.
+
+Provider-neutral `RuntimeEventEnvelope` records one JSONL event as its type, class, payload digest, byte count, and hashed operational provider-session references. Raw payloads and transcripts are not persisted. `RuntimeInvocationLifecycleReceipt` binds those envelopes and the consumption receipt to exact project, Session, Run, contract, caller-fence digest, child-fence digest, exit, timeout/cancellation, and cleanup facts without recording a PID or raw command. `RuntimeResultPacketDraft` additionally binds the release receipt and converts the evidence to the existing structured return shape, but cannot finish the Run or become a reviewed `ResultPacket` by itself.
+
+The tracked lifecycle verifier uses a fixed no-descendant Node fixture, not Codex or OpenCode model execution. It proves pre-start consumption, sequential and in-flight replay rejection, tamper detection, release inspection, bounded stdin input, input-digest observation, JSONL validation, exact-child exit, timeout/caller-cancellation termination, read-only action enforcement, and transcript-free ResultPacket drafts for both runtime identities. This proves the provider-neutral boundary while honestly leaving live provider process-tree ownership, provider event normalization, provider-session attachment, and runtime control disabled.
 
 ## Authority and identity boundary
 
@@ -93,9 +99,10 @@ After an active Run has an explicitly compatible ExecutionContract, the mutation
 ```text
 node scripts/head.mjs runtime-invocation-authorize <project> --input <authorization.json>
 node scripts/head.mjs runtime-invocation-read <project> --authorization <runtime-invocation-authorization-id>
+node scripts/head.mjs runtime-invocation-lease-status <project> --authorization <runtime-invocation-authorization-id>
 ```
 
-The input contains only `runtime`, `workspaceMode`, and optional `limits`. The read-only MCP tool `head_runtime_invocation_authorization` verifies one persisted authorization. No MCP tool creates or consumes an authorization.
+The input contains only `runtime`, `workspaceMode`, and optional `limits`. The read-only MCP tools `head_runtime_invocation_authorization` and `head_runtime_invocation_lease_status` verify one persisted authorization and its available/claimed/consumed/released state. No MCP tool creates, claims, consumes, releases, or replays an authorization.
 
 The tracked verifier is:
 
@@ -104,18 +111,17 @@ npm run verify:runtime-adapters
 npm run verify:runtime-lifecycle
 ```
 
-The adapter verifier proves deterministic contract identities, Codex/OpenCode coverage, the Windows/macOS/Linux matrix, current-host discovery, version and protocol-evidence schemas, canonical project/Session capability binding, disabled control methods, authority-escalation rejection, tamper rejection, and privacy boundaries. The lifecycle verifier proves the active Run/contract/Capsule authorization chain, both runtime identities, bounded events, exact no-descendant child cleanup, timeout, write rejection, and ResultPacket drafting without a live provider. A sandbox that denies child creation yields explicit operational failure rather than being mistaken for runtime absence or successful execution.
+The adapter verifier proves deterministic contract identities, Codex/OpenCode coverage, the Windows/macOS/Linux matrix, current-host discovery, version and protocol-evidence schemas, canonical project/Session capability binding, disabled control methods, authority-escalation rejection, tamper rejection, and privacy boundaries. The lifecycle verifier proves the active Run/contract/Capsule authorization chain, durable single consumption and release, sequential/concurrent replay rejection, both runtime identities, bounded events, exact no-descendant child cleanup, timeout, caller cancellation, write rejection, and ResultPacket drafting without a live provider. A sandbox that denies child creation yields explicit operational failure rather than being mistaken for runtime absence or successful execution.
 
 ## Next activation gate
 
 Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, and canonical HEAD project/Session capability binding are active. Before any `start`, `resume`, `stream`, `interrupt`, `close`, attach, messaging, or process-host control becomes active, the platform/runtime/host composition must still verify:
 
-1. consume the prepared authorization through a durable single-use execution lease;
-2. apply the conformed caller, child-process, and project-root fences to the actual Codex/OpenCode child and its descendants;
-3. validate actual provider input, structured events, ResultPacket evidence, and provider-specific errors through the provider-neutral schemas;
-4. prove actual provider cancellation, timeout, interrupt, close, and descendant cleanup;
-5. actual provider-session binding remaining operational-only;
-6. no canon, ReviewDecision, instruction, or promotion authority;
-7. failure behavior that preserves the WholePlan, accepted Capsule, ExecutionContract, and evidence lineage.
+1. apply the conformed authorization, lease, caller, child-process, and project-root fences to the actual Codex/OpenCode child and its descendants;
+2. validate actual provider input, structured events, ResultPacket evidence, and provider-specific errors through the provider-neutral schemas;
+3. prove actual provider cancellation, timeout, interrupt, close, and descendant cleanup;
+4. actual provider-session binding remaining operational-only;
+5. no canon, ReviewDecision, instruction, or promotion authority;
+6. failure behavior that preserves the WholePlan, accepted Capsule, ExecutionContract, and evidence lineage.
 
 Point-in-time `RuntimeStateAdapter` exports remain a separate evidence-only facility. They do not satisfy this control activation gate.

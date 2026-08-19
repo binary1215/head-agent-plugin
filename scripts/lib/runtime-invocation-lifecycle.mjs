@@ -9,11 +9,17 @@ import {
   verifyRuntimeProjectBinding,
   verifyRuntimeProtocolEvidence,
 } from "./runtime-protocol-evidence.mjs";
+import {
+  inspectRuntimeExecutionLease,
+  verifyRuntimeExecutionLeaseOwnership,
+  verifyRuntimeExecutionLeaseRelease,
+  withRuntimeExecutionLease,
+} from "./runtime-execution-lease.mjs";
 
 export const RUNTIME_INVOCATION_AUTHORIZATION_VERSION = "0.1.0";
 export const RUNTIME_EVENT_ENVELOPE_VERSION = "0.1.0";
-export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.1.0";
-export const RUNTIME_RESULT_DRAFT_VERSION = "0.1.0";
+export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.2.0";
+export const RUNTIME_RESULT_DRAFT_VERSION = "0.2.0";
 
 const RUNTIMES = Object.freeze(["codex", "opencode"]);
 const WORKSPACE_MODES = Object.freeze(["read-only", "workspace-write"]);
@@ -374,6 +380,28 @@ export function readRuntimeInvocationAuthorization({ root = ".", authorizationId
   return { status: "verified", file, authorization };
 }
 
+export function inspectRuntimeInvocationExecutionLease({ root = ".", authorizationId } = {}) {
+  const inspected = inspectProject(root);
+  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  const authorization = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId }).authorization;
+  return {
+    status: "verified",
+    authorizationId: authorization.authorizationId,
+    projectId: authorization.projectId,
+    headSessionId: authorization.headSessionId,
+    runId: authorization.runId,
+    executionContractId: authorization.executionContractId,
+    runtime: authorization.runtime,
+    lease: inspectRuntimeExecutionLease({
+      projectRoot: inspected.project.projectRoot,
+      projectId: inspected.project.projectId,
+      authorizationId: authorization.authorizationId,
+    }),
+    providerInvoked: false,
+    providerControlEnabled: false,
+  };
+}
+
 function eventType(record) {
   for (const key of ["type", "eventType", "kind"]) {
     if (typeof record[key] === "string" && record[key].trim()) return record[key].trim().slice(0, 128);
@@ -471,7 +499,7 @@ export function verifyRuntimeEventEnvelope(document) {
 
 function lifecycleSummary({ authorization, events, status, exitCode, signal, stdoutBytes, stderrBytes, stdoutDigest, stderrDigest,
   callerFenceDigest, childFenceDigest, childStarted, childExitObserved, terminationRequested, projectFenceValidated,
-  inputDigestObserved, noDescendantFixture }) {
+  inputDigestObserved, noDescendantFixture, consumption }) {
   const eventIds = events.map((item) => item.eventId);
   const eventTypes = [...new Set(events.map((item) => item.eventType))].sort(compareText);
   const unknownEventTypes = [...new Set(events.filter((item) => item.eventClass === "unknown").map((item) => item.eventType))].sort(compareText);
@@ -485,6 +513,7 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
     headSessionId: authorization.headSessionId,
     runId: authorization.runId,
     executionContractId: authorization.executionContractId,
+    executionLeaseConsumptionId: consumption.consumptionId,
     runtime: authorization.runtime,
     status,
     exitCode,
@@ -520,6 +549,13 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
       providerControlEnabled: false,
       lifecycleConformanceEvidenceOnly: true,
     },
+    executionLeaseBoundary: {
+      authorizationConsumedBeforeInvocation: consumption.singleUseBoundary.authorizationConsumedBeforeInvocation,
+      atMostOnce: consumption.singleUseBoundary.atMostOnce,
+      replayAllowed: consumption.singleUseBoundary.replayAllowed,
+      providerInvokedAtConsumption: consumption.singleUseBoundary.providerInvokedAtConsumption,
+      crashRecovery: consumption.singleUseBoundary.crashRecovery,
+    },
     authority: "execution-evidence-not-canon",
     instructionAuthority: false,
     promotionAuthority: false,
@@ -530,9 +566,9 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
 export function verifyRuntimeInvocationLifecycleReceipt(document) {
   assertFields(document, [
     "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", "headSessionId", "runId",
-    "executionContractId", "runtime", "status", "exitCode", "signal", "eventIds", "eventTypes",
+    "executionContractId", "executionLeaseConsumptionId", "runtime", "status", "exitCode", "signal", "eventIds", "eventTypes",
     "unknownEventTypes", "providerSessionReferenceDigests", "eventCount", "stdoutBytes", "stderrBytes",
-    "stdoutDigest", "stderrDigest", "inputDigestObserved", "processBoundary", "providerBoundary", "authority",
+    "stdoutDigest", "stderrDigest", "inputDigestObserved", "processBoundary", "providerBoundary", "executionLeaseBoundary", "authority",
     "instructionAuthority", "promotionAuthority", "mutatesCanon", "receiptId", "receiptHash",
   ], "Runtime invocation lifecycle receipt");
   assertFields(document.processBoundary, [
@@ -544,6 +580,9 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     "conformanceFixtureOnly", "actualProviderInvoked", "actualProviderSessionCreated", "providerControlEnabled",
     "lifecycleConformanceEvidenceOnly",
   ], "Runtime invocation provider boundary");
+  assertFields(document.executionLeaseBoundary, [
+    "authorizationConsumedBeforeInvocation", "atMostOnce", "replayAllowed", "providerInvokedAtConsumption", "crashRecovery",
+  ], "Runtime invocation execution lease boundary");
   const statuses = new Set(["completed", "failed", "cancelled", "timed-out", "output-limited", "invalid-event"]);
   const sortedUnique = (items) => Array.isArray(items) && canonicalJson(items) === canonicalJson([...new Set(items)].sort(compareText));
   const completed = document.status === "completed";
@@ -556,6 +595,7 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
     || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
     || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
+    || !/^runtime-execution-consumption-[a-f0-9]{24}$/.test(document.executionLeaseConsumptionId || "")
     || !Number.isInteger(document.exitCode) && document.exitCode !== null
     || typeof document.signal !== "string" || document.signal.length > 32
     || !sortedUnique(document.eventIds) || document.eventIds.some((item) => !/^runtime-event-[a-f0-9]{24}$/.test(item))
@@ -580,6 +620,13 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
       actualProviderSessionCreated: false,
       providerControlEnabled: false,
       lifecycleConformanceEvidenceOnly: true,
+    })
+    || canonicalJson(document.executionLeaseBoundary) !== canonicalJson({
+      authorizationConsumedBeforeInvocation: true,
+      atMostOnce: true,
+      replayAllowed: false,
+      providerInvokedAtConsumption: false,
+      crashRecovery: "authorization-remains-consumed-new-head-decision-required",
     })
     || document.authority !== "execution-evidence-not-canon" || document.instructionAuthority !== false
     || document.promotionAuthority !== false || document.mutatesCanon !== false) {
@@ -658,6 +705,12 @@ export async function runRuntimeLifecycleConformance({
     fail("Runtime execution input changed after authorization.", "RUNTIME_INVOCATION_INPUT_DRIFT");
   }
   const callerFenceDigest = callerFence(projectRoot, verified.authorizationId);
+  const leased = await withRuntimeExecutionLease({
+    projectRoot,
+    authorization: verified,
+    ownerFenceDigest: callerFenceDigest,
+  }, async ({ lease, consumption }) => {
+    verifyRuntimeExecutionLeaseOwnership({ projectRoot, authorization: verified, lease, consumption });
   const ownershipNonce = crypto.randomBytes(32).toString("hex");
   let child;
   let timer;
@@ -713,7 +766,11 @@ export async function runRuntimeLifecycleConformance({
       onProcessEvent({ type: "spawn", pid: child.pid, parentPid: process.pid, command: process.execPath, cwd: projectRoot, ports: "none" });
       child.stdin.end(input);
     });
-    child.once("error", (error) => reject(Object.assign(new Error(`Lifecycle conformance child failed: ${error.message}`), { code: "RUNTIME_CONFORMANCE_SPAWN_FAILED" })));
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
+      reject(Object.assign(new Error(`Lifecycle conformance child failed: ${error.message}`), { code: "RUNTIME_CONFORMANCE_SPAWN_FAILED" }));
+    });
     child.stdout.on("data", (chunk) => {
       stdout = Buffer.concat([stdout, chunk]);
       if (stdout.length > verified.limits.maxStdoutBytes) {
@@ -775,6 +832,7 @@ export async function runRuntimeLifecycleConformance({
         projectFenceValidated: true,
         inputDigestObserved,
         noDescendantFixture: true,
+        consumption,
       });
       resolve(verifyRuntimeInvocationLifecycleReceipt(identify(payload, "runtime-lifecycle-receipt", "receiptId", "receiptHash")));
     });
@@ -783,14 +841,26 @@ export async function runRuntimeLifecycleConformance({
     fail("Lifecycle conformance fixture did not observe the authorized execution input.", "RUNTIME_INVOCATION_INPUT_NOT_OBSERVED");
   }
   return { status: "lifecycle_conformance_recorded", receipt, events };
+  });
+  return {
+    ...leased.result,
+    executionLease: {
+      consumption: leased.consumption,
+      release: leased.release,
+    },
+  };
 }
 
-export function buildRuntimeResultPacketDraft({ authorization, receipt } = {}) {
+export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRelease } = {}) {
   const verifiedAuthorization = verifyRuntimeInvocationAuthorization(authorization);
   const verifiedReceipt = verifyRuntimeInvocationLifecycleReceipt(receipt);
+  const verifiedRelease = verifyRuntimeExecutionLeaseRelease(leaseRelease);
   if (verifiedReceipt.authorizationId !== verifiedAuthorization.authorizationId
     || verifiedReceipt.executionContractId !== verifiedAuthorization.executionContractId
-    || verifiedReceipt.runId !== verifiedAuthorization.runId) {
+    || verifiedReceipt.runId !== verifiedAuthorization.runId
+    || verifiedRelease.authorizationId !== verifiedAuthorization.authorizationId
+    || verifiedRelease.consumptionId !== verifiedReceipt.executionLeaseConsumptionId
+    || verifiedRelease.lifecycleReceiptId !== verifiedReceipt.receiptId) {
     fail("Runtime receipt does not belong to the authorized Run.", "RUNTIME_RESULT_DRAFT_LINEAGE_CONFLICT");
   }
   const successful = verifiedReceipt.status === "completed" && verifiedReceipt.exitCode === 0
@@ -801,12 +871,16 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt } = {}) {
     protocolVersion: RUNTIME_RESULT_DRAFT_VERSION,
     authorizationId: verifiedAuthorization.authorizationId,
     lifecycleReceiptId: verifiedReceipt.receiptId,
+    executionLeaseConsumptionId: verifiedReceipt.executionLeaseConsumptionId,
+    executionLeaseReleaseId: verifiedRelease.releaseId,
     executionContractId: verifiedAuthorization.executionContractId,
     runId: verifiedAuthorization.runId,
     outcome: successful ? "Provider lifecycle conformance completed." : `Provider lifecycle conformance ended with ${verifiedReceipt.status}.`,
     evidence: [{
       kind: "RuntimeLifecycleEvidence",
       lifecycleReceiptId: verifiedReceipt.receiptId,
+      executionLeaseConsumptionId: verifiedReceipt.executionLeaseConsumptionId,
+      executionLeaseReleaseId: verifiedRelease.releaseId,
       eventIds: verifiedReceipt.eventIds,
       eventTypes: verifiedReceipt.eventTypes,
       providerSessionReferenceDigests: verifiedReceipt.providerSessionReferenceDigests,
@@ -836,7 +910,8 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt } = {}) {
 
 export function verifyRuntimeResultPacketDraft(document) {
   assertFields(document, [
-    "schemaVersion", "kind", "protocolVersion", "authorizationId", "lifecycleReceiptId", "executionContractId",
+    "schemaVersion", "kind", "protocolVersion", "authorizationId", "lifecycleReceiptId", "executionLeaseConsumptionId",
+    "executionLeaseReleaseId", "executionContractId",
     "runId", "outcome", "evidence", "planDelta", "impactRadius", "verification", "unknowns",
     "finalResultPacketPersisted", "freshHeadReviewRequired", "rawTranscriptIncluded", "authority",
     "instructionAuthority", "promotionAuthority", "mutatesCanon", "draftId", "draftHash",
@@ -848,7 +923,8 @@ export function verifyRuntimeResultPacketDraft(document) {
   const evidence = document.evidence[0];
   const verification = document.verification[0];
   assertFields(evidence, [
-    "kind", "lifecycleReceiptId", "eventIds", "eventTypes", "providerSessionReferenceDigests", "instructionAuthority",
+    "kind", "lifecycleReceiptId", "executionLeaseConsumptionId", "executionLeaseReleaseId", "eventIds", "eventTypes",
+    "providerSessionReferenceDigests", "instructionAuthority",
   ], "Runtime ResultPacket draft evidence");
   assertFields(verification, [
     "kind", "status", "projectFenceValidated", "exactChildExitObserved", "descendantTreeOwnershipValidated", "inputDigestMatched",
@@ -858,10 +934,14 @@ export function verifyRuntimeResultPacketDraft(document) {
     || document.protocolVersion !== RUNTIME_RESULT_DRAFT_VERSION
     || !/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^runtime-lifecycle-receipt-[a-f0-9]{24}$/.test(document.lifecycleReceiptId || "")
+    || !/^runtime-execution-consumption-[a-f0-9]{24}$/.test(document.executionLeaseConsumptionId || "")
+    || !/^runtime-execution-release-[a-f0-9]{24}$/.test(document.executionLeaseReleaseId || "")
     || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
     || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
     || typeof document.outcome !== "string" || !document.outcome
     || evidence.kind !== "RuntimeLifecycleEvidence" || evidence.lifecycleReceiptId !== document.lifecycleReceiptId
+    || evidence.executionLeaseConsumptionId !== document.executionLeaseConsumptionId
+    || evidence.executionLeaseReleaseId !== document.executionLeaseReleaseId
     || !sortedUnique(evidence.eventIds) || evidence.eventIds.some((item) => !/^runtime-event-[a-f0-9]{24}$/.test(item))
     || !sortedUnique(evidence.eventTypes) || !sortedUnique(evidence.providerSessionReferenceDigests)
     || evidence.providerSessionReferenceDigests.some((item) => !/^[a-f0-9]{64}$/.test(item))
