@@ -34,7 +34,7 @@ export const tools = [
   },
   {
     name: "head_runtime_adapters",
-    description: "Inspect provider-neutral runtime contracts, privacy-bounded executable discovery, and fixed non-session version evidence without creating or controlling a provider session.",
+    description: "Inspect provider-neutral runtime contracts, privacy-bounded executable discovery, fixed non-session version and protocol/capability evidence, and HEAD project/session capability binding without creating or controlling a provider session.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
@@ -370,7 +370,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.32" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.33" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });

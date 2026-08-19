@@ -29,6 +29,16 @@ import {
   buildRuntimeVersionEvidence,
   verifyRuntimeVersionEvidence,
 } from "./lib/runtime-machine-execution.mjs";
+import {
+  BoundedProtocolAgentRuntimeAdapter,
+  BoundedProtocolPlatformAdapter,
+  BoundedProtocolWorkspaceHostAdapter,
+  RUNTIME_PROTOCOL_CONTROL_METHODS,
+  buildRuntimeProjectBinding,
+  buildRuntimeProtocolEvidence,
+  verifyRuntimeProjectBinding,
+  verifyRuntimeProtocolEvidence,
+} from "./lib/runtime-protocol-evidence.mjs";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const hasOwnKeyDeep = (value, key) => {
@@ -154,6 +164,61 @@ try {
     assert.throws(() => versionHost[method](), { code: "RUNTIME_ADAPTER_CONTROL_NOT_ENABLED" });
   }
 
+  const protocolEvidence = await buildRuntimeProtocolEvidence({ versionEvidence });
+  verifyRuntimeProtocolEvidence(protocolEvidence);
+  assert.equal(protocolEvidence.activationBoundary.actualProviderSessionControlValidated, false);
+  assert.equal(protocolEvidence.activationBoundary.runtimeControlEnabled, false);
+  assert.equal(protocolEvidence.activationBoundary.providerSessionCreated, false);
+  assert.equal(protocolEvidence.summary.rawPathsExposed, false);
+  assert.equal(protocolEvidence.summary.rawOutputExposed, false);
+  assert.equal(protocolEvidence.summary.rawCommandsExposed, false);
+  assert.equal(hasOwnKeyDeep(protocolEvidence, "path"), false);
+  assert.equal(hasOwnKeyDeep(protocolEvidence, "executablePath"), false);
+  assert.equal(hasOwnKeyDeep(protocolEvidence, "stdout"), false);
+  assert.equal(hasOwnKeyDeep(protocolEvidence, "stderr"), false);
+  assert.equal(hasOwnKeyDeep(protocolEvidence, "providerSessionId"), false);
+  const tamperedProtocolEvidence = clone(protocolEvidence);
+  tamperedProtocolEvidence.activationBoundary.runtimeControlEnabled = true;
+  assert.throws(() => verifyRuntimeProtocolEvidence(tamperedProtocolEvidence), { code: "INVALID_RUNTIME_PROTOCOL_EVIDENCE" });
+  await assert.rejects(
+    () => buildRuntimeProtocolEvidence({ versionEvidence, runtimes: [] }),
+    { code: "RUNTIME_PROTOCOL_RUNTIME_REQUIRED" },
+  );
+  const protocolHost = new BoundedProtocolWorkspaceHostAdapter();
+  const protocolPlatform = new BoundedProtocolPlatformAdapter({ workspaceHostAdapter: protocolHost });
+  for (const runtime of RUNTIME_ADAPTER_RUNTIMES) {
+    const adapter = new BoundedProtocolAgentRuntimeAdapter({ runtime, platformAdapter: protocolPlatform });
+    for (const method of RUNTIME_PROTOCOL_CONTROL_METHODS) {
+      assert.throws(() => adapter[method](), { code: "RUNTIME_ADAPTER_CONTROL_NOT_ENABLED" });
+    }
+  }
+  for (const method of ["spawnOwned", "inspectOwned", "terminateOwned"]) {
+    assert.throws(() => protocolPlatform[method](), { code: "RUNTIME_ADAPTER_CONTROL_NOT_ENABLED" });
+  }
+  for (const method of ["attach", "send", "receive", "detach"]) {
+    assert.throws(() => protocolHost[method](), { code: "RUNTIME_ADAPTER_CONTROL_NOT_ENABLED" });
+  }
+
+  const projectBinding = buildRuntimeProjectBinding({
+    projectId: "head-0123456789abcdef0123",
+    headSessionId: "session-01234567-89ab-cdef-0123-456789abcdef",
+    projectRoot: process.cwd(),
+    projectStatus: "ready",
+    versionEvidence,
+    protocolEvidence,
+  });
+  verifyRuntimeProjectBinding(projectBinding);
+  assert.equal(projectBinding.bindingBoundary.headProjectIdentityCanonical, true);
+  assert.equal(projectBinding.bindingBoundary.headSessionIdentityCanonical, true);
+  assert.equal(projectBinding.bindingBoundary.providerSessionIdentityCanonical, false);
+  assert.equal(projectBinding.bindingBoundary.actualProviderSessionBindingValidated, false);
+  assert.equal(projectBinding.bindingBoundary.runtimeControlEnabled, false);
+  assert.equal(hasOwnKeyDeep(projectBinding, "projectRoot"), false);
+  assert.equal(hasOwnKeyDeep(projectBinding, "providerSessionId"), false);
+  const tamperedBinding = clone(projectBinding);
+  tamperedBinding.bindingBoundary.runtimeControlEnabled = true;
+  assert.throws(() => verifyRuntimeProjectBinding(tamperedBinding), { code: "INVALID_RUNTIME_PROJECT_BINDING" });
+
   process.stdout.write(`${JSON.stringify({
     status: "verified",
     matrixId: matrix.matrixId,
@@ -171,6 +236,12 @@ try {
     versionUnavailableRuntimes: versionEvidence.summary.unavailableRuntimes,
     versionFailedRuntimes: versionEvidence.summary.failedRuntimes,
     boundedVersionExecutionValidated: versionEvidence.activationBoundary.actualPlatformExecutionValidated,
+    protocolEvidenceId: protocolEvidence.evidenceId,
+    protocolNegotiatedRuntimes: protocolEvidence.summary.negotiatedRuntimes,
+    protocolPartialRuntimes: protocolEvidence.summary.partialRuntimes,
+    boundedProtocolObservationValidated: protocolEvidence.activationBoundary.actualProviderProtocolObservationValidated,
+    projectBindingId: projectBinding.bindingId,
+    projectBindingStatus: projectBinding.status,
     authorityEffect: "none",
   }, null, 2)}\n`);
 } catch (error) {

@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.32",
+  "version": "0.3.0-alpha.33",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -83,7 +83,9 @@
       "Windows, macOS, and Linux Platform Contract Matrix",
       "Native-process Workspace Host Contract",
       "Privacy-preserving Codex and OpenCode CLI Discovery",
-      "Bounded Non-session Runtime Version Evidence"
+      "Bounded Non-session Runtime Version Evidence",
+      "Provider-specific Protocol Capability Evidence",
+      "HEAD Project and Session Runtime Capability Binding"
     ],
     "defaultPrompt": [
       "Initialize this project for HEAD coordination.",
@@ -107,7 +109,7 @@
       "Record an accepted execution as a Git-independent ChangeSet, then review inferred Feature or Capability impact before creating IMPACTS relationships.",
       "Attach explicitly selected Git commits as optional evidence without changing the provider-neutral ChangeSet identity.",
       "Inspect external runtime observations without granting runtime control authority.",
-      "Inspect the Codex/OpenCode runtime adapter contract, read-only discovery, and bounded version evidence without creating, resuming, streaming, interrupting, or closing a provider session.",
+      "Inspect the Codex/OpenCode runtime adapter contract, read-only discovery, bounded version and protocol capability evidence, and HEAD project/Session binding without creating, resuming, streaming, interrupting, or closing a provider session.",
       "Inspect the current HEAD session and Context Capsule."
     ],
     "brandColor": "#234E70"

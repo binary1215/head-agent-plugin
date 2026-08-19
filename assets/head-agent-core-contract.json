@@ -44,16 +44,16 @@
     "runtimes": ["codex", "opencode"],
     "platforms": ["darwin", "linux", "win32"],
     "workspaceHosts": ["native-process"],
-    "identity": "Static descriptor, discovery, bounded version observation, composition, and matrix identities are content-derived; provider sessions, raw commands and output, prompts, transcripts, endpoints, credentials, live process IDs, and physical adapter identity are excluded.",
+    "identity": "Static descriptor, discovery, bounded version and fixed-help protocol observation, project/Session capability binding, composition, and matrix identities are content-derived; provider sessions, raw commands and output, project paths and content, prompts, transcripts, endpoints, credentials, live process IDs, and physical adapter identity are excluded.",
     "authority": "Capability contract only with no instruction, promotion, control, or canon-mutation authority. Consequential runtime control still requires an accepted ExecutionContract and exact project, caller, and child-process ownership.",
-    "status": "Projection-only Codex/OpenCode, contract-only platform, and native-process host references are active for deterministic inspection. Privacy-preserving current-host discovery and bounded fixed version invocation are active; the current Windows host verifies both runtimes without creating provider sessions. Provider hydration, messaging, caller fencing, process-tree control, and all runtime control operations remain disabled and deferred."
+    "status": "Projection-only Codex/OpenCode, contract-only platform, and native-process host references are active for deterministic inspection. Privacy-preserving current-host discovery, bounded fixed version invocation, provider-specific fixed-help capability observation, and canonical HEAD project/Session capability binding are active; the current Windows host verifies both runtimes without creating provider sessions. Actual provider-session binding, hydration, messaging, caller fencing, process-tree control, and all runtime control operations remain disabled and deferred."
   },
   "worldModel": {
     "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
     "store": "replaceable-rebuildable-materialized-view via a versioned WorldModelStoreAdapter; local-json is the active adapter",
     "tiers": ["Hot current snapshot", "Warm change summary", "Cold prior snapshots"],
     "authority": "Derived evidence only; project canon and user-owned decisions remain authoritative.",
-    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding and document-review receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, local/in-memory/activated-ArcadeDB graph projection, prepared traversal, deterministic Markdown projection, explicit incremental refresh, debounced filesystem/CI trigger ingestion, opt-in safe automatic Markdown regeneration, explicit document-candidate review/application, privacy-preserving current-host runtime CLI discovery, and bounded non-session version evidence are active; AST-accurate analysis, structured Git decision inference, provider-session runtime control, Obsidian/Notion, live ArcadeDB performance evaluation, and compare-and-swap remote publication are deferred."
+    "coverage": "Supported text files, heuristic symbols/dependencies, evidence-linked file/symbol/import/call graph, user-owned Product Model canon, Git-independent temporal Product/File/Symbol/Test revisions, reviewed product/code/test mappings, reviewed provider-neutral ChangeSets and impacts, optional VCS evidence, immutable onboarding and document-review receipts, all reachable Git commit-message evidence, point-in-time external runtime observations, bounded traversal, local/in-memory/activated-ArcadeDB graph projection, prepared traversal, deterministic Markdown projection, explicit incremental refresh, debounced filesystem/CI trigger ingestion, opt-in safe automatic Markdown regeneration, explicit document-candidate review/application, privacy-preserving current-host runtime CLI discovery, bounded non-session version and protocol evidence, and canonical HEAD project/Session capability binding are active; AST-accurate analysis, structured Git decision inference, provider-session runtime control, Obsidian/Notion, live ArcadeDB performance evaluation, and compare-and-swap remote publication are deferred."
   },
   "incrementalRefresh": {
     "purpose": "Reconstruct changed observed project state as a new immutable World Model and GraphSnapshot without mutating canon or accepted execution inputs.",
@@ -151,6 +151,8 @@
     "contract-only PlatformAdapter, AgentRuntimeAdapter, and WorkspaceHostAdapter references",
     "deterministic Codex/OpenCode and Windows/macOS/Linux runtime contract matrix",
     "privacy-bounded Codex/OpenCode executable discovery and non-session version evidence",
+    "provider-specific fixed-help protocol capability evidence",
+    "canonical HEAD project and Session runtime capability binding",
     "fail-closed disabled runtime and workspace-host control operations",
     "conformance-gated ArcadeDB snapshot, topology, server-expansion, and prepared-traversal projection",
     "content-derived prepared-traversal cost evidence and read-only live benchmark boundary",
@@ -162,7 +164,8 @@
     "automatic provider runtime hydration from Fresh HEAD review",
     "authorized knowledge promotion into project canon",
     "AST-accurate semantic call graph",
-    "provider-session runtime invocation and control beyond bounded non-session version evidence",
+    "actual provider-session project binding, invocation, and control beyond bounded non-session capability evidence",
+    "bounded provider event, ResultPacket, cancellation, and close conformance",
     "structured Git decision inference and supersession",
     "general conformance graph projection",
     "dedicated imported backlog evidence adapters",

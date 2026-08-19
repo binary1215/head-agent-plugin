@@ -1,6 +1,6 @@
 # Runtime adapter contracts
 
-Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, and runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation. None of these layers enables provider-session or runtime control.
+Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation, runtime-protocol-evidence protocol `0.1.0` observes fixed provider-specific help surfaces, and runtime-project-binding protocol `0.1.0` binds those observations to canonical HEAD project and Session identities. None of these layers enables provider-session or runtime control.
 
 ```text
 HEAD Core
@@ -44,11 +44,17 @@ The current Windows execution verified the installed Codex and OpenCode version 
 - `providerSessionCreated: false`;
 - `capabilityDoesNotGrantAuthorization: true`.
 
+The protocol-evidence composition runs only three fixed help profiles per selected runtime through the same direct-child, no-shell, ignored-stdin, minimal-environment boundary. Codex is checked for non-interactive execution, JSON events, output schema, ephemeral execution, resume surface, stdio app-server transport, and protocol schema generation. OpenCode is checked for non-interactive `run`, JSON event format, resume/continue surface, ACP, project-directory binding, and headless server discovery. Parser output is reduced to allowlisted signal names, support status, output digests and sizes, and exact-child lifecycle facts. Raw arguments, raw help text, paths, environment, provider session IDs, and PIDs are not returned.
+
+The current Windows execution observes the required non-interactive and machine-protocol surfaces for both Codex and OpenCode. This records `actualProviderProtocolObservationValidated: true`, but `actualProviderSessionControlValidated`, provider-session creation, and runtime control remain false.
+
+`RuntimeProjectBinding` then binds the version and protocol evidence identities to the canonical `.head/project.json` project ID and `.head/sessions/current.json` HEAD Session ID. The physical project root is reduced to a digest and no project content is sent to either runtime. This is a capability-reference binding only: it proves which HEAD project and Session inspected the installed interfaces, not that a provider session was created or attached to that project.
+
 ## Authority and identity boundary
 
 Runtime capability never grants authorization. A future control operation must still be bounded by an accepted `ExecutionContract`, exact project binding, caller identity, owned-process evidence, resource limits, cleanup, and ResultPacket/ReviewDecision lineage.
 
-HEAD Session and Run IDs remain canonical project identities. Provider session IDs may later be attached only as operational references and never replace HEAD identities or enter core semantic identity. The current probe artifacts contain no provider session ID, command, endpoint, prompt, transcript, credential, or live process identity.
+HEAD Session and Run IDs remain canonical project identities. Provider session IDs may later be attached only as operational references and never replace HEAD identities or enter core semantic identity. The current probe artifacts contain no provider session ID, raw command, endpoint, prompt, transcript, credential, raw output, path, or live process identity.
 
 All descriptors and probes require:
 
@@ -58,7 +64,7 @@ All descriptors and probes require:
 - `mutatesCanon: false`;
 - `tuiScraping: false` for runtime adapters.
 
-The static contract descriptors additionally require `capabilityAuthority: none`; the operational discovery and version-evidence compositions instead declare `authority: operational-observation-only` and `capabilityDoesNotGrantAuthorization: true`.
+The static contract descriptors additionally require `capabilityAuthority: none`; the operational discovery, version, and protocol-evidence compositions instead declare `authority: operational-observation-only` and `capabilityDoesNotGrantAuthorization: true`. The project binding combines canonical HEAD references with operational evidence but has no instruction, promotion, control, or canon-mutation authority.
 
 An adapter that advertises control, mutation, TUI scraping, or a different session-identity rule fails validation instead of being treated as available.
 
@@ -70,7 +76,7 @@ The CLI command is read-only:
 node scripts/head.mjs runtime-adapters <project>
 ```
 
-The read-only MCP tool is `head_runtime_adapters`. Both use the runtimes selected in `.head/project.json`, return the deterministic three-platform/two-runtime contract matrix, the current-host privacy-bounded machine-discovery composition, and bounded version evidence. They may start only the exact short-lived version child described above; they never create, resume, message, interrupt, or close a provider session.
+The read-only MCP tool is `head_runtime_adapters`. Both use the runtimes selected in `.head/project.json`, return the deterministic three-platform/two-runtime contract matrix, current-host privacy-bounded discovery, bounded version and protocol evidence, and the canonical HEAD project/Session capability binding. They may start only the exact short-lived version and fixed-help children described above; they never create, resume, message, interrupt, or close a provider session.
 
 The tracked verifier is:
 
@@ -78,19 +84,18 @@ The tracked verifier is:
 npm run verify:runtime-adapters
 ```
 
-It proves deterministic contract identities, Codex/OpenCode coverage, the Windows/macOS/Linux matrix, current-host discovery and version-evidence schemas, bounded child lifecycle, disabled control methods, authority-escalation rejection, tamper rejection, and absence of raw paths, raw output, or provider-session identity from returned artifacts. A sandbox that denies child creation yields explicit `spawn-failed` operational evidence rather than being mistaken for runtime absence or successful execution.
+It proves deterministic contract identities, Codex/OpenCode coverage, the Windows/macOS/Linux matrix, current-host discovery, version and protocol-evidence schemas, canonical project/Session capability binding, bounded child lifecycle, disabled control methods, authority-escalation rejection, tamper rejection, and absence of raw paths, raw commands, raw output, project content, or provider-session identity from returned artifacts. A sandbox that denies child creation yields explicit `spawn-failed` operational evidence rather than being mistaken for runtime absence or successful execution.
 
 ## Next activation gate
 
-Read-only path discovery and bounded non-session version invocation are active. Before any `start`, `resume`, `stream`, `interrupt`, `close`, attach, messaging, or process-host control becomes active, the platform/runtime/host composition must verify:
+Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, and canonical HEAD project/Session capability binding are active. Before any `start`, `resume`, `stream`, `interrupt`, `close`, attach, messaging, or process-host control becomes active, the platform/runtime/host composition must still verify:
 
-1. provider-specific non-interactive protocol negotiation beyond the completed fixed version probe, without a shell or TUI scraping;
-2. canonical project and HEAD Session binding;
-3. exact caller and child-process ownership;
-4. bounded input/output and event schemas;
-5. cancellation, timeout, interrupt, close, and descendant cleanup;
-6. provider-session references remaining operational-only;
-7. no canon, ReviewDecision, instruction, or promotion authority;
-8. failure behavior that preserves the WholePlan, accepted Capsule, ExecutionContract, and evidence lineage.
+1. an accepted `ExecutionContract` bound to the exact project, HEAD Session, WholePlan, and ContextCapsule;
+2. exact caller and child-process ownership plus project-root fencing;
+3. bounded provider input, structured event, ResultPacket, and error schemas;
+4. cancellation, timeout, interrupt, close, and descendant cleanup;
+5. actual provider-session binding remaining operational-only;
+6. no canon, ReviewDecision, instruction, or promotion authority;
+7. failure behavior that preserves the WholePlan, accepted Capsule, ExecutionContract, and evidence lineage.
 
 Point-in-time `RuntimeStateAdapter` exports remain a separate evidence-only facility. They do not satisfy this control activation gate.
