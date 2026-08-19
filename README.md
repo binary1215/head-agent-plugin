@@ -61,7 +61,7 @@ not a separate analytics feature: it is the evidence layer that lets each stage
 refer to the same product, source, revision, decision, and execution identities.
 
 ```mermaid
-flowchart LR
+flowchart TB
     U[User objective] --> H[Whole-plan HEAD]
     PC[Product Canon] --> GS[World Model + GraphSnapshot]
     RE[Repository evidence] --> GS
