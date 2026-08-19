@@ -268,6 +268,73 @@ export function initializeProject({ root = ".", pluginRoot, runtimes } = {}) {
   }
 }
 
+export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes = null } = {}) {
+  const canonicalPluginRoot = fs.realpathSync(path.resolve(pluginRoot));
+  const inspected = inspectProject(root);
+  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status !== "ready") {
+    fail(`Managed project files must be drift-free before installation convergence; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
+  }
+  if (runtimes != null) {
+    const requested = normalizeRuntimes(runtimes);
+    if (JSON.stringify(requested) !== JSON.stringify(inspected.project.runtimes)) {
+      fail("Requested runtimes do not match the initialized project runtime set.", "PROJECT_RUNTIME_MISMATCH");
+    }
+  }
+  const projectRoot = inspected.project.projectRoot;
+  const manifestFile = path.join(projectRoot, ".head", "generated", "manifest.json");
+  const manifest = readJson(manifestFile, "Managed manifest");
+  if (manifest.pluginRoot === canonicalPluginRoot) {
+    return {
+      status: "current",
+      projectId: inspected.project.projectId,
+      sessionId: inspected.state.sessionId,
+      pluginRootChanged: false,
+      updatedManagedFiles: [],
+    };
+  }
+
+  const replacements = new Map();
+  if (inspected.project.runtimes.includes("opencode")) {
+    const projection = json(opencodeProjection(canonicalPluginRoot));
+    replacements.set(".head/generated/opencode.json", projection);
+    if (inspected.project.integrations.opencode?.status === "managed") replacements.set("opencode.json", projection);
+  }
+  const originals = new Map([[manifestFile, fs.readFileSync(manifestFile)]]);
+  try {
+    for (const [relative, content] of replacements) {
+      const file = path.join(projectRoot, relative);
+      assertNoSymlinkAncestors(projectRoot, file);
+      if (!fs.existsSync(file)) fail(`Managed installation projection is missing: ${relative}`, "MANAGED_INSTALLATION_PROJECTION_MISSING");
+      originals.set(file, fs.readFileSync(file));
+      atomicWrite(file, content);
+    }
+    const managed = (manifest.managed || []).map((item) => replacements.has(item.path)
+      ? { ...item, sha256: sha256(fs.readFileSync(path.join(projectRoot, item.path))) }
+      : item);
+    for (const relative of replacements.keys()) {
+      if (!managed.some((item) => item.path === relative)) {
+        fail(`Managed manifest does not own installation projection: ${relative}`, "MANAGED_INSTALLATION_PROJECTION_UNOWNED");
+      }
+    }
+    atomicWrite(manifestFile, json({ ...manifest, generatedAt: now(), pluginRoot: canonicalPluginRoot, managed }));
+  } catch (error) {
+    for (const [file, content] of [...originals.entries()].reverse()) {
+      try { atomicWrite(file, content); } catch {}
+    }
+    throw error;
+  }
+  const converged = inspectProject(projectRoot);
+  if (converged.status !== "ready") fail("Installation convergence did not produce a ready project.", "INSTALLATION_CONVERGENCE_FAILED");
+  return {
+    status: "converged",
+    projectId: converged.project.projectId,
+    sessionId: converged.state.sessionId,
+    pluginRootChanged: true,
+    updatedManagedFiles: [...replacements.keys()].sort(),
+  };
+}
+
 export function inspectProject(root = ".") {
   const canonicalRoot = canonicalDirectory(root);
   const projectFile = path.join(canonicalRoot, ".head", "project.json");
@@ -374,12 +441,15 @@ export function coreContract() {
     "runtime-descendant-tree-supervision",
     "windows-job-object-tree-ownership",
     "posix-process-group-tree-ownership",
+    "public-initialize-resume-composition",
+    "managed-installation-projection-convergence",
   ];
   contract.deferredCapabilities = [
     ...contract.deferredCapabilities,
     "runtime-descendant-tree-supervision",
   ].filter((capability) => !new Set([
     "runtime-descendant-tree-supervision",
+    "native-worker-descendant-tree-supervision",
     "actual-provider-runtime-event-normalization",
   ]).has(capability));
   return contract;

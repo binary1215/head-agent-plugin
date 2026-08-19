@@ -227,6 +227,7 @@ Status terms in this README have exact meanings:
 | Capability | Status |
 | --- | --- |
 | Source-based CLI execution | **Available** |
+| One-command install, initialize, and onboarding resume | **Available** |
 | Project initialization and project-scoped HEAD Session | **Available** |
 | Repository Source Scope | **Available** |
 | Review-gated onboarding and Product Canon bootstrap | **Available** |
@@ -275,10 +276,9 @@ GraphDB. Add `~/.local/bin` to `PATH` once if the installer reports
 ```powershell
 git clone https://github.com/binary1215/head-agent-plugin.git
 Set-Location .\head-agent-plugin
-.\scripts\install.ps1
+.\scripts\install.ps1 --project C:\path\to\project --runtime codex,opencode
 
 head-agent --version
-head-agent init C:\path\to\project --runtime codex,opencode
 head-agent doctor C:\path\to\project
 ```
 
@@ -287,10 +287,9 @@ head-agent doctor C:\path\to\project
 ```bash
 git clone https://github.com/binary1215/head-agent-plugin.git
 cd head-agent-plugin
-./scripts/install.sh
+./scripts/install.sh --project /path/to/project --runtime codex,opencode
 
 head-agent --version
-head-agent init /path/to/project --runtime codex,opencode
 head-agent doctor /path/to/project
 ```
 
@@ -352,7 +351,8 @@ The current installer:
 3. stages, verifies, and activates the release without in-place source edits;
 4. installs PowerShell/cmd and POSIX-compatible command launchers;
 5. keeps prior verified releases available for explicit rollback;
-6. preserves the JavaScript fallback when native compute is unavailable.
+6. optionally initializes or resumes one project through the installed release;
+7. preserves the JavaScript fallback when native compute is unavailable.
 
 Verify the full isolated lifecycle without touching the real user installation:
 
@@ -369,23 +369,33 @@ promote inferred Features into Product Canon.
 The examples below use the currently available source CLI. Replace
 `C:\path\to\project` with the target project root.
 
-### 1. Initialize the project
+### 1. Initialize or resume the project
+
+`init` is the public composition path. On first use it creates one project and
+HEAD Session identity, indexes the selected source scope, and creates the
+reviewable onboarding candidate batch. Repeating `init` or using its `resume`
+alias verifies and returns the same pending review or ready state without
+duplicating project, Session, candidate, or Product Canon authority.
 
 ```powershell
-node .\scripts\head.mjs init C:\path\to\project --runtime codex
+head-agent init C:\path\to\project --runtime codex,opencode
+head-agent resume C:\path\to\project --runtime codex,opencode
 ```
 
-Codex and OpenCode projections can be prepared together without claiming that
-OpenCode live execution is already available:
+When a source boundary or new-project brief is needed, supply it on the first
+command so it is applied before indexing:
 
 ```powershell
-node .\scripts\head.mjs init C:\path\to\project --runtime codex,opencode
+head-agent init C:\path\to\project --runtime codex,opencode `
+  --input .\onboarding.json
 ```
 
 Initialization creates protected `.head/` project state, a project-scoped HEAD
-Session, onboarding state, and an empty user-owned Product Model.
+Session, onboarding state, an empty user-owned Product Model, and an immutable
+candidate batch. OpenCode uses the same project identity and onboarding state;
+its actual-provider execution remains Experimental.
 
-### 2. Select the repository source scope
+### 2. Select the repository source scope before indexing
 
 For repositories containing generated output, vendored dependencies, copied
 projects, model bundles, or large fixtures, record the exact project-relative
@@ -393,32 +403,21 @@ roots that should participate in product inference.
 
 ```json
 {
-  "includeRoots": [
-    "src",
-    "packages"
-  ],
-  "excludeRoots": [
-    "dist",
-    "vendor",
-    "generated",
-    "fixtures"
-  ]
+  "mode": "existing",
+  "sourceScope": {
+    "includeRoots": ["src", "packages"],
+    "excludeRoots": ["dist", "vendor", "generated", "fixtures"]
+  }
 }
-```
-
-```powershell
-node .\scripts\head.mjs source-scope-set C:\path\to\project --input .\source-scope.json
-node .\scripts\head.mjs source-scope-status C:\path\to\project
 ```
 
 Source Scope controls observation only. It cannot define Product Canon, approve
 an inferred Feature, or grant execution authority.
 
-### 3. Start onboarding
+### 3. Inspect onboarding
 
 ```powershell
-node .\scripts\head.mjs onboarding-start C:\path\to\project
-node .\scripts\head.mjs onboarding-status C:\path\to\project
+head-agent onboarding-status C:\path\to\project
 ```
 
 For an existing project, HEAD indexes the selected source scope and proposes
@@ -528,18 +527,14 @@ go vet ./...
 The JavaScript implementation is the semantic reference. Native backends must
 pass fixture-driven conformance before they are advertised for production use.
 
-## Installation roadmap
+## Remaining distribution work
 
-The current alpha runs directly from source. Planned distribution work is:
-
-1. add cross-platform `head-agent` command wrappers;
-2. expose `head-agent --version`;
-3. provide Codex marketplace packaging;
-4. add `install.ps1` and `install.sh`;
-5. publish versioned native worker and supervisor releases;
-6. add staged `head-agent doctor` checks;
-7. implement atomic upgrades with rollback;
-8. implement safe removal without deleting project `.head` data.
+The current alpha has user-scoped cross-platform launchers, version and project
+diagnostics, one-command installation plus onboarding, content-addressed
+upgrades, rollback, and safe removal. Remaining distribution work is limited to
+Codex marketplace publication, automatic verified native-artifact selection and
+download, and broader platform installation E2E beyond the current Windows and
+CI build evidence.
 
 ## Project status and licensing
 

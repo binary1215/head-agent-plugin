@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.47",
+  "version": "0.3.0-alpha.48",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -25,6 +25,8 @@
       "Skills",
       "MCP Tools",
       "Project Initialization",
+      "Idempotent Project Initialize and Resume",
+      "Managed Installation Projection Convergence",
       "Project-scoped Onboarding State",
       "Evidence-linked Product Candidate Review",
       "Clustered Product Behavior Candidate Inference",

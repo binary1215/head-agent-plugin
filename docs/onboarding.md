@@ -31,9 +31,33 @@ Repository and brief analysis creates `OnboardingCandidateSet` evidence with `in
 
 Candidate protocol `0.2.0` derives candidate-set identity from project, Session, mode, exact SourceSnapshot, Product Model input, candidates, Evidence, Unknowns, ancestry, and producer policy. It deliberately excludes the derived World Model ID so rebuilding the same evidence after rejection produces the same candidate identity instead of coupling authority review to a materialized-view pointer.
 
-## Starting onboarding
+## Public initialize and resume path
 
-Existing projects can use local storage without an input file:
+The primary public command composes project creation or verification,
+installation-projection convergence, and onboarding start or resume:
+
+```powershell
+node scripts/head.mjs init C:\path\to\project --runtime codex,opencode --input .\onboarding.json
+node scripts/head.mjs resume C:\path\to\project --runtime codex,opencode
+```
+
+The first command creates exactly one project-scoped HEAD Session and starts
+onboarding. Repetition verifies the existing project/runtime binding. A pending
+candidate review or ready Product Canon is returned without rewriting the
+onboarding pointer or creating duplicate authority artifacts. After a plugin
+upgrade, only drift-free managed OpenCode configuration is converged to the new
+verified release path; user-modified or unowned configuration fails closed.
+
+The same path can be invoked during installation:
+
+```powershell
+.\scripts\install.ps1 --project C:\path\to\project --runtime codex,opencode --onboarding-input .\onboarding.json
+```
+
+## Low-level onboarding restart
+
+Already initialized projects can explicitly restart an `initialized`,
+`awaiting-evidence`, or `rejected` onboarding phase with the lower-level command:
 
 ```powershell
 node scripts/head.mjs onboarding-start C:\path\to\project
@@ -53,13 +77,13 @@ Before indexing, the user may persist a project-relative observation boundary. E
 }
 ```
 
-```powershell
-node scripts/head.mjs source-scope-set C:\path\to\project --input .\source-scope.json
-node scripts/head.mjs source-scope-status C:\path\to\project
-node scripts/head.mjs onboarding-start C:\path\to\project
-```
-
-The same object may be supplied as `sourceScope` inside `onboarding-start` input. The exact scope identity is embedded in `RepositoryScanResult` and the World Model source digest. A later scope change makes the existing index stale; it never edits Product Canon or an accepted Capsule.
+Supply this object as `sourceScope` inside the public `init --input` document so
+the boundary exists before the first index. The low-level `source-scope-set`
+command remains available for an initialized project before an explicit
+`onboarding-start`, or for a later reviewed rescan. The exact scope identity is
+embedded in `RepositoryScanResult` and the World Model source digest. A later
+scope change makes the existing index stale; it never edits Product Canon or an
+accepted Capsule.
 
 A new-project brief uses the Product Model entity schema while remaining a candidate until review:
 
@@ -103,7 +127,7 @@ A new-project brief uses the Product Model entity schema while remaining a candi
 ```
 
 ```powershell
-node scripts/head.mjs onboarding-start C:\path\to\project --input .\onboarding-start.json
+node scripts/head.mjs init C:\path\to\project --input .\onboarding-start.json
 ```
 
 A project whose Product Canon already contains approved entities skips candidate bootstrap, still indexes implementation evidence, verifies the Product Model projection, and enters `ready`.

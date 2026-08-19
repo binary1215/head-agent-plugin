@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCheckpoint, initializeProject, inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
+import { createCheckpoint, inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSnapshot, readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
@@ -26,6 +26,7 @@ import {
 import { executeRuntimeInvocation } from "./lib/runtime-one-shot-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
+import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
@@ -47,7 +48,8 @@ export function parse(argv) {
 export function usage() {
   return {
     commands: [
-      "head init <project> [--runtime codex,opencode]",
+      "head init <project> [--runtime codex,opencode] [--input <onboarding.json>]",
+      "head resume <project> [--runtime codex,opencode] [--input <onboarding.json>]",
       "head --version",
       "head status <project>",
       "head doctor <project>",
@@ -145,7 +147,12 @@ export function runCommand(argv = process.argv.slice(2)) {
   const { command, root, options } = parse(argv);
   if (command === "help" || command === "--help" || command === "-h") return usage();
   if (command === "--version" || command === "version") return { name: "head-agent-core", version: packageMetadata.version };
-  if (command === "init") return initializeProject({ root, pluginRoot, runtimes: options.runtime?.split(",") });
+  if (command === "init" || command === "resume") return initializeOrResumeProject({
+    root,
+    pluginRoot,
+    runtimes: options.runtime?.split(","),
+    onboarding: options.input ? inputJson(options, "Project onboarding") : null,
+  });
   if (command === "status" || command === "doctor") return inspectProject(root);
   if (command === "runtime-adapters") return inspectRuntimeAdapters(root);
   if (command === "runtime-invocation-authorize") {

@@ -12,10 +12,14 @@ import {
 } from "./lib/distribution-lifecycle.mjs";
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const sourceVersion = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json"), "utf8")).version;
+const upgradedVersion = `${sourceVersion}-e2e`;
 const scratchRoot = path.join(sourceRoot, "tmp", `distribution-e2e-${process.pid}`);
 const installRoot = path.join(scratchRoot, "user-data", "head-agent-core");
 const binDirectory = path.join(scratchRoot, "user-home", ".local", "bin");
 const upgradedSource = path.join(scratchRoot, "upgraded-source");
+const projectRoot = path.join(scratchRoot, "project-without-git-or-graphdb");
+const evidenceResumeProjectRoot = path.join(scratchRoot, "project-awaiting-evidence");
 
 function copySourceFixture() {
   fs.mkdirSync(upgradedSource, { recursive: true });
@@ -30,15 +34,54 @@ function copySourceFixture() {
   for (const relative of ["package.json", path.join(".codex-plugin", "plugin.json")]) {
     const file = path.join(upgradedSource, relative);
     const value = JSON.parse(fs.readFileSync(file, "utf8"));
-    value.version = "0.3.0-alpha.47-e2e";
+    value.version = upgradedVersion;
     fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   }
 }
 
+function runNode(args) {
+  const result = spawnSync(process.execPath, args, { encoding: "utf8", shell: false, windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || result.error?.message || result.stdout);
+  return JSON.parse(result.stdout);
+}
+
+function runGlobal(args) {
+  const command = process.platform === "win32" ? path.join(binDirectory, "head-agent.cmd") : path.join(binDirectory, "head-agent");
+  const result = process.platform === "win32"
+    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" ${args.map((item) => `"${item}"`).join(" ")}"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
+    : spawnSync(command, args, { encoding: "utf8", shell: false });
+  assert.equal(result.status, 0, result.stderr || result.error?.message || result.stdout);
+  return JSON.parse(result.stdout);
+}
+
+function runGlobalFailure(args) {
+  const command = process.platform === "win32" ? path.join(binDirectory, "head-agent.cmd") : path.join(binDirectory, "head-agent");
+  const result = process.platform === "win32"
+    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" ${args.map((item) => `"${item}"`).join(" ")}"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
+    : spawnSync(command, args, { encoding: "utf8", shell: false });
+  assert.notEqual(result.status, 0);
+  return JSON.parse(result.stdout);
+}
+
 try {
-  const installed = installDistribution({ sourceRoot, installRoot, binDirectory });
+  fs.mkdirSync(path.join(projectRoot, "src"), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, "src", "camera-service.mjs"), "export function captureCameraFrame() { return { captured: true }; }\n", "utf8");
+  const installed = runNode([
+    path.join(sourceRoot, "scripts", "distribution.mjs"),
+    "install",
+    "--source", sourceRoot,
+    "--install-root", installRoot,
+    "--bin-dir", binDirectory,
+    "--project", projectRoot,
+    "--runtime", "codex,opencode",
+  ]);
   assert.equal(installed.status, "installed");
-  assert.equal(installed.version, "0.3.0-alpha.47");
+  assert.equal(installed.version, sourceVersion);
+  assert.equal(installed.project.projectAction, "initialized");
+  assert.equal(installed.project.onboardingAction, "started");
+  assert.equal(installed.project.onboarding.storageMode, "local");
+  assert.equal(installed.project.onboarding.candidateCount > 0, true);
+  assert.equal(fs.existsSync(path.join(projectRoot, ".git")), false);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
 
   const command = process.platform === "win32" ? path.join(binDirectory, "head-agent.cmd") : path.join(binDirectory, "head-agent");
@@ -46,7 +89,38 @@ try {
     ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" --version"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
     : spawnSync(command, ["--version"], { encoding: "utf8", shell: false });
   assert.equal(version.status, 0, version.stderr || version.error?.message);
-  assert.equal(JSON.parse(version.stdout).version, "0.3.0-alpha.47");
+  assert.equal(JSON.parse(version.stdout).version, sourceVersion);
+
+  const projectBeforeResume = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "project.json"), "utf8"));
+  const sessionBeforeResume = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "sessions", "current.json"), "utf8"));
+  const onboardingStateFile = path.join(projectRoot, ".head", "onboarding", "current.json");
+  const onboardingBeforeResume = fs.readFileSync(onboardingStateFile, "utf8");
+  const resumed = runGlobal(["resume", projectRoot, "--runtime", "codex,opencode"]);
+  assert.equal(resumed.projectAction, "resumed");
+  assert.equal(resumed.onboardingAction, "review-required");
+  assert.equal(resumed.project.projectId, projectBeforeResume.projectId);
+  assert.equal(resumed.project.sessionId, sessionBeforeResume.sessionId);
+  assert.equal(fs.readFileSync(onboardingStateFile, "utf8"), onboardingBeforeResume);
+
+  const managedOpenCodeFile = path.join(projectRoot, "opencode.json");
+  const managedOpenCodeBeforeDrift = fs.readFileSync(managedOpenCodeFile, "utf8");
+  fs.writeFileSync(managedOpenCodeFile, `${managedOpenCodeBeforeDrift}\nuser-edit`, "utf8");
+  const driftFailure = runGlobalFailure(["resume", projectRoot, "--runtime", "codex,opencode"]);
+  assert.equal(driftFailure.code, "PROJECT_NOT_READY");
+  assert.equal(fs.readFileSync(managedOpenCodeFile, "utf8"), `${managedOpenCodeBeforeDrift}\nuser-edit`);
+  fs.writeFileSync(managedOpenCodeFile, managedOpenCodeBeforeDrift, "utf8");
+
+  fs.mkdirSync(evidenceResumeProjectRoot, { recursive: true });
+  const awaitingEvidence = runGlobal(["init", evidenceResumeProjectRoot, "--runtime", "codex"]);
+  assert.equal(awaitingEvidence.status, "awaiting_onboarding_evidence");
+  assert.equal(awaitingEvidence.onboarding.candidateCount, 0);
+  fs.mkdirSync(path.join(evidenceResumeProjectRoot, "src"), { recursive: true });
+  fs.writeFileSync(path.join(evidenceResumeProjectRoot, "src", "capture.mjs"), "export function captureDepthImage() { return true; }\n", "utf8");
+  const resumedEvidence = runGlobal(["resume", evidenceResumeProjectRoot, "--runtime", "codex"]);
+  assert.equal(resumedEvidence.status, "awaiting_onboarding_review");
+  assert.equal(resumedEvidence.onboardingAction, "resumed-analysis");
+  assert.equal(resumedEvidence.project.projectId, awaitingEvidence.project.projectId);
+  assert.equal(resumedEvidence.project.sessionId, awaitingEvidence.project.sessionId);
 
   copySourceFixture();
   const upgradedPluginFile = path.join(upgradedSource, ".codex-plugin", "plugin.json");
@@ -58,15 +132,30 @@ try {
   );
   assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
   fs.writeFileSync(upgradedPluginFile, `${JSON.stringify(upgradedPlugin, null, 2)}\n`, "utf8");
-  const upgraded = installDistribution({ sourceRoot: upgradedSource, installRoot, binDirectory });
+  const upgraded = runNode([
+    path.join(sourceRoot, "scripts", "distribution.mjs"),
+    "upgrade",
+    "--source", upgradedSource,
+    "--install-root", installRoot,
+    "--bin-dir", binDirectory,
+    "--project", projectRoot,
+    "--runtime", "codex,opencode",
+  ]);
   assert.equal(upgraded.status, "upgraded");
   assert.notEqual(upgraded.releaseId, installed.releaseId);
+  assert.equal(upgraded.project.installationAction, "converged");
+  assert.equal(upgraded.project.project.projectId, projectBeforeResume.projectId);
+  assert.equal(fs.readFileSync(path.join(projectRoot, "opencode.json"), "utf8").includes(upgraded.releaseId), true);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).rollbackReleaseId, installed.releaseId);
 
   const rolledBack = rollbackDistribution({ installRoot, binDirectory });
   assert.equal(rolledBack.status, "rolled-back");
   assert.equal(rolledBack.activeReleaseId, installed.releaseId);
-  assert.equal(inspectDistribution({ installRoot, binDirectory }).version, "0.3.0-alpha.47");
+  assert.equal(inspectDistribution({ installRoot, binDirectory }).version, sourceVersion);
+  const resumedAfterRollback = runGlobal(["resume", projectRoot, "--runtime", "codex,opencode"]);
+  assert.equal(resumedAfterRollback.installationAction, "converged");
+  assert.equal(resumedAfterRollback.project.projectId, projectBeforeResume.projectId);
+  assert.equal(fs.readFileSync(path.join(projectRoot, "opencode.json"), "utf8").includes(installed.releaseId), true);
 
   const uninstalled = uninstallDistribution({ installRoot, binDirectory, purge: false });
   assert.equal(uninstalled.status, "uninstalled");
@@ -85,6 +174,12 @@ try {
     rollbackVerified: true,
     failedUpgradePreservedCurrent: true,
     launcherVerified: true,
+    publicInitializeResumeVerified: true,
+    projectAuthorityDeduplicated: true,
+    gitAndGraphDbIndependentOnboardingVerified: true,
+    managedProjectionConvergenceVerified: true,
+    managedDriftRejectedWithoutOverwrite: true,
+    awaitingEvidenceResumeVerified: true,
     projectStatePreserved: true,
   }, null, 2)}\n`);
 } finally {
