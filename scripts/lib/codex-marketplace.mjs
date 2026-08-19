@@ -6,6 +6,7 @@ import { stageDistributionRelease, verifyDistributionRelease } from "./distribut
 const CODEX_MARKETPLACE_PROTOCOL = "0.1.0";
 const DEFAULT_MARKETPLACE_NAME = "head-agent-plugin";
 const DEFAULT_MARKETPLACE_DISPLAY_NAME = "HEAD Agent Plugin";
+const MARKETPLACE_GIT_ATTRIBUTES = "* -text\n";
 
 function fail(code, message) {
   const error = new Error(message);
@@ -160,6 +161,7 @@ export function buildCodexMarketplaceSnapshot({
   try {
     const pluginRoot = path.join(temporary, "plugins", pluginManifest.name);
     const distribution = stageDistributionRelease({ sourceRoot: source, destinationRoot: pluginRoot });
+    fs.writeFileSync(path.join(temporary, ".gitattributes"), MARKETPLACE_GIT_ATTRIBUTES, { flag: "wx" });
     writeJson(path.join(temporary, ".agents", "plugins", "marketplace.json"), marketplaceDocument({
       name,
       displayName: displayName.trim(),
@@ -187,10 +189,13 @@ export function verifyCodexMarketplaceSnapshot({ root, expectedRepository = null
   if (!root) fail("HEAD_CODEX_MARKETPLACE_VERIFY_ARGUMENTS", "Marketplace root is required.");
   const marketplaceRoot = path.resolve(root);
   const rootEntries = fs.readdirSync(marketplaceRoot).sort();
-  const expectedRootEntries = [".agents", ".head-agent-marketplace-generated.json", "plugins"].sort();
+  const expectedRootEntries = [".agents", ".gitattributes", ".head-agent-marketplace-generated.json", "plugins"].sort();
   if (rootEntries.length !== expectedRootEntries.length
     || rootEntries.some((entry, index) => entry !== expectedRootEntries[index])) {
     fail("HEAD_CODEX_MARKETPLACE_ROOT_CONTENT", "Marketplace root contains unexpected files or directories.");
+  }
+  if (fs.readFileSync(path.join(marketplaceRoot, ".gitattributes"), "utf8") !== MARKETPLACE_GIT_ATTRIBUTES) {
+    fail("HEAD_CODEX_MARKETPLACE_GIT_ATTRIBUTES", "Marketplace Git attributes must preserve exact cross-platform bytes.");
   }
 
   const marketplace = readJson(
@@ -263,6 +268,7 @@ export function verifyCodexMarketplaceSnapshot({ root, expectedRepository = null
 
   const expectedFiles = [
     ".agents/plugins/marketplace.json",
+    ".gitattributes",
     ".head-agent-marketplace-generated.json",
     ...distribution.files.map((file) => `plugins/${manifest.name}/${file.path}`),
     `plugins/${manifest.name}/distribution-manifest.json`,

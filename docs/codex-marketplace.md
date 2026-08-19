@@ -15,6 +15,7 @@ The generated `codex-marketplace` branch contains exactly:
 
 ```text
 .agents/plugins/marketplace.json
+.gitattributes
 .head-agent-marketplace-generated.json
 plugins/head-agent-core/<verified distribution files>
 ```
@@ -25,6 +26,11 @@ immutable user distribution. It excludes `.git`, `test`, `node_modules`, local
 included plugin file, and the branch marker binds the marketplace name, plugin
 name/version, distribution release ID, source repository, and exact source
 commit into a content-derived snapshot ID.
+
+The generated `.gitattributes` contains `* -text`. It is itself part of the
+strictly verified tree and prevents Git from rewriting LF/CRLF bytes on a
+different operating system, so the distribution manifest remains portable
+rather than validating only on the Linux publisher.
 
 ## Installation
 
