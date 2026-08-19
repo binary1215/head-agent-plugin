@@ -7,6 +7,10 @@ const CODEX_MARKETPLACE_PROTOCOL = "0.1.0";
 const DEFAULT_MARKETPLACE_NAME = "head-agent-plugin";
 const DEFAULT_MARKETPLACE_DISPLAY_NAME = "HEAD Agent Plugin";
 const MARKETPLACE_GIT_ATTRIBUTES = "* -text\n";
+const LEGACY_BYTE_PRESERVATION_MIGRATION = Object.freeze({
+  pluginVersion: "0.3.0-alpha.56",
+  sourceCommit: "3b93a40effd9ee4a3e5fa86a0822be743d69c9f5",
+});
 
 function fail(code, message) {
   const error = new Error(message);
@@ -185,16 +189,28 @@ export function buildCodexMarketplaceSnapshot({
   }
 }
 
-export function verifyCodexMarketplaceSnapshot({ root, expectedRepository = null, expectedMarketplaceName = null } = {}) {
+export function verifyCodexMarketplaceSnapshot({
+  root,
+  expectedRepository = null,
+  expectedMarketplaceName = null,
+  allowLegacyBytePreservation = false,
+} = {}) {
   if (!root) fail("HEAD_CODEX_MARKETPLACE_VERIFY_ARGUMENTS", "Marketplace root is required.");
   const marketplaceRoot = path.resolve(root);
   const rootEntries = fs.readdirSync(marketplaceRoot).sort();
-  const expectedRootEntries = [".agents", ".gitattributes", ".head-agent-marketplace-generated.json", "plugins"].sort();
+  const hasGitAttributes = rootEntries.includes(".gitattributes");
+  const legacyBytePreservationCandidate = allowLegacyBytePreservation && !hasGitAttributes;
+  const expectedRootEntries = [
+    ".agents",
+    ...(legacyBytePreservationCandidate ? [] : [".gitattributes"]),
+    ".head-agent-marketplace-generated.json",
+    "plugins",
+  ].sort();
   if (rootEntries.length !== expectedRootEntries.length
     || rootEntries.some((entry, index) => entry !== expectedRootEntries[index])) {
     fail("HEAD_CODEX_MARKETPLACE_ROOT_CONTENT", "Marketplace root contains unexpected files or directories.");
   }
-  if (fs.readFileSync(path.join(marketplaceRoot, ".gitattributes"), "utf8") !== MARKETPLACE_GIT_ATTRIBUTES) {
+  if (hasGitAttributes && fs.readFileSync(path.join(marketplaceRoot, ".gitattributes"), "utf8") !== MARKETPLACE_GIT_ATTRIBUTES) {
     fail("HEAD_CODEX_MARKETPLACE_GIT_ATTRIBUTES", "Marketplace Git attributes must preserve exact cross-platform bytes.");
   }
 
@@ -259,6 +275,12 @@ export function verifyCodexMarketplaceSnapshot({ root, expectedRepository = null
   if (canonical(marker) !== canonical(expectedMarker)) {
     fail("HEAD_CODEX_MARKETPLACE_MARKER_MISMATCH", "Marketplace generation marker does not match the verified snapshot.");
   }
+  if (!hasGitAttributes
+    && (!legacyBytePreservationCandidate
+      || manifest.version !== LEGACY_BYTE_PRESERVATION_MIGRATION.pluginVersion
+      || marker.sourceCommit !== LEGACY_BYTE_PRESERVATION_MIGRATION.sourceCommit)) {
+    fail("HEAD_CODEX_MARKETPLACE_LEGACY_MIGRATION", "Marketplace snapshot is not the one approved byte-preservation migration source.");
+  }
   if (expectedRepository && marker.sourceRepository !== sourceRepository(expectedRepository)) {
     fail("HEAD_CODEX_MARKETPLACE_REPOSITORY_MISMATCH", "Marketplace snapshot belongs to a different source repository.");
   }
@@ -268,7 +290,7 @@ export function verifyCodexMarketplaceSnapshot({ root, expectedRepository = null
 
   const expectedFiles = [
     ".agents/plugins/marketplace.json",
-    ".gitattributes",
+    ...(hasGitAttributes ? [".gitattributes"] : []),
     ".head-agent-marketplace-generated.json",
     ...distribution.files.map((file) => `plugins/${manifest.name}/${file.path}`),
     `plugins/${manifest.name}/distribution-manifest.json`,
@@ -288,6 +310,7 @@ export function verifyCodexMarketplaceSnapshot({ root, expectedRepository = null
     snapshotId: marker.snapshotId,
     sourceRepository: marker.sourceRepository,
     sourceCommit: marker.sourceCommit,
+    bytePreservation: hasGitAttributes ? "git_attributes_exact" : "legacy_migration_only",
     pluginFileCount: distribution.files.length,
     credentialInputsAccepted: false,
     sourceAllowlistOnly: true,

@@ -530,10 +530,16 @@ jobs:
             previous_root="${RUNNER_TEMP}/previous-head-agent-marketplace"
             mkdir -p "${previous_root}"
             git archive FETCH_HEAD | tar -x -C "${previous_root}"
-            node scripts/verify-codex-marketplace.mjs \
+            if ! node scripts/verify-codex-marketplace.mjs \
               --root "${previous_root}" \
               --expected-repository "${GITHUB_REPOSITORY}" \
-              --expected-marketplace-name "head-agent-plugin"
+              --expected-marketplace-name "head-agent-plugin"; then
+              node scripts/verify-codex-marketplace.mjs \
+                --root "${previous_root}" \
+                --expected-repository "${GITHUB_REPOSITORY}" \
+                --expected-marketplace-name "head-agent-plugin" \
+                --allow-legacy-byte-preservation
+            fi
           fi
           echo "expected_sha=${expected_sha}" >> "${GITHUB_OUTPUT}"
 

@@ -11,12 +11,14 @@ const repositoryIndex = process.argv.indexOf("--expected-repository");
 const expectedRepository = repositoryIndex === -1 ? null : process.argv[repositoryIndex + 1] || "";
 const marketplaceIndex = process.argv.indexOf("--expected-marketplace-name");
 const expectedMarketplaceName = marketplaceIndex === -1 ? null : process.argv[marketplaceIndex + 1] || "";
+const allowLegacyBytePreservation = process.argv.includes("--allow-legacy-byte-preservation");
 
 if (providedRoot) {
   process.stdout.write(`${JSON.stringify(verifyCodexMarketplaceSnapshot({
     root: path.resolve(providedRoot),
     expectedRepository,
     expectedMarketplaceName,
+    allowLegacyBytePreservation,
   }), null, 2)}\n`);
 } else {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-codex-marketplace-"));
