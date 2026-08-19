@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.53",
+  "version": "0.3.0-alpha.54",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -64,6 +64,8 @@
       "Replaceable GraphProjectionAdapter Contract",
       "Local JSON and In-memory Graph Projection",
       "Conformance-gated ArcadeDB Graph Projection",
+      "Resumable Content-addressed ArcadeDB Delta Sync",
+      "Verified ArcadeDB Pointer Compare-and-swap",
       "Privacy-safe ArcadeDB Database Compatibility Audit",
       "Exact-target Missing Database Provision and Incompatible Reset",
       "Snapshot-scoped ArcadeDB Vertex and Edge Topology",

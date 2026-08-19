@@ -3,13 +3,17 @@ import {
   LocalJsonGraphProjectionAdapter,
   buildArcadeDbGraphProjectionActivation,
   buildArcadeDbGraphTopologyActivation,
+  buildGraphProjectionPointer,
   createActivatedArcadeDbGraphProjectionAdapter,
   inspectArcadeDbGraphProjectionActivation,
+  inspectArcadeDbIncrementalSyncReceipt,
   inspectArcadeDbGraphTopologyActivation,
+  persistArcadeDbIncrementalSyncReceipt,
   persistArcadeDbGraphProjectionActivation,
   persistArcadeDbGraphTopologyActivation,
   verifyGraphProjectionAdapterConformance,
 } from "./graph-projection-adapter.mjs";
+import { buildArcadeDbIncrementalSyncReceipt, incrementalSyncCanonicalJson } from "./arcadedb-incremental-sync.mjs";
 import { inspectArcadeDbDatabaseCompatibility } from "./arcadedb-database-lifecycle.mjs";
 import { inspectWorldGraphProjection, inspectWorldModel } from "./world-model.mjs";
 
@@ -60,31 +64,69 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     fail("The selected ArcadeDB database has an incompatible reserved schema.", "ARCADEDB_DATABASE_INCOMPATIBLE");
   }
   const graph = world.snapshot.temporalProvenanceGraph;
-  const remoteAdapter = new ArcadeDbGraphProjectionAdapter({ storageSelection: configured.storageSelection, transport, rewriteTopologyManifest: true });
+  const localAdapter = new LocalJsonGraphProjectionAdapter({ projectRoot: world.snapshot.projectRoot });
+  const localPointer = localAdapter.readPointer();
+  const localBase = localPointer == null ? null : localAdapter.readSnapshot(localPointer.document.graphSnapshotId)?.document || null;
+  const targetPointer = buildGraphProjectionPointer(graph);
+  const remoteAdapter = new ArcadeDbGraphProjectionAdapter({
+    storageSelection: configured.storageSelection,
+    transport,
+    topologyRequired: true,
+    incrementalSyncRequired: true,
+    baseGraph: localBase,
+  });
   remoteAdapter.ensureSchema();
-  activationStage("snapshot-migration", () => remoteAdapter.writeSnapshot(graph.graphSnapshotId, graph));
+  activationStage("incremental-snapshot-sync", () => remoteAdapter.writeSnapshot(graph.graphSnapshotId, graph));
+  const topology = remoteAdapter.pendingIncrementalSync?.topology;
+  if (!topology) fail("Incremental GraphDB sync did not produce verified topology evidence.", "ARCADEDB_INCREMENTAL_SYNC_TOPOLOGY_MISSING");
+  const baselineAdapter = new ArcadeDbGraphProjectionAdapter({
+    storageSelection: configured.storageSelection,
+    transport,
+    stagedPointer: targetPointer,
+  });
   activationStage("baseline-conformance", () => verifyGraphProjectionAdapterConformance({
     projectRoot: world.snapshot.projectRoot,
     graph,
-    referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: world.snapshot.projectRoot }),
-    candidateAdapter: remoteAdapter,
+    referenceAdapter: localAdapter,
+    candidateAdapter: baselineAdapter,
     queries: conformanceQueries(graph),
   }));
-  const topology = activationStage("topology-materialization", () => remoteAdapter.materializeTopology(graph));
   const serverTraversalAdapter = new ArcadeDbGraphProjectionAdapter({
     storageSelection: configured.storageSelection,
     transport,
     topologyRequired: true,
     serverTraversalRequired: true,
     preparedTraversalRequired: true,
+    stagedPointer: targetPointer,
   });
   const conformanceReport = activationStage("server-conformance", () => verifyGraphProjectionAdapterConformance({
     projectRoot: world.snapshot.projectRoot,
     graph,
-    referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: world.snapshot.projectRoot }),
+    referenceAdapter: localAdapter,
     candidateAdapter: serverTraversalAdapter,
     queries: conformanceQueries(graph),
   }));
+  const localSnapshot = activationStage("local-recovery-snapshot", () => localAdapter.writeSnapshot(graph.graphSnapshotId, graph));
+  if (incrementalSyncCanonicalJson(localSnapshot.document) !== incrementalSyncCanonicalJson(graph)) {
+    fail("Local recovery GraphSnapshot differs from the verified remote target.", "ARCADEDB_INCREMENTAL_SYNC_LOCAL_MIRROR_MISMATCH");
+  }
+  const remotePointer = activationStage("atomic-pointer-transition", () => remoteAdapter.writePointer(targetPointer));
+  const localMirrorPointer = activationStage("local-recovery-pointer", () => localAdapter.writePointer(targetPointer));
+  if (incrementalSyncCanonicalJson(remotePointer.document) !== incrementalSyncCanonicalJson(localMirrorPointer.document)) {
+    fail("Local recovery pointer differs from the verified remote pointer.", "ARCADEDB_INCREMENTAL_SYNC_LOCAL_MIRROR_MISMATCH");
+  }
+  const completedSync = remoteAdapter.takeCompletedIncrementalSync();
+  if (!completedSync) fail("Incremental GraphDB sync completion evidence is missing.", "ARCADEDB_INCREMENTAL_SYNC_RECEIPT_MISSING");
+  const syncReceipt = buildArcadeDbIncrementalSyncReceipt({
+    manifest: completedSync.manifest,
+    syncState: completedSync.syncState,
+    pointerBefore: completedSync.pointerBefore,
+    pointerAfter: completedSync.pointerAfter,
+    snapshotVerified: true,
+    topologyVerified: true,
+    localMirrorVerified: true,
+  });
+  const persistedSync = persistArcadeDbIncrementalSyncReceipt({ projectRoot: world.snapshot.projectRoot, receipt: syncReceipt });
   const topologyActivation = buildArcadeDbGraphTopologyActivation({
     storageSelection: configured.storageSelection,
     graph,
@@ -110,6 +152,7 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     pointer: persisted.pointer,
     conformanceReport,
     topology: persistedTopology.activation,
+    incrementalSync: persistedSync.receipt,
     databaseAuditId: databaseAudit.auditId,
     databaseAuditHash: databaseAudit.auditHash,
     traversalMode: conformanceReport.candidateAdapter.traversalMode,
@@ -125,6 +168,10 @@ export function inspectArcadeDbGraphProjectionStatus({ root = ".", transport = n
     projectRoot: world.snapshot.projectRoot,
     graph: world.snapshot.temporalProvenanceGraph,
   });
+  const incrementalSync = inspectArcadeDbIncrementalSyncReceipt({
+    projectRoot: world.snapshot.projectRoot,
+    graph: world.snapshot.temporalProvenanceGraph,
+  });
   if (activation.status !== "verified-active") return {
     status: activation.status,
     worldModelStatus: world.status,
@@ -133,6 +180,7 @@ export function inspectArcadeDbGraphProjectionStatus({ root = ".", transport = n
     storageSelection: activation.storageSelection,
     activation: null,
     topology,
+    incrementalSync,
     traversalMode: null,
     credentialsPersisted: false,
     authority: "rebuildable-derived-projection-not-project-canon",
@@ -147,6 +195,7 @@ export function inspectArcadeDbGraphProjectionStatus({ root = ".", transport = n
     storageSelectionId: activation.storageSelection.storageSelectionId,
     activation: activation.activation,
     topology,
+    incrementalSync,
     projection: projection.projection,
     traversalMode: adapter.describe().traversalMode,
     credentialsPersisted: false,

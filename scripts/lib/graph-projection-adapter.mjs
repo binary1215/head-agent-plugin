@@ -6,6 +6,15 @@ import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { ONBOARDING_STORAGE_DIRECTORY, verifyOnboardingState, verifyStorageSelection } from "./onboarding-contract.mjs";
 import { queryTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "./temporal-provenance.mjs";
+import {
+  ARCADEDB_INCREMENTAL_SYNC_VERSION,
+  buildArcadeDbIncrementalSyncReceipt,
+  buildArcadeDbIncrementalSyncManifest,
+  executeArcadeDbIncrementalSync,
+  incrementalSyncCanonicalJson,
+  verifyArcadeDbIncrementalSyncReceipt,
+  verifyArcadeDbIncrementalSyncManifest,
+} from "./arcadedb-incremental-sync.mjs";
 
 export const GRAPH_PROJECTION_ADAPTER_VERSION = "0.1.0";
 export const GRAPH_PROJECTION_CONTRACT = "replaceable-rebuildable-derived-graph-projection";
@@ -21,6 +30,8 @@ const ARCADEDB_NODE_TYPE = "HeadAgentGraphNode";
 const ARCADEDB_EDGE_TYPE = "HeadAgentGraphEdge";
 const ARCADEDB_TOPOLOGY_TYPE = "HeadAgentGraphTopology";
 const ARCADEDB_TOPOLOGY_CHUNK_TYPE = "HeadAgentGraphTopologyChunk";
+const ARCADEDB_SYNC_TYPE = "HeadAgentGraphSyncManifest";
+const ARCADEDB_SYNC_CHECKPOINT_TYPE = "HeadAgentGraphSyncCheckpoint";
 export const ARCADEDB_GRAPH_RESERVED_SCHEMA = Object.freeze([
   Object.freeze({ name: ARCADEDB_SNAPSHOT_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", graphSnapshotHash: "STRING", sourceSnapshotId: "STRING", documentJson: "STRING" }) }),
   Object.freeze({ name: ARCADEDB_SNAPSHOT_CHUNK_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", chunkIndex: "INTEGER", chunkJson: "STRING" }) }),
@@ -29,16 +40,24 @@ export const ARCADEDB_GRAPH_RESERVED_SCHEMA = Object.freeze([
   Object.freeze({ name: ARCADEDB_EDGE_TYPE, type: "edge", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", graphSnapshotHash: "STRING", sourceSnapshotId: "STRING", edgeId: "STRING", edgeType: "STRING", edgeJson: "STRING" }) }),
   Object.freeze({ name: ARCADEDB_TOPOLOGY_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", topologyId: "STRING", topologyJson: "STRING" }) }),
   Object.freeze({ name: ARCADEDB_TOPOLOGY_CHUNK_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", chunkIndex: "INTEGER", chunkJson: "STRING" }) }),
+  Object.freeze({ name: ARCADEDB_SYNC_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", syncId: "STRING", syncJson: "STRING" }) }),
+  Object.freeze({ name: ARCADEDB_SYNC_CHECKPOINT_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", syncId: "STRING", batchId: "STRING", checkpointJson: "STRING" }) }),
 ]);
 const ARCADEDB_ACTIVATION_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "activations");
 const ARCADEDB_CONFORMANCE_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "conformance");
 const ARCADEDB_ACTIVATION_POINTER = path.join(".head", "graph-projection", "arcadedb", "current.json");
 const ARCADEDB_TOPOLOGY_ACTIVATION_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "topology", "activations");
 const ARCADEDB_TOPOLOGY_ACTIVATION_POINTER = path.join(".head", "graph-projection", "arcadedb", "topology", "current.json");
+const ARCADEDB_INCREMENTAL_SYNC_RECEIPT_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "sync", "receipts");
+const ARCADEDB_INCREMENTAL_SYNC_RECEIPT_POINTER = path.join(".head", "graph-projection", "arcadedb", "sync", "current.json");
 const ARCADEDB_TRANSPORT_METHODS = ["describe", "ensureSchema", "readPointer", "readSnapshot", "writePointer", "writeSnapshot", "listSnapshotIds"];
 const ARCADEDB_TOPOLOGY_TRANSPORT_METHODS = ["ensureTopologySchema", "readTopology", "writeTopology"];
 const ARCADEDB_SERVER_TRAVERSAL_TRANSPORT_METHODS = ["queryTopology"];
 const ARCADEDB_PREPARED_TRAVERSAL_TRANSPORT_METHODS = ["readTopologyManifest", "queryTopology"];
+const ARCADEDB_INCREMENTAL_SYNC_TRANSPORT_METHODS = [
+  "ensureSyncSchema", "readSyncManifest", "writeSyncManifest", "readSyncCheckpoints", "writeSyncCheckpoint",
+  "applySyncBatch", "readSyncBatchRecords", "writePointerCompareAndSwap",
+];
 const ARCADEDB_SERVER_TRAVERSAL_MODE = "server-expanded-client-canonicalized";
 const ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS = 8192;
 const ARCADEDB_SNAPSHOT_CHUNK_BYTES = 8 * 1024;
@@ -159,6 +178,11 @@ function pointerFor(graph) {
   const payload = pointerPayload(graph);
   const pointerHash = digest(graphProjectionCanonicalJson(payload));
   return { ...payload, pointerId: `graph-projection-pointer-${pointerHash.slice(0, 24)}`, pointerHash };
+}
+
+export function buildGraphProjectionPointer(graph) {
+  verifyTemporalProvenanceGraph(graph);
+  return pointerFor(graph);
 }
 
 export function verifyGraphProjectionPointer(document, expectedGraph = null) {
@@ -302,6 +326,17 @@ function assertArcadeDbPreparedTraversalTransport(transport) {
     fail(`ArcadeDB transport is missing prepared traversal method ${method}().`, "INVALID_ARCADEDB_PREPARED_TRAVERSAL_TRANSPORT");
   }
   return transport;
+}
+
+function assertArcadeDbIncrementalSyncTransport(transport) {
+  for (const method of ARCADEDB_INCREMENTAL_SYNC_TRANSPORT_METHODS) if (typeof transport?.[method] !== "function") {
+    fail(`ArcadeDB transport is missing incremental sync method ${method}().`, "INVALID_ARCADEDB_INCREMENTAL_SYNC_TRANSPORT");
+  }
+  return transport;
+}
+
+function supportsArcadeDbIncrementalSync(transport) {
+  return ARCADEDB_INCREMENTAL_SYNC_TRANSPORT_METHODS.every((method) => typeof transport?.[method] === "function");
 }
 
 function supportsPreparedTraversal(adapter) {
@@ -468,12 +503,145 @@ export class ArcadeDbHttpTransport {
     for (const command of commands) this.invoke("command", { command });
   }
 
+  ensureSyncSchema() {
+    const commands = [
+      `CREATE DOCUMENT TYPE ${ARCADEDB_SYNC_TYPE} IF NOT EXISTS`,
+      `CREATE PROPERTY ${ARCADEDB_SYNC_TYPE}.projectId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_SYNC_TYPE}.syncId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_SYNC_TYPE}.syncJson IF NOT EXISTS STRING`,
+      `CREATE INDEX IF NOT EXISTS ON ${ARCADEDB_SYNC_TYPE} (projectId, syncId) UNIQUE`,
+      `CREATE DOCUMENT TYPE ${ARCADEDB_SYNC_CHECKPOINT_TYPE} IF NOT EXISTS`,
+      `CREATE PROPERTY ${ARCADEDB_SYNC_CHECKPOINT_TYPE}.projectId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_SYNC_CHECKPOINT_TYPE}.syncId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_SYNC_CHECKPOINT_TYPE}.batchId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_SYNC_CHECKPOINT_TYPE}.checkpointJson IF NOT EXISTS STRING`,
+      `CREATE INDEX IF NOT EXISTS ON ${ARCADEDB_SYNC_CHECKPOINT_TYPE} (projectId, syncId, batchId) UNIQUE`,
+    ];
+    for (const command of commands) this.invoke("command", { command });
+  }
+
   readPointer(projectId) {
     const response = this.invoke("query", {
       command: `SELECT pointerJson FROM ${ARCADEDB_POINTER_TYPE} WHERE projectId = :projectId LIMIT 1`,
       params: { projectId },
     });
     return responseRecords(response)[0]?.pointerJson ?? null;
+  }
+
+  readSyncManifest(projectId, syncId) {
+    const response = this.invoke("query", {
+      command: `SELECT syncJson FROM ${ARCADEDB_SYNC_TYPE} WHERE projectId = :projectId AND syncId = :syncId LIMIT 1`,
+      params: { projectId, syncId },
+    });
+    return responseRecords(response)[0]?.syncJson ?? null;
+  }
+
+  writeSyncManifest(projectId, syncId, syncJson) {
+    try {
+      this.invoke("command", {
+        command: `INSERT INTO ${ARCADEDB_SYNC_TYPE} SET projectId = :projectId, syncId = :syncId, syncJson = :syncJson`,
+        params: { projectId, syncId, syncJson },
+      });
+      return true;
+    } catch (error) {
+      if (this.readSyncManifest(projectId, syncId) === syncJson) return false;
+      throw error;
+    }
+  }
+
+  readSyncCheckpoints(projectId, syncId) {
+    const response = this.invoke("query", {
+      command: `SELECT checkpointJson FROM ${ARCADEDB_SYNC_CHECKPOINT_TYPE} WHERE projectId = :projectId AND syncId = :syncId ORDER BY batchId`,
+      params: { projectId, syncId },
+    });
+    return responseRecords(response).map((record) => record.checkpointJson);
+  }
+
+  writeSyncCheckpoint(projectId, syncId, batchId, checkpointJson) {
+    const existing = responseRecords(this.invoke("query", {
+      command: `SELECT checkpointJson FROM ${ARCADEDB_SYNC_CHECKPOINT_TYPE} WHERE projectId = :projectId AND syncId = :syncId AND batchId = :batchId LIMIT 1`,
+      params: { projectId, syncId, batchId },
+    }))[0]?.checkpointJson ?? null;
+    if (existing != null) {
+      if (existing !== checkpointJson) fail("ArcadeDB sync checkpoint conflicts with immutable remote content.", "ARCADEDB_INCREMENTAL_SYNC_CHECKPOINT_CONFLICT");
+      return false;
+    }
+    try {
+      this.invoke("command", {
+        command: `INSERT INTO ${ARCADEDB_SYNC_CHECKPOINT_TYPE} SET projectId = :projectId, syncId = :syncId, batchId = :batchId, checkpointJson = :checkpointJson`,
+        params: { projectId, syncId, batchId, checkpointJson },
+      });
+      return true;
+    } catch (error) {
+      const after = responseRecords(this.invoke("query", {
+        command: `SELECT checkpointJson FROM ${ARCADEDB_SYNC_CHECKPOINT_TYPE} WHERE projectId = :projectId AND syncId = :syncId AND batchId = :batchId LIMIT 1`,
+        params: { projectId, syncId, batchId },
+      }))[0]?.checkpointJson ?? null;
+      if (after === checkpointJson) return false;
+      throw error;
+    }
+  }
+
+  applySyncBatch(projectId, manifest, batch) {
+    verifyArcadeDbIncrementalSyncManifest(manifest);
+    const params = {
+      projectId,
+      baseGraphSnapshotId: manifest.baseGraphSnapshotId,
+      targetGraphSnapshotId: manifest.targetGraphSnapshotId,
+      graphSnapshotHash: manifest.targetGraphSnapshotHash,
+      sourceSnapshotId: manifest.sourceSnapshotId,
+    };
+    const commands = ["BEGIN ISOLATION REPEATABLE_READ"];
+    for (const [index, record] of batch.records.entries()) {
+      const suffix = String(index);
+      if (batch.recordKind === "node") {
+        Object.assign(params, { [`nodeId${suffix}`]: record.nodeId });
+        if (new Set(["carry-forward", "rebase"]).has(batch.operation)) {
+          Object.assign(params, { [`sourceNodeId${suffix}`]: record.sourceNodeId || record.nodeId });
+          commands.push(`LET source${suffix} = SELECT nodeKind, nodeJson FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :baseGraphSnapshotId AND nodeId = :sourceNodeId${suffix} LIMIT 1`);
+          const nodeJson = batch.operation === "rebase"
+            ? `convert.toJson(map.merge(convert.fromJsonMap($source${suffix}[0].nodeJson), {sourceSnapshotId: :sourceSnapshotId}))`
+            : `$source${suffix}[0].nodeJson`;
+          commands.push(`IF ($source${suffix}.size() = 1) { UPDATE ${ARCADEDB_NODE_TYPE} SET projectId = :projectId, graphSnapshotId = :targetGraphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, nodeId = :nodeId${suffix}, nodeKind = $source${suffix}[0].nodeKind, nodeJson = ${nodeJson} UPSERT WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :nodeId${suffix}; } ELSE { ROLLBACK; RETURN false; }`);
+        } else {
+          Object.assign(params, { [`nodeKind${suffix}`]: record.kind, [`nodeJson${suffix}`]: graphProjectionCanonicalJson(record) });
+          commands.push(`UPDATE ${ARCADEDB_NODE_TYPE} SET projectId = :projectId, graphSnapshotId = :targetGraphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, nodeId = :nodeId${suffix}, nodeKind = :nodeKind${suffix}, nodeJson = :nodeJson${suffix} UPSERT WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :nodeId${suffix}`);
+        }
+        continue;
+      }
+      Object.assign(params, {
+        [`edgeId${suffix}`]: record.edgeId,
+        [`fromNodeId${suffix}`]: record.from,
+        [`toNodeId${suffix}`]: record.to,
+      });
+      commands.push(`LET existing${suffix} = SELECT edgeJson FROM ${ARCADEDB_EDGE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND edgeId = :edgeId${suffix} LIMIT 1`);
+      if (new Set(["carry-forward", "rebase"]).has(batch.operation)) {
+        Object.assign(params, { [`sourceEdgeId${suffix}`]: record.sourceEdgeId || record.edgeId });
+        commands.push(`LET source${suffix} = SELECT edgeType, edgeJson FROM ${ARCADEDB_EDGE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :baseGraphSnapshotId AND edgeId = :sourceEdgeId${suffix} LIMIT 1`);
+        const edgeJson = batch.operation === "rebase"
+          ? `convert.toJson(map.merge(convert.fromJsonMap($source${suffix}[0].edgeJson), {edgeId: :edgeId${suffix}, sourceSnapshotId: :sourceSnapshotId}))`
+          : `$source${suffix}[0].edgeJson`;
+        commands.push(`IF ($existing${suffix}.size() = 0 AND $source${suffix}.size() = 1) { CREATE EDGE ${ARCADEDB_EDGE_TYPE} FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :fromNodeId${suffix}) TO (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :toNodeId${suffix}) IF NOT EXISTS SET projectId = :projectId, graphSnapshotId = :targetGraphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, edgeId = :edgeId${suffix}, edgeType = $source${suffix}[0].edgeType, edgeJson = ${edgeJson}; } ELSE { IF ($existing${suffix}.size() = 0) { ROLLBACK; RETURN false; } }`);
+      } else {
+        Object.assign(params, { [`edgeType${suffix}`]: record.type, [`edgeJson${suffix}`]: graphProjectionCanonicalJson(record) });
+        commands.push(`IF ($existing${suffix}.size() = 0) { CREATE EDGE ${ARCADEDB_EDGE_TYPE} FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :fromNodeId${suffix}) TO (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :toNodeId${suffix}) IF NOT EXISTS SET projectId = :projectId, graphSnapshotId = :targetGraphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, edgeId = :edgeId${suffix}, edgeType = :edgeType${suffix}, edgeJson = :edgeJson${suffix}; }`);
+      }
+    }
+    commands.push("COMMIT RETRY 3", "RETURN true");
+    this.invoke("command", { language: "sqlscript", command: commands.join(";\n"), params });
+    return true;
+  }
+
+  readSyncBatchRecords(projectId, graphSnapshotId, batch) {
+    const field = batch.recordKind === "node" ? "nodeJson" : "edgeJson";
+    const identifier = batch.recordKind === "node" ? "nodeId" : "edgeId";
+    const type = batch.recordKind === "node" ? ARCADEDB_NODE_TYPE : ARCADEDB_EDGE_TYPE;
+    const ids = batch.records.map((record) => record[identifier]);
+    const response = this.invoke("query", {
+      command: `SELECT ${field}, ${identifier} FROM ${type} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND ${identifier} IN :recordIds ORDER BY ${identifier}`,
+      params: { projectId, graphSnapshotId, recordIds: ids },
+    });
+    return responseRecords(response).map((record) => record[field]);
   }
 
   readSnapshot(projectId, id) {
@@ -486,6 +654,34 @@ export class ArcadeDbHttpTransport {
     let manifest;
     try { manifest = JSON.parse(documentJson); }
     catch { return documentJson; }
+    if (manifest?.kind === "HeadAgentGraphSnapshotTopologyManifest") {
+      if (manifest.schemaVersion !== 1 || manifest.encoding !== "topology-backed-canonical-graph"
+        || !/^arcadedb-graph-topology-[a-f0-9]{24}$/.test(manifest.topologyId || "")
+        || !/^[a-f0-9]{64}$/.test(manifest.topologyHash || "")
+        || !Number.isSafeInteger(manifest.byteLength) || manifest.byteLength < 1
+        || !/^[a-f0-9]{64}$/.test(manifest.sha256 || "") || typeof manifest.graphHeaderJson !== "string") {
+        fail("ArcadeDB topology-backed graph snapshot manifest is invalid.", "ARCADEDB_GRAPH_SNAPSHOT_TOPOLOGY_MANIFEST_MISMATCH");
+      }
+      const remote = this.readTopology(projectId, id);
+      if (!remote || typeof remote.topologyJson !== "string") fail("ArcadeDB topology-backed graph snapshot is missing its topology.", "ARCADEDB_GRAPH_SNAPSHOT_TOPOLOGY_MANIFEST_MISMATCH");
+      const topology = verifyArcadeDbGraphTopology(parseRemoteJson(remote.topologyJson, "ArcadeDB graph topology"));
+      if (topology.topologyId !== manifest.topologyId || topology.topologyHash !== manifest.topologyHash) {
+        fail("ArcadeDB topology-backed graph snapshot references a different topology.", "ARCADEDB_GRAPH_SNAPSHOT_TOPOLOGY_MANIFEST_MISMATCH");
+      }
+      let header;
+      try { header = JSON.parse(manifest.graphHeaderJson); }
+      catch { fail("ArcadeDB topology-backed graph snapshot header is invalid.", "ARCADEDB_GRAPH_SNAPSHOT_TOPOLOGY_MANIFEST_MISMATCH"); }
+      const nodes = remote.nodeJsons.map((value) => parseRemoteJson(value, "ArcadeDB graph node")).sort((left, right) => left.nodeId.localeCompare(right.nodeId));
+      const edges = remote.edgeJsons.map((value) => parseRemoteJson(value, "ArcadeDB graph edge")).sort((left, right) => left.edgeId.localeCompare(right.edgeId));
+      const assembled = graphProjectionCanonicalJson({ ...header, nodes, edges });
+      if (nodes.length !== topology.nodeCount || edges.length !== topology.edgeCount
+        || digest(graphProjectionCanonicalJson(nodes)) !== topology.nodeSetHash
+        || digest(graphProjectionCanonicalJson(edges)) !== topology.edgeSetHash
+        || Buffer.byteLength(assembled, "utf8") !== manifest.byteLength || digest(assembled) !== manifest.sha256) {
+        fail("ArcadeDB topology-backed graph snapshot failed reconstruction verification.", "ARCADEDB_GRAPH_SNAPSHOT_TOPOLOGY_MANIFEST_MISMATCH");
+      }
+      return assembled;
+    }
     if (manifest?.kind !== "HeadAgentGraphSnapshotChunkManifest") return documentJson;
     if (manifest.schemaVersion !== 1 || manifest.encoding !== "gzip-base64-json-chunks"
       || !Number.isSafeInteger(manifest.chunkCount) || manifest.chunkCount < 1
@@ -519,7 +715,26 @@ export class ArcadeDbHttpTransport {
   writeSnapshot(projectId, id, documentJson, metadata) {
     try {
       let storedDocumentJson = documentJson;
-      if (Buffer.byteLength(documentJson, "utf8") > ARCADEDB_SNAPSHOT_CHUNK_BYTES) {
+      if (metadata?.topologyBacked === true) {
+        let graph;
+        try { graph = JSON.parse(documentJson); }
+        catch { fail("Topology-backed snapshot input is invalid JSON.", "ARCADEDB_GRAPH_SNAPSHOT_TOPOLOGY_MANIFEST_MISMATCH"); }
+        verifyTemporalProvenanceGraph(graph);
+        const topology = buildArcadeDbGraphTopology(graph);
+        const header = { ...graph };
+        delete header.nodes;
+        delete header.edges;
+        storedDocumentJson = graphProjectionCanonicalJson({
+          schemaVersion: 1,
+          kind: "HeadAgentGraphSnapshotTopologyManifest",
+          encoding: "topology-backed-canonical-graph",
+          topologyId: topology.topologyId,
+          topologyHash: topology.topologyHash,
+          graphHeaderJson: graphProjectionCanonicalJson(header),
+          byteLength: Buffer.byteLength(documentJson, "utf8"),
+          sha256: digest(documentJson),
+        });
+      } else if (Buffer.byteLength(documentJson, "utf8") > ARCADEDB_SNAPSHOT_CHUNK_BYTES) {
         const encoded = zlib.gzipSync(Buffer.from(documentJson, "utf8"), { level: 9 }).toString("base64");
         const chunks = [];
         for (let offset = 0; offset < encoded.length; offset += ARCADEDB_SNAPSHOT_CHUNK_BYTES) {
@@ -589,6 +804,23 @@ export class ArcadeDbHttpTransport {
         : `INSERT INTO ${ARCADEDB_POINTER_TYPE} SET projectId = :projectId, pointerJson = :pointerJson`,
       params: { projectId, pointerJson },
     });
+  }
+
+  writePointerCompareAndSwap(projectId, expectedPointerJson, pointerJson) {
+    const commands = [
+      "BEGIN ISOLATION REPEATABLE_READ",
+      `LOCK TYPE ${ARCADEDB_POINTER_TYPE}`,
+      `LET current = SELECT pointerJson FROM ${ARCADEDB_POINTER_TYPE} WHERE projectId = :projectId LIMIT 1`,
+      `IF ($current.size() = 0) { IF (:expectedPointerJson IS NULL) { INSERT INTO ${ARCADEDB_POINTER_TYPE} SET projectId = :projectId, pointerJson = :pointerJson; } ELSE { ROLLBACK; RETURN false; } } ELSE { IF ($current[0].pointerJson = :expectedPointerJson) { UPDATE ${ARCADEDB_POINTER_TYPE} SET pointerJson = :pointerJson WHERE projectId = :projectId AND pointerJson = :expectedPointerJson; } ELSE { ROLLBACK; RETURN false; } }`,
+      "COMMIT RETRY 3",
+      "RETURN true",
+    ];
+    this.invoke("command", {
+      language: "sqlscript",
+      command: commands.join(";\n"),
+      params: { projectId, expectedPointerJson, pointerJson },
+    });
+    return this.readPointer(projectId) === pointerJson;
   }
 
   listSnapshotIds(projectId) {
@@ -1196,6 +1428,9 @@ export class ArcadeDbGraphProjectionAdapter {
     serverTraversalRequired = false,
     preparedTraversalRequired = false,
     rewriteTopologyManifest = false,
+    incrementalSyncRequired = false,
+    stagedPointer = null,
+    baseGraph = null,
   } = {}) {
     this.storageSelection = verifyStorageSelection(storageSelection);
     if (this.storageSelection.mode !== "graphdb") fail("ArcadeDB adapter requires a GraphDB storage selection.", "ARCADEDB_SELECTION_REQUIRED");
@@ -1208,10 +1443,18 @@ export class ArcadeDbGraphProjectionAdapter {
     this.topologySchemaReady = false;
     this.preparedTraversalRequired = preparedTraversalRequired === true;
     this.rewriteTopologyManifest = rewriteTopologyManifest === true;
+    this.incrementalSyncRequired = incrementalSyncRequired === true;
+    this.stagedPointer = stagedPointer == null ? null : clone(verifyGraphProjectionPointer(stagedPointer));
+    if (baseGraph != null) verifyTemporalProvenanceGraph(baseGraph);
+    this.baseGraph = baseGraph == null ? null : clone(baseGraph);
+    this.pendingIncrementalSync = null;
+    this.completedIncrementalSync = null;
+    this.pendingPointerBase = null;
     this.serverTraversalRequired = serverTraversalRequired === true || this.preparedTraversalRequired;
     this.topologyRequired = topologyRequired === true || this.serverTraversalRequired;
     if (this.serverTraversalRequired) assertArcadeDbServerTraversalTransport(this.transport);
     if (this.preparedTraversalRequired) assertArcadeDbPreparedTraversalTransport(this.transport);
+    if (this.incrementalSyncRequired) assertArcadeDbIncrementalSyncTransport(this.transport);
   }
 
   describe() {
@@ -1221,6 +1464,8 @@ export class ArcadeDbGraphProjectionAdapter {
       remoteProtocolVersion: ARCADEDB_GRAPH_PROJECTION_VERSION,
       credentialsPersisted: false,
       serverRecordIdentitySemantic: false,
+      incrementalSyncProtocolVersion: this.incrementalSyncRequired ? ARCADEDB_INCREMENTAL_SYNC_VERSION : null,
+      incrementalSyncMode: this.incrementalSyncRequired ? "content-addressed-batches-checkpoints-cas" : "legacy-full-materialization",
       topologyMode: this.topologyRequired ? "snapshot-scoped-vertex-edge-verified" : "not-required",
       traversalMode: this.serverTraversalRequired
         ? ARCADEDB_SERVER_TRAVERSAL_MODE
@@ -1250,6 +1495,7 @@ export class ArcadeDbGraphProjectionAdapter {
   }
 
   readPointer() {
+    if (this.stagedPointer) return { location: `${this.locationBase}/staged-current`, document: clone(this.stagedPointer) };
     const value = this.transport.readPointer(this.projectId);
     return value == null ? null : { location: `${this.locationBase}/current`, document: parseRemoteJson(value, "ArcadeDB graph projection pointer") };
   }
@@ -1266,6 +1512,44 @@ export class ArcadeDbGraphProjectionAdapter {
   writeSnapshot(id, document) {
     graphSnapshotId(id);
     this.ensureSchema();
+    if (this.incrementalSyncRequired) {
+      verifyTemporalProvenanceGraph(document);
+      this.ensureTopologySchema();
+      const transport = assertArcadeDbIncrementalSyncTransport(this.transport);
+      const pointerJson = transport.readPointer(this.projectId);
+      const pointer = pointerJson == null ? null : verifyGraphProjectionPointer(parseRemoteJson(pointerJson, "ArcadeDB graph projection pointer"));
+      let baseGraph = pointer ? this.baseGraph : null;
+      if (pointer && (!baseGraph || baseGraph.graphSnapshotId !== pointer.graphSnapshotId || baseGraph.graphSnapshotHash !== pointer.graphSnapshotHash)) {
+        const baseJson = transport.readSnapshot(this.projectId, pointer.graphSnapshotId);
+        if (baseJson == null) fail("ArcadeDB incremental sync pointer references a missing base GraphSnapshot.", "ARCADEDB_INCREMENTAL_SYNC_BASE_MISSING");
+        baseGraph = parseRemoteJson(baseJson, "ArcadeDB incremental sync base GraphSnapshot");
+        verifyTemporalProvenanceGraph(baseGraph);
+      }
+      if (pointer && (baseGraph.projectId !== pointer.projectId || baseGraph.graphSnapshotId !== pointer.graphSnapshotId
+        || baseGraph.graphSnapshotHash !== pointer.graphSnapshotHash || baseGraph.sourceSnapshotId !== pointer.sourceSnapshotId)) {
+        fail("ArcadeDB incremental sync base graph differs from the current pointer.", "ARCADEDB_INCREMENTAL_SYNC_BASE_MISMATCH");
+      }
+      const manifest = buildArcadeDbIncrementalSyncManifest({ baseGraph, targetGraph: document });
+      const syncState = executeArcadeDbIncrementalSync({ transport, manifest, baseGraph, targetGraph: document });
+      const topology = buildArcadeDbGraphTopology(document);
+      transport.writeTopology(this.projectId, document.graphSnapshotId, clone(document), clone(topology));
+      const verifiedTopology = this.readTopology(document).topology;
+      const created = transport.writeSnapshot(this.projectId, id, graphProjectionCanonicalJson(document), {
+        graphSnapshotHash: document.graphSnapshotHash,
+        sourceSnapshotId: document.sourceSnapshotId,
+        topologyBacked: true,
+      });
+      const value = transport.readSnapshot(this.projectId, id);
+      if (value == null) fail("ArcadeDB did not return the synchronized GraphSnapshot.", "GRAPH_PROJECTION_WRITE_MISMATCH");
+      const verifiedDocument = parseRemoteJson(value, "ArcadeDB synchronized GraphSnapshot");
+      verifyTemporalProvenanceGraph(verifiedDocument);
+      if (graphProjectionCanonicalJson(verifiedDocument) !== graphProjectionCanonicalJson(document)) {
+        fail("ArcadeDB synchronized GraphSnapshot differs from the target.", "GRAPH_PROJECTION_WRITE_MISMATCH");
+      }
+      this.pendingPointerBase = pointer;
+      this.pendingIncrementalSync = { manifest, syncState, topology: verifiedTopology };
+      return { location: `${this.locationBase}/snapshots/${id}`, document: verifiedDocument, created, incrementalSync: syncState };
+    }
     if (this.topologyRequired) this.materializeTopology(document);
     const created = this.transport.writeSnapshot(this.projectId, id, graphProjectionCanonicalJson(document), {
       graphSnapshotHash: document.graphSnapshotHash,
@@ -1277,11 +1561,46 @@ export class ArcadeDbGraphProjectionAdapter {
   }
 
   writePointer(document) {
+    if (this.stagedPointer) {
+      this.stagedPointer = clone(verifyGraphProjectionPointer(document));
+      return { location: `${this.locationBase}/staged-current`, document: clone(this.stagedPointer) };
+    }
     this.ensureSchema();
+    if (this.pendingIncrementalSync) {
+      const expectedJson = this.pendingPointerBase == null ? null : graphProjectionCanonicalJson(this.pendingPointerBase);
+      const pointerJson = graphProjectionCanonicalJson(document);
+      const applied = assertArcadeDbIncrementalSyncTransport(this.transport)
+        .writePointerCompareAndSwap(this.projectId, expectedJson, pointerJson);
+      if (!applied) fail("ArcadeDB graph pointer changed during incremental sync.", "ARCADEDB_INCREMENTAL_SYNC_POINTER_CONFLICT");
+      const entry = this.readPointer();
+      if (!entry || graphProjectionCanonicalJson(entry.document) !== pointerJson) {
+        fail("ArcadeDB incremental sync pointer verification failed.", "GRAPH_PROJECTION_WRITE_MISMATCH");
+      }
+      this.pendingIncrementalSync.pointerAfter = clone(entry.document);
+      this.completedIncrementalSync = {
+        ...this.pendingIncrementalSync,
+        pointerBefore: clone(this.pendingPointerBase),
+        pointerAfter: clone(entry.document),
+      };
+      this.pendingIncrementalSync = null;
+      this.pendingPointerBase = null;
+      return entry;
+    }
+    if (this.incrementalSyncRequired) {
+      const entry = this.readPointer();
+      if (entry && graphProjectionCanonicalJson(entry.document) === graphProjectionCanonicalJson(document)) return entry;
+      fail("ArcadeDB pointer advancement requires a verified incremental sync.", "ARCADEDB_INCREMENTAL_SYNC_REQUIRED");
+    }
     this.transport.writePointer(this.projectId, graphProjectionCanonicalJson(document));
     const entry = this.readPointer();
     if (!entry) fail("ArcadeDB did not return the written graph pointer.", "GRAPH_PROJECTION_WRITE_MISMATCH");
     return entry;
+  }
+
+  takeCompletedIncrementalSync() {
+    const completed = this.completedIncrementalSync;
+    this.completedIncrementalSync = null;
+    return completed == null ? null : clone(completed);
   }
 
   listSnapshotIds() {
@@ -1404,6 +1723,7 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
     this.remoteObserved = false;
     this.remoteMutated = false;
     this.pendingTopologyActivation = null;
+    this.lastIncrementalSyncReceipt = null;
   }
 
   describe() {
@@ -1421,6 +1741,10 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
       ...(remoteDescriptor.preparedTraversalProtocolVersion ? {
         preparedTraversalProtocolVersion: remoteDescriptor.preparedTraversalProtocolVersion,
         preparedTraversalMode: remoteDescriptor.preparedTraversalMode,
+      } : {}),
+      ...(remoteDescriptor.incrementalSyncProtocolVersion ? {
+        incrementalSyncProtocolVersion: remoteDescriptor.incrementalSyncProtocolVersion,
+        incrementalSyncMode: remoteDescriptor.incrementalSyncMode,
       } : {}),
     };
   }
@@ -1480,6 +1804,24 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
       const localEntry = this.local.writePointer(document);
       if (graphProjectionCanonicalJson(localEntry.document) !== graphProjectionCanonicalJson(remoteEntry.document)) {
         fail("ArcadeDB and local mirror pointers differ.", "GRAPH_PROJECTION_WRITE_MISMATCH");
+      }
+      const completedSync = typeof this.remote.takeCompletedIncrementalSync === "function"
+        ? this.remote.takeCompletedIncrementalSync()
+        : null;
+      if (completedSync) {
+        const receipt = buildArcadeDbIncrementalSyncReceipt({
+          manifest: completedSync.manifest,
+          syncState: completedSync.syncState,
+          pointerBefore: completedSync.pointerBefore,
+          pointerAfter: completedSync.pointerAfter,
+          snapshotVerified: true,
+          topologyVerified: true,
+          localMirrorVerified: true,
+        });
+        this.lastIncrementalSyncReceipt = persistArcadeDbIncrementalSyncReceipt({
+          projectRoot: this.projectRoot,
+          receipt,
+        }).receipt;
       }
       if (this.pendingTopologyActivation) {
         if (this.pendingTopologyActivation.graphSnapshotId !== document.graphSnapshotId
@@ -2012,6 +2354,89 @@ export function inspectArcadeDbGraphTopologyActivation({ projectRoot, graph = nu
   return { status: "verified-active", storageSelection, activation, pointer, activationFile, pointerFile };
 }
 
+function incrementalSyncReceiptPointerFor(receipt) {
+  const verified = verifyArcadeDbIncrementalSyncReceipt(receipt);
+  const payload = {
+    schemaVersion: 1,
+    kind: "ArcadeDbIncrementalSyncReceiptPointer",
+    protocol: { name: "head-agent-core-arcadedb-incremental-sync", version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
+    projectId: verified.projectId,
+    syncId: verified.syncId,
+    receiptId: verified.receiptId,
+    receiptHash: verified.receiptHash,
+    targetGraphSnapshotId: verified.targetGraphSnapshotId,
+    targetGraphSnapshotHash: verified.targetGraphSnapshotHash,
+    credentialValuesPersisted: false,
+  };
+  const pointerHash = digest(graphProjectionCanonicalJson(payload));
+  return { ...payload, pointerId: `arcadedb-sync-receipt-pointer-${pointerHash.slice(0, 24)}`, pointerHash };
+}
+
+function verifyIncrementalSyncReceiptPointer(document) {
+  assertFields(document, [
+    "schemaVersion", "kind", "protocol", "projectId", "syncId", "receiptId", "receiptHash",
+    "targetGraphSnapshotId", "targetGraphSnapshotHash", "credentialValuesPersisted", "pointerId", "pointerHash",
+  ], "ArcadeDB incremental sync receipt pointer", "INVALID_ARCADEDB_INCREMENTAL_SYNC_RECEIPT_POINTER");
+  if (document.kind !== "ArcadeDbIncrementalSyncReceiptPointer" || document.schemaVersion !== 1
+    || document.protocol?.name !== "head-agent-core-arcadedb-incremental-sync"
+    || document.protocol?.version !== ARCADEDB_INCREMENTAL_SYNC_VERSION
+    || typeof document.projectId !== "string" || !document.projectId
+    || !/^arcadedb-sync-[a-f0-9]{24}$/.test(document.syncId || "")
+    || !/^arcadedb-sync-receipt-[a-f0-9]{24}$/.test(document.receiptId || "")
+    || !/^[a-f0-9]{64}$/.test(document.receiptHash || "")
+    || !/^graph-snapshot-[a-f0-9]{24}$/.test(document.targetGraphSnapshotId || "")
+    || !/^[a-f0-9]{64}$/.test(document.targetGraphSnapshotHash || "")
+    || document.credentialValuesPersisted !== false
+    || !/^arcadedb-sync-receipt-pointer-[a-f0-9]{24}$/.test(document.pointerId || "")
+    || !/^[a-f0-9]{64}$/.test(document.pointerHash || "")) {
+    fail("ArcadeDB incremental sync receipt pointer is invalid.", "INVALID_ARCADEDB_INCREMENTAL_SYNC_RECEIPT_POINTER");
+  }
+  const payload = { ...document };
+  delete payload.pointerId;
+  delete payload.pointerHash;
+  const pointerHash = digest(graphProjectionCanonicalJson(payload));
+  if (document.pointerHash !== pointerHash || document.pointerId !== `arcadedb-sync-receipt-pointer-${pointerHash.slice(0, 24)}`) {
+    fail("ArcadeDB incremental sync receipt pointer digest verification failed.", "ARCADEDB_INCREMENTAL_SYNC_RECEIPT_POINTER_DIGEST_MISMATCH");
+  }
+  return document;
+}
+
+export function persistArcadeDbIncrementalSyncReceipt({ projectRoot, receipt } = {}) {
+  const root = path.resolve(projectRoot || ".");
+  const verified = verifyArcadeDbIncrementalSyncReceipt(receipt);
+  const receiptFile = path.join(root, ARCADEDB_INCREMENTAL_SYNC_RECEIPT_DIRECTORY, `${verified.receiptId}.json`);
+  if (fs.existsSync(receiptFile)) {
+    const existing = verifyArcadeDbIncrementalSyncReceipt(parseDocument(receiptFile, "ArcadeDB incremental sync receipt"));
+    if (graphProjectionCanonicalJson(existing) !== graphProjectionCanonicalJson(verified)) {
+      fail("ArcadeDB incremental sync receipt identity conflicts with existing content.", "ARCADEDB_INCREMENTAL_SYNC_RECEIPT_CONFLICT");
+    }
+  } else atomicWrite(receiptFile, json(verified));
+  const pointer = incrementalSyncReceiptPointerFor(verified);
+  const pointerFile = path.join(root, ARCADEDB_INCREMENTAL_SYNC_RECEIPT_POINTER);
+  atomicWrite(pointerFile, json(pointer));
+  return { receipt: verified, receiptFile, pointer, pointerFile };
+}
+
+export function inspectArcadeDbIncrementalSyncReceipt({ projectRoot, graph = null } = {}) {
+  const root = path.resolve(projectRoot || ".");
+  const pointerFile = path.join(root, ARCADEDB_INCREMENTAL_SYNC_RECEIPT_POINTER);
+  if (!fs.existsSync(pointerFile)) return { status: "not-synchronized", receipt: null };
+  const pointer = verifyIncrementalSyncReceiptPointer(parseDocument(pointerFile, "ArcadeDB incremental sync receipt pointer"));
+  const receiptFile = path.join(root, ARCADEDB_INCREMENTAL_SYNC_RECEIPT_DIRECTORY, `${pointer.receiptId}.json`);
+  if (!fs.existsSync(receiptFile)) fail("ArcadeDB incremental sync receipt pointer references missing content.", "ARCADEDB_INCREMENTAL_SYNC_RECEIPT_MISSING");
+  const receipt = verifyArcadeDbIncrementalSyncReceipt(parseDocument(receiptFile, "ArcadeDB incremental sync receipt"));
+  if (receipt.projectId !== pointer.projectId || receipt.syncId !== pointer.syncId
+    || receipt.receiptHash !== pointer.receiptHash || receipt.targetGraphSnapshotId !== pointer.targetGraphSnapshotId
+    || receipt.targetGraphSnapshotHash !== pointer.targetGraphSnapshotHash) {
+    fail("ArcadeDB incremental sync receipt pointer is stale or divergent.", "ARCADEDB_INCREMENTAL_SYNC_RECEIPT_POINTER_MISMATCH");
+  }
+  if (graph && (receipt.projectId !== graph.projectId || receipt.targetGraphSnapshotId !== graph.graphSnapshotId
+    || receipt.targetGraphSnapshotHash !== graph.graphSnapshotHash)) {
+    return { status: "stale", receipt, pointer, receiptFile, pointerFile };
+  }
+  return { status: "verified-current", receipt, pointer, receiptFile, pointerFile };
+}
+
 export function createActivatedArcadeDbGraphProjectionAdapter({ projectRoot, transport = null } = {}) {
   const inspected = inspectArcadeDbGraphProjectionActivation({ projectRoot });
   if (inspected.status !== "verified-active") return null;
@@ -2028,6 +2453,7 @@ export function createActivatedArcadeDbGraphProjectionAdapter({ projectRoot, tra
       topologyRequired: serverTraversalRequired || topology.status === "verified-active" || topology.status === "stale",
       serverTraversalRequired,
       preparedTraversalRequired,
+      incrementalSyncRequired: true,
     }),
   });
 }

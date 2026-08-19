@@ -14,6 +14,7 @@ const CURRENT_RECEIPT = path.join(".head", "graph-projection", "arcadedb", "data
 const ACTIVATION_POINTERS = Object.freeze([
   path.join(".head", "graph-projection", "arcadedb", "current.json"),
   path.join(".head", "graph-projection", "arcadedb", "topology", "current.json"),
+  path.join(".head", "graph-projection", "arcadedb", "sync", "current.json"),
 ]);
 
 const fail = (message, code = "ARCADEDB_DATABASE_LIFECYCLE_ERROR") => {

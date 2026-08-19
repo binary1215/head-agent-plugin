@@ -25,6 +25,7 @@ on:
       - "scripts/lib/temporal-provenance.mjs"
       - "scripts/lib/world-model.mjs"
       - "scripts/lib/graph-projection-adapter.mjs"
+      - "scripts/lib/arcadedb-incremental-sync.mjs"
       - "scripts/lib/graphdb-projection-activation.mjs"
       - "scripts/lib/arcadedb-database-lifecycle.mjs"
       - "scripts/lib/arcadedb-http-bridge.mjs"
@@ -57,6 +58,7 @@ on:
       - "scripts/verify-onboarding.mjs"
       - "scripts/verify-conversational-onboarding.mjs"
       - "scripts/verify-arcadedb-database-lifecycle.mjs"
+      - "scripts/verify-arcadedb-incremental-sync.mjs"
       - "skills/**"
       - "package.json"
       - ".codex-plugin/plugin.json"
@@ -85,6 +87,7 @@ on:
       - "scripts/lib/temporal-provenance.mjs"
       - "scripts/lib/world-model.mjs"
       - "scripts/lib/graph-projection-adapter.mjs"
+      - "scripts/lib/arcadedb-incremental-sync.mjs"
       - "scripts/lib/graphdb-projection-activation.mjs"
       - "scripts/lib/arcadedb-database-lifecycle.mjs"
       - "scripts/lib/arcadedb-http-bridge.mjs"
@@ -117,6 +120,7 @@ on:
       - "scripts/verify-onboarding.mjs"
       - "scripts/verify-conversational-onboarding.mjs"
       - "scripts/verify-arcadedb-database-lifecycle.mjs"
+      - "scripts/verify-arcadedb-incremental-sync.mjs"
       - "skills/**"
       - "package.json"
       - ".codex-plugin/plugin.json"
@@ -229,6 +233,9 @@ jobs:
 
       - name: Verify ArcadeDB database lifecycle boundary
         run: node scripts/verify-arcadedb-database-lifecycle.mjs
+
+      - name: Verify ArcadeDB incremental sync contract
+        run: node scripts/verify-arcadedb-incremental-sync.mjs
 
       - name: Verify prepared traversal cost identity and no-full-read boundary
         run: node scripts/benchmark-prepared-traversal.mjs --iterations 3

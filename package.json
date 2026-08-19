@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.53",
+  "version": "0.3.0-alpha.54",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
@@ -19,6 +19,7 @@
     "verify:native-delivery": "node scripts/verify-native-artifact-delivery.mjs",
     "verify:newcomer": "node scripts/verify-newcomer-readme.mjs",
     "verify:conversational-onboarding": "node scripts/verify-conversational-onboarding.mjs",
+    "verify:graphdb-sync": "node scripts/verify-arcadedb-incremental-sync.mjs",
     "distribution:status": "node scripts/distribution.mjs status"
   }
 }

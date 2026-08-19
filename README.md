@@ -569,6 +569,14 @@ be written into project artifacts, graph identities, generated documents, or
 execution receipts. Remote activation must pass local/remote conformance before
 it becomes current.
 
+The experimental write path is incremental and resumable: content-derived
+node/edge batches are re-read before immutable checkpoints are accepted,
+snapshot-only identity changes use compact rebase records, the complete graph
+is reconstructed from verified topology, and an exact-predecessor
+compare-and-swap advances the remote pointer only after staged conformance and
+local recovery verification. Re-running an unchanged graph produces a
+zero-batch sync receipt.
+
 See [Graph projection adapter](docs/graph-projection-adapter.md) for the current
 activation, recovery, and failure boundaries.
 
