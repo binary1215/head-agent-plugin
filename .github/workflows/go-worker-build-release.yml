@@ -498,7 +498,6 @@ jobs:
       contents: write
     env:
       MARKETPLACE_BRANCH: codex-marketplace
-      MARKETPLACE_ROOT: ${{ runner.temp }}/head-agent-codex-marketplace
     steps:
       - name: Checkout verified source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -509,12 +508,14 @@ jobs:
       - name: Build content-verified marketplace snapshot
         shell: bash
         run: |
+          marketplace_root="${RUNNER_TEMP}/head-agent-codex-marketplace"
+          echo "MARKETPLACE_ROOT=${marketplace_root}" >> "${GITHUB_ENV}"
           node scripts/build-codex-marketplace.mjs \
-            --output "${MARKETPLACE_ROOT}" \
+            --output "${marketplace_root}" \
             --source-repository "${GITHUB_REPOSITORY}" \
             --source-commit "${GITHUB_SHA}"
           node scripts/verify-codex-marketplace.mjs \
-            --root "${MARKETPLACE_ROOT}" \
+            --root "${marketplace_root}" \
             --expected-repository "${GITHUB_REPOSITORY}" \
             --expected-marketplace-name "head-agent-plugin"
 
