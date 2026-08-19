@@ -33,21 +33,8 @@ compile only the context required for the current task, execute within an
 explicit boundary, and review the result without depending on one provider
 conversation.
 
-```text
-User objective and Project Canon
-        │
-        ▼
-  Whole-plan HEAD
-        │
-        ├── Context Compiler
-        │       └── reproducible Context Capsule
-        │
-        ├── Execution Contract
-        │       └── Codex / OpenCode adapter
-        │
-        └── Result Packet
-                └── Fresh HEAD Review
-```
+The runtime, unified graph, and projections are shown together in
+[Architecture at a glance](#architecture-at-a-glance).
 
 ## Core principles
 
@@ -58,108 +45,121 @@ User objective and Project Canon
 | Minimum sufficient context | Context is selected for one task instead of copying an entire conversation. |
 | Canon survives session loss | Project identity and accepted state live outside provider conversations. |
 | Evidence is not instruction | Repository content, model output, and graph records do not automatically become authority. |
-| GraphDB is replaceable | The graph is a rebuildable retrieval and provenance projection, not the sole source of truth. |
+| Graph storage is replaceable | The World Model retains the recoverable GraphSnapshot; local JSON and ArcadeDB are materializations. |
 | Git is optional | Git may enrich evidence but is not required for HEAD identity, lineage, or recovery. |
 
-## A graph that connects product meaning to execution evidence
+## Architecture at a glance
 
-HEAD Agent Core does not build only a code dependency graph. It creates a
-content-derived, deterministic `GraphSnapshot` that connects product concepts,
-repository evidence, reviewed relationships, change history, and execution
-lineage while preserving their different authority levels.
+HEAD Agent Core uses one connected architecture for planning, repository
+understanding, execution, review, and human-readable projection. The graph is
+not a separate analytics feature: it is the evidence layer that lets each stage
+refer to the same product, source, revision, decision, and execution identities.
 
 ```mermaid
-flowchart LR
-    FG[FeatureGroup] --> C[Capability]
-    C --> F[Feature]
+flowchart TB
+    U[User objective] --> H[Whole-plan HEAD]
+    PC[User-owned Product Canon] --> WM[Repository World Model]
+    RE[Observed repository evidence] --> WM
+    VR[Verified reviews and lineage] --> WM
 
-    F --- M[Reviewed IMPLEMENTS / VERIFIED_BY]
-    M --- CODE[File / Symbol]
-    M --- TEST[Test]
+    WM --> GS[Embedded immutable GraphSnapshot]
+    H --> CC[Context Compiler]
+    GS -->|bounded traversal| CC
+    CC --> CAP[Reproducible Context Capsule]
+    CAP --> EC[Execution Contract]
+    EC --> RA[Codex / OpenCode runtime adapter]
+    RA --> RP[Result Packet]
+    RP --> FR[Fresh HEAD Review]
+    FR -->|accepted change and review evidence| VR
 
-    WP[WholePlan] --> EC[Execution Contract]
-    EC --> RP[Result Packet]
-    RP --> CS[ChangeSet]
-
-    CS -->|CHANGES| REV[File / Symbol / Test Revision]
-    CS -->|reviewed IMPACTS| F
-
-    EV[Evidence] --> RD[ReviewDecision]
-    RD --> PMR[Product Model Revision]
-
-    PMR --> GS[Unified GraphSnapshot]
-    REV --> GS
-    CS --> GS
-    GS --> MD[Markdown Projection]
-    GS --> DB[Optional ArcadeDB Projection]
+    GS --> GP[GraphProjectionAdapter]
+    GP --> LJ[Local JSON]
+    GP --> ADB[Optional ArcadeDB]
+    GS --> DP[DocumentProjectionAdapter]
+    DP --> MD[Markdown]
+    DP -. future .-> ON[Obsidian / Notion]
 ```
 
-### More than a current-state graph
+### What is a GraphSnapshot?
 
-The same immutable snapshot supports complementary traversal views:
+A `GraphSnapshot` is the immutable, content-addressed evidence graph embedded in
+one verified Repository World Model. It captures the complete graph state HEAD
+can reproduce at a specific indexing, refresh, or reviewed authority-transition
+boundary.
+
+It is not a screenshot of a graph UI, a database backup, or a mutable collection
+of the latest nodes. The snapshot canonically sorts and hashes its inputs,
+nodes, edges, and parent identities. The same verified inputs produce the same
+`graphSnapshotId`; any semantic change produces a new snapshot while prior
+snapshots remain immutable.
+
+| Question | GraphSnapshot contract |
+| --- | --- |
+| What is it bound to? | Exact Project, Product Model, SourceSnapshot, protocol, and parent identities. |
+| What does it contain? | Product concepts, code and test entities, immutable revisions, typed relations, reviewed mappings and impacts, ChangeSets, decisions, evidence, and lineage references. |
+| What does every record preserve? | Origin, evidence IDs, freshness, producer, authority class, and instruction/promotion flags. |
+| When does it change? | When verified semantic inputs change through indexing, refresh, accepted review, or accepted execution evidence; no-change rebuilds retain the same identity. |
+| How is history represented? | SourceSnapshots, revisions, and ChangeSets allow zero or more parents, forming DAGs without claiming automatic merge behavior. |
+| Where is it stored? | Recoverably inside the World Model, then optionally materialized through local JSON or ArcadeDB and rendered into documents. |
+| Is it project authority? | No. It is `derived-evidence-only`; Product Canon, observed source, and explicit review records retain their respective authority. |
+
+### One graph, several traversal views
+
+The unified snapshot connects product meaning to implementation and execution
+without flattening their authority differences:
 
 | View | Example question |
 | --- | --- |
-| Product and semantic | Which reviewed code and tests relate to this Feature? |
-| Temporal | How did this File, Symbol, Feature, or Decision change? |
-| Provenance | Which evidence and review produced this relationship? |
-| Execution | Which accepted result produced this ChangeSet? |
-| Impact | Which reviewed product concepts does this ChangeSet affect? |
+| Product | Which Capability and Feature express this product intent? |
+| Implementation | Which reviewed File, Symbol, and Test implement or verify it? |
+| Temporal | How did this Feature, source entity, or decision change? |
+| Provenance | Which evidence and ReviewDecision created this relationship? |
+| Execution | Which accepted Result Packet produced this ChangeSet? |
+| Impact | Which reviewed product concepts does this change affect? |
 
-The graph can represent:
-
-- `FeatureGroup → Capability → Feature` product structure;
-- reviewed Feature/Capability-to-File, Symbol, and Test relationships;
-- repository files, symbols, imports, bindings, dependencies, and call evidence;
-- immutable File, Symbol, Test, and Product Model revisions;
-- Git-independent ChangeSets with zero-or-more parent ChangeSets;
-- multiple-parent SourceSnapshot and Revision DAGs;
-- onboarding, mapping, document, and impact candidate review provenance;
-- optional VCS evidence without adding Git identity to the ChangeSet;
-- graph-to-Markdown and optional ArcadeDB materializations.
-
-This enables bounded paths such as:
+Representative bounded paths include:
 
 ```text
 Feature
-  → reviewed implementation relationship
-  → Symbol
-  → Symbol revision
+  → reviewed IMPLEMENTS / VERIFIED_BY
+  → File / Symbol / Test
+  → immutable Revision
   → ChangeSet
-  → ResultPacket reference
-  → ReviewDecision reference
-```
+  → execution and review evidence
 
-and:
-
-```text
 ChangeSet
-  → changed File / Symbol / Test revision
-  → reviewed impact
-  → Capability or Feature
+  → CHANGES
+  → File / Symbol / Test Revision
+  → reviewed IMPACTS
+  → Feature / Capability
   → FeatureGroup
 ```
 
-### Authority-aware by design
+Git may attach optional VCS evidence, but it does not define ChangeSet or graph
+identity. Inferred Features, mappings, impacts, and document edits stay in
+explicit candidate surfaces until a scoped user review accepts them.
 
-The graph is useful for retrieval and audit, but it cannot silently become
-project authority.
+### Graph, database, and documents have different roles
 
-- Product intent comes from user-owned Product Canon and explicit reviews.
-- Current behavior comes from repository and runtime evidence.
-- Inferred product concepts and relationships remain candidates until reviewed.
-- Generated Markdown is a human projection, not Canon.
-- ArcadeDB is a replaceable materialization, not the unique source of truth.
-- Git can enrich evidence but is not required for graph identity or lineage.
-- Every graph is bound to exact source and Canon snapshot identities.
+The authority and projection direction is deliberately one-way:
 
-### Built for bounded agent context
+```text
+User-owned Product Canon + observed source + verified reviews and lineage
+  → Repository World Model containing a recoverable GraphSnapshot
+      → replaceable graph materialization: local JSON / optional ArcadeDB
+      → replaceable human projection: Markdown / future Obsidian or Notion
+```
 
-The Context Compiler does not copy the complete graph into an agent prompt. It
-performs task-specific bounded traversal and records what was included, what was
-excluded, which evidence is stale or missing, and which questions remain
-explicit Unknowns. The resulting Context Capsule remains reproducible from the
-same canonical inputs, compiler version, traversal policy, and token budget.
+ArcadeDB record IDs, filesystem paths, provider page IDs, and adapter names do
+not enter semantic identity. A missing projection can be rebuilt from the
+verified World Model; a stale, tampered, or semantically divergent projection
+fails closed instead of redefining the graph.
+
+The Context Compiler also never copies the whole graph into a model prompt. It
+performs task-specific bounded traversal and records selected and excluded
+evidence, stale or missing inputs, truncation, and explicit Unknowns. The same
+canonical inputs, compiler version, traversal policy, and token budget reproduce
+the same Context Capsule.
 
 ## Implementation status
 
@@ -370,28 +370,6 @@ it becomes current.
 
 See [Graph projection adapter](docs/graph-projection-adapter.md) for the current
 activation, recovery, and failure boundaries.
-
-## How execution works
-
-```mermaid
-flowchart LR
-    U[User Objective] --> H[Whole-plan HEAD]
-    P[Project Canon] --> H
-    S[Repository Evidence] --> W[World Model]
-    W --> C[Context Compiler]
-    H --> C
-    C --> X[Context Capsule]
-    X --> E[Execution Contract]
-    E --> A[Runtime Adapter]
-    A --> R[Result Packet]
-    R --> F[Fresh HEAD Review]
-    W --> G[Optional Graph Projection]
-    G --> D[Markdown and future document projections]
-```
-
-The graph and documents improve retrieval and navigation, but they remain
-replaceable projections. User-owned Product Canon, reviewed decisions, current
-source, and verified runtime evidence retain their respective authority.
 
 ## Design lineage and acknowledgements
 
