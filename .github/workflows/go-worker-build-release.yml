@@ -22,11 +22,14 @@ on:
       - "scripts/lib/world-model.mjs"
       - "scripts/lib/graph-projection-adapter.mjs"
       - "scripts/lib/graphdb-projection-activation.mjs"
+      - "scripts/lib/prepared-traversal-benchmark.mjs"
+      - "scripts/benchmark-prepared-traversal.mjs"
       - "scripts/head.mjs"
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
       - "scripts/verify-onboarding.mjs"
       - "benchmarks/repository-scan-v1/**"
+      - "benchmarks/prepared-traversal-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
   pull_request:
     branches:
@@ -47,11 +50,14 @@ on:
       - "scripts/lib/world-model.mjs"
       - "scripts/lib/graph-projection-adapter.mjs"
       - "scripts/lib/graphdb-projection-activation.mjs"
+      - "scripts/lib/prepared-traversal-benchmark.mjs"
+      - "scripts/benchmark-prepared-traversal.mjs"
       - "scripts/head.mjs"
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
       - "scripts/verify-onboarding.mjs"
       - "benchmarks/repository-scan-v1/**"
+      - "benchmarks/prepared-traversal-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
   workflow_dispatch:
     inputs:
@@ -155,6 +161,9 @@ jobs:
 
       - name: Verify onboarding authority and recovery contract
         run: node scripts/verify-onboarding.mjs
+
+      - name: Verify prepared traversal cost identity and no-full-read boundary
+        run: node scripts/benchmark-prepared-traversal.mjs --iterations 3
 
       - name: Verify native stdio and JavaScript conformance
         shell: bash

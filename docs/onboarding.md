@@ -190,7 +190,7 @@ It covers existing code, a new-project brief, empty evidence, revision, rejectio
 
 ## Explicitly deferred
 
-- live prepared-query performance evidence, compare-and-swap publication, and non-ArcadeDB transports;
+- an executed live prepared-query evaluation, compare-and-swap publication, and non-ArcadeDB transports;
 - dedicated imported-backlog connectors beyond an explicit structured brief;
 - general relationship promotion beyond the separate Feature/code/test mapping review scope;
 - automatic semantic promotion, document synchronization, and merge/conflict resolution.

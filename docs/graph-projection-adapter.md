@@ -92,6 +92,26 @@ Activated query mode remains `server-expanded-client-canonicalized`. A newly con
 
 The server response is evidence, not semantic authority. The client requires the exact prepared radius, verifies every JSON record and physical traversal depth, and rejects stale manifests, missing coverage, duplicates, forged or out-of-radius records, and truncation. It then returns the unchanged deterministic `TemporalTraversalResult`; server ordering, ArcadeDB record IDs, transport metadata, and verification receipts never enter query or result identity. This is query-scoped integrity: status inspection and activation still perform complete remote snapshot/topology verification, so corruption outside the requested radius is detected by those full-audit paths rather than claimed away by a bounded query.
 
+## Prepared traversal performance evidence
+
+`PreparedTraversalCostEvidence` protocol `0.1.0` is content-derived from the exact GraphSnapshot and `PreparedTraversalRequest`. Its payload model counts normalized UTF-8 canonical-JSON response components: the identity envelope, graph manifest, bounded expansion, complete GraphSnapshot, and complete topology records. The prepared total contains only the identity envelope, manifest, and bounded expansion. The conservative full-reload baseline adds one complete snapshot and one complete topology record set. This is reproducible logical transport-cost evidence, not a claim about HTTP framing, compression, database cache state, or wall-clock latency.
+
+The reviewed 64-file fixture under `benchmarks/prepared-traversal-v1` fixes graph, request, result, and cost-evidence identities. It records 20,478 prepared bytes versus an 833,590-byte baseline, saving 813,112 bytes or 9,754 basis points. Run it with:
+
+```text
+npm run benchmark:prepared-traversal -- --iterations 7
+```
+
+Elapsed time and observed transport-call sizes are emitted only under diagnostics and never enter `PreparedTraversalCostEvidence`, graph, query, result, or Capsule identity. The fixture verifies zero full snapshot reads, zero full topology reads, and zero query-phase writes.
+
+An already activated prepared ArcadeDB project can use the same harness in strictly read-only mode:
+
+```text
+npm run benchmark:prepared-traversal -- --live-project <project-path> --iterations 7
+```
+
+The live path reads the project-scoped activation and environment reference names, accepts no credential values or credential flags, rejects fallback and semantic drift, and replaces every schema/snapshot/topology/pointer write method with a fail-closed guard. Reports exclude endpoint, database, credential values, and project paths. A fixture run proves the contract and deterministic cost identity; only a successful `arcadedb-live-read-only` report proves behavior and latency against a live environment.
+
 An interrupted topology write with no manifest may resume only when every existing record is an exact subset of the target GraphSnapshot; once a manifest exists, any partial or divergent state is rejected rather than repaired silently.
 
 After activation, the default adapter mirrors every successful remote snapshot and pointer into the local JSON projection. Connection/timeout or missing-environment-reference failure may select the local mirror only before any remote content has been observed or mutated in that operation. Authentication failure, rejected requests, stale pointers, missing records, digest mismatch, content conflict, semantic query divergence, or failure after a remote observation/mutation fail closed. If local progress occurs during a remote outage, a later stale remote pointer also fails closed until explicit activation repairs and re-verifies the projection.

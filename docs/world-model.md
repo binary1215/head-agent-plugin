@@ -156,10 +156,10 @@ Debounced filesystem and CI trigger ingestion plus single-writer event coalescin
 - cross-repository relationships;
 - authorized candidate-knowledge promotion;
 - inferred commit-to-ChangeSet matching, conformance, complete execution-lineage, and projection of document artifacts/review receipts back into later graph snapshots;
-- temporal projection of document-review artifacts, Obsidian, and Notion adapters;
+- Obsidian and Notion projection adapters;
 - dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
-- live prepared-query performance evidence, compare-and-swap publication, and non-ArcadeDB transports;
+- an executed live prepared-query evaluation, compare-and-swap publication, and non-ArcadeDB transports;
 - production selection or transport amortization for the conformant Go `repository.scan.v1` candidate, plus benchmark-gated migration of graph/traversal/Context operations;
 - descendant process-tree supervision beyond the worker manifest's enforced no-descendant contract.
 

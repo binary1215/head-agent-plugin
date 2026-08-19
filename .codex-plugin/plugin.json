@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.30",
+  "version": "0.3.0-alpha.31",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -63,6 +63,8 @@
       "Conformance-gated ArcadeDB Bounded Server Expansion",
       "Provider-neutral Prepared Traversal Verification",
       "ArcadeDB Manifest-only Bounded Query Reads",
+      "Deterministic Prepared Traversal Cost Evidence",
+      "Read-only ArcadeDB Prepared Traversal Benchmark",
       "Environment-only GraphDB Credential Resolution",
       "Remote Graph Snapshot Local Mirroring",
       "Replaceable DocumentProjectionAdapter Contract",
