@@ -21,6 +21,7 @@ import {
   REPOSITORY_SCAN_SEMANTIC_PRODUCER,
   validateRepositoryScanResult,
 } from "./lib/repository-scan.mjs";
+import { buildRepositorySourceScope } from "./lib/repository-source-scope.mjs";
 
 function parseArguments(values) {
   const result = {};
@@ -85,6 +86,10 @@ try {
   if (nativeSelection.manifest.operations.includes(REPOSITORY_SCAN_OPERATION)) {
     const input = buildRepositoryScanInput({ projectRoot: repositoryRoot });
     const managedInput = buildRepositoryScanInput({ projectRoot: repositoryRoot, managedRootFiles: ["README.md"] });
+    const scopedInput = buildRepositoryScanInput({
+      projectRoot: repositoryRoot,
+      sourceScope: buildRepositorySourceScope({ includeRoots: ["src"], excludeRoots: ["src/tool.py"] }),
+    });
     const missingInput = buildRepositoryScanInput({ projectRoot: path.join(repositoryRoot, "missing-root") });
     repositoryConformance = await verifyComputeAdapterConformance({
       referenceAdapter: repositoryReferenceAdapter,
@@ -93,6 +98,7 @@ try {
         { name: "repository-scan-basic", operation: REPOSITORY_SCAN_OPERATION, input, semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER },
         { name: "repository-scan-file-limit", operation: REPOSITORY_SCAN_OPERATION, input, semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER, limits: { maxFiles: 1 } },
         { name: "repository-scan-managed-projection", operation: REPOSITORY_SCAN_OPERATION, input: managedInput, semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER },
+        { name: "repository-scan-source-scope", operation: REPOSITORY_SCAN_OPERATION, input: scopedInput, semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER },
         { name: "repository-scan-missing-root", operation: REPOSITORY_SCAN_OPERATION, input: missingInput, semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER },
         { name: "repository-scan-total-byte-limit", operation: REPOSITORY_SCAN_OPERATION, input, semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER, limits: { maxTotalBytes: 1 } },
         { name: "repository-scan-skip-large", operation: REPOSITORY_SCAN_OPERATION, input, semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER, limits: { maxFileBytes: 1 } },

@@ -24,6 +24,7 @@ import {
 } from "./lib/runtime-invocation-lifecycle.mjs";
 import { executeCodexRuntimeInvocation } from "./lib/runtime-codex-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
+import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -59,6 +60,8 @@ export function usage() {
       "head onboarding-review <project> --input <review.json>",
       "head onboarding-candidates <project> --candidate-set <onboarding-candidate-set-id>",
       "head onboarding-review-read <project> --review <onboarding-review-decision-id>",
+      "head source-scope-set <project> --input <source-scope.json>",
+      "head source-scope-status <project>",
       "head feature-mapping-start <project>",
       "head feature-mapping-status <project>",
       "head feature-mapping-review <project> --input <review.json>",
@@ -175,6 +178,16 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });
   if (command === "onboarding-candidates") return readOnboardingCandidateSet({ root, candidateSetId: options["candidate-set"] });
   if (command === "onboarding-review-read") return readOnboardingReviewDecision({ root, reviewDecisionId: options.review });
+  if (command === "source-scope-set") {
+    const inspected = inspectProject(root);
+    if (inspected.status !== "ready") throw new Error(`Project must be ready to configure source scope; current status: ${inspected.status}.`);
+    return writeRepositorySourceScope({ projectRoot: inspected.project.projectRoot, selection: inputJson(options, "Repository source scope") });
+  }
+  if (command === "source-scope-status") {
+    const inspected = inspectProject(root);
+    if (inspected.status === "not_initialized") throw new Error("HEAD Agent Core is not initialized.");
+    return readRepositorySourceScope({ projectRoot: inspected.project.projectRoot });
+  }
   if (command === "feature-mapping-start") return startFeatureMapping({ root });
   if (command === "feature-mapping-status") return inspectFeatureMapping({ root });
   if (command === "feature-mapping-review") return reviewFeatureMapping({ ...inputJson(options, "Feature mapping ReviewDecision"), root });

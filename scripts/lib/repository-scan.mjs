@@ -20,8 +20,13 @@ import {
   SOURCE_ANALYSIS_VERSION,
 } from "./source-analysis.mjs";
 import { GoWorkerComputeAdapter } from "./go-worker-adapter.mjs";
+import {
+  buildRepositorySourceScope,
+  pathWithinRepositorySourceScope,
+  verifyRepositorySourceScope,
+} from "./repository-source-scope.mjs";
 
-export const REPOSITORY_SCAN_VERSION = "0.2.0";
+export const REPOSITORY_SCAN_VERSION = "0.3.0";
 export const REPOSITORY_SCAN_OPERATION = "repository.scan.v1";
 export const REPOSITORY_SCAN_SEMANTIC_PRODUCER = Object.freeze({
   name: "head-agent-core-repository-scan",
@@ -54,7 +59,8 @@ const SOURCE_LANGUAGES = new Set([
 ]);
 const SYMBOL_KINDS = new Set(["binding", "class", "function", "heading"]);
 const DEPENDENCY_KINDS = new Set(["dependencies", "devDependencies", "module", "optionalDependencies", "peerDependencies"]);
-const SKIPPED_FIELDS = Object.freeze(["excludedDirectory", "managedProjection", "unsupportedType", "tooLarge", "symlink"]);
+const LEGACY_SKIPPED_FIELDS = Object.freeze(["excludedDirectory", "managedProjection", "unsupportedType", "tooLarge", "symlink"]);
+const SKIPPED_FIELDS = Object.freeze([...LEGACY_SKIPPED_FIELDS, "outsideSourceScope"]);
 
 const fail = (message, code = "REPOSITORY_SCAN_ERROR") => {
   const error = new Error(message);
@@ -107,18 +113,19 @@ export function managedRootFilesForProject(project) {
   return values.sort(compareText);
 }
 
-export function buildRepositoryScanInput({ projectRoot, managedRootFiles = [] } = {}) {
+export function buildRepositoryScanInput({ projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope() } = {}) {
   if (typeof projectRoot !== "string" || !projectRoot.trim() || projectRoot.includes("\0")) fail("projectRoot is required.", "INVALID_REPOSITORY_SCAN_INPUT");
   return {
     schemaVersion: 1,
     kind: "RepositoryScanInput",
     projectRoot: path.resolve(projectRoot),
     managedRootFiles: normalizeManagedRootFiles(managedRootFiles),
+    sourceScope: verifyRepositorySourceScope(sourceScope),
   };
 }
 
 export function validateRepositoryScanInput(input) {
-  assertFields(input, ["schemaVersion", "kind", "projectRoot", "managedRootFiles"], "Repository scan input");
+  assertFields(input, ["schemaVersion", "kind", "projectRoot", "managedRootFiles", "sourceScope"], "Repository scan input");
   const rebuilt = buildRepositoryScanInput(input);
   if (canonicalJson(rebuilt) !== canonicalJson(input)) fail("Repository scan input is not canonical.", "INVALID_REPOSITORY_SCAN_INPUT");
   return input;
@@ -149,10 +156,12 @@ function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = 
       if (entry.isSymbolicLink()) { skipped.symlink += 1; continue; }
       if (entry.isDirectory()) {
         if (EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase())) skipped.excludedDirectory += 1;
+        else if (!pathWithinRepositorySourceScope(relative, input.sourceScope, { directory: true })) skipped.outsideSourceScope += 1;
         else stack.push(absolute);
         continue;
       }
       if (!entry.isFile()) { skipped.unsupportedType += 1; continue; }
+      if (!pathWithinRepositorySourceScope(relative, input.sourceScope)) { skipped.outsideSourceScope += 1; continue; }
       if (managed.has(relative)) { skipped.managedProjection += 1; continue; }
       const base = entry.name;
       const extension = path.extname(base).toLowerCase();
@@ -213,6 +222,7 @@ function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = 
     authority: "derived-evidence-only",
     instructionAuthority: false,
     promotionAuthority: false,
+    sourceScope: input.sourceScope,
     files,
     skipped,
     summary: {
@@ -234,6 +244,62 @@ function withIdentity(payload) {
 export function scanRepositoryReference(input, { limits = DEFAULT_COMPUTE_LIMITS } = {}) {
   const result = withIdentity(scanPayload(input, limits));
   return validateRepositoryScanResult(result);
+}
+
+export function inspectRepositoryScanFreshness({ projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope(), storedFiles = [], limits = {} } = {}) {
+  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope });
+  const normalizedLimits = normalizeComputeLimits(limits);
+  if (!Array.isArray(storedFiles)) fail("storedFiles must be an array.", "INVALID_REPOSITORY_SCAN_INPUT");
+  const managed = new Set(input.managedRootFiles);
+  const files = [];
+  let totalBytes = 0;
+  const stack = [input.projectRoot];
+  while (stack.length) {
+    const directory = stack.pop();
+    const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => compareText(left.name, right.name));
+    for (const entry of entries) {
+      const absolute = path.join(directory, entry.name);
+      const relative = normalizePath(input.projectRoot, absolute);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        if (!EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase()) && pathWithinRepositorySourceScope(relative, input.sourceScope, { directory: true })) stack.push(absolute);
+        continue;
+      }
+      if (!entry.isFile() || !pathWithinRepositorySourceScope(relative, input.sourceScope) || managed.has(relative)) continue;
+      const extension = path.extname(entry.name).toLowerCase();
+      if (!TEXT_EXTENSIONS.has(extension) && entry.name !== "Dockerfile") continue;
+      const stat = fs.statSync(absolute);
+      if (stat.size > normalizedLimits.maxFileBytes) continue;
+      const raw = fs.readFileSync(absolute);
+      if (raw.length > normalizedLimits.maxFileBytes) continue;
+      if (files.length >= normalizedLimits.maxFiles) fail(`Repository scan exceeds ${normalizedLimits.maxFiles} files.`, "REPOSITORY_SCAN_FILE_LIMIT");
+      if (totalBytes + raw.length > normalizedLimits.maxTotalBytes) fail(`Repository scan exceeds ${normalizedLimits.maxTotalBytes} total bytes.`, "REPOSITORY_SCAN_TOTAL_BYTES_LIMIT");
+      files.push({
+        path: relative,
+        digest: digest(raw),
+        bytes: raw.length,
+        classification: classifySourcePath(relative, extension),
+        language: languageForSource(extension, entry.name),
+      });
+      totalBytes += raw.length;
+    }
+  }
+  files.sort((left, right) => compareText(left.path, right.path));
+  const before = new Map(storedFiles.map((file) => [file.path, file]));
+  const after = new Map(files.map((file) => [file.path, file]));
+  const added = [...after.keys()].filter((file) => !before.has(file)).sort(compareText);
+  const removed = [...before.keys()].filter((file) => !after.has(file)).sort(compareText);
+  const changed = [...after.keys()].filter((file) => {
+    const previous = before.get(file);
+    const current = after.get(file);
+    return previous && ["digest", "bytes", "classification", "language"].some((field) => previous[field] !== current[field]);
+  }).sort(compareText);
+  return {
+    status: added.length || changed.length || removed.length ? "changed" : "unchanged",
+    sourceScope: input.sourceScope,
+    files,
+    changes: { added, changed, removed },
+  };
 }
 
 function resultFromWorldModelSnapshot(snapshot) {
@@ -263,9 +329,9 @@ export function repositoryScanResultFromWorldModel(snapshot) {
   return validateRepositoryScanResult(resultFromWorldModelSnapshot(snapshot));
 }
 
-export function validateRepositoryScanExecution(execution, { projectRoot, managedRootFiles = [] } = {}) {
+export function validateRepositoryScanExecution(execution, { projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope() } = {}) {
   if (!execution || typeof execution !== "object" || Array.isArray(execution)) fail("Repository scan execution is required.", "INVALID_REPOSITORY_SCAN_EXECUTION");
-  const expectedInput = buildRepositoryScanInput({ projectRoot, managedRootFiles });
+  const expectedInput = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope });
   validateComputeRequest(execution.request);
   validateComputeResponse(execution.request, execution.response);
   if (execution.request.operation !== REPOSITORY_SCAN_OPERATION
@@ -279,9 +345,9 @@ export function validateRepositoryScanExecution(execution, { projectRoot, manage
   return execution;
 }
 
-export async function executeIncrementalRepositoryScan({ projectRoot, managedRootFiles = [], previousSnapshot, limits = {} } = {}) {
+export async function executeIncrementalRepositoryScan({ projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope(), previousSnapshot, limits = {} } = {}) {
   const previousResult = repositoryScanResultFromWorldModel(previousSnapshot);
-  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles });
+  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope });
   const request = buildComputeRequest({
     operation: REPOSITORY_SCAN_OPERATION,
     input,
@@ -316,7 +382,7 @@ export async function executeIncrementalRepositoryScan({ projectRoot, managedRoo
       removedPaths: reuse.removedPaths,
       changes,
     },
-  }, { projectRoot, managedRootFiles });
+  }, { projectRoot, managedRootFiles, sourceScope });
 }
 
 function assertOrderedUnique(values, identity, label) {
@@ -336,13 +402,16 @@ function validateLineRecord(record, fields, label) {
 }
 
 export function validateRepositoryScanResult(result) {
-  assertFields(result, ["schemaVersion", "kind", "protocol", "sourceAnalysisVersion", "authority", "instructionAuthority", "promotionAuthority", "files", "skipped", "summary", "scanId", "scanHash"], "Repository scan result");
+  const currentProtocol = result?.protocol?.version === REPOSITORY_SCAN_VERSION;
+  const legacyProtocol = result?.protocol?.version === "0.2.0";
+  assertFields(result, ["schemaVersion", "kind", "protocol", "sourceAnalysisVersion", "authority", "instructionAuthority", "promotionAuthority", ...(currentProtocol ? ["sourceScope"] : []), "files", "skipped", "summary", "scanId", "scanHash"], "Repository scan result");
   if (result.schemaVersion !== 1 || result.kind !== "RepositoryScanResult"
-    || canonicalJson(result.protocol) !== canonicalJson({ name: "head-agent-core-repository-scan", version: REPOSITORY_SCAN_VERSION })
+    || result.protocol?.name !== "head-agent-core-repository-scan" || (!currentProtocol && !legacyProtocol)
     || result.sourceAnalysisVersion !== SOURCE_ANALYSIS_VERSION || result.authority !== "derived-evidence-only"
     || result.instructionAuthority !== false || result.promotionAuthority !== false || !Array.isArray(result.files)) {
     fail("Repository scan result contract is invalid.", "INVALID_REPOSITORY_SCAN_RESULT");
   }
+  if (currentProtocol) verifyRepositorySourceScope(result.sourceScope);
   assertOrderedUnique(result.files, (file) => file.path, "Repository scan files");
   for (const [index, file] of result.files.entries()) {
     const label = `files[${index}]`;
@@ -376,8 +445,9 @@ export function validateRepositoryScanResult(result) {
     }
     assertOrdered(file.semanticFacts.calls, (left, right) => left.line - right.line || compareText(left.callee, right.callee), `${label}.semanticFacts.calls`);
   }
-  assertFields(result.skipped, SKIPPED_FIELDS, "Repository scan skipped counts");
-  if (SKIPPED_FIELDS.some((field) => !Number.isInteger(result.skipped[field]) || result.skipped[field] < 0)) fail("Repository scan skipped counts are invalid.", "INVALID_REPOSITORY_SCAN_RESULT");
+  const skippedFields = currentProtocol ? SKIPPED_FIELDS : LEGACY_SKIPPED_FIELDS;
+  assertFields(result.skipped, skippedFields, "Repository scan skipped counts");
+  if (skippedFields.some((field) => !Number.isInteger(result.skipped[field]) || result.skipped[field] < 0)) fail("Repository scan skipped counts are invalid.", "INVALID_REPOSITORY_SCAN_RESULT");
   assertFields(result.summary, ["fileCount", "totalBytes", "symbolCount", "dependencyCount", "bindingCount", "callCount"], "Repository scan summary");
   const expectedSummary = {
     fileCount: result.files.length,
@@ -412,8 +482,8 @@ export function createRepositoryScanComputeAdapter({ pluginRoot = path.resolve(i
   });
 }
 
-export async function executeRepositoryScan({ adapter = createRepositoryScanComputeAdapter(), projectRoot, managedRootFiles = [], limits = {} } = {}) {
-  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles });
+export async function executeRepositoryScan({ adapter = createRepositoryScanComputeAdapter(), projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope(), limits = {} } = {}) {
+  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope });
   const execution = await executeComputeOperation({
     adapter,
     operation: REPOSITORY_SCAN_OPERATION,

@@ -24,7 +24,7 @@ import (
 const (
 	Operation             = "repository.scan.v1"
 	ProducerName          = "head-agent-core-repository-scan"
-	ProducerVersion       = "0.2.0"
+	ProducerVersion       = "0.3.0"
 	SourceAnalysisVersion = "0.2.0"
 	maximumSymbolsPerFile = 200
 )
@@ -121,6 +121,80 @@ type scanInput struct {
 	Kind             string
 	ProjectRoot      string
 	ManagedRootFiles []string
+	SourceScope      map[string]any
+	IncludeRoots     []string
+	ExcludeRoots     []string
+}
+
+func parseScopeRoots(scope map[string]any, field string) ([]string, *OperationError) {
+	values, ok := scope[field].([]any)
+	if !ok {
+		return nil, operationError("INVALID_REPOSITORY_SOURCE_SCOPE", field+" must be an array.")
+	}
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for index, value := range values {
+		root, ok := value.(string)
+		if !ok || !normalizedRelativePath(root) {
+			return nil, operationError("INVALID_REPOSITORY_SOURCE_SCOPE_PATH", fmt.Sprintf("%s[%d] is not a normalized project-relative path.", field, index))
+		}
+		if seen[root] {
+			return nil, operationError("INVALID_REPOSITORY_SOURCE_SCOPE", field+" contains duplicates.")
+		}
+		seen[root] = true
+		result = append(result, root)
+	}
+	for index := 1; index < len(result); index++ {
+		if canonicaljson.CompareText(result[index-1], result[index]) > 0 {
+			return nil, operationError("INVALID_REPOSITORY_SOURCE_SCOPE", field+" is not canonically ordered.")
+		}
+	}
+	return result, nil
+}
+
+func verifySourceScope(value json.RawMessage) (map[string]any, []string, []string, *OperationError) {
+	var scope map[string]any
+	if json.Unmarshal(value, &scope) != nil || scope == nil {
+		return nil, nil, nil, operationError("INVALID_REPOSITORY_SOURCE_SCOPE", "Repository source scope must be an object.")
+	}
+	allowed := map[string]bool{
+		"schemaVersion": true, "kind": true, "protocol": true, "includeRoots": true, "excludeRoots": true,
+		"authority": true, "instructionAuthority": true, "promotionAuthority": true, "sourceScopeId": true, "sourceScopeHash": true,
+	}
+	for key := range scope {
+		if !allowed[key] {
+			return nil, nil, nil, operationError("INVALID_REPOSITORY_SOURCE_SCOPE", "Repository source scope contains unsupported fields.")
+		}
+	}
+	protocol, protocolOK := scope["protocol"].(map[string]any)
+	if scope["schemaVersion"] != float64(1) || scope["kind"] != "RepositorySourceScope" ||
+		!protocolOK || protocol["name"] != "head-agent-core-repository-source-scope" || protocol["version"] != "0.1.0" ||
+		scope["authority"] != "user-selected-observation-boundary" || scope["instructionAuthority"] != false || scope["promotionAuthority"] != false {
+		return nil, nil, nil, operationError("INVALID_REPOSITORY_SOURCE_SCOPE", "Repository source scope contract is invalid.")
+	}
+	includeRoots, includeError := parseScopeRoots(scope, "includeRoots")
+	if includeError != nil {
+		return nil, nil, nil, includeError
+	}
+	excludeRoots, excludeError := parseScopeRoots(scope, "excludeRoots")
+	if excludeError != nil {
+		return nil, nil, nil, excludeError
+	}
+	payload := map[string]any{}
+	for key, item := range scope {
+		if key != "sourceScopeId" && key != "sourceScopeHash" {
+			payload[key] = item
+		}
+	}
+	canonical, canonicalError := canonicaljson.Marshal(payload)
+	if canonicalError != nil {
+		return nil, nil, nil, operationError("INVALID_REPOSITORY_SOURCE_SCOPE", "Repository source scope cannot be encoded.")
+	}
+	hash := digest(canonical)
+	if scope["sourceScopeHash"] != hash || scope["sourceScopeId"] != "repository-source-scope-"+hash[:24] {
+		return nil, nil, nil, operationError("REPOSITORY_SOURCE_SCOPE_DIGEST_MISMATCH", "Repository source scope digest verification failed.")
+	}
+	return scope, includeRoots, excludeRoots, nil
 }
 
 func parseInput(data []byte) (scanInput, *OperationError) {
@@ -128,7 +202,7 @@ func parseInput(data []byte) (scanInput, *OperationError) {
 	if err != nil {
 		return scanInput{}, operationError("INVALID_REPOSITORY_SCAN_SCHEMA", "Repository scan input must be an object.")
 	}
-	allowed := map[string]bool{"schemaVersion": true, "kind": true, "projectRoot": true, "managedRootFiles": true}
+	allowed := map[string]bool{"schemaVersion": true, "kind": true, "projectRoot": true, "managedRootFiles": true, "sourceScope": true}
 	unexpected := make([]string, 0)
 	for key := range raw {
 		if !allowed[key] {
@@ -166,6 +240,15 @@ func parseInput(data []byte) (scanInput, *OperationError) {
 	sort.Slice(input.ManagedRootFiles, func(left, right int) bool {
 		return canonicaljson.CompareText(input.ManagedRootFiles[left], input.ManagedRootFiles[right]) < 0
 	})
+	scopeValue, ok := raw["sourceScope"]
+	if !ok {
+		return scanInput{}, operationError("INVALID_REPOSITORY_SCAN_INPUT", "sourceScope is required.")
+	}
+	var scopeError *OperationError
+	input.SourceScope, input.IncludeRoots, input.ExcludeRoots, scopeError = verifySourceScope(scopeValue)
+	if scopeError != nil {
+		return scanInput{}, scopeError
+	}
 	absolute, absErr := filepath.Abs(input.ProjectRoot)
 	if absErr != nil {
 		return scanInput{}, operationError("INVALID_REPOSITORY_SCAN_INPUT", "projectRoot is required.")
@@ -175,6 +258,7 @@ func parseInput(data []byte) (scanInput, *OperationError) {
 		"kind":             "RepositoryScanInput",
 		"projectRoot":      filepath.Clean(absolute),
 		"managedRootFiles": input.ManagedRootFiles,
+		"sourceScope":      input.SourceScope,
 	}
 	canonicalRaw, rawErr := canonicaljson.Marshal(json.RawMessage(data))
 	canonicalRebuilt, rebuiltErr := canonicaljson.Marshal(rebuilt)
@@ -513,12 +597,34 @@ func decodeUTF8(raw []byte) string {
 
 func emptySkipped() map[string]any {
 	return map[string]any{
-		"excludedDirectory": 0,
-		"managedProjection": 0,
-		"unsupportedType":   0,
-		"tooLarge":          0,
-		"symlink":           0,
+		"excludedDirectory":  0,
+		"managedProjection":  0,
+		"unsupportedType":    0,
+		"tooLarge":           0,
+		"symlink":            0,
+		"outsideSourceScope": 0,
 	}
+}
+
+func withinRoot(relative string, root string) bool {
+	return relative == root || strings.HasPrefix(relative, root+"/")
+}
+
+func sourceScopeAllows(relative string, input scanInput, directory bool) bool {
+	for _, root := range input.ExcludeRoots {
+		if withinRoot(relative, root) {
+			return false
+		}
+	}
+	if len(input.IncludeRoots) == 0 {
+		return true
+	}
+	for _, root := range input.IncludeRoots {
+		if withinRoot(relative, root) || (directory && strings.HasPrefix(root, relative+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 func increment(skipped map[string]any, field string) {
@@ -570,6 +676,8 @@ func Scan(data []byte, limits Limits) (any, *OperationError) {
 			if info.IsDir() {
 				if excludedDirectories[strings.ToLower(entry.Name())] {
 					increment(skipped, "excludedDirectory")
+				} else if !sourceScopeAllows(relative, input, true) {
+					increment(skipped, "outsideSourceScope")
 				} else {
 					stack = append(stack, absolute)
 				}
@@ -577,6 +685,10 @@ func Scan(data []byte, limits Limits) (any, *OperationError) {
 			}
 			if !info.Mode().IsRegular() {
 				increment(skipped, "unsupportedType")
+				continue
+			}
+			if !sourceScopeAllows(relative, input, false) {
+				increment(skipped, "outsideSourceScope")
 				continue
 			}
 			if managed[relative] {
@@ -652,6 +764,7 @@ func Scan(data []byte, limits Limits) (any, *OperationError) {
 		"authority":             "derived-evidence-only",
 		"instructionAuthority":  false,
 		"promotionAuthority":    false,
+		"sourceScope":           input.SourceScope,
 		"files":                 files,
 		"skipped":               skipped,
 		"summary": map[string]any{
@@ -675,8 +788,23 @@ func Scan(data []byte, limits Limits) (any, *OperationError) {
 
 // FixtureInput constructs a canonical input for Go unit tests.
 func FixtureInput(root string, managed []string) []byte {
+	return FixtureInputWithScope(root, managed, []any{}, []any{})
+}
+
+// FixtureInputWithScope constructs a canonical scoped input for Go unit tests.
+func FixtureInputWithScope(root string, managed []string, includeRoots []any, excludeRoots []any) []byte {
+	scopePayload := map[string]any{
+		"schemaVersion": 1, "kind": "RepositorySourceScope",
+		"protocol":     map[string]any{"name": "head-agent-core-repository-source-scope", "version": "0.1.0"},
+		"includeRoots": includeRoots, "excludeRoots": excludeRoots,
+		"authority": "user-selected-observation-boundary", "instructionAuthority": false, "promotionAuthority": false,
+	}
+	canonicalScope, _ := canonicaljson.Marshal(scopePayload)
+	scopeHash := digest(canonicalScope)
+	scopePayload["sourceScopeId"] = "repository-source-scope-" + scopeHash[:24]
+	scopePayload["sourceScopeHash"] = scopeHash
 	value := map[string]any{
-		"schemaVersion": 1, "kind": "RepositoryScanInput", "projectRoot": filepath.Clean(root), "managedRootFiles": managed,
+		"schemaVersion": 1, "kind": "RepositoryScanInput", "projectRoot": filepath.Clean(root), "managedRootFiles": managed, "sourceScope": scopePayload,
 	}
 	encoded, _ := canonicaljson.Marshal(value)
 	return encoded

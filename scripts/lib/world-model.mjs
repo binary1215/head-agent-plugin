@@ -24,6 +24,7 @@ import {
   buildRepositoryScanInput,
   createRepositoryScanComputeAdapter,
   executeRepositoryScan,
+  inspectRepositoryScanFreshness,
   managedRootFilesForProject,
   REPOSITORY_SCAN_DEFAULTS,
   REPOSITORY_SCAN_EXCLUDED_DIRECTORIES,
@@ -32,6 +33,7 @@ import {
   validateRepositoryScanExecution,
   validateRepositoryScanResult,
 } from "./repository-scan.mjs";
+import { buildRepositorySourceScope, readRepositorySourceScope } from "./repository-source-scope.mjs";
 import {
   buildTemporalProvenanceGraph,
   TEMPORAL_PROVENANCE_VERSION,
@@ -63,7 +65,7 @@ import {
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
-export const WORLD_MODEL_VERSION = "0.10.0";
+export const WORLD_MODEL_VERSION = "0.10.1";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
@@ -363,9 +365,10 @@ function indexerState() {
   };
 }
 
-function sourceDigestFor(files, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
+function sourceDigestFor(files, sourceScope, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
   return digest(canonicalJson({
     files,
+    sourceScope: { sourceScopeId: sourceScope.sourceScopeId, sourceScopeHash: sourceScope.sourceScopeHash },
     productModel: { productModelId: productModel.productModelId, productModelHash: productModel.productModelHash },
     onboardingProjection: {
       projectionInputId: onboardingProjection.projectionInputId,
@@ -448,11 +451,24 @@ export function findWorldModelSnapshot({ root = ".", graphSnapshotId = "", sourc
 export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStateAdapter = null } = {}) {
   const stored = readWorldModel({ root, storeAdapter });
   const inspected = readyProject(root);
+  const sourceScopeState = readRepositorySourceScope({ projectRoot: inspected.project.projectRoot });
+  const sourceScope = sourceScopeState.sourceScope;
   const scanInput = buildRepositoryScanInput({
     projectRoot: inspected.project.projectRoot,
     managedRootFiles: managedRootFilesForProject(inspected.project),
+    sourceScope,
   });
-  const scan = scanRepositoryReference(scanInput);
+  const storedSourceScope = stored.snapshot.repositoryScan?.sourceScope || buildRepositorySourceScope();
+  const freshness = inspectRepositoryScanFreshness({
+    projectRoot: inspected.project.projectRoot,
+    managedRootFiles: managedRootFilesForProject(inspected.project),
+    sourceScope,
+    storedFiles: stored.snapshot.files,
+  });
+  const sourceScopeChanged = sourceScope.sourceScopeId !== storedSourceScope.sourceScopeId;
+  const scan = freshness.status === "unchanged" && !sourceScopeChanged
+    ? { files: stored.snapshot.files }
+    : scanRepositoryReference(scanInput);
   const productCanon = readProductModelCanon({ projectRoot: inspected.project.projectRoot });
   const onboardingProjection = loadOnboardingGraphProjection({
     projectRoot: inspected.project.projectRoot,
@@ -477,20 +493,9 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   const selectedRuntimeAdapter = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer.sourceAdapters?.runtimeState);
   const externalRuntimeResult = buildExternalRuntimeState({ projectRoot: inspected.project.projectRoot, adapter: selectedRuntimeAdapter });
   const externalRuntimeState = externalRuntimeResult.runtimeState;
-  const currentTemporalProvenanceGraph = buildTemporalProvenanceGraph({
-    projectId: inspected.project.projectId,
-    files: scan.files,
-    productModel: productCanon.model,
-    productEvidenceId: productCanon.evidenceId,
-    onboardingProjection,
-    featureMappingProjection,
-    changeSetProjection,
-    documentChangeProjection,
-    parentSourceSnapshotIds: stored.snapshot.temporalProvenanceGraph?.parentSourceSnapshotIds || [],
-    revisionParentIds: stored.snapshot.temporalProvenanceGraph?.revisionParentIds || {},
-  });
   const currentSourceDigest = sourceDigestFor(
     scan.files,
+    sourceScope,
     productCanon.model,
     onboardingProjection,
     featureMappingProjection,
@@ -517,22 +522,29 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   for (const item of scan.files) if (!storedByPath.has(item.path)) fileFreshness.push({ path: item.path, status: "unindexed" });
   fileFreshness.sort((left, right) => left.path.localeCompare(right.path));
   const fileChanges = changesBetween(stored.snapshot, current);
+  const productModelChanged = productCanon.model.productModelHash !== stored.snapshot.productModel?.productModelHash;
+  const onboardingProjectionChanged = onboardingProjection.projectionInputHash !== stored.snapshot.onboardingProjection?.projectionInputHash;
+  const featureMappingProjectionChanged = featureMappingProjection.projectionInputHash !== stored.snapshot.featureMappingProjection?.projectionInputHash;
+  const changeSetProjectionChanged = changeSetProjection.projectionInputHash !== stored.snapshot.changeSetProjection?.projectionInputHash;
+  const documentChangeProjectionChanged = documentChangeProjection.projectionInputHash !== stored.snapshot.documentChangeProjection?.projectionInputHash;
   return {
     ...stored,
     status: currentSourceDigest === stored.snapshot.sourceDigest ? "current" : "stale",
     currentSourceDigest,
     changes: {
       ...fileChanges,
+      sourceScopeChanged,
       gitChanged: canonicalJson(git) !== canonicalJson(stored.snapshot.git),
       gitHistoryChanged: git.referencesDigest !== stored.snapshot.git?.referencesDigest,
       runtimeStateChanged: canonicalJson(runtimeState) !== canonicalJson(stored.snapshot.runtimeState),
       externalRuntimeStateChanged: externalRuntimeState.runtimeStateHash !== stored.snapshot.externalRuntimeState?.runtimeStateHash,
-      productModelChanged: productCanon.model.productModelHash !== stored.snapshot.productModel?.productModelHash,
-      onboardingProjectionChanged: onboardingProjection.projectionInputHash !== stored.snapshot.onboardingProjection?.projectionInputHash,
-      featureMappingProjectionChanged: featureMappingProjection.projectionInputHash !== stored.snapshot.featureMappingProjection?.projectionInputHash,
-      changeSetProjectionChanged: changeSetProjection.projectionInputHash !== stored.snapshot.changeSetProjection?.projectionInputHash,
-      documentChangeProjectionChanged: documentChangeProjection.projectionInputHash !== stored.snapshot.documentChangeProjection?.projectionInputHash,
-      temporalProvenanceChanged: currentTemporalProvenanceGraph.graphSnapshotHash !== stored.snapshot.temporalProvenanceGraph?.graphSnapshotHash,
+      productModelChanged,
+      onboardingProjectionChanged,
+      featureMappingProjectionChanged,
+      changeSetProjectionChanged,
+      documentChangeProjectionChanged,
+      temporalProvenanceChanged: sourceScopeChanged || fileChanges.added.length > 0 || fileChanges.changed.length > 0 || fileChanges.removed.length > 0
+        || productModelChanged || onboardingProjectionChanged || featureMappingProjectionChanged || changeSetProjectionChanged || documentChangeProjectionChanged,
     },
     fileFreshness,
     sourceAdapters: { runtimeState: externalRuntimeResult.adapter },
@@ -562,12 +574,14 @@ async function buildWorldModelLocked({
   const inspected = readyProject(root);
   const project = inspected.project;
   const managedRootFiles = managedRootFilesForProject(project);
+  const sourceScope = readRepositorySourceScope({ projectRoot: project.projectRoot }).sourceScope;
   const selectedRepositoryScanExecution = repositoryScanExecution
-    ? validateRepositoryScanExecution(repositoryScanExecution, { projectRoot: project.projectRoot, managedRootFiles })
+    ? validateRepositoryScanExecution(repositoryScanExecution, { projectRoot: project.projectRoot, managedRootFiles, sourceScope })
     : await executeRepositoryScan({
       adapter: computeAdapter || createRepositoryScanComputeAdapter(),
       projectRoot: project.projectRoot,
       managedRootFiles,
+      sourceScope,
     });
   const scan = validateRepositoryScanResult(selectedRepositoryScanExecution.result);
   const productCanon = readProductModelCanon({ projectRoot: project.projectRoot });
@@ -609,6 +623,7 @@ async function buildWorldModelLocked({
   });
   const sourceDigest = sourceDigestFor(
     scan.files,
+    sourceScope,
     productCanon.model,
     onboardingProjection,
     featureMappingProjection,
@@ -644,6 +659,7 @@ async function buildWorldModelLocked({
       maxSymbolsPerFile: REPOSITORY_SCAN_DEFAULTS.maxSymbolsPerFile,
       excludedDirectories: REPOSITORY_SCAN_EXCLUDED_DIRECTORIES,
       managedRootProjectionsExcluded: managedRootFilesForProject(project),
+      sourceScope,
     },
     coverage: {
       files: "supported-text-files-within-rules",
@@ -716,6 +732,7 @@ async function buildWorldModelLocked({
       authority: scan.authority,
       instructionAuthority: false,
       promotionAuthority: false,
+      sourceScope: scan.sourceScope,
       summary: scan.summary,
     },
     files: scan.files,

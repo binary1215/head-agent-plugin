@@ -122,7 +122,7 @@ function verifyCandidate(candidate) {
   if (candidate.schemaVersion !== 1 || candidate.kind !== "OnboardingProductCandidate" || !PRODUCT_ENTITY_KINDS.includes(candidate.productKind)
     || candidate.authorityClass !== "candidate" || candidate.instructionAuthority !== false || candidate.promotionAuthority !== false
     || typeof candidate.confidence !== "number" || candidate.confidence < 0 || candidate.confidence > 1
-    || candidate.producer !== "head-agent-core-onboarding-inference" || candidate.producerVersion !== "0.1.0"
+    || candidate.producer !== "head-agent-core-onboarding-inference" || !new Set(["0.1.0", "0.2.0"]).has(candidate.producerVersion)
     || typeof candidate.explanation !== "string" || !candidate.explanation
     || !/^source-snapshot-[a-f0-9]{24}$/.test(candidate.sourceSnapshotId || "")) {
     fail("Onboarding product candidate fields or authority are invalid.", "INVALID_ONBOARDING_PROJECTION_CANDIDATE");

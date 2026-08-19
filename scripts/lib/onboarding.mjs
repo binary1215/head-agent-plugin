@@ -33,10 +33,11 @@ import {
   readProductModelCanon,
 } from "./product-model.mjs";
 import { buildWorldModel, inspectWorldModel, readWorldModel } from "./world-model.mjs";
+import { readRepositorySourceScope, writeRepositorySourceScope } from "./repository-source-scope.mjs";
 
 export const ONBOARDING_CANDIDATE_VERSION = "0.2.0";
 export const ONBOARDING_REVIEW_VERSION = "0.1.0";
-export const ONBOARDING_INFERENCE_VERSION = "0.1.0";
+export const ONBOARDING_INFERENCE_VERSION = "0.2.0";
 
 const MAX_INFERRED_SYMBOLS = 24;
 const MAX_CANDIDATES = 200;
@@ -420,6 +421,17 @@ function humanName(value) {
   return String(value).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function productSymbolScore({ file, symbol }) {
+  const words = humanName(symbol.name).toLowerCase();
+  let score = file.classification === "source" ? 20 : 4;
+  score += symbol.kind === "function" ? 14 : symbol.kind === "class" ? 8 : 2;
+  if (/\b(?:create|start|stop|open|close|connect|disconnect|read|write|send|receive|process|detect|pick|calibrate|align|capture|preview|serve|control|update|load|save|run|handle|publish|subscribe|transport|infer|verify|track|manage)\w*\b/u.test(words)) score += 16;
+  if (/\b(?:mock|fake|stub|broken|benchmark|spec|descriptor|observation|record|stats?|dict|list|array|batch|base|block|head|queue|reader|writer|fixture)\w*\b/u.test(words)) score -= 24;
+  if (file.classification === "test") score -= 8;
+  if (symbol.name.length < 4) score -= 4;
+  return score;
+}
+
 function inferRepositoryCandidates(worldModel) {
   const evidence = [];
   const candidates = [];
@@ -471,7 +483,11 @@ function inferRepositoryCandidates(worldModel) {
     ["source", "test"].includes(file.classification)
       ? file.symbols.filter((symbol) => symbol.kind !== "heading" && !symbol.name.startsWith("_")).map((symbol) => ({ file, symbol }))
       : []
-  )).sort((left, right) => compareText(left.symbol.name, right.symbol.name) || compareText(left.file.path, right.file.path) || left.symbol.line - right.symbol.line);
+  )).map((item) => ({ ...item, productScore: productSymbolScore(item) }))
+    .sort((left, right) => right.productScore - left.productScore
+      || compareText(left.symbol.name, right.symbol.name)
+      || compareText(left.file.path, right.file.path)
+      || left.symbol.line - right.symbol.line);
   const selectedSymbols = [];
   const seenNames = new Set();
   for (const item of symbols) {
@@ -481,7 +497,7 @@ function inferRepositoryCandidates(worldModel) {
     selectedSymbols.push(item);
     if (selectedSymbols.length >= MAX_INFERRED_SYMBOLS) break;
   }
-  for (const { file, symbol } of selectedSymbols) {
+  for (const { file, symbol, productScore } of selectedSymbols) {
     const testEvidence = file.classification === "test";
     const symbolEvidence = evidenceRecord({
       sourceKind: testEvidence ? "repository-test-symbol" : "repository-symbol",
@@ -498,8 +514,8 @@ function inferRepositoryCandidates(worldModel) {
       kind: "Capability",
       entity: { key: capabilityKey, name, description: `Candidate capability inferred from observed ${testEvidence ? "test " : ""}${symbol.kind} symbol ${symbol.name}.` },
       evidenceIds: [symbolEvidence.evidenceId],
-      explanation: "A named implementation symbol is evidence of behavior, not proof of approved product intent.",
-      confidence: testEvidence ? 0.45 : 0.55,
+      explanation: "A deterministically ranked public implementation symbol is evidence of behavior, not proof of approved product intent.",
+      confidence: testEvidence ? 0.45 : Math.min(0.7, 0.5 + Math.max(0, productScore) / 200),
       sourceSnapshotId,
       origin: testEvidence ? "repository-test-symbol-heuristic" : "repository-symbol-heuristic",
     }));
@@ -514,8 +530,8 @@ function inferRepositoryCandidates(worldModel) {
         governedBy: [],
       },
       evidenceIds: [symbolEvidence.evidenceId],
-      explanation: "Implementation structure can propose a Feature, but only onboarding review can adopt it as Product Canon.",
-      confidence: testEvidence ? 0.4 : 0.5,
+      explanation: "Deterministically ranked implementation behavior can propose a Feature, but only onboarding review can adopt it as Product Canon.",
+      confidence: testEvidence ? 0.4 : Math.min(0.65, 0.45 + Math.max(0, productScore) / 200),
       sourceSnapshotId,
       origin: testEvidence ? "repository-test-symbol-heuristic" : "repository-symbol-heuristic",
     }));
@@ -614,7 +630,7 @@ async function rebuildWithOnboardingProjection({
   });
 }
 
-export async function startOnboarding({ root = ".", mode = "existing", storage = null, brief = null } = {}) {
+export async function startOnboarding({ root = ".", mode = "existing", storage = null, brief = null, sourceScope = null } = {}) {
   const inspected = readyProject(root, "onboarding start");
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("Onboarding cannot change product authority while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
@@ -627,6 +643,9 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
   if (previousState.phase === "ready") fail("Onboarding is already ready.", "ONBOARDING_ALREADY_READY");
   const inputMode = requiredText(mode, "Onboarding mode").toLowerCase();
   if (!new Set(["existing", "new"]).has(inputMode)) fail("Onboarding mode must be existing or new.", "INVALID_ONBOARDING_MODE");
+  const selectedSourceScope = sourceScope == null
+    ? readRepositorySourceScope({ projectRoot })
+    : writeRepositorySourceScope({ projectRoot, selection: sourceScope });
   const normalizedStorage = buildStorageSelection({ projectId: inspected.project.projectId, selection: storage || { mode: "local" } });
   persistStorageSelection(projectRoot, normalizedStorage);
   const world = await buildWorldModel({ root: projectRoot, persist: true });
@@ -646,6 +665,7 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
       status: "ready_existing_product_canon",
       state,
       storageSelection: normalizedStorage,
+      sourceScope: selectedSourceScope.sourceScope,
       worldModel: { worldModelId: world.snapshot.worldModelId, sourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId },
       productModel: productCanon.model,
       disclosure: normalizedStorage.mode === "graphdb" ? "GraphDB adapter is pending; onboarding completed on the local conformance path." : "Local materialization is active.",
@@ -689,6 +709,7 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
     status: phase === "awaiting-review" ? "awaiting_onboarding_review" : "awaiting_onboarding_evidence",
     state,
     storageSelection: normalizedStorage,
+    sourceScope: selectedSourceScope.sourceScope,
     candidateSet,
     worldModel: {
       evidenceWorldModelId: world.snapshot.worldModelId,

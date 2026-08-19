@@ -7,6 +7,7 @@ import {
   executeIncrementalRepositoryScan,
   managedRootFilesForProject,
 } from "./repository-scan.mjs";
+import { readRepositorySourceScope } from "./repository-source-scope.mjs";
 import {
   buildWorldModel,
   deriveIncrementalRevisionParents,
@@ -532,6 +533,7 @@ async function refreshWorldModelLocked({
   const repositoryScanExecution = await executeIncrementalRepositoryScan({
     projectRoot,
     managedRootFiles: managedRootFilesForProject(inspected.project),
+    sourceScope: readRepositorySourceScope({ projectRoot }).sourceScope,
     previousSnapshot,
   });
   const observedPaths = combinedPaths(repositoryScanExecution.diagnostics.changes);

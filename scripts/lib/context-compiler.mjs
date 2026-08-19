@@ -5,7 +5,8 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.8.0";
+export const CONTEXT_COMPILER_VERSION = "0.9.0";
+const MAX_REPOSITORY_GRAPH_EXPANSIONS = 32;
 
 const fail = (message, code = "CONTEXT_COMPILER_ERROR") => {
   const error = new Error(message);
@@ -202,7 +203,7 @@ function queryTemporalProjection(worldModel, graphProjectionAdapter, query) {
   }).result;
 }
 
-function repositoryCandidates(worldModel, task, graphProjectionAdapter = null) {
+function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, budget = 4000) {
   if (!worldModel || worldModel.status !== "current") return [];
   const taskTerms = terms(task);
   const graph = worldModel.snapshot.semanticGraph || null;
@@ -217,23 +218,44 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null) {
     symbolKind: node.symbolKind,
     line: node.line,
   } : null;
-  return worldModel.snapshot.files.map((file) => {
-    const temporalTraversal = temporalGraph ? queryTemporalProjection(worldModel, graphProjectionAdapter, {
-      query: file.path,
-      relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "CHANGES"],
-      authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
-      freshness: ["current"],
-      minConfidence: 0,
-      includeUnreviewedCandidates: false,
-      depth: 2,
-      maxNodes: 50,
-      maxEdges: 100,
-    }) : null;
-    const relationships = (graph?.edges || []).filter((edge) => {
-      const from = nodes.get(edge.from);
-      const to = nodes.get(edge.to);
-      return edge.evidence?.path === file.path || from?.path === file.path || to?.path === file.path;
-    }).slice(0, 50).map((edge) => ({
+  const relationshipEdgesByPath = new Map();
+  for (const edge of graph?.edges || []) {
+    const paths = new Set([edge.evidence?.path, nodes.get(edge.from)?.path, nodes.get(edge.to)?.path].filter(Boolean));
+    for (const filePath of paths) {
+      if (!relationshipEdgesByPath.has(filePath)) relationshipEdgesByPath.set(filePath, []);
+      relationshipEdgesByPath.get(filePath).push(edge);
+    }
+  }
+  const ranked = worldModel.snapshot.files.map((file) => {
+    const lightweightBody = [
+      file.path,
+      file.classification,
+      file.language,
+      ...file.symbols.map((item) => `${item.kind} ${item.name}`),
+      ...file.dependencies.map((item) => `${item.kind} ${item.specifier}`),
+    ].join(" ");
+    const relevance = overlap(taskTerms, terms(lightweightBody));
+    const importance = file.classification === "source" ? 2 : 1;
+    return { file, relevance, importance, score: relevance * 25 + importance * 4 };
+  }).sort((left, right) => right.score - left.score || left.file.path.localeCompare(right.file.path));
+  const expansionLimit = Math.min(MAX_REPOSITORY_GRAPH_EXPANSIONS, Math.max(8, Math.ceil(Number(budget) / 4000) * 8));
+  const expandedPaths = new Set(ranked.filter((item) => item.relevance > 0).slice(0, expansionLimit).map((item) => item.file.path));
+  const temporalAnchorPath = ranked.find((item) => item.relevance > 0)?.file.path || "";
+  const sharedTemporalTraversal = temporalGraph && temporalAnchorPath ? queryTemporalProjection(worldModel, graphProjectionAdapter, {
+    query: temporalAnchorPath,
+    relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "CHANGES"],
+    authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
+    freshness: ["current"],
+    minConfidence: 0,
+    includeUnreviewedCandidates: false,
+    depth: 2,
+    maxNodes: 50,
+    maxEdges: 100,
+  }) : null;
+  return ranked.map(({ file, relevance: lightweightRelevance, importance, score: lightweightScore }) => {
+    const expanded = expandedPaths.has(file.path);
+    const temporalTraversal = file.path === temporalAnchorPath ? sharedTemporalTraversal : null;
+    const relationships = (expanded ? relationshipEdgesByPath.get(file.path) || [] : []).slice(0, 50).map((edge) => ({
       id: edge.id,
       type: edge.type,
       from: nodeReference(nodes.get(edge.from)),
@@ -253,9 +275,8 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null) {
       ...relationships.flatMap((item) => [item.type, item.from?.path, item.from?.name, item.to?.path, item.to?.name, item.to?.specifier]).filter(Boolean),
       ...(temporalTraversal?.nodes || []).flatMap((item) => [item.kind, item.path, item.name, item.symbolKind]).filter(Boolean),
     ].join(" ");
-    const relevance = overlap(taskTerms, terms(body));
-    const importance = file.classification === "source" ? 2 : 1;
-    const score = relevance * 25 + importance * 4;
+    const relevance = expanded ? overlap(taskTerms, terms(body)) : lightweightRelevance;
+    const score = expanded ? relevance * 25 + importance * 4 : lightweightScore;
     const record = {
       kind: "RepositoryFile",
       path: file.path,
@@ -282,6 +303,9 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null) {
         exclusion: temporalTraversal.exclusion,
         truncated: temporalTraversal.truncated,
       } : null,
+      graphExpansion: temporalTraversal
+        ? "bounded-temporal-anchor"
+        : expanded ? "bounded-semantic-adjacency" : "not-expanded-by-relevance-bound",
       worldModelId: worldModel.snapshot.worldModelId,
       trustBoundary: "evidence-not-instruction",
     };
@@ -518,7 +542,7 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
   const candidates = [
     ...activeCandidates(sources.knowledge, task, historyClass),
     ...productContextCandidates(sources.worldModel, task, graphProjectionAdapter),
-    ...repositoryCandidates(sources.worldModel, task, graphProjectionAdapter),
+    ...repositoryCandidates(sources.worldModel, task, graphProjectionAdapter, maxApproxTokens),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
   ].sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));

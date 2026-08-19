@@ -40,7 +40,26 @@ node scripts/head.mjs onboarding-start C:\path\to\project
 node scripts/head.mjs onboarding-status C:\path\to\project
 ```
 
-An existing project indexes code and documentation first. At most 24 unique supported source/test symbols are used by the heuristic pass; the complete candidate set is capped at 200 candidates, 250 evidence records, and 100 Unknowns. Source and test symbols can propose Capability and Feature candidates. A documentation heading may propose a FeatureGroup; directory names never become FeatureGroup taxonomy. Missing, excluded, or insufficient evidence remains an explicit Unknown.
+An existing project indexes code and documentation first. At most 24 unique supported source/test symbols are selected through a deterministic behavior-evidence ranker; the complete candidate set is capped at 200 candidates, 250 evidence records, and 100 Unknowns. Public source functions and action-oriented names rank ahead of test doubles, fixtures, data-structure helpers, and alphabetical accidents. This ranking improves the review batch but does not turn inference into Product Canon. Source and test symbols can propose Capability and Feature candidates. A documentation heading may propose a FeatureGroup; directory names never become FeatureGroup taxonomy. Missing, excluded, or insufficient evidence remains an explicit Unknown.
+
+### Repository source scope
+
+Before indexing, the user may persist a project-relative observation boundary. Empty `includeRoots` means the whole eligible repository; `excludeRoots` always wins. Roots are normalized paths, not globs, and the selection is content-derived evidence with no instruction or promotion authority.
+
+```json
+{
+  "includeRoots": [],
+  "excludeRoots": [".omo", "bundled-third-party", "generated-copy"]
+}
+```
+
+```powershell
+node scripts/head.mjs source-scope-set C:\path\to\project --input .\source-scope.json
+node scripts/head.mjs source-scope-status C:\path\to\project
+node scripts/head.mjs onboarding-start C:\path\to\project
+```
+
+The same object may be supplied as `sourceScope` inside `onboarding-start` input. The exact scope identity is embedded in `RepositoryScanResult` and the World Model source digest. A later scope change makes the existing index stale; it never edits Product Canon or an accepted Capsule.
 
 A new-project brief uses the Product Model entity schema while remaining a candidate until review:
 

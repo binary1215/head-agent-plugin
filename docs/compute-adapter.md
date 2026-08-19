@@ -6,7 +6,7 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this plane.
 
 `ComputeAdapter` separates deterministic heavy computation from the JavaScript control plane without transferring product authority, runtime authority, or semantic identity to an implementation language. Contract version `0.3.0` and WorkerProtocol version `0.2.0` are active.
 
-`JsReferenceComputeAdapter` runs deterministic reference operations in-process and remains the semantic oracle and local fallback. `GoWorkerComputeAdapter` provides a verified native stdio transport. The Go source now implements `repository.scan.v1` and matches the JavaScript complete response across six success/failure fixtures, but packaged release manifests still advertise `worker.health.v1` only. Comparative measurements show regressions for small and medium inputs and only marginal improvement for a large input, so production World Model scanning remains JavaScript rather than claiming unproven acceleration. No user project receives native source or binaries.
+`JsReferenceComputeAdapter` runs deterministic reference operations in-process and remains the semantic oracle and local fallback. `GoWorkerComputeAdapter` provides a verified native stdio transport. The Go source now implements `repository.scan.v1` and matches the JavaScript complete response across seven success/failure fixtures, including explicit source-scope filtering, but packaged release manifests still advertise `worker.health.v1` only. Comparative measurements show regressions for small and medium inputs and only marginal improvement for a large input, so production World Model scanning remains JavaScript rather than claiming unproven acceleration. No user project receives native source or binaries.
 
 ## Authority boundary
 
@@ -67,7 +67,7 @@ Conformance proves equivalence only for the supplied fixtures. An operation cann
 
 `worker.health.v1` is the first native conformance operation. Both backends return the same canonical authority-free readiness result. A test-only `worker.lifecycle.v1` fixture waits until the adapter timeout and proves cancellation plus PID exit; production manifests do not advertise that lifecycle operation.
 
-The Go `repository.scan.v1` candidate covers the same bounded file traversal, exclusions, raw-byte hashes, UTF-8 replacement behavior, classification, language mapping, symbol cap, dependency extraction, import bindings, call extraction, skipped counts, summaries, and content-derived identity as the JavaScript reference. Canonical JSON uses JavaScript-compatible UTF-16 key ordering and escaping. The tracked corpus covers JavaScript, Python, Markdown/Unicode, configuration, Dockerfile, test classification, excluded directories, unsupported files, managed projections, invalid roots, and resource-limit failures.
+The Go `repository.scan.v1` candidate covers the same bounded file traversal, built-in exclusions, normalized user-selected include/exclude roots, raw-byte hashes, UTF-8 replacement behavior, classification, language mapping, symbol cap, dependency extraction, import bindings, call extraction, skipped counts, summaries, and content-derived identity as the JavaScript reference. Canonical JSON uses JavaScript-compatible UTF-16 key ordering and escaping. The tracked corpus covers JavaScript, Python, Markdown/Unicode, configuration, Dockerfile, test classification, excluded directories, explicit source scope, unsupported files, managed projections, invalid roots, and resource-limit failures.
 
 ## Distribution and selection
 
@@ -83,7 +83,7 @@ Malformed or digest-invalid native responses, stdout limit violations, timeouts,
 
 ## Repository scan v1
 
-`repository.scan.v1` accepts an absolute project root only as an operational input. Its validated semantic result contains normalized relative paths, content digests, sizes, classifications, languages, symbols, dependencies, import bindings, calls, skip counts, and a content-derived `scanId`. It contains no absolute root, backend name, PID, timing, GraphDB identifier, Git requirement, source text, instruction authority, or promotion authority.
+`repository.scan.v1` accepts an absolute project root only as an operational input. Its validated semantic result contains the content-derived `RepositorySourceScope`, normalized relative paths, content digests, sizes, classifications, languages, symbols, dependencies, import bindings, calls, skip counts, and a content-derived `scanId`. The scope has user-selected observation-boundary authority only and explicitly has no instruction or promotion authority. The result contains no absolute root, backend name, PID, timing, GraphDB identifier, Git requirement, source text, instruction authority, or promotion authority.
 
 The World Model consumes only a successfully validated complete result. JavaScript and future native implementations must use the same source-analysis producer version and canonical ordering. Backend name, execution mode, request ID, result digest, and elapsed time remain pointer or caller diagnostics outside the World Model snapshot identity.
 

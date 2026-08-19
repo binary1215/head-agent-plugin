@@ -19,7 +19,7 @@ func TestTrackedCorpusMatchesReviewedIdentity(t *testing.T) {
 		t.Fatal(operationFailure)
 	}
 	document := result.(map[string]any)
-	if document["scanId"] != "repository-scan-1d4ac0c3da5c82dc795bf638" {
+	if document["scanId"] != "repository-scan-395c9ccab8f6a2f424e47e8a" {
 		t.Fatalf("unexpected scan identity: %v", document["scanId"])
 	}
 	summary := document["summary"].(map[string]any)
@@ -29,5 +29,28 @@ func TestTrackedCorpusMatchesReviewedIdentity(t *testing.T) {
 	skipped := document["skipped"].(map[string]any)
 	if skipped["excludedDirectory"] != 1 || skipped["unsupportedType"] != 1 {
 		t.Fatalf("unexpected skipped counts: %#v", skipped)
+	}
+}
+
+func TestTrackedCorpusHonorsExplicitSourceScope(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve repository scan test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "..", "benchmarks", "repository-scan-v1", "basic"))
+	result, operationFailure := Scan(FixtureInputWithScope(root, []string{}, []any{"src"}, []any{"src/tool.py"}), Limits{
+		MaxFiles: 20000, MaxFileBytes: 512 * 1024, MaxTotalBytes: 256 * 1024 * 1024,
+	})
+	if operationFailure != nil {
+		t.Fatal(operationFailure)
+	}
+	document := result.(map[string]any)
+	summary := document["summary"].(map[string]any)
+	if summary["fileCount"] != 2 {
+		t.Fatalf("unexpected scoped summary: %#v", summary)
+	}
+	skipped := document["skipped"].(map[string]any)
+	if skipped["outsideSourceScope"].(int) < 1 {
+		t.Fatalf("source-scope exclusions were not recorded: %#v", skipped)
 	}
 }

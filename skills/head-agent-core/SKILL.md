@@ -45,7 +45,7 @@ Read `../../docs/onboarding.md`, `../../docs/product-model.md`, `../../docs/worl
 
 ## Project onboarding
 
-Initialization creates a project-scoped HEAD Session record and an explicit onboarding pointer. Run `onboarding-start` to index an existing project or pass a structured new-project brief. Inspect the resulting immutable candidate batch with `onboarding-status`; candidates are evidence only and must never be treated as Product Canon or execution instructions. Candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts are projected into the temporal graph for audit. Candidate-space traversal remains explicit opt-in and never changes authority.
+Initialization creates a project-scoped HEAD Session record and an explicit onboarding pointer. Before indexing a mixed or copied repository, use `source-scope-set` or the onboarding input `sourceScope` field to record user-selected project-relative include/exclude roots. Treat that scope as an observation boundary only: it participates in scan identity and can make an old index stale, but it cannot define FeatureGroup taxonomy, promote candidates, or change Product Canon. Run `onboarding-start` to index an existing project or pass a structured new-project brief. Inspect the resulting immutable candidate batch with `onboarding-status`; deterministic behavior ranking improves review order but candidates remain evidence only and must never be treated as Product Canon or execution instructions. Candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts are projected into the temporal graph for audit. Candidate-space traversal remains explicit opt-in and never changes authority.
 
 Only run `onboarding-review` from explicit user review input naming the current candidate-set ID. `accept-all` and dependency-complete `accept-selection` may create Product Canon; `revise` creates a successor candidate set and `reject` leaves canon unchanged. Stop on stale source, Product Canon drift, digest failure, missing references, or conflicts. A GraphDB selection is pending operational configuration only: persist endpoint, database, and environment-style secret-reference names, never credentials, and continue through the complete local path until explicit `world-graph-remote-activate` conformance succeeds. After activation, availability-only failure may use the verified local mirror with disclosure; authentication, stale, tampered, conflicting, partial, or semantically divergent remote state must fail closed.
 
@@ -80,6 +80,8 @@ Resolve this skill directory, then run the sibling plugin entry at `../../script
 ```text
 node <plugin-root>/scripts/head.mjs init <project> --runtime codex,opencode
 node <plugin-root>/scripts/head.mjs status <project>
+node <plugin-root>/scripts/head.mjs source-scope-set <project> --input <source-scope.json>
+node <plugin-root>/scripts/head.mjs source-scope-status <project>
 node <plugin-root>/scripts/head.mjs onboarding-start <project> [--input <onboarding.json>]
 node <plugin-root>/scripts/head.mjs onboarding-status <project>
 node <plugin-root>/scripts/head.mjs onboarding-review <project> --input <review.json>
