@@ -30,6 +30,10 @@ import {
   verifyRuntimeExecutionLeaseConsumption,
   verifyRuntimeExecutionLeaseRelease,
 } from "./lib/runtime-execution-lease.mjs";
+import {
+  executeCodexRuntimeInvocation,
+  readCodexRuntimeInvocationResult,
+} from "./lib/runtime-codex-exec.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureNonce = `${process.pid}-${Date.now()}`;
@@ -84,6 +88,33 @@ function evidenceFixtureOutput(command, args) {
 function evidenceFixtureSpawn(command, args, options) {
   const output = evidenceFixtureOutput(command, args);
   return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", output], options);
+}
+
+const CODEX_EXEC_PROTOCOL_FIXTURE = String.raw`
+let input = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => { input = Buffer.concat([input, chunk]); });
+process.stdin.on('end', () => {
+  const result = {
+    schemaVersion: 1,
+    kind: 'RuntimeStructuredResult',
+    protocolVersion: '0.1.0',
+    outcome: 'Codex protocol fixture completed.',
+    evidence: ['Authorized input reached the exact fixture child.'],
+    planDelta: '',
+    impactRadius: [],
+    verification: ['Structured result schema accepted.'],
+    unknowns: [],
+  };
+  const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
+  write({ type: 'thread.started', thread_id: 'codex-protocol-fixture-thread' });
+  write({ type: 'turn.started' });
+  write({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(result) } });
+  write({ type: 'turn.completed', usage: { input_tokens: input.length, output_tokens: 1 } });
+});
+`;
+
+function codexExecProtocolFixtureSpawn(_command, _args, options) {
+  return spawn(process.execPath, ["-e", CODEX_EXEC_PROTOCOL_FIXTURE], options);
 }
 
 async function main() {
@@ -148,6 +179,7 @@ async function main() {
       versionEvidence,
       spawnImplementation: evidenceFixtureSpawn,
     });
+    assert(protocolEvidence.summary.allRequestedProtocolsObserved, `Protocol evidence fixture was partial: ${JSON.stringify(protocolEvidence.observations.map((item) => ({ runtime: item.runtime, negotiated: item.protocolNegotiationObserved, probes: item.probeOutcomes.map((probe) => ({ name: probe.name, status: probe.status, exitCode: probe.exitCode, stdoutBytes: probe.stdoutBytes, stderrBytes: probe.stderrBytes })), capabilities: item.capabilities })))}.`);
     const projectBinding = buildRuntimeProjectBinding({
       projectId: initialized.project.projectId,
       headSessionId: initializedProject.state.sessionId,
@@ -214,6 +246,55 @@ async function main() {
         requestDriftRejected,
       });
     }
+    const codexProtocolRequest = "Return one bounded structured Session result through the Codex exec JSONL protocol fixture.";
+    const codexProtocolAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      scope: { kind: "session", request: codexProtocolRequest },
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000 },
+      persist: true,
+    }).authorization;
+    const codexObservation = protocolEvidence.observations.find((item) => item.runtime === "codex");
+    const codexProtocolExecution = await executeCodexRuntimeInvocation({
+      root: resolvedRoot,
+      authorization: codexProtocolAuthorization,
+      sessionRequest: codexProtocolRequest,
+      protocolEvidence,
+      projectBinding,
+      spawnImplementation: codexExecProtocolFixtureSpawn,
+      targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+      evidenceMode: "protocol-fixture",
+      onProcessEvent: recordProcess,
+      persist: true,
+    });
+    assert(codexProtocolExecution.receipt.status === "completed", "Codex exec protocol fixture did not complete.");
+    assert(codexProtocolExecution.actualProviderInvoked === false, "Codex protocol fixture was represented as an actual provider invocation.");
+    assert(codexProtocolExecution.receipt.providerBoundary.structuredResultObserved === true, "Codex structured result was not observed.");
+    assert(codexProtocolExecution.draft.providerResult?.outcome === "Codex protocol fixture completed.", "Codex structured result was not carried into the draft.");
+    assert(codexProtocolExecution.draft.freshHeadReviewRequired === false, "Codex Session protocol fixture incorrectly required Fresh HEAD review.");
+    const recordedCodexProtocolExecution = readCodexRuntimeInvocationResult({
+      root: resolvedRoot,
+      authorizationId: codexProtocolAuthorization.authorizationId,
+    });
+    assert(recordedCodexProtocolExecution.draft.draftHash === codexProtocolExecution.draft.draftHash, "Codex invocation record did not round-trip.");
+    assert(!JSON.stringify(recordedCodexProtocolExecution).includes(codexProtocolRequest), "Codex invocation record persisted the raw Session request.");
+    const cliCodexProtocolResult = await runCommand([
+      "runtime-invocation-result", resolvedRoot, "--authorization", codexProtocolAuthorization.authorizationId,
+    ]);
+    assert(cliCodexProtocolResult.draft.draftHash === codexProtocolExecution.draft.draftHash, "Codex invocation CLI read failed.");
+    const mcpCodexProtocolResult = await dispatch({
+      jsonrpc: "2.0",
+      id: "codex-protocol-result",
+      method: "tools/call",
+      params: {
+        name: "head_runtime_invocation_result",
+        arguments: { project_root: resolvedRoot, authorization_id: codexProtocolAuthorization.authorizationId },
+      },
+    });
+    assert(mcpCodexProtocolResult.result?.structuredContent?.draft?.draftHash === codexProtocolExecution.draft.draftHash, "Codex invocation MCP read failed.");
     const sessionWritePreview = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
       runtime: "codex",
@@ -468,6 +549,8 @@ async function main() {
       workspaceWriteRejected: true,
       sessionWorkspaceWriteAuthorized: true,
       sessionFreshHeadReviewRequired: false,
+      codexExecProtocolFixtureValidated: true,
+      codexStructuredResultRecorded: true,
       operationalStateExternalized: true,
       legacyProjectLockRejected,
       rawTranscriptPersisted: false,

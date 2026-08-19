@@ -22,6 +22,7 @@ import {
   inspectRuntimeInvocationExecutionLease,
   readRuntimeInvocationAuthorization,
 } from "./lib/runtime-invocation-lifecycle.mjs";
+import { executeCodexRuntimeInvocation, readCodexRuntimeInvocationResult } from "./lib/runtime-codex-exec.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -49,6 +50,8 @@ export function usage() {
       "head runtime-invocation-authorize <project> --input <authorization.json>",
       "head runtime-invocation-read <project> --authorization <execution-authorization-id>",
       "head runtime-invocation-lease-status <project> --authorization <execution-authorization-id>",
+      "head runtime-invocation-execute <project> --authorization <execution-authorization-id> [--input <execution.json>]",
+      "head runtime-invocation-result <project> --authorization <execution-authorization-id>",
       "head onboarding-start <project> [--input <onboarding.json>]",
       "head onboarding-status <project>",
       "head onboarding-review <project> --input <review.json>",
@@ -149,6 +152,21 @@ export function runCommand(argv = process.argv.slice(2)) {
   }
   if (command === "runtime-invocation-read") return readRuntimeInvocationAuthorization({ root, authorizationId: options.authorization });
   if (command === "runtime-invocation-lease-status") return inspectRuntimeInvocationExecutionLease({ root, authorizationId: options.authorization });
+  if (command === "runtime-invocation-execute") {
+    const authorization = readRuntimeInvocationAuthorization({ root, authorizationId: options.authorization }).authorization;
+    const input = optionalInputJson(options, "Runtime invocation execution");
+    const unexpected = Object.keys(input).filter((key) => key !== "sessionRequest");
+    if (unexpected.length) throw new Error(`Runtime invocation execution contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    return inspectRuntimeAdapters(root).then((runtimeStatus) => executeCodexRuntimeInvocation({
+      root,
+      authorization,
+      sessionRequest: input.sessionRequest || "",
+      protocolEvidence: runtimeStatus.protocolEvidence,
+      projectBinding: runtimeStatus.projectBinding,
+      persist: true,
+    }));
+  }
+  if (command === "runtime-invocation-result") return readCodexRuntimeInvocationResult({ root, authorizationId: options.authorization });
   if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
   if (command === "onboarding-status") return inspectOnboarding({ root });
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });

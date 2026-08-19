@@ -19,8 +19,9 @@ import {
 export const EXECUTION_AUTHORIZATION_VERSION = "0.2.0";
 export const RUNTIME_INVOCATION_AUTHORIZATION_VERSION = EXECUTION_AUTHORIZATION_VERSION;
 export const RUNTIME_EVENT_ENVELOPE_VERSION = "0.1.0";
-export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.3.0";
-export const RUNTIME_RESULT_DRAFT_VERSION = "0.3.0";
+export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.4.0";
+export const RUNTIME_RESULT_DRAFT_VERSION = "0.4.0";
+export const RUNTIME_STRUCTURED_RESULT_VERSION = "0.1.0";
 
 const RUNTIMES = Object.freeze(["codex", "opencode"]);
 const WORKSPACE_MODES = Object.freeze(["read-only", "workspace-write"]);
@@ -123,6 +124,46 @@ function normalizeLimits(value = {}) {
     fail("maxEventBytes cannot exceed maxStdoutBytes.", "INVALID_RUNTIME_INVOCATION_LIMITS");
   }
   return limits;
+}
+
+function boundedResultText(value, label, { empty = false, maximum = 16_384 } = {}) {
+  if (typeof value !== "string" || (!empty && !value.trim()) || Buffer.byteLength(value) > maximum) {
+    fail(`${label} is invalid or exceeds ${maximum} bytes.`, "INVALID_RUNTIME_STRUCTURED_RESULT");
+  }
+  return value;
+}
+
+function boundedResultList(value, label, { maximumItems = 64, maximumItemBytes = 8_192 } = {}) {
+  if (!Array.isArray(value) || value.length > maximumItems
+    || value.some((item) => typeof item !== "string" || !item.trim() || Buffer.byteLength(item) > maximumItemBytes)) {
+    fail(`${label} is invalid or exceeds its bound.`, "INVALID_RUNTIME_STRUCTURED_RESULT");
+  }
+  return [...value];
+}
+
+export function verifyRuntimeStructuredResult(document, { scopeKind = null } = {}) {
+  assertFields(document, [
+    "schemaVersion", "kind", "protocolVersion", "outcome", "evidence", "planDelta", "impactRadius", "verification", "unknowns",
+  ], "Runtime structured result", "INVALID_RUNTIME_STRUCTURED_RESULT");
+  const result = {
+    schemaVersion: document.schemaVersion,
+    kind: document.kind,
+    protocolVersion: document.protocolVersion,
+    outcome: boundedResultText(document.outcome, "Runtime structured result outcome"),
+    evidence: boundedResultList(document.evidence, "Runtime structured result evidence"),
+    planDelta: boundedResultText(document.planDelta, "Runtime structured result planDelta", { empty: true }),
+    impactRadius: boundedResultList(document.impactRadius, "Runtime structured result impactRadius"),
+    verification: boundedResultList(document.verification, "Runtime structured result verification"),
+    unknowns: boundedResultList(document.unknowns, "Runtime structured result unknowns"),
+  };
+  if (result.schemaVersion !== 1 || result.kind !== "RuntimeStructuredResult"
+    || result.protocolVersion !== RUNTIME_STRUCTURED_RESULT_VERSION
+    || ![null, ...EXECUTION_SCOPE_KINDS].includes(scopeKind)
+    || scopeKind === "session" && (result.planDelta !== "" || result.impactRadius.length !== 0)
+    || Buffer.byteLength(canonicalJson(result)) > 128 * 1024) {
+    fail("Runtime structured result violates its scope or total-byte boundary.", "INVALID_RUNTIME_STRUCTURED_RESULT");
+  }
+  return result;
 }
 
 function realRoot(root) {
@@ -302,14 +343,17 @@ export function buildRuntimeInvocationAuthorization({
   const runtimeObservation = verifiedProtocol.observations.find((item) => item.runtime === selectedRuntime);
   const runtimeBinding = verifiedBinding.bindings.find((item) => item.runtime === selectedRuntime);
   const rootDigest = digest(realRoot(projectRoot));
-  if (verifiedBinding.projectId !== inspected.project.projectId
-    || verifiedBinding.headSessionId !== inspected.state.sessionId
-    || verifiedBinding.projectRootDigest !== rootDigest
-    || verifiedBinding.protocolEvidenceId !== verifiedProtocol.evidenceId
-    || verifiedBinding.status !== "verified-head-project-session-capability-binding"
-    || runtimeBinding?.capabilityStatus !== "observed"
-    || !runtimeObservation?.protocolNegotiationObserved) {
-    fail("Runtime capability evidence is not an exact verified binding for this project, Session, and runtime.", "RUNTIME_INVOCATION_CAPABILITY_BINDING_INVALID");
+  const bindingMismatches = [
+    verifiedBinding.projectId !== inspected.project.projectId ? "project" : null,
+    verifiedBinding.headSessionId !== inspected.state.sessionId ? "session" : null,
+    verifiedBinding.projectRootDigest !== rootDigest ? "root" : null,
+    verifiedBinding.protocolEvidenceId !== verifiedProtocol.evidenceId ? "protocol" : null,
+    verifiedBinding.status !== "verified-head-project-session-capability-binding" ? "status" : null,
+    runtimeBinding?.capabilityStatus !== "observed" ? "runtime-binding" : null,
+    !runtimeObservation?.protocolNegotiationObserved ? "runtime-observation" : null,
+  ].filter(Boolean);
+  if (bindingMismatches.length > 0) {
+    fail(`Runtime capability evidence is not an exact verified binding for this project, Session, and runtime (${bindingMismatches.join(", ")}).`, "RUNTIME_INVOCATION_CAPABILITY_BINDING_INVALID");
   }
   const normalizedLimits = normalizeLimits(limits);
   const inputBytes = Buffer.byteLength(canonicalJson(input));
@@ -469,6 +513,16 @@ export function inspectRuntimeInvocationExecutionLease({ root = ".", authorizati
   const inspected = inspectProject(root);
   if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
   const authorization = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId }).authorization;
+  const recordedReceiptFile = path.join(
+    inspected.project.projectRoot,
+    ".head", "runtime", "invocations", authorization.authorizationId, "receipt.json",
+  );
+  const recordedReceipt = fs.existsSync(recordedReceiptFile)
+    ? verifyRuntimeInvocationLifecycleReceipt(readJson(recordedReceiptFile, "Runtime invocation lifecycle receipt"))
+    : null;
+  if (recordedReceipt && recordedReceipt.authorizationId !== authorization.authorizationId) {
+    fail("Recorded runtime invocation receipt belongs to another authorization.", "RUNTIME_INVOCATION_RECORD_CONFLICT");
+  }
   return {
     status: "verified",
     authorizationId: authorization.authorizationId,
@@ -481,9 +535,49 @@ export function inspectRuntimeInvocationExecutionLease({ root = ".", authorizati
       projectId: inspected.project.projectId,
       authorizationId: authorization.authorizationId,
     }),
-    providerInvoked: false,
+    providerInvoked: recordedReceipt?.providerBoundary.actualProviderInvoked || false,
+    providerMode: recordedReceipt?.providerBoundary.mode || null,
+    boundedOneShotInvocationEnabled: recordedReceipt?.providerBoundary.boundedOneShotInvocationEnabled || false,
     providerControlEnabled: false,
   };
+}
+
+export function prepareRuntimeInvocationExecution({ root = ".", authorization, sessionRequest = "" } = {}) {
+  const verified = verifyRuntimeInvocationAuthorization(authorization);
+  const inspected = inspectProject(root);
+  if (inspected.status !== "ready" || inspected.project.projectId !== verified.projectId || inspected.state.sessionId !== verified.headSessionId) {
+    fail("Runtime execution requires the authorization's exact project and HEAD Session.", "RUNTIME_INVOCATION_FENCE_MISMATCH");
+  }
+  if (verified.scope.kind === "run" && (inspected.state.activeRunId !== verified.scope.runId
+    || inspected.state.activeExecutionContractId !== verified.scope.executionContractId)) {
+    fail("Run execution requires the authorization's exact active Run and ExecutionContract.", "RUNTIME_INVOCATION_FENCE_MISMATCH");
+  }
+  if (verified.scope.kind === "session" && (inspected.state.mode !== "session" || inspected.state.activeRunId
+    || inspected.state.activeExecutionContractId || inspected.state.pendingReview)) {
+    fail("Session execution requires the authorization's idle HEAD Session.", "RUNTIME_INVOCATION_FENCE_MISMATCH");
+  }
+  const projectRoot = inspected.project.projectRoot;
+  if (digest(realRoot(projectRoot)) !== verified.projectRootDigest) fail("Runtime invocation project root changed after authorization.", "RUNTIME_INVOCATION_PROJECT_DRIFT");
+  let executionInput;
+  if (verified.scope.kind === "run") {
+    const contract = lineage(projectRoot, verified.scope.executionContractId, "ExecutionContract");
+    const plan = lineage(projectRoot, verified.scope.wholePlanId, "WholePlanSnapshot");
+    const capsule = readContextCapsule({ root: projectRoot, capsuleId: verified.scope.contextCapsuleId }).capsule;
+    executionInput = runInvocationInput({ plan, contract, capsule });
+  } else {
+    const request = requiredText(sessionRequest, "Session execution request", "RUNTIME_INVOCATION_INPUT_DRIFT");
+    if (digest(request) !== verified.scope.userRequestDigest || Buffer.byteLength(request) !== verified.scope.userRequestBytes) {
+      fail("Session execution request changed after authorization.", "RUNTIME_INVOCATION_INPUT_DRIFT");
+    }
+    const capsule = verified.scope.contextCapsuleId === null
+      ? null : readContextCapsule({ root: projectRoot, capsuleId: verified.scope.contextCapsuleId }).capsule;
+    executionInput = sessionInvocationInput({ request, capsule, requiredActions: verified.requiredAllowedActions });
+  }
+  const input = Buffer.from(canonicalJson(executionInput), "utf8");
+  if (input.length !== verified.executionInput.bytes || digest(input) !== verified.executionInput.digest) {
+    fail("Runtime execution input changed after authorization.", "RUNTIME_INVOCATION_INPUT_DRIFT");
+  }
+  return { authorization: verified, inspected, projectRoot, executionInput, input };
 }
 
 function eventType(record) {
@@ -583,11 +677,16 @@ export function verifyRuntimeEventEnvelope(document) {
 
 function lifecycleSummary({ authorization, events, status, exitCode, signal, stdoutBytes, stderrBytes, stdoutDigest, stderrDigest,
   callerFenceDigest, childFenceDigest, childStarted, childExitObserved, terminationRequested, projectFenceValidated,
-  inputDigestObserved, noDescendantFixture, consumption }) {
+  inputDigestObserved, noDescendantFixture, descendantTreeOwnershipValidated = false, consumption,
+  providerMode = "conformance-fixture", providerSessionCreated = false, structuredResult = null }) {
   const eventIds = events.map((item) => item.eventId);
   const eventTypes = [...new Set(events.map((item) => item.eventType))].sort(compareText);
   const unknownEventTypes = [...new Set(events.filter((item) => item.eventClass === "unknown").map((item) => item.eventType))].sort(compareText);
   const providerSessionReferenceDigests = [...new Set(events.flatMap((item) => item.providerSessionReferenceDigests))].sort(compareText);
+  const fixtureMode = providerMode === "conformance-fixture" || providerMode === "codex-protocol-fixture";
+  const actualProvider = providerMode === "actual-codex";
+  if (!fixtureMode && !actualProvider) fail("Runtime provider mode is invalid.", "INVALID_RUNTIME_PROVIDER_MODE");
+  const verifiedResult = structuredResult === null ? null : verifyRuntimeStructuredResult(structuredResult, { scopeKind: authorization.scope.kind });
   return {
     schemaVersion: 1,
     kind: "RuntimeInvocationLifecycleReceipt",
@@ -625,14 +724,19 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
       rawOutputPersisted: false,
       childPidPersisted: false,
       noDescendantFixture,
-      descendantTreeOwnershipValidated: noDescendantFixture && childStarted && childExitObserved,
+      descendantTreeOwnershipValidated,
     },
     providerBoundary: {
-      conformanceFixtureOnly: true,
-      actualProviderInvoked: false,
-      actualProviderSessionCreated: false,
-      providerControlEnabled: false,
-      lifecycleConformanceEvidenceOnly: true,
+      mode: providerMode,
+      conformanceFixtureOnly: fixtureMode,
+      actualProviderInvoked: actualProvider,
+      actualProviderSessionCreated: providerSessionCreated,
+      boundedOneShotInvocationEnabled: actualProvider,
+      generalProviderControlEnabled: false,
+      lifecycleConformanceEvidenceOnly: fixtureMode,
+      structuredResultObserved: verifiedResult !== null,
+      structuredResultDigest: verifiedResult === null ? "" : digest(canonicalJson(verifiedResult)),
+      structuredResultBytes: verifiedResult === null ? 0 : Buffer.byteLength(canonicalJson(verifiedResult)),
     },
     executionLeaseBoundary: {
       authorizationConsumedBeforeInvocation: consumption.singleUseBoundary.authorizationConsumedBeforeInvocation,
@@ -646,6 +750,15 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
     promotionAuthority: false,
     mutatesCanon: false,
   };
+}
+
+export function buildRuntimeInvocationLifecycleReceipt(input = {}) {
+  return verifyRuntimeInvocationLifecycleReceipt(identify(
+    lifecycleSummary(input),
+    "runtime-lifecycle-receipt",
+    "receiptId",
+    "receiptHash",
+  ));
 }
 
 export function verifyRuntimeInvocationLifecycleReceipt(document) {
@@ -662,8 +775,9 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     "noDescendantFixture", "descendantTreeOwnershipValidated",
   ], "Runtime invocation process boundary");
   assertFields(document.providerBoundary, [
-    "conformanceFixtureOnly", "actualProviderInvoked", "actualProviderSessionCreated", "providerControlEnabled",
-    "lifecycleConformanceEvidenceOnly",
+    "mode", "conformanceFixtureOnly", "actualProviderInvoked", "actualProviderSessionCreated",
+    "boundedOneShotInvocationEnabled", "generalProviderControlEnabled", "lifecycleConformanceEvidenceOnly",
+    "structuredResultObserved", "structuredResultDigest", "structuredResultBytes",
   ], "Runtime invocation provider boundary");
   assertFields(document.executionLeaseBoundary, [
     "authorizationConsumedBeforeInvocation", "atMostOnce", "replayAllowed", "providerInvokedAtConsumption", "crashRecovery",
@@ -672,6 +786,21 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
   const sortedUnique = (items) => Array.isArray(items) && canonicalJson(items) === canonicalJson([...new Set(items)].sort(compareText));
   const completed = document.status === "completed";
   const terminated = new Set(["cancelled", "timed-out", "output-limited", "invalid-event"]).has(document.status);
+  const fixtureMode = document.providerBoundary.mode === "conformance-fixture"
+    || document.providerBoundary.mode === "codex-protocol-fixture";
+  const actualProvider = document.providerBoundary.mode === "actual-codex";
+  const expectedProviderBoundary = {
+    mode: document.providerBoundary.mode,
+    conformanceFixtureOnly: fixtureMode,
+    actualProviderInvoked: actualProvider,
+    actualProviderSessionCreated: document.providerBoundary.actualProviderSessionCreated,
+    boundedOneShotInvocationEnabled: actualProvider,
+    generalProviderControlEnabled: false,
+    lifecycleConformanceEvidenceOnly: fixtureMode,
+    structuredResultObserved: document.providerBoundary.structuredResultObserved,
+    structuredResultDigest: document.providerBoundary.structuredResultDigest,
+    structuredResultBytes: document.providerBoundary.structuredResultBytes,
+  };
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeInvocationLifecycleReceipt"
     || document.protocolVersion !== RUNTIME_LIFECYCLE_RECEIPT_VERSION || !statuses.has(document.status)
     || document.runtime !== normalizeRuntime(document.runtime)
@@ -697,17 +826,25 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     || document.processBoundary.exactChildStarted !== document.processBoundary.exactChildExitObserved
     || document.processBoundary.projectFenceValidated !== true || document.processBoundary.shellInterpretation !== false
     || document.processBoundary.rawCommandPersisted !== false || document.processBoundary.rawOutputPersisted !== false
-    || document.processBoundary.childPidPersisted !== false || document.processBoundary.noDescendantFixture !== true
-    || document.processBoundary.descendantTreeOwnershipValidated !== document.processBoundary.exactChildStarted
+    || document.processBoundary.childPidPersisted !== false || typeof document.processBoundary.noDescendantFixture !== "boolean"
+    || typeof document.processBoundary.descendantTreeOwnershipValidated !== "boolean"
+    || document.processBoundary.descendantTreeOwnershipValidated
+      && (!document.processBoundary.exactChildStarted || !document.processBoundary.exactChildExitObserved)
+    || document.processBoundary.noDescendantFixture
+      && document.processBoundary.descendantTreeOwnershipValidated !== document.processBoundary.exactChildStarted
     || (completed && (document.exitCode !== 0 || document.processBoundary.terminationRequested !== false))
     || (terminated && document.processBoundary.terminationRequested !== true)
-    || canonicalJson(document.providerBoundary) !== canonicalJson({
-      conformanceFixtureOnly: true,
-      actualProviderInvoked: false,
-      actualProviderSessionCreated: false,
-      providerControlEnabled: false,
-      lifecycleConformanceEvidenceOnly: true,
-    })
+    || (!fixtureMode && !actualProvider)
+    || actualProvider && document.runtime !== "codex"
+    || actualProvider && completed && (!document.providerBoundary.actualProviderSessionCreated || !document.providerBoundary.structuredResultObserved)
+    || fixtureMode && document.providerBoundary.actualProviderInvoked
+    || typeof document.providerBoundary.actualProviderSessionCreated !== "boolean"
+    || typeof document.providerBoundary.structuredResultObserved !== "boolean"
+    || (document.providerBoundary.structuredResultObserved
+      ? (!/^[a-f0-9]{64}$/.test(document.providerBoundary.structuredResultDigest || "")
+        || !Number.isSafeInteger(document.providerBoundary.structuredResultBytes) || document.providerBoundary.structuredResultBytes < 1)
+      : document.providerBoundary.structuredResultDigest !== "" || document.providerBoundary.structuredResultBytes !== 0)
+    || canonicalJson(document.providerBoundary) !== canonicalJson(expectedProviderBoundary)
     || canonicalJson(document.executionLeaseBoundary) !== canonicalJson({
       authorizationConsumedBeforeInvocation: true,
       atMostOnce: true,
@@ -764,6 +901,10 @@ function callerFence(root, authorizationId) {
     executable: process.execPath,
     projectRoot: realRoot(root),
   }));
+}
+
+export function buildRuntimeInvocationCallerFence(root, authorizationId) {
+  return callerFence(root, authorizationId);
 }
 
 export async function runRuntimeLifecycleConformance({
@@ -938,6 +1079,7 @@ export async function runRuntimeLifecycleConformance({
         projectFenceValidated: true,
         inputDigestObserved,
         noDescendantFixture: true,
+        descendantTreeOwnershipValidated: childStarted && childExitObserved,
         consumption,
       });
       resolve(verifyRuntimeInvocationLifecycleReceipt(identify(payload, "runtime-lifecycle-receipt", "receiptId", "receiptHash")));
@@ -957,10 +1099,12 @@ export async function runRuntimeLifecycleConformance({
   };
 }
 
-export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRelease } = {}) {
+export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRelease, providerResult = null } = {}) {
   const verifiedAuthorization = verifyRuntimeInvocationAuthorization(authorization);
   const verifiedReceipt = verifyRuntimeInvocationLifecycleReceipt(receipt);
   const verifiedRelease = verifyRuntimeExecutionLeaseRelease(leaseRelease);
+  const verifiedProviderResult = providerResult === null
+    ? null : verifyRuntimeStructuredResult(providerResult, { scopeKind: verifiedAuthorization.scope.kind });
   if (verifiedReceipt.authorizationId !== verifiedAuthorization.authorizationId
     || verifiedReceipt.scopeKind !== verifiedAuthorization.scope.kind
     || verifiedReceipt.executionContractId !== verifiedAuthorization.scope.executionContractId
@@ -970,8 +1114,19 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
     || verifiedRelease.lifecycleReceiptId !== verifiedReceipt.receiptId) {
     fail("Runtime receipt does not belong to the authorized execution scope.", "RUNTIME_RESULT_DRAFT_LINEAGE_CONFLICT");
   }
+  const actualProvider = verifiedReceipt.providerBoundary.actualProviderInvoked;
+  const providerResultDigest = verifiedProviderResult === null ? "" : digest(canonicalJson(verifiedProviderResult));
+  if (verifiedReceipt.providerBoundary.structuredResultObserved !== (verifiedProviderResult !== null)
+    || verifiedReceipt.providerBoundary.structuredResultDigest !== providerResultDigest) {
+    fail("Runtime structured result does not match the lifecycle receipt.", "RUNTIME_RESULT_DRAFT_STRUCTURED_RESULT_CONFLICT");
+  }
   const successful = verifiedReceipt.status === "completed" && verifiedReceipt.exitCode === 0
-    && verifiedReceipt.inputDigestObserved === verifiedAuthorization.executionInput.digest;
+    && verifiedReceipt.inputDigestObserved === verifiedAuthorization.executionInput.digest
+    && (!actualProvider || verifiedReceipt.processBoundary.descendantTreeOwnershipValidated);
+  const lifecycleUnknowns = verifiedReceipt.unknownEventTypes.map((type) => `Unrecognized provider event type: ${type}`);
+  if (actualProvider && !verifiedReceipt.processBoundary.descendantTreeOwnershipValidated) {
+    lifecycleUnknowns.push("Actual provider descendant-tree ownership is not yet validated.");
+  }
   const payload = {
     schemaVersion: 1,
     kind: "RuntimeResultPacketDraft",
@@ -983,7 +1138,8 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
     scopeKind: verifiedAuthorization.scope.kind,
     executionContractId: verifiedAuthorization.scope.executionContractId,
     runId: verifiedAuthorization.scope.runId,
-    outcome: successful ? "Provider lifecycle conformance completed." : `Provider lifecycle conformance ended with ${verifiedReceipt.status}.`,
+    outcome: verifiedProviderResult?.outcome
+      || (successful ? "Provider lifecycle conformance completed." : `Provider lifecycle conformance ended with ${verifiedReceipt.status}.`),
     evidence: [{
       kind: "RuntimeLifecycleEvidence",
       lifecycleReceiptId: verifiedReceipt.receiptId,
@@ -992,10 +1148,13 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
       eventIds: verifiedReceipt.eventIds,
       eventTypes: verifiedReceipt.eventTypes,
       providerSessionReferenceDigests: verifiedReceipt.providerSessionReferenceDigests,
+      actualProviderInvoked: actualProvider,
+      structuredResultDigest: providerResultDigest,
       instructionAuthority: false,
     }],
-    planDelta: "",
-    impactRadius: [],
+    providerResult: verifiedProviderResult,
+    planDelta: verifiedProviderResult?.planDelta || "",
+    impactRadius: verifiedProviderResult?.impactRadius || [],
     verification: [{
       kind: "RuntimeLifecycleVerification",
       status: successful ? "passed" : "failed",
@@ -1004,7 +1163,7 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
       descendantTreeOwnershipValidated: verifiedReceipt.processBoundary.descendantTreeOwnershipValidated,
       inputDigestMatched: verifiedReceipt.inputDigestObserved === verifiedAuthorization.executionInput.digest,
     }],
-    unknowns: verifiedReceipt.unknownEventTypes.map((type) => `Unrecognized provider event type: ${type}`),
+    unknowns: [...new Set([...lifecycleUnknowns, ...(verifiedProviderResult?.unknowns || [])])].sort(compareText),
     finalResultPacketPersisted: false,
     freshHeadReviewRequired: verifiedAuthorization.scope.kind === "run",
     rawTranscriptIncluded: false,
@@ -1020,7 +1179,7 @@ export function verifyRuntimeResultPacketDraft(document) {
   assertFields(document, [
     "schemaVersion", "kind", "protocolVersion", "authorizationId", "lifecycleReceiptId", "executionLeaseConsumptionId",
     "executionLeaseReleaseId", "scopeKind", "executionContractId",
-    "runId", "outcome", "evidence", "planDelta", "impactRadius", "verification", "unknowns",
+    "runId", "outcome", "evidence", "providerResult", "planDelta", "impactRadius", "verification", "unknowns",
     "finalResultPacketPersisted", "freshHeadReviewRequired", "rawTranscriptIncluded", "authority",
     "instructionAuthority", "promotionAuthority", "mutatesCanon", "draftId", "draftHash",
   ], "Runtime ResultPacket draft");
@@ -1032,12 +1191,15 @@ export function verifyRuntimeResultPacketDraft(document) {
   const verification = document.verification[0];
   assertFields(evidence, [
     "kind", "lifecycleReceiptId", "executionLeaseConsumptionId", "executionLeaseReleaseId", "eventIds", "eventTypes",
-    "providerSessionReferenceDigests", "instructionAuthority",
+    "providerSessionReferenceDigests", "actualProviderInvoked", "structuredResultDigest", "instructionAuthority",
   ], "Runtime ResultPacket draft evidence");
   assertFields(verification, [
     "kind", "status", "projectFenceValidated", "exactChildExitObserved", "descendantTreeOwnershipValidated", "inputDigestMatched",
   ], "Runtime ResultPacket draft verification");
   const sortedUnique = (items) => Array.isArray(items) && canonicalJson(items) === canonicalJson([...new Set(items)].sort(compareText));
+  const providerResult = document.providerResult === null
+    ? null : verifyRuntimeStructuredResult(document.providerResult, { scopeKind: document.scopeKind });
+  const providerResultDigest = providerResult === null ? "" : digest(canonicalJson(providerResult));
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeResultPacketDraft"
     || document.protocolVersion !== RUNTIME_RESULT_DRAFT_VERSION
     || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
@@ -1055,11 +1217,12 @@ export function verifyRuntimeResultPacketDraft(document) {
     || !sortedUnique(evidence.eventIds) || evidence.eventIds.some((item) => !/^runtime-event-[a-f0-9]{24}$/.test(item))
     || !sortedUnique(evidence.eventTypes) || !sortedUnique(evidence.providerSessionReferenceDigests)
     || evidence.providerSessionReferenceDigests.some((item) => !/^[a-f0-9]{64}$/.test(item))
+    || typeof evidence.actualProviderInvoked !== "boolean" || evidence.structuredResultDigest !== providerResultDigest
     || evidence.instructionAuthority !== false
     || verification.kind !== "RuntimeLifecycleVerification" || !new Set(["passed", "failed"]).has(verification.status)
     || [verification.projectFenceValidated, verification.exactChildExitObserved, verification.descendantTreeOwnershipValidated, verification.inputDigestMatched].some((item) => typeof item !== "boolean")
-    || typeof document.planDelta !== "string"
-    || !Array.isArray(document.impactRadius) || document.impactRadius.length !== 0
+    || typeof document.planDelta !== "string" || document.planDelta !== (providerResult?.planDelta || "")
+    || !Array.isArray(document.impactRadius) || canonicalJson(document.impactRadius) !== canonicalJson(providerResult?.impactRadius || [])
     || !Array.isArray(document.unknowns) || document.unknowns.some((item) => typeof item !== "string" || !item)
     || document.finalResultPacketPersisted !== false || document.freshHeadReviewRequired !== (document.scopeKind === "run")
     || document.rawTranscriptIncluded !== false || document.authority !== "draft-evidence-not-reviewed-result"
