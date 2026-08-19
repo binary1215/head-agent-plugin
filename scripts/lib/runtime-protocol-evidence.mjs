@@ -9,7 +9,7 @@ import {
 import { resolveReadOnlyRuntimeExecutableTarget } from "./runtime-machine-discovery.mjs";
 import { verifyRuntimeVersionEvidence } from "./runtime-machine-execution.mjs";
 
-export const RUNTIME_PROTOCOL_EVIDENCE_VERSION = "0.1.0";
+export const RUNTIME_PROTOCOL_EVIDENCE_VERSION = "0.2.0";
 export const RUNTIME_PROJECT_BINDING_VERSION = "0.1.0";
 
 const PROBE_TIMEOUT_MS = 5_000;
@@ -123,6 +123,10 @@ const RUNTIME_PROFILES = Object.freeze({
           signal("execution:non-interactive", /run codex non-interactively/i),
           signal("events:json", /--json\b/i),
           signal("output:schema", /--output-schema\b/i),
+          signal("output:color", /--color\b/i),
+          signal("execution:sandbox-option", /--sandbox\b/i),
+          signal("execution:skip-git-check", /--skip-git-repo-check\b/i),
+          signal("binding:cwd-option", /--cd\b/i),
           signal("session:ephemeral", /--ephemeral\b/i),
           signal("session:resume", /(?:^|\s)resume(?:\s|$)/m),
         ]),
@@ -140,6 +144,7 @@ const RUNTIME_PROFILES = Object.freeze({
     capabilities: Object.freeze([
       Object.freeze({ name: "non-interactive-execution", requirements: Object.freeze(["execution:non-interactive", "events:json", "output:schema", "session:ephemeral"]) }),
       Object.freeze({ name: "structured-event-stream", requirements: Object.freeze(["events:json"]) }),
+      Object.freeze({ name: "one-shot-invocation-surface", requirements: Object.freeze(["events:json", "output:schema", "output:color", "execution:sandbox-option", "execution:skip-git-check", "binding:cwd-option", "session:ephemeral"]) }),
       Object.freeze({ name: "provider-session-resume-surface", requirements: Object.freeze(["session:resume"]) }),
       Object.freeze({ name: "stdio-app-server-protocol", requirements: Object.freeze(["transport:stdio", "protocol:schema-generation", "transport:listen-option"]) }),
       Object.freeze({ name: "stdio-mcp-server-command", requirements: Object.freeze(["command:mcp-server"]) }),

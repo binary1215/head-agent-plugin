@@ -79,7 +79,7 @@ function evidenceFixtureOutput(command, args) {
   const key = args.join(" ");
   if (key === "--version") return `${runtime} 1.2.3\n`;
   if (runtime === "codex" && key === "--help") return "exec\nmcp-server\napp-server\n";
-  if (runtime === "codex" && key === "exec --help") return "Run Codex non-interactively\n--json\n--output-schema\n--ephemeral\nresume\n";
+  if (runtime === "codex" && key === "exec --help") return "Run Codex non-interactively\n--json\n--output-schema\n--color\n--sandbox\n--skip-git-repo-check\n--cd\n--ephemeral\nresume\n";
   if (runtime === "codex" && key === "app-server --help") return "stdio://\ngenerate-json-schema\n--listen\n";
   if (runtime === "opencode" && key === "--help") return "opencode run\nopencode acp\nopencode serve\nopencode session\n";
   if (runtime === "opencode" && key === "run --help") return "Run OpenCode with a message\n--format choices: json\n--session\n--continue\n";
@@ -89,6 +89,14 @@ function evidenceFixtureOutput(command, args) {
 
 function evidenceFixtureSpawn(command, args, options) {
   const output = evidenceFixtureOutput(command, args);
+  return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", output], {
+    ...options,
+    cwd: pluginRoot,
+  });
+}
+
+function codexInvocationDriftFixtureSpawn(command, args, options) {
+  const output = evidenceFixtureOutput(command, args).replace("--sandbox\n", "");
   return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", output], {
     ...options,
     cwd: pluginRoot,
@@ -202,6 +210,64 @@ async function main() {
       versionEvidence,
       protocolEvidence,
     });
+    const driftedCodexVersionEvidence = await buildRuntimeVersionEvidence({
+      runtimes: ["codex"],
+      environment: evidenceEnvironment,
+      spawnImplementation: evidenceFixtureSpawn,
+    });
+    const driftedCodexProtocolEvidence = await buildRuntimeProtocolEvidence({
+      runtimes: ["codex"],
+      versionEvidence: driftedCodexVersionEvidence,
+      environment: evidenceEnvironment,
+      spawnImplementation: codexInvocationDriftFixtureSpawn,
+    });
+    const driftedCodexObservation = driftedCodexProtocolEvidence.observations.find((item) => item.runtime === "codex");
+    const driftedInvocationSurface = driftedCodexObservation.capabilities.find((item) => item.capability === "one-shot-invocation-surface");
+    assert(driftedCodexObservation.protocolNegotiationObserved === true
+      && driftedInvocationSurface?.support === "not-observed",
+    "Codex invocation-surface drift fixture did not preserve generic protocol negotiation while removing one fixed option.");
+    const driftedCodexProjectBinding = buildRuntimeProjectBinding({
+      projectId: initialized.project.projectId,
+      headSessionId: initializedProject.state.sessionId,
+      projectRoot: resolvedRoot,
+      projectStatus: "ready",
+      versionEvidence: driftedCodexVersionEvidence,
+      protocolEvidence: driftedCodexProtocolEvidence,
+    });
+    const driftedCodexRequest = "Reject an incomplete Codex invocation surface before consuming the execution lease.";
+    const driftedCodexAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      scope: { kind: "session", request: driftedCodexRequest },
+      workspaceMode: "read-only",
+      protocolEvidence: driftedCodexProtocolEvidence,
+      projectBinding: driftedCodexProjectBinding,
+      limits: { timeoutMs: 5_000 },
+      persist: true,
+    }).authorization;
+    let codexInvocationSurfaceRejectedBeforeConsumption = false;
+    try {
+      await executeCodexRuntimeInvocation({
+        root: resolvedRoot,
+        authorization: driftedCodexAuthorization,
+        sessionRequest: driftedCodexRequest,
+        protocolEvidence: driftedCodexProtocolEvidence,
+        projectBinding: driftedCodexProjectBinding,
+        targetResolver: () => ({ executablePath: process.execPath, observation: driftedCodexObservation.executable }),
+        onProcessEvent: recordProcess,
+        persist: true,
+      });
+    } catch (error) {
+      codexInvocationSurfaceRejectedBeforeConsumption = error.code === "CODEX_EXEC_INVOCATION_SURFACE_NOT_VERIFIED";
+    }
+    const driftedCodexLease = inspectRuntimeInvocationExecutionLease({
+      root: resolvedRoot,
+      authorizationId: driftedCodexAuthorization.authorizationId,
+    });
+    assert(codexInvocationSurfaceRejectedBeforeConsumption
+      && driftedCodexLease.lease.status === "available"
+      && driftedCodexLease.lease.singleUseConsumed === false,
+    "Codex invocation-surface drift was not rejected before execution-lease consumption.");
     const sessionResults = [];
     for (const runtime of ["codex", "opencode"]) {
       const request = `Inspect the fixture locally through the ${runtime} Session lane without changing Product Canon.`;
@@ -608,6 +674,8 @@ async function main() {
       codexExecProtocolFixtureValidated: true,
       codexStructuredResultRecorded: true,
       codexDescendantTreeSupervisionValidated: true,
+      codexInvocationSurfacePreflightValidated: true,
+      codexInvocationSurfaceDriftRejectedBeforeConsumption: true,
       providerNeutralInvocationRecordValidated: true,
       opencodeProtocolFixtureModeValidated: true,
       sessionRunResultApplicationRejected: true,

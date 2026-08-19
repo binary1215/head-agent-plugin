@@ -205,7 +205,7 @@ function structuredResultExposesRoot(result, roots) {
   });
 }
 
-function verifyCurrentCodexTarget({ authorization, protocolEvidence, projectBinding, targetResolver, platform, environment, fileSystem }) {
+function verifyCurrentCodexTarget({ authorization, protocolEvidence, projectBinding, targetResolver, platform, environment, fileSystem, requireInvocationSurface }) {
   const protocol = verifyRuntimeProtocolEvidence(protocolEvidence);
   const binding = verifyRuntimeProjectBinding(projectBinding);
   if (authorization.runtime !== "codex") fail("Codex exec requires a Codex authorization.", "CODEX_AUTHORIZATION_REQUIRED");
@@ -220,6 +220,10 @@ function verifyCurrentCodexTarget({ authorization, protocolEvidence, projectBind
   if (!observation || observation.observationId !== authorization.runtimeProtocolObservationId
     || !observation.protocolNegotiationObserved) {
     fail("Authorized Codex protocol observation is unavailable.", "CODEX_EXEC_PROTOCOL_NOT_VERIFIED");
+  }
+  const invocationSurface = observation.capabilities.find((item) => item.capability === "one-shot-invocation-surface");
+  if (requireInvocationSurface && invocationSurface?.support !== "observed") {
+    fail("The authorized Codex executable does not prove every fixed one-shot invocation option.", "CODEX_EXEC_INVOCATION_SURFACE_NOT_VERIFIED");
   }
   const target = targetResolver({ runtime: "codex", platform, environment, fileSystem });
   if (!target?.executablePath || !path.isAbsolute(target.executablePath)
@@ -463,6 +467,7 @@ export async function executeCodexRuntimeInvocation({
     platform,
     environment,
     fileSystem,
+    requireInvocationSurface: evidenceMode === "actual-provider",
   });
   if (evidenceMode === "actual-provider" && providerArguments !== null) {
     fail("Actual Codex execution arguments cannot be replaced.", "CODEX_EXEC_ARGUMENT_OVERRIDE_REJECTED");
