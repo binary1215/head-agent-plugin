@@ -16,6 +16,7 @@ import {
 } from "./lib/runtime-protocol-evidence.mjs";
 import {
   buildRuntimeInvocationAuthorization,
+  buildRuntimeInvocationLifecycleReceipt,
   buildRuntimeResultPacketDraft,
   inspectRuntimeInvocationExecutionLease,
   readRuntimeInvocationAuthorization,
@@ -31,10 +32,9 @@ import {
   verifyRuntimeExecutionLeaseRelease,
 } from "./lib/runtime-execution-lease.mjs";
 import {
-  applyCodexRuntimeRunResult,
   executeCodexRuntimeInvocation,
-  readCodexRuntimeInvocationResult,
 } from "./lib/runtime-codex-exec.mjs";
+import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { resolveVerifiedProcessSupervisor } from "./lib/runtime-process-supervisor.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -295,16 +295,16 @@ async function main() {
     "Codex protocol fixture did not pass native descendant-tree supervision.");
     assert(codexProtocolExecution.draft.providerResult?.outcome === "Codex protocol fixture completed.", "Codex structured result was not carried into the draft.");
     assert(codexProtocolExecution.draft.freshHeadReviewRequired === false, "Codex Session protocol fixture incorrectly required Fresh HEAD review.");
-    const recordedCodexProtocolExecution = readCodexRuntimeInvocationResult({
+    const recordedCodexProtocolExecution = readRuntimeInvocationResult({
       root: resolvedRoot,
       authorizationId: codexProtocolAuthorization.authorizationId,
     });
     assert(recordedCodexProtocolExecution.application === null, "Session protocol fixture acquired a Run result application.");
     let sessionApplicationRejected = false;
     try {
-      applyCodexRuntimeRunResult({ root: resolvedRoot, authorizationId: codexProtocolAuthorization.authorizationId });
+      applyRuntimeRunResult({ root: resolvedRoot, authorizationId: codexProtocolAuthorization.authorizationId });
     } catch (error) {
-      sessionApplicationRejected = error.code === "CODEX_RUN_AUTHORIZATION_REQUIRED";
+      sessionApplicationRejected = error.code === "RUNTIME_RUN_AUTHORIZATION_REQUIRED";
     }
     assert(sessionApplicationRejected, "Session protocol fixture entered canonical Run result application.");
     assert(recordedCodexProtocolExecution.draft.draftHash === codexProtocolExecution.draft.draftHash, "Codex invocation record did not round-trip.");
@@ -372,6 +372,34 @@ async function main() {
       assert(success.receipt.status === "completed", `${runtime} success lifecycle did not complete.`);
       assert(success.receipt.processBoundary.descendantTreeOwnershipValidated === true, `${runtime} fixture ownership was not validated.`);
       assert(success.receipt.inputDigestObserved === authorization.executionInput.digest, `${runtime} input digest was not observed.`);
+      if (runtime === "opencode") {
+        const opencodeProtocolFixtureReceipt = buildRuntimeInvocationLifecycleReceipt({
+          authorization,
+          events: success.events,
+          status: success.receipt.status,
+          exitCode: success.receipt.exitCode,
+          signal: success.receipt.signal,
+          stdoutBytes: success.receipt.stdoutBytes,
+          stderrBytes: success.receipt.stderrBytes,
+          stdoutDigest: success.receipt.stdoutDigest,
+          stderrDigest: success.receipt.stderrDigest,
+          callerFenceDigest: success.receipt.processBoundary.callerFenceDigest,
+          childFenceDigest: success.receipt.processBoundary.childFenceDigest,
+          childStarted: success.receipt.processBoundary.exactChildStarted,
+          childExitObserved: success.receipt.processBoundary.exactChildExitObserved,
+          terminationRequested: success.receipt.processBoundary.terminationRequested,
+          projectFenceValidated: success.receipt.processBoundary.projectFenceValidated,
+          inputDigestObserved: success.receipt.inputDigestObserved,
+          noDescendantFixture: true,
+          descendantTreeOwnershipValidated: success.receipt.processBoundary.descendantTreeOwnershipValidated,
+          consumption: success.executionLease.consumption,
+          providerMode: "opencode-protocol-fixture",
+        });
+        assert(opencodeProtocolFixtureReceipt.runtime === "opencode"
+          && opencodeProtocolFixtureReceipt.providerBoundary.mode === "opencode-protocol-fixture"
+          && opencodeProtocolFixtureReceipt.providerBoundary.actualProviderInvoked === false,
+        "OpenCode protocol fixture mode did not remain provider-neutral fixture evidence.");
+      }
       verifyRuntimeExecutionLeaseConsumption(success.executionLease.consumption);
       verifyRuntimeExecutionLeaseRelease(success.executionLease.release);
       const tamperedConsumption = { ...success.executionLease.consumption, consumedAt: new Date(0).toISOString() };
@@ -580,6 +608,8 @@ async function main() {
       codexExecProtocolFixtureValidated: true,
       codexStructuredResultRecorded: true,
       codexDescendantTreeSupervisionValidated: true,
+      providerNeutralInvocationRecordValidated: true,
+      opencodeProtocolFixtureModeValidated: true,
       sessionRunResultApplicationRejected: true,
       operationalStateExternalized: true,
       legacyProjectLockRejected,

@@ -13,10 +13,9 @@ import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "./lib/
 import { buildRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { RUNTIME_OPERATIONAL_STATE_ENV } from "./lib/runtime-execution-lease.mjs";
 import {
-  applyCodexRuntimeRunResult,
   executeCodexRuntimeInvocation,
-  readCodexRuntimeInvocationResult,
 } from "./lib/runtime-codex-exec.mjs";
+import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { resolveVerifiedProcessSupervisor } from "./lib/runtime-process-supervisor.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -27,6 +26,21 @@ const liveOptIn = "HEAD_AGENT_LIVE_CODEX_E2E";
 
 function assert(condition, message) {
   if (!condition) throw Object.assign(new Error(message), { code: "LIVE_CODEX_E2E_ASSERTION" });
+}
+
+function safeExecutionFailureSummary(execution) {
+  const receipt = execution?.receipt;
+  return {
+    status: receipt?.status || "missing",
+    exitCode: receipt?.exitCode ?? null,
+    eventTypes: receipt?.eventTypes || [],
+    unknownEventTypes: receipt?.unknownEventTypes || [],
+    stdoutBytes: receipt?.stdoutBytes ?? 0,
+    stderrBytes: receipt?.stderrBytes ?? 0,
+    actualProviderInvoked: receipt?.providerBoundary?.actualProviderInvoked === true,
+    structuredResultObserved: receipt?.providerBoundary?.structuredResultObserved === true,
+    descendantTreeOwnershipValidated: receipt?.processBoundary?.descendantTreeOwnershipValidated === true,
+  };
 }
 
 function digest(value) {
@@ -93,7 +107,8 @@ async function main() {
     assert(root.startsWith(`${pluginRoot}${path.sep}`) && path.basename(root).startsWith(prefix), "Live Codex fixture root escaped the plugin workspace.");
     assert(!fs.existsSync(root), "Live Codex fixture root already exists.");
   }
-  resolveVerifiedProcessSupervisor({ pluginRoot });
+  const supervisorFixtureRoot = path.resolve(process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
+  const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: supervisorFixtureRoot });
   const previousOperationalRoot = process.env[RUNTIME_OPERATIONAL_STATE_ENV];
   process.env[RUNTIME_OPERATIONAL_STATE_ENV] = operationalRoot;
   fs.mkdirSync(projectRoot, { recursive: false });
@@ -127,10 +142,12 @@ async function main() {
       sessionRequest,
       protocolEvidence: sessionEvidence.protocolEvidence,
       projectBinding: sessionEvidence.projectBinding,
+      supervisorSelection,
       onProcessEvent: recordProcess,
       persist: true,
     });
-    assert(sessionExecution.receipt.status === "completed" && sessionExecution.actualProviderInvoked === true, "Live Codex Session did not complete as an actual provider invocation.");
+    assert(sessionExecution.receipt.status === "completed" && sessionExecution.actualProviderInvoked === true,
+      `Live Codex Session did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(sessionExecution))}`);
     assert(sessionExecution.descendantTreeOwnershipValidated === true, "Live Codex Session did not prove descendant-tree ownership.");
     assert(sessionExecution.draft.scopeKind === "session" && sessionExecution.draft.freshHeadReviewRequired === false, "Live Codex Session acquired Run review semantics.");
     assert(sessionExecution.draft.providerResult?.planDelta === "" && sessionExecution.draft.providerResult?.impactRadius.length === 0, "Live Codex Session returned a Run-shaped result.");
@@ -183,15 +200,17 @@ async function main() {
       authorization: runAuthorization,
       protocolEvidence: runEvidence.protocolEvidence,
       projectBinding: runEvidence.projectBinding,
+      supervisorSelection,
       onProcessEvent: recordProcess,
       persist: true,
     });
-    assert(runExecution.receipt.status === "completed" && runExecution.actualProviderInvoked === true, "Live Codex Run did not complete as an actual provider invocation.");
+    assert(runExecution.receipt.status === "completed" && runExecution.actualProviderInvoked === true,
+      `Live Codex Run did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(runExecution))}`);
     assert(runExecution.descendantTreeOwnershipValidated === true, "Live Codex Run did not prove descendant-tree ownership.");
     assert(runExecution.draft.scopeKind === "run" && runExecution.draft.freshHeadReviewRequired === true, "Live Codex Run did not retain Run review semantics.");
     assert(fs.readFileSync(path.join(projectRoot, "run-output.txt"), "utf8") === "HEAD live Run verified\n", "Live Codex Run did not create the exact accepted output.");
 
-    const applied = applyCodexRuntimeRunResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
+    const applied = applyRuntimeRunResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
     assert(applied.status === "runtime_run_result_applied", "Live Codex Run draft was not applied to canonical Execution Lineage.");
     assert(applied.freshHeadReview?.resultPacket?.resultPacketId === applied.resultPacket.resultPacketId, "Fresh HEAD did not receive the canonical ResultPacket.");
     const pending = getPendingReviewContext({ root: projectRoot });
@@ -203,7 +222,7 @@ async function main() {
       rationale: "The isolated live Codex E2E produced the exact file, verified native lifecycle evidence, and preserved Product Canon.",
       nextActions: ["Reuse the conformed provider-neutral lifecycle for the OpenCode adapter after Codex timeout and cancellation evidence."],
     });
-    const recorded = readCodexRuntimeInvocationResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
+    const recorded = readRuntimeInvocationResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
     const completed = inspectProject(projectRoot);
     assert(recorded.application?.applicationId === applied.application.applicationId, "Runtime Run result application was not durably recoverable.");
     assert(completed.state.mode === "session" && completed.state.lastReviewDecisionId === reviewed.reviewDecision.reviewDecisionId, "Live Run did not return to the reviewed HEAD Session state.");

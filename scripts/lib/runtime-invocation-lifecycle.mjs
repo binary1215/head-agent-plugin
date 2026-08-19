@@ -675,6 +675,13 @@ export function verifyRuntimeEventEnvelope(document) {
   return document;
 }
 
+function providerModeProfile(runtime, providerMode) {
+  const selectedRuntime = String(runtime || "").trim().toLowerCase();
+  const fixtureMode = providerMode === "conformance-fixture" || providerMode === `${selectedRuntime}-protocol-fixture`;
+  const actualProvider = providerMode === `actual-${selectedRuntime}`;
+  return { fixtureMode, actualProvider, valid: fixtureMode || actualProvider };
+}
+
 function lifecycleSummary({ authorization, events, status, exitCode, signal, stdoutBytes, stderrBytes, stdoutDigest, stderrDigest,
   callerFenceDigest, childFenceDigest, childStarted, childExitObserved, terminationRequested, projectFenceValidated,
   inputDigestObserved, noDescendantFixture, descendantTreeOwnershipValidated = false, consumption,
@@ -683,9 +690,8 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
   const eventTypes = [...new Set(events.map((item) => item.eventType))].sort(compareText);
   const unknownEventTypes = [...new Set(events.filter((item) => item.eventClass === "unknown").map((item) => item.eventType))].sort(compareText);
   const providerSessionReferenceDigests = [...new Set(events.flatMap((item) => item.providerSessionReferenceDigests))].sort(compareText);
-  const fixtureMode = providerMode === "conformance-fixture" || providerMode === "codex-protocol-fixture";
-  const actualProvider = providerMode === "actual-codex";
-  if (!fixtureMode && !actualProvider) fail("Runtime provider mode is invalid.", "INVALID_RUNTIME_PROVIDER_MODE");
+  const { fixtureMode, actualProvider, valid } = providerModeProfile(authorization.runtime, providerMode);
+  if (!valid) fail("Runtime provider mode is invalid.", "INVALID_RUNTIME_PROVIDER_MODE");
   const verifiedResult = structuredResult === null ? null : verifyRuntimeStructuredResult(structuredResult, { scopeKind: authorization.scope.kind });
   const processSupervision = supervision === null ? {
     supervisionMode: "no-descendant-fixture",
@@ -808,9 +814,7 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
   const sortedUnique = (items) => Array.isArray(items) && canonicalJson(items) === canonicalJson([...new Set(items)].sort(compareText));
   const completed = document.status === "completed";
   const terminated = new Set(["cancelled", "timed-out", "output-limited", "invalid-event"]).has(document.status);
-  const fixtureMode = document.providerBoundary.mode === "conformance-fixture"
-    || document.providerBoundary.mode === "codex-protocol-fixture";
-  const actualProvider = document.providerBoundary.mode === "actual-codex";
+  const { fixtureMode, actualProvider, valid: validProviderMode } = providerModeProfile(document.runtime, document.providerBoundary.mode);
   const nativeSupervision = document.processBoundary.supervisionMode === "native-process-tree";
   const fixtureSupervision = document.processBoundary.supervisionMode === "no-descendant-fixture";
   const expectedProviderBoundary = {
@@ -878,8 +882,7 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     || (completed && (document.exitCode !== 0 || document.processBoundary.terminationRequested !== false))
     || (completed && nativeSupervision && !document.processBoundary.providerChildExitObserved)
     || (terminated && document.processBoundary.terminationRequested !== true)
-    || (!fixtureMode && !actualProvider)
-    || actualProvider && document.runtime !== "codex"
+    || !validProviderMode
     || actualProvider && completed && (!document.providerBoundary.actualProviderSessionCreated || !document.providerBoundary.structuredResultObserved)
     || actualProvider && completed && !document.processBoundary.descendantTreeOwnershipValidated
     || fixtureMode && document.providerBoundary.actualProviderInvoked

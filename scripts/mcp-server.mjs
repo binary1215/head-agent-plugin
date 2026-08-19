@@ -15,7 +15,7 @@ import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refres
 import { inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision } from "./lib/document-change-review.mjs";
 import { inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
 import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
-import { readCodexRuntimeInvocationResult } from "./lib/runtime-codex-exec.mjs";
+import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 
 const protocolVersion = "2024-11-05";
 export const tools = [
@@ -72,7 +72,7 @@ export const tools = [
   },
   {
     name: "head_runtime_invocation_result",
-    description: "Read and digest-verify one recorded Codex one-shot invocation receipt, structured result draft, and transcript-free event envelopes without invoking or controlling a provider.",
+    description: "Read and digest-verify one provider-neutral recorded invocation receipt, structured result draft, optional Run application, and transcript-free event envelopes without invoking or controlling a provider.",
     inputSchema: {
       type: "object",
       properties: {
@@ -411,7 +411,7 @@ const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, m
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.37" } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: "0.3.0-alpha.38" } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools });
@@ -430,7 +430,7 @@ export async function dispatch(request) {
         : name === "head_runtime_invocation_lease_status"
           ? inspectRuntimeInvocationExecutionLease({ root: args.project_root, authorizationId: args.authorization_id })
         : name === "head_runtime_invocation_result"
-          ? readCodexRuntimeInvocationResult({ root: args.project_root, authorizationId: args.authorization_id })
+          ? readRuntimeInvocationResult({ root: args.project_root, authorizationId: args.authorization_id })
         : name === "head_onboarding_status"
           ? inspectOnboarding({ root: args.project_root })
         : name === "head_feature_mapping_status"
