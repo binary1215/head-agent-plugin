@@ -157,7 +157,7 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "runtime-adapters") return inspectRuntimeAdapters(root);
   if (command === "runtime-invocation-authorize") {
     const input = inputJson(options, "Runtime invocation authorization");
-    const allowed = new Set(["runtime", "scope", "workspaceMode", "limits"]);
+    const allowed = new Set(["runtime", "scope", "workspaceMode", "runtimeSelection", "limits"]);
     const unexpected = Object.keys(input).filter((key) => !allowed.has(key));
     if (unexpected.length) throw new Error(`Runtime invocation authorization contains unsupported fields: ${unexpected.sort().join(", ")}`);
     return inspectRuntimeAdapters(root).then((runtimeStatus) => buildRuntimeInvocationAuthorization({

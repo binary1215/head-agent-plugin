@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +58,27 @@ const temporaryOperationalRoot = path.join(pluginRoot, `.test-tmp-runtime-operat
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function canonicalFixtureValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalFixtureValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalFixtureValue(value[key])]));
+  }
+  return value;
+}
+
+function legacyAuthorizationFixture(authorization) {
+  const payload = { ...authorization, protocolVersion: "0.2.0" };
+  delete payload.runtimeSelection;
+  delete payload.authorizationId;
+  delete payload.authorizationHash;
+  const hash = crypto.createHash("sha256").update(JSON.stringify(canonicalFixtureValue(payload))).digest("hex");
+  return {
+    ...payload,
+    authorizationId: `execution-authorization-${hash.slice(0, 24)}`,
+    authorizationHash: hash,
+  };
 }
 
 function recordProcess(event) {
@@ -403,6 +425,52 @@ async function main() {
       && driftedCodexLease.lease.status === "available"
       && driftedCodexLease.lease.singleUseConsumed === false,
     "Codex invocation-surface drift was not rejected before execution-lease consumption.");
+    const selectedModelRequest = "Bind one exact runtime model without persisting the raw request.";
+    const selectedModelAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "opencode",
+      scope: { kind: "session", request: selectedModelRequest },
+      workspaceMode: "read-only",
+      runtimeSelection: { model: "litellm/gpt-5.4-mini" },
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000 },
+      persist: false,
+    }).authorization;
+    const alternateModelAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "opencode",
+      scope: { kind: "session", request: selectedModelRequest },
+      workspaceMode: "read-only",
+      runtimeSelection: { model: "litellm/gpt-5.4" },
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000 },
+      persist: false,
+    }).authorization;
+    assert(verifyRuntimeInvocationAuthorization(selectedModelAuthorization).runtimeSelection.model === "litellm/gpt-5.4-mini",
+      "Runtime model selection did not round-trip through authorization verification.");
+    assert(selectedModelAuthorization.authorizationId !== alternateModelAuthorization.authorizationId,
+      "Runtime model drift did not change the immutable authorization identity.");
+    const legacyAuthorization = legacyAuthorizationFixture(selectedModelAuthorization);
+    assert(!("runtimeSelection" in verifyRuntimeInvocationAuthorization(legacyAuthorization)),
+      "Legacy authorization without runtime selection did not verify compatibly.");
+    let invalidRuntimeSelectionRejected = false;
+    try {
+      buildRuntimeInvocationAuthorization({
+        root: resolvedRoot,
+        runtime: "opencode",
+        scope: { kind: "session", request: selectedModelRequest },
+        workspaceMode: "read-only",
+        runtimeSelection: { model: "gpt-5.4-mini" },
+        protocolEvidence,
+        projectBinding,
+        persist: false,
+      });
+    } catch (error) {
+      invalidRuntimeSelectionRejected = error.code === "INVALID_RUNTIME_SELECTION";
+    }
+    assert(invalidRuntimeSelectionRejected, "Unqualified runtime model selection was accepted.");
     const sessionResults = [];
     for (const runtime of ["codex", "opencode"]) {
       const request = `Inspect the fixture locally through the ${runtime} Session lane without changing Product Canon.`;
@@ -932,6 +1000,10 @@ async function main() {
       codexDescendantTreeSupervisionValidated: true,
       codexInvocationSurfacePreflightValidated: true,
       codexInvocationSurfaceDriftRejectedBeforeConsumption: true,
+      runtimeModelSelectionBound: true,
+      runtimeModelDriftChangesAuthorization: true,
+      invalidRuntimeSelectionRejected,
+      legacyExecutionAuthorizationVerified: true,
       codexPortableWireSchemaValidated: true,
       semanticResultBoundsRetained: true,
       codexPrivacyReducedDiagnosticsValidated: true,

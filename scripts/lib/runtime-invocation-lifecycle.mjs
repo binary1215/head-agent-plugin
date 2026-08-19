@@ -16,7 +16,7 @@ import {
   withRuntimeExecutionLease,
 } from "./runtime-execution-lease.mjs";
 
-export const EXECUTION_AUTHORIZATION_VERSION = "0.2.0";
+export const EXECUTION_AUTHORIZATION_VERSION = "0.3.0";
 export const RUNTIME_INVOCATION_AUTHORIZATION_VERSION = EXECUTION_AUTHORIZATION_VERSION;
 export const RUNTIME_EVENT_ENVELOPE_VERSION = "0.1.0";
 export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.6.0";
@@ -24,6 +24,7 @@ export const RUNTIME_RESULT_DRAFT_VERSION = "0.5.0";
 export const RUNTIME_STRUCTURED_RESULT_VERSION = "0.1.0";
 const LEGACY_RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.5.0";
 const LEGACY_RUNTIME_RESULT_DRAFT_VERSION = "0.4.0";
+const LEGACY_EXECUTION_AUTHORIZATION_VERSION = "0.2.0";
 
 const RUNTIMES = Object.freeze(["codex", "opencode"]);
 const WORKSPACE_MODES = Object.freeze(["read-only", "workspace-write"]);
@@ -101,6 +102,20 @@ function normalizeWorkspaceMode(value) {
   const mode = String(value || "read-only").trim().toLowerCase();
   if (!WORKSPACE_MODES.includes(mode)) fail(`Unsupported workspace mode: ${mode || "(empty)"}.`, "INVALID_RUNTIME_WORKSPACE_MODE");
   return mode;
+}
+
+function normalizeRuntimeSelection(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail("Runtime selection must be an object.", "INVALID_RUNTIME_SELECTION");
+  }
+  const unexpected = Object.keys(value).filter((field) => field !== "model");
+  if (unexpected.length) fail(`Runtime selection contains unsupported fields: ${unexpected.sort().join(", ")}.`, "INVALID_RUNTIME_SELECTION");
+  const model = value.model == null || value.model === "" ? null : String(value.model).trim();
+  if (model !== null && (!/^[a-z0-9][a-z0-9._-]{0,63}\/[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$/.test(model)
+    || model.includes("..") || Buffer.byteLength(model) > 256)) {
+    fail("Runtime model selection must use a bounded provider/model identifier.", "INVALID_RUNTIME_SELECTION");
+  }
+  return { model };
 }
 
 function normalizeLimits(value = {}) {
@@ -286,6 +301,7 @@ export function buildRuntimeInvocationAuthorization({
   runtime,
   scope = { kind: "run" },
   workspaceMode = "read-only",
+  runtimeSelection = {},
   protocolEvidence,
   projectBinding,
   limits = {},
@@ -295,6 +311,7 @@ export function buildRuntimeInvocationAuthorization({
   if (inspected.status !== "ready") fail(`Project must be ready for runtime invocation authorization; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   const selectedRuntime = normalizeRuntime(runtime);
   const selectedWorkspaceMode = normalizeWorkspaceMode(workspaceMode);
+  const selectedRuntimeSelection = normalizeRuntimeSelection(runtimeSelection);
   const selectedScope = normalizeScopeInput(scope);
   if (!inspected.project.runtimes.includes(selectedRuntime)) fail("Runtime is not enabled for this HEAD project.", "RUNTIME_NOT_ENABLED_FOR_PROJECT");
   const projectRoot = inspected.project.projectRoot;
@@ -373,6 +390,7 @@ export function buildRuntimeInvocationAuthorization({
     scope: executionScope,
     runtime: selectedRuntime,
     workspaceMode: selectedWorkspaceMode,
+    runtimeSelection: selectedRuntimeSelection,
     requiredAllowedActions: requiredActions,
     projectRootDigest: rootDigest,
     runtimeProjectBindingId: verifiedBinding.bindingId,
@@ -424,11 +442,12 @@ export function buildRuntimeInvocationAuthorization({
 }
 
 export function verifyRuntimeInvocationAuthorization(document) {
+  const legacyAuthorization = document?.protocolVersion === LEGACY_EXECUTION_AUTHORIZATION_VERSION;
   assertFields(document, [
     "schemaVersion", "kind", "protocolVersion", "projectId", "headSessionId", "scope", "runtime", "workspaceMode", "requiredAllowedActions",
     "projectRootDigest", "runtimeProjectBindingId", "runtimeProtocolEvidenceId", "runtimeProtocolObservationId",
     "executionInput", "limits", "authorizationBoundary", "authority", "instructionAuthority", "promotionAuthority",
-    "mutatesCanon", "authorizationId", "authorizationHash",
+    "mutatesCanon", "authorizationId", "authorizationHash", ...(legacyAuthorization ? [] : ["runtimeSelection"]),
   ], "Runtime invocation authorization");
   assertFields(document.scope, [
     "kind", "userRequestDigest", "userRequestBytes", "runId", "wholePlanId", "executionContractId", "contextCapsuleId",
@@ -444,6 +463,7 @@ export function verifyRuntimeInvocationAuthorization(document) {
   ], "Runtime invocation authorization boundary");
   const runtime = normalizeRuntime(document.runtime);
   const workspaceMode = normalizeWorkspaceMode(document.workspaceMode);
+  const runtimeSelection = legacyAuthorization ? { model: null } : normalizeRuntimeSelection(document.runtimeSelection);
   const expectedActions = [REQUIRED_INVOKE_ACTION, WORKSPACE_ACTION[workspaceMode]];
   const scopeKind = String(document.scope.kind || "").trim().toLowerCase();
   if (!EXECUTION_SCOPE_KINDS.includes(scopeKind)) fail("Execution authorization scope is invalid.", "INVALID_RUNTIME_INVOCATION_AUTHORIZATION");
@@ -465,8 +485,10 @@ export function verifyRuntimeInvocationAuthorization(document) {
     providerControlEnabled: false,
   };
   if (document.schemaVersion !== 1 || document.kind !== "ExecutionAuthorization"
-    || document.protocolVersion !== RUNTIME_INVOCATION_AUTHORIZATION_VERSION || document.runtime !== runtime
+    || !new Set([RUNTIME_INVOCATION_AUTHORIZATION_VERSION, LEGACY_EXECUTION_AUTHORIZATION_VERSION]).has(document.protocolVersion)
+    || document.runtime !== runtime
     || document.workspaceMode !== workspaceMode || canonicalJson(document.requiredAllowedActions) !== canonicalJson(expectedActions)
+    || !legacyAuthorization && canonicalJson(document.runtimeSelection) !== canonicalJson(runtimeSelection)
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
     || (runScope && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.scope.runId || "")

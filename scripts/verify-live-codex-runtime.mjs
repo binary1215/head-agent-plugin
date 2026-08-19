@@ -20,10 +20,13 @@ const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const nonce = `${process.pid}-${Date.now()}`;
 const providerRuntime = String(process.env.HEAD_AGENT_LIVE_RUNTIME || "codex").trim().toLowerCase();
 const providerName = providerRuntime === "opencode" ? "OpenCode" : "Codex";
+const runtimeModel = String(process.env.HEAD_AGENT_LIVE_RUNTIME_MODEL || "").trim() || null;
 const projectRoot = path.join(pluginRoot, `.qa-live-${providerRuntime}-${nonce}`);
 const operationalRoot = path.join(pluginRoot, `.qa-live-${providerRuntime}-operational-${nonce}`);
-const liveOptIn = "HEAD_AGENT_LIVE_CODEX_E2E";
-const liveModeEnv = "HEAD_AGENT_LIVE_CODEX_E2E_MODE";
+const liveOptIn = "HEAD_AGENT_LIVE_RUNTIME_E2E";
+const legacyLiveOptIn = "HEAD_AGENT_LIVE_CODEX_E2E";
+const liveModeEnv = "HEAD_AGENT_LIVE_RUNTIME_E2E_MODE";
+const legacyLiveModeEnv = "HEAD_AGENT_LIVE_CODEX_E2E_MODE";
 const LIVE_MODE_PLANS = Object.freeze({
   "run-only": Object.freeze({ mode: "run-only", includeSession: false }),
   "session-and-run": Object.freeze({ mode: "session-and-run", includeSession: true }),
@@ -55,7 +58,7 @@ function digest(value) {
 }
 
 function resolveLivePlan(environment = process.env) {
-  const mode = String(environment[liveModeEnv] || "run-only").trim().toLowerCase();
+  const mode = String(environment[liveModeEnv] || environment[legacyLiveModeEnv] || "run-only").trim().toLowerCase();
   const plan = LIVE_MODE_PLANS[mode];
   if (!plan) {
     throw Object.assign(new Error(`${liveModeEnv} must be run-only or session-and-run when provided.`), {
@@ -119,9 +122,11 @@ async function buildActualRuntimeEvidence(root) {
 
 async function main() {
   assert(new Set(["codex", "opencode"]).has(providerRuntime), "HEAD_AGENT_LIVE_RUNTIME must be codex or opencode.");
+  assert(providerRuntime !== "opencode" || runtimeModel !== null,
+    "HEAD_AGENT_LIVE_RUNTIME_MODEL=provider/model is required for live OpenCode so execution cannot drift to a user-global default.");
   activeLivePlan = resolveLivePlan();
-  if (process.env[liveOptIn] !== "1") {
-    throw Object.assign(new Error(`${liveOptIn}=1 is required because ${activeLivePlan.mode} performs real ${providerName} model calls.`), { code: "LIVE_CODEX_E2E_OPT_IN_REQUIRED" });
+  if (process.env[liveOptIn] !== "1" && process.env[legacyLiveOptIn] !== "1") {
+    throw Object.assign(new Error(`${liveOptIn}=1 is required because ${activeLivePlan.mode} performs real ${providerName} model calls.`), { code: "LIVE_RUNTIME_E2E_OPT_IN_REQUIRED" });
   }
   for (const [root, prefix] of [[projectRoot, `.qa-live-${providerRuntime}-`], [operationalRoot, `.qa-live-${providerRuntime}-operational-`]]) {
     assert(root.startsWith(`${pluginRoot}${path.sep}`) && path.basename(root).startsWith(prefix), `Live ${providerName} fixture root escaped the plugin workspace.`);
@@ -151,6 +156,7 @@ async function main() {
       const sessionAuthorization = buildRuntimeInvocationAuthorization({
         root: projectRoot,
         runtime: providerRuntime,
+        runtimeSelection: { model: runtimeModel },
         scope: { kind: "session", request: sessionRequest, contextCapsuleId: null },
         workspaceMode: "read-only",
         protocolEvidence: sessionEvidence.protocolEvidence,
@@ -226,6 +232,7 @@ async function main() {
     const runAuthorization = buildRuntimeInvocationAuthorization({
       root: projectRoot,
       runtime: providerRuntime,
+      runtimeSelection: { model: runtimeModel },
       scope: { kind: "run" },
       workspaceMode: "workspace-write",
       protocolEvidence: runEvidence.protocolEvidence,
@@ -277,6 +284,8 @@ async function main() {
       status: activeLivePlan.includeSession ? `live_${providerRuntime}_session_and_run_verified` : `live_${providerRuntime}_run_verified`,
       runtime: providerRuntime,
       mode: activeLivePlan.mode,
+      runtimeModelSelected: runtimeModel !== null,
+      runtimeModelDigest: runtimeModel === null ? "" : digest(runtimeModel),
       projectId: initialized.project.projectId,
       headSessionId: completed.state.sessionId,
       session: sessionSummary,

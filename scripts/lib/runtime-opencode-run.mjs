@@ -69,7 +69,12 @@ function permissionPolicy(workspaceMode) {
   return { ...base, edit: "deny", write: "deny", patch: "deny", multiedit: "deny" };
 }
 
-function providerEnvironment(environment, workspaceMode) {
+function providerEnvironment(environment, workspaceMode, model) {
+  const providerId = typeof model === "string" && model.includes("/") ? model.split("/", 1)[0] : "";
+  const providerEnvironmentPrefix = providerId ? providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_") : "";
+  const providerApiKeyName = providerEnvironmentPrefix ? `${providerEnvironmentPrefix}_API_KEY` : "";
+  const providerBaseUrlName = providerEnvironmentPrefix ? `${providerEnvironmentPrefix}_BASE_URL` : "";
+  const selectedProviderEnvironmentNames = new Set([providerApiKeyName, providerBaseUrlName].filter(Boolean));
   const fixedNames = new Set([
     "appdata", "comspec", "home", "homedrive", "homepath", "http_proxy", "https_proxy", "lang", "lc_all",
     "localappdata", "no_proxy", "path", "ssl_cert_dir", "ssl_cert_file", "systemroot", "temp", "tmp", "userprofile", "windir",
@@ -77,9 +82,18 @@ function providerEnvironment(environment, workspaceMode) {
   const result = {};
   for (const [key, value] of Object.entries(environment || {})) {
     const normalized = key.toLowerCase();
-    if ((fixedNames.has(normalized) || /_api_key$/iu.test(key)) && typeof value === "string") result[key] = value;
+    if ((fixedNames.has(normalized) || /_api_key$/iu.test(key) || selectedProviderEnvironmentNames.has(key))
+      && typeof value === "string") result[key] = value;
   }
   const permission = permissionPolicy(workspaceMode);
+  const provider = providerId && result[providerApiKeyName] && result[providerBaseUrlName] ? {
+    [providerId]: {
+      options: {
+        apiKey: `{env:${providerApiKeyName}}`,
+        baseURL: `{env:${providerBaseUrlName}}`,
+      },
+    },
+  } : undefined;
   result.CI = "1";
   result.NO_COLOR = "1";
   result.TERM = "dumb";
@@ -94,6 +108,7 @@ function providerEnvironment(environment, workspaceMode) {
     autoupdate: false,
     share: "disabled",
     permission,
+    ...(provider ? { provider } : {}),
   });
   return result;
 }
@@ -153,8 +168,12 @@ function removeOperationalControlState(operationalStateRoot, authorization, stat
   }
 }
 
-function opencodeArguments({ projectRoot }) {
-  return ["run", "--format", "json", "--pure", "--dir", projectRoot, "--title", "HEAD Agent invocation"];
+function opencodeArguments({ projectRoot, model }) {
+  return [
+    "run", "--format", "json", "--pure", "--dir", projectRoot,
+    ...(model ? ["--model", model] : []),
+    "--title", "HEAD Agent invocation",
+  ];
 }
 
 function parseStructuredText(value, scopeKind) {
@@ -297,9 +316,16 @@ export async function executeOpenCodeRuntimeInvocation({
       return await runSupervisedRuntimeOneShot({
         runtime: "opencode",
         executablePath: target.executablePath,
-        args: providerArguments === null ? opencodeArguments({ projectRoot: prepared.projectRoot }) : providerArguments,
+        args: providerArguments === null ? opencodeArguments({
+          projectRoot: prepared.projectRoot,
+          model: verified.runtimeSelection?.model || null,
+        }) : providerArguments,
         projectRoot: prepared.projectRoot,
-        providerEnvironment: providerEnvironment(environment, verified.workspaceMode),
+        providerEnvironment: providerEnvironment(
+          environment,
+          verified.workspaceMode,
+          verified.runtimeSelection?.model || null,
+        ),
         authorization: verified,
         input: prepared.input,
         consumption,

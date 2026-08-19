@@ -180,11 +180,12 @@ function removeOperationalSchemaFile(operationalStateRoot, authorization, state)
   }
 }
 
-function codexArguments({ projectRoot, schemaFile, workspaceMode }) {
+function codexArguments({ projectRoot, schemaFile, workspaceMode, model }) {
   return [
     "exec",
     "--json",
     "--ephemeral",
+    ...(model ? ["--model", model] : []),
     "--color", "never",
     "--sandbox", workspaceMode,
     "--skip-git-repo-check",
@@ -349,7 +350,12 @@ export async function executeCodexRuntimeInvocation({
         runtime: "codex",
         executablePath: target.executablePath,
         args: providerArguments === null
-          ? codexArguments({ projectRoot: prepared.projectRoot, schemaFile: schemaState.file, workspaceMode: verified.workspaceMode })
+          ? codexArguments({
+            projectRoot: prepared.projectRoot,
+            schemaFile: schemaState.file,
+            workspaceMode: verified.workspaceMode,
+            model: verified.runtimeSelection?.model || null,
+          })
           : selectedArguments,
         projectRoot: prepared.projectRoot,
         providerEnvironment: providerEnvironment(environment),

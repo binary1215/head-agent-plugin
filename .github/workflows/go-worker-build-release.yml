@@ -251,6 +251,8 @@ jobs:
           node ../../scripts/verify-process-supervisor.mjs --plugin-root "${NATIVE_TEST_ROOT}"
           HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${NATIVE_TEST_ROOT}" \
             node ../../scripts/verify-runtime-invocation-lifecycle.mjs
+          HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${NATIVE_TEST_ROOT}" \
+            node ../../scripts/verify-provider-replacement-recovery.mjs
 
   build:
     name: Build ${{ matrix.goos }}-${{ matrix.goarch }}

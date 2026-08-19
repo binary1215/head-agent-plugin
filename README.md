@@ -240,6 +240,7 @@ Status terms in this README have exact meanings:
 | ArcadeDB graph projection | **Experimental** |
 | OpenCode project projection | **Available** |
 | OpenCode one-shot Session and Run execution | **Experimental** |
+| Artifact-only Codex-to-OpenCode provider replacement recovery | **Available** |
 | Codex marketplace distribution | **Planned** |
 | `install.ps1` and `install.sh` | **Available** |
 | User-scoped global `head-agent` command | **Available** |
@@ -393,7 +394,8 @@ head-agent init C:\path\to\project --runtime codex,opencode `
 Initialization creates protected `.head/` project state, a project-scoped HEAD
 Session, onboarding state, an empty user-owned Product Model, and an immutable
 candidate batch. OpenCode uses the same project identity and onboarding state;
-its actual-provider execution remains Experimental.
+fresh-process provider replacement is verified from HEAD artifacts alone, while
+OpenCode actual-provider execution remains Experimental.
 
 ### 2. Select the repository source scope before indexing
 
