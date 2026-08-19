@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.39",
+  "version": "0.3.0-alpha.40",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -89,6 +89,7 @@
       "ExecutionContract-bound Runtime Invocation Authorization",
       "Durable At-most-once Runtime Execution Lease",
       "Bounded Runtime Event and ResultPacket Draft Schemas",
+      "Portable Structured Outputs Wire Schema",
       "Exact-child Runtime Lifecycle Conformance"
     ],
     "defaultPrompt": [

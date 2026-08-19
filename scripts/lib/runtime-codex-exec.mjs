@@ -25,7 +25,8 @@ import {
   spawnSupervisedProcess,
 } from "./runtime-process-supervisor.mjs";
 
-export const CODEX_EXEC_PROVIDER_VERSION = "0.1.0";
+export const CODEX_EXEC_PROVIDER_VERSION = "0.2.0";
+export const CODEX_EXEC_WIRE_SCHEMA_VERSION = "0.1.0";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const fail = (message, code = "CODEX_EXEC_PROVIDER_ERROR") => {
@@ -49,22 +50,52 @@ const canonicalJson = (value) => JSON.stringify(canonicalValue(value));
 const prettyJson = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
 export const CODEX_EXEC_RESULT_SCHEMA = Object.freeze({
-  $schema: "https://json-schema.org/draft/2020-12/schema",
   type: "object",
   additionalProperties: false,
   required: ["schemaVersion", "kind", "protocolVersion", "outcome", "evidence", "planDelta", "impactRadius", "verification", "unknowns"],
   properties: {
-    schemaVersion: { const: 1 },
-    kind: { const: "RuntimeStructuredResult" },
-    protocolVersion: { const: RUNTIME_STRUCTURED_RESULT_VERSION },
-    outcome: { type: "string", minLength: 1, maxLength: 16_384 },
-    evidence: { type: "array", maxItems: 64, items: { type: "string", minLength: 1, maxLength: 8_192 } },
-    planDelta: { type: "string", maxLength: 16_384 },
-    impactRadius: { type: "array", maxItems: 64, items: { type: "string", minLength: 1, maxLength: 8_192 } },
-    verification: { type: "array", maxItems: 64, items: { type: "string", minLength: 1, maxLength: 8_192 } },
-    unknowns: { type: "array", maxItems: 64, items: { type: "string", minLength: 1, maxLength: 8_192 } },
+    schemaVersion: { type: "integer", enum: [1] },
+    kind: { type: "string", enum: ["RuntimeStructuredResult"] },
+    protocolVersion: { type: "string", enum: [RUNTIME_STRUCTURED_RESULT_VERSION] },
+    outcome: { type: "string" },
+    evidence: { type: "array", items: { type: "string" } },
+    planDelta: { type: "string" },
+    impactRadius: { type: "array", items: { type: "string" } },
+    verification: { type: "array", items: { type: "string" } },
+    unknowns: { type: "array", items: { type: "string" } },
   },
 });
+
+const NON_PORTABLE_WIRE_SCHEMA_KEYWORDS = new Set([
+  "$schema", "allOf", "dependentRequired", "dependentSchemas", "else", "format", "if", "maxItems",
+  "maxLength", "maximum", "minItems", "minLength", "minimum", "multipleOf", "not", "pattern",
+  "patternProperties", "then",
+]);
+
+export function verifyCodexExecWireResultSchema(schema = CODEX_EXEC_RESULT_SCHEMA) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)
+    || schema.type !== "object" || schema.additionalProperties !== false
+    || !schema.properties || typeof schema.properties !== "object" || Array.isArray(schema.properties)
+    || !Array.isArray(schema.required)
+    || canonicalJson([...schema.required].sort(compareText)) !== canonicalJson(Object.keys(schema.properties).sort(compareText))) {
+    fail("Codex exec wire schema does not satisfy the fixed Structured Outputs object boundary.", "INVALID_CODEX_EXEC_WIRE_SCHEMA");
+  }
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, item] of Object.entries(value)) {
+      if (NON_PORTABLE_WIRE_SCHEMA_KEYWORDS.has(key)) {
+        fail(`Codex exec wire schema uses the non-portable ${key} keyword.`, "INVALID_CODEX_EXEC_WIRE_SCHEMA");
+      }
+      visit(item);
+    }
+  };
+  visit(schema);
+  return schema;
+}
 
 function providerEnvironment(environment = process.env) {
   const allowed = new Set([
@@ -117,7 +148,7 @@ function createOperationalSchemaFile(operationalStateRoot, authorization) {
   }
   const file = path.join(directory, "result.schema.json");
   const controlFile = path.join(directory, "supervisor-control.jsonl");
-  fs.writeFileSync(file, prettyJson(CODEX_EXEC_RESULT_SCHEMA), { encoding: "utf8", flag: "wx" });
+  fs.writeFileSync(file, prettyJson(verifyCodexExecWireResultSchema()), { encoding: "utf8", flag: "wx" });
   return { directory, file, controlFile };
 }
 

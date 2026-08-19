@@ -24,6 +24,7 @@ import {
   verifyRuntimeInvocationAuthorization,
   verifyRuntimeInvocationLifecycleReceipt,
   verifyRuntimeResultPacketDraft,
+  verifyRuntimeStructuredResult,
 } from "./lib/runtime-invocation-lifecycle.mjs";
 import {
   RUNTIME_OPERATIONAL_STATE_ENV,
@@ -32,7 +33,9 @@ import {
   verifyRuntimeExecutionLeaseRelease,
 } from "./lib/runtime-execution-lease.mjs";
 import {
+  CODEX_EXEC_RESULT_SCHEMA,
   executeCodexRuntimeInvocation,
+  verifyCodexExecWireResultSchema,
 } from "./lib/runtime-codex-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { resolveVerifiedProcessSupervisor } from "./lib/runtime-process-supervisor.mjs";
@@ -136,6 +139,28 @@ async function main() {
   fs.mkdirSync(resolvedRoot, { recursive: false });
   fs.mkdirSync(resolvedOperationalRoot, { recursive: false });
   try {
+    const codexWireSchema = verifyCodexExecWireResultSchema(CODEX_EXEC_RESULT_SCHEMA);
+    const codexWireSchemaText = JSON.stringify(codexWireSchema);
+    assert(!codexWireSchemaText.includes("$schema") && !codexWireSchemaText.includes("minLength")
+      && !codexWireSchemaText.includes("maxLength") && !codexWireSchemaText.includes("minItems")
+      && !codexWireSchemaText.includes("maxItems"), "Codex wire schema retained provider-specific constraint keywords.");
+    let semanticResultBoundsRejected = false;
+    try {
+      verifyRuntimeStructuredResult({
+        schemaVersion: 1,
+        kind: "RuntimeStructuredResult",
+        protocolVersion: "0.1.0",
+        outcome: "bounded",
+        evidence: Array.from({ length: 65 }, (_, index) => `evidence-${index}`),
+        planDelta: "",
+        impactRadius: [],
+        verification: [],
+        unknowns: [],
+      }, { scopeKind: "session" });
+    } catch (error) {
+      semanticResultBoundsRejected = error.code === "INVALID_RUNTIME_STRUCTURED_RESULT";
+    }
+    assert(semanticResultBoundsRejected, "Provider-neutral structured-result bounds were weakened with the wire schema.");
     fs.writeFileSync(path.join(resolvedRoot, "example.mjs"), "export const answer = 42;\n", "utf8");
     const initialized = initializeProject({ root: resolvedRoot, pluginRoot, runtimes: ["codex", "opencode"] });
     assert(initialized.status === "ready", "Fixture project initialization failed.");
@@ -676,6 +701,8 @@ async function main() {
       codexDescendantTreeSupervisionValidated: true,
       codexInvocationSurfacePreflightValidated: true,
       codexInvocationSurfaceDriftRejectedBeforeConsumption: true,
+      codexPortableWireSchemaValidated: true,
+      semanticResultBoundsRetained: true,
       providerNeutralInvocationRecordValidated: true,
       opencodeProtocolFixtureModeValidated: true,
       sessionRunResultApplicationRejected: true,
