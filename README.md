@@ -91,7 +91,7 @@ edge directions preserve meaning, while bounded traversal can start from either
 endpoint and explore the relationship in either direction.
 
 ```mermaid
-flowchart LR
+flowchart TB
     UI[User intent] -->|reviewed into| CANON
 
     subgraph GS["GraphSnapshot: connected project evidence"]
@@ -109,10 +109,13 @@ flowchart LR
     end
 ```
 
-`Reviewed user intent` is shown outside the snapshot deliberately. Raw prompts
-do not become graph authority. Only intent captured through reviewed Product
-Canon artifacts such as Requirements, Constraints, Decisions, and Features
-enters the snapshot.
+`User intent` is shown outside the snapshot deliberately. Raw prompts do not
+become graph authority. Only intent captured through reviewed Product Canon
+artifacts such as Requirements, Constraints, Decisions, and Features enters the
+snapshot.
+
+<details>
+<summary><strong>See how this semantic graph is encoded</strong></summary>
 
 The picture stays intentionally semantic. The implementation preserves the
 exact relationship vocabulary underneath it:
@@ -134,6 +137,8 @@ exact relationship vocabulary underneath it:
 | How is history represented? | SourceSnapshots, revisions, and ChangeSets allow zero or more parents, forming DAGs without claiming automatic merge behavior. |
 | Where is it stored? | Recoverably inside the World Model, then optionally materialized through local JSON or ArcadeDB and rendered into documents. |
 | Is it project authority? | No. It is `derived-evidence-only`; Product Canon, observed source, and explicit review records retain their respective authority. |
+
+</details>
 
 ### Traverse from any anchor
 
