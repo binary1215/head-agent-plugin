@@ -1303,7 +1303,7 @@ export function verifyPreparedTraversalRequest(document, { graph = null, result 
   return document;
 }
 
-function buildPreparedTraversalVerificationFromVerified(prepared, verificationMode) {
+function preparedTraversalVerificationDocumentFromVerified(prepared, verificationMode) {
   if (typeof verificationMode !== "string" || !/^[a-z0-9-]+$/.test(verificationMode)) {
     fail("Prepared traversal verification mode is invalid.", "INVALID_PREPARED_TRAVERSAL_VERIFICATION");
   }
@@ -1328,11 +1328,15 @@ function buildPreparedTraversalVerificationFromVerified(prepared, verificationMo
     promotionAuthority: false,
   };
   const verificationHash = digest(graphProjectionCanonicalJson(payload));
-  return verifyPreparedTraversalVerification({
+  return {
     ...payload,
     verificationId: `prepared-traversal-verification-${verificationHash.slice(0, 24)}`,
     verificationHash,
-  });
+  };
+}
+
+function buildPreparedTraversalVerificationFromVerified(prepared, verificationMode) {
+  return verifyPreparedTraversalVerification(preparedTraversalVerificationDocumentFromVerified(prepared, verificationMode));
 }
 
 function buildPreparedTraversalVerification(request, verificationMode) {
@@ -1371,12 +1375,21 @@ export function verifyPreparedTraversalVerification(document, expectedRequest = 
   }
   if (expectedRequest) {
     const request = verifyPreparedTraversalRequest(expectedRequest);
-    const expected = buildPreparedTraversalVerificationFromVerified(request, document.verificationMode);
+    const expected = preparedTraversalVerificationDocumentFromVerified(request, document.verificationMode);
     if (graphProjectionCanonicalJson(document) !== graphProjectionCanonicalJson(expected)) {
       fail("Prepared traversal verification does not match its request.", "PREPARED_TRAVERSAL_VERIFICATION_MISMATCH");
     }
   }
   return document;
+}
+
+function verifyPreparedTraversalVerificationAgainstLocallyBuiltRequest(document, locallyBuiltRequest) {
+  const verified = verifyPreparedTraversalVerification(document);
+  const expected = preparedTraversalVerificationDocumentFromVerified(locallyBuiltRequest, verified.verificationMode);
+  if (graphProjectionCanonicalJson(verified) !== graphProjectionCanonicalJson(expected)) {
+    fail("Prepared traversal verification does not match its request.", "PREPARED_TRAVERSAL_VERIFICATION_MISMATCH");
+  }
+  return verified;
 }
 
 function verifyArcadeDbServerTraversalResponseAgainstPrepared({ prepared, response, maxRecords }) {
@@ -2638,7 +2651,7 @@ export function queryGraphProjection({ projectRoot, graph, adapter = null, query
   }
   if (prepared) {
     const request = buildPreparedTraversalRequest({ graph, result: expected });
-    const verification = verifyPreparedTraversalVerification(selected.queryPrepared(clone(request), {
+    const verification = verifyPreparedTraversalVerificationAgainstLocallyBuiltRequest(selected.queryPrepared(clone(request), {
       pointerReadToken: inspected.pointerReadToken,
     }), request);
     const selectedDiagnostics = typeof selected.diagnostics === "function" ? selected.diagnostics() : {};
@@ -2654,6 +2667,11 @@ export function queryGraphProjection({ projectRoot, graph, adapter = null, query
           expansionHash: request.expansionHash,
           verificationId: verification.verificationId,
           verificationMode: verification.verificationMode,
+          clientReceiptVerification: {
+            verificationDocumentDigest: "independently-verified",
+            requestBinding: "same-stack-locally-built-request",
+            fullRequestReverification: false,
+          },
         },
       },
     };

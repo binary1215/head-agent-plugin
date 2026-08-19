@@ -271,8 +271,31 @@ async function runFixture(iterations, queryText) {
     preparedTraversalRequired: true,
   });
   materializeGraphProjection({ projectRoot: ".", graph, adapter });
+  const alternateAnchor = graph.nodes.find((node) => !request.traversalQuery.anchorIds.includes(node.nodeId));
+  if (!alternateAnchor) fail("Benchmark requires a second graph anchor for receipt replay rejection.", "BENCHMARK_REPLAY_ANCHOR_MISSING");
+  const alternateResult = queryTemporalProvenanceGraph(graph, {
+    query: alternateAnchor.nodeId,
+    depth: 0,
+    maxNodes: 1,
+    maxEdges: 0,
+  });
+  const alternateRequest = buildPreparedTraversalRequest({ graph, result: alternateResult });
+  const replayedVerification = adapter.queryPrepared(alternateRequest);
+  const queryPrepared = adapter.queryPrepared.bind(adapter);
+  adapter.queryPrepared = () => replayedVerification;
+  let receiptReplayRejected = false;
+  try {
+    queryGraphProjection({ projectRoot: ".", graph, adapter, query });
+  } catch (error) {
+    if (error.code !== "PREPARED_TRAVERSAL_VERIFICATION_MISMATCH") throw error;
+    receiptReplayRejected = true;
+  } finally {
+    adapter.queryPrepared = queryPrepared;
+  }
+  if (!receiptReplayRejected) fail("Prepared traversal accepted a valid receipt from a distinct request.", "BENCHMARK_RECEIPT_REPLAY_ACCEPTED");
   transport.reset();
   const elapsedMs = [];
+  let receiptReuseCount = 0;
   for (let index = 0; index < iterations; index += 1) {
     const started = performance.now();
     const execution = queryGraphProjection({ projectRoot: ".", graph, adapter, query });
@@ -280,6 +303,13 @@ async function runFixture(iterations, queryText) {
     if (execution.result.resultId !== result.resultId || execution.result.resultHash !== result.resultHash) {
       fail("Fixture benchmark semantic identity drifted.", "BENCHMARK_SEMANTIC_IDENTITY_DRIFT");
     }
+    const receipt = execution.diagnostics.preparedTraversal?.clientReceiptVerification;
+    if (receipt?.verificationDocumentDigest !== "independently-verified"
+      || receipt.requestBinding !== "same-stack-locally-built-request"
+      || receipt.fullRequestReverification !== false) {
+      fail("Fixture benchmark did not use the bounded client-receipt verification path.", "BENCHMARK_RECEIPT_VERIFICATION_DRIFT");
+    }
+    receiptReuseCount += 1;
   }
   const transportSummary = transport.summary();
   if (transportSummary.writeAttemptCount !== 0
@@ -297,6 +327,15 @@ async function runFixture(iterations, queryText) {
     elapsedMs,
     transportSummary,
     readShape,
+    receiptVerification: {
+      queryCount: iterations,
+      locallyBuiltRequestReuseCount: receiptReuseCount,
+      fullRequestReverificationCount: 0,
+      verificationDocumentDigestChecks: iterations,
+      requestBindingChecks: iterations,
+      semanticIdentityEffect: "none",
+    },
+    receiptReplayRejected,
     liveEnvironmentValidated: false,
   };
 }
@@ -320,6 +359,7 @@ async function runLive(projectRoot, iterations, queryText) {
     fail("Live activated adapter does not expose prepared traversal.", "LIVE_PREPARED_TRAVERSAL_NOT_ACTIVE");
   }
   const elapsedMs = [];
+  let receiptReuseCount = 0;
   for (let index = 0; index < iterations; index += 1) {
     const started = performance.now();
     const execution = queryGraphProjection({ projectRoot, graph, adapter, query });
@@ -328,6 +368,13 @@ async function runLive(projectRoot, iterations, queryText) {
       || execution.diagnostics.fallbackUsed) {
       fail("Live benchmark used fallback or changed semantic identity.", "LIVE_BENCHMARK_CONFORMANCE_FAILED");
     }
+    const receipt = execution.diagnostics.preparedTraversal?.clientReceiptVerification;
+    if (receipt?.verificationDocumentDigest !== "independently-verified"
+      || receipt.requestBinding !== "same-stack-locally-built-request"
+      || receipt.fullRequestReverification !== false) {
+      fail("Live benchmark did not use the bounded client-receipt verification path.", "LIVE_BENCHMARK_RECEIPT_VERIFICATION_DRIFT");
+    }
+    receiptReuseCount += 1;
   }
   const transportSummary = transport.summary();
   if (transportSummary.writeAttemptCount !== 0
@@ -345,6 +392,14 @@ async function runLive(projectRoot, iterations, queryText) {
     elapsedMs,
     transportSummary,
     readShape,
+    receiptVerification: {
+      queryCount: iterations,
+      locallyBuiltRequestReuseCount: receiptReuseCount,
+      fullRequestReverificationCount: 0,
+      verificationDocumentDigestChecks: iterations,
+      requestBindingChecks: iterations,
+      semanticIdentityEffect: "none",
+    },
     liveEnvironmentValidated: true,
   };
 }
@@ -377,6 +432,7 @@ try {
       maxElapsedMs: elapsed.at(-1),
       transport: execution.transportSummary,
       pointerReadOptimization: execution.readShape,
+      clientReceiptOptimization: execution.receiptVerification,
       timingSemantic: false,
     },
     safety: {
@@ -385,6 +441,9 @@ try {
       credentialsPersisted: false,
       fullSnapshotReads: 0,
       fullTopologyReads: 0,
+      ...(execution.receiptReplayRejected == null ? {} : {
+        distinctValidReceiptReplayRejected: execution.receiptReplayRejected === true,
+      }),
       liveEnvironmentValidated: execution.liveEnvironmentValidated,
     },
     authorityEffect: "none",
