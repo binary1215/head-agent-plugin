@@ -7,9 +7,7 @@ import { resolveReadOnlyRuntimeExecutableTarget } from "./runtime-machine-discov
 import { verifyRuntimeProjectBinding, verifyRuntimeProtocolEvidence } from "./runtime-protocol-evidence.mjs";
 import {
   buildRuntimeInvocationCallerFence,
-  buildRuntimeInvocationLifecycleReceipt,
   buildRuntimeResultPacketDraft,
-  normalizeRuntimeEvent,
   prepareRuntimeInvocationExecution,
   verifyRuntimeInvocationAuthorization,
   verifyRuntimeStructuredResult,
@@ -22,8 +20,8 @@ import {
 } from "./runtime-execution-lease.mjs";
 import {
   resolveVerifiedProcessSupervisor,
-  spawnSupervisedProcess,
 } from "./runtime-process-supervisor.mjs";
+import { runSupervisedRuntimeOneShot } from "./runtime-supervised-one-shot.mjs";
 
 export const CODEX_EXEC_PROVIDER_VERSION = "0.2.0";
 export const CODEX_EXEC_WIRE_SCHEMA_VERSION = "0.1.0";
@@ -264,15 +262,6 @@ export function classifyCodexProviderDiagnostics({ record = null, stderr = "", e
   return [...codes].sort(compareText);
 }
 
-function structuredResultExposesRoot(result, roots) {
-  if (!result) return false;
-  const content = canonicalJson(result).toLowerCase();
-  return roots.filter(Boolean).some((root) => {
-    const resolved = path.resolve(root).toLowerCase();
-    return content.includes(resolved) || content.includes(resolved.replaceAll("\\", "/"));
-  });
-}
-
 function verifyCurrentCodexTarget({ authorization, protocolEvidence, projectBinding, targetResolver, platform, environment, fileSystem, requireInvocationSurface }) {
   const protocol = verifyRuntimeProtocolEvidence(protocolEvidence);
   const binding = verifyRuntimeProjectBinding(projectBinding);
@@ -301,231 +290,6 @@ function verifyCurrentCodexTarget({ authorization, protocolEvidence, projectBind
     fail("Codex executable identity changed or is not safe for direct spawn.", "CODEX_EXEC_EXECUTABLE_DRIFT");
   }
   return { target, observation };
-}
-
-function terminateExactTree(supervised, state, reason) {
-  if (!state.childStarted || state.childExitObserved || state.terminationRequested) return;
-  state.terminationRequested = true;
-  if (reason === "timeout") state.timedOut = true;
-  if (reason === "cancel") state.cancelled = true;
-  if (reason === "output-limit") state.outputLimited = true;
-  if (reason === "invalid-event") state.invalidEvent = true;
-  supervised.terminate(false);
-}
-
-async function runCodexChild({
-  executablePath,
-  args,
-  projectRoot,
-  environment,
-  authorization,
-  input,
-  consumption,
-  callerFenceDigest,
-  signal,
-  spawnImplementation,
-  onProcessEvent,
-  providerMode,
-  sensitiveRoots,
-  supervisorSelection,
-  supervisorControlFile,
-}) {
-  const state = {
-    childStarted: false,
-    childExitObserved: false,
-    terminationRequested: false,
-    timedOut: false,
-    cancelled: false,
-    outputLimited: false,
-    invalidEvent: false,
-  };
-  let child;
-  let supervised;
-  let timer;
-  let forceTimer;
-  let abortHandler;
-  let stdout = Buffer.alloc(0);
-  let stderr = Buffer.alloc(0);
-  let lineBuffer = "";
-  let inputDigestObserved = digest(Buffer.alloc(0));
-  let inputWriteFailed = false;
-  let providerResult = null;
-  const events = [];
-  const providerDiagnosticCodes = new Set();
-  const ownershipNonce = crypto.randomBytes(32).toString("hex");
-
-  const receipt = await new Promise((resolve, reject) => {
-    let settled = false;
-    const rejectOnce = (error) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (forceTimer) clearTimeout(forceTimer);
-      if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
-      reject(error);
-    };
-    try {
-      supervised = spawnSupervisedProcess({
-        selection: supervisorSelection,
-        executablePath,
-        args,
-        cwd: projectRoot,
-        providerEnvironment: providerEnvironment(environment),
-        input,
-        controlFile: supervisorControlFile,
-        terminationGraceMs: authorization.limits.terminationGraceMs,
-        spawnImplementation,
-        onControlEvent: (event) => {
-          if (event.type === "provider.started") {
-            inputDigestObserved = digest(input);
-            onProcessEvent({ type: "spawn", pid: event.providerPid, parentPid: child?.pid || process.pid, command: "codex exec", cwd: projectRoot, ports: "none" });
-          } else if (event.type === "provider.exited") {
-            onProcessEvent({ type: "exit", pid: event.providerPid, parentPid: child?.pid || process.pid, exitCode: event.exitCode, signal: "none" });
-          }
-        },
-      });
-      child = supervised.child;
-    } catch (error) {
-      rejectOnce(Object.assign(new Error(`Codex exec could not start: ${error.message}`), { code: "CODEX_EXEC_SPAWN_FAILED" }));
-      return;
-    }
-    let childFenceDigest = digest(`${callerFenceDigest}\nnot-started\n${ownershipNonce}`);
-    const terminate = (reason) => {
-      const before = state.terminationRequested;
-      terminateExactTree(supervised, state, reason);
-      if (!before && state.terminationRequested) {
-        forceTimer = setTimeout(() => {
-          if (!state.childExitObserved) supervised.terminate(true);
-        }, authorization.limits.terminationGraceMs);
-        forceTimer.unref();
-      }
-    };
-    const consumeLine = (line) => {
-      if (!line.trim()) return;
-      if (events.length >= authorization.limits.maxEvents) {
-        terminate("output-limit");
-        return;
-      }
-      try {
-        const record = JSON.parse(line);
-        const envelope = normalizeRuntimeEvent({ authorization, sequence: events.length, line });
-        events.push(envelope);
-        for (const code of classifyCodexProviderDiagnostics({ record })) providerDiagnosticCodes.add(code);
-        const result = extractCodexStructuredResult(record, { scopeKind: authorization.scope.kind });
-        if (result && structuredResultExposesRoot(result, sensitiveRoots)) {
-          providerDiagnosticCodes.add("codex.sensitive-root-exposure");
-          terminate("invalid-event");
-        }
-        else if (result) providerResult = result;
-      } catch (error) {
-        const diagnosticCode = error?.code === "RUNTIME_EVENT_LIMIT" ? "codex.event-count-limit"
-          : error?.code === "RUNTIME_EVENT_OUTPUT_LIMIT" ? "codex.event-byte-limit"
-            : error?.code === "INVALID_RUNTIME_EVENT_JSON" || error instanceof SyntaxError ? "codex.invalid-json-event"
-              : "codex.invalid-event-unclassified";
-        providerDiagnosticCodes.add(diagnosticCode);
-        terminate("invalid-event");
-      }
-    };
-    timer = setTimeout(() => terminate("timeout"), authorization.limits.timeoutMs);
-    if (signal) {
-      if (signal.aborted) terminate("cancel");
-      else {
-        abortHandler = () => terminate("cancel");
-        signal.addEventListener("abort", abortHandler, { once: true });
-      }
-    }
-    child.once("spawn", () => {
-      state.childStarted = true;
-      childFenceDigest = digest(`${callerFenceDigest}\n${child.pid}\n${ownershipNonce}`);
-      onProcessEvent({ type: "spawn", pid: child.pid, parentPid: process.pid, command: "head-agent process-supervisor", cwd: path.dirname(supervisorSelection.binaryPath), ports: "none" });
-    });
-    child.once("error", (error) => {
-      rejectOnce(Object.assign(new Error(`Codex exec child failed: ${error.message}`), { code: "CODEX_EXEC_SPAWN_FAILED" }));
-    });
-    child.stdin.on("error", () => {
-      inputWriteFailed = true;
-      inputDigestObserved = digest(Buffer.alloc(0));
-    });
-    child.stdout.on("data", (chunk) => {
-      stdout = Buffer.concat([stdout, chunk]);
-      if (stdout.length > authorization.limits.maxStdoutBytes) {
-        terminate("output-limit");
-        return;
-      }
-      lineBuffer += chunk.toString("utf8");
-      const lines = lineBuffer.split(/\r?\n/);
-      lineBuffer = lines.pop() || "";
-      for (const line of lines) consumeLine(line);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr = Buffer.concat([stderr, chunk]);
-      if (stderr.length > authorization.limits.maxStderrBytes) terminate("output-limit");
-    });
-    child.once("close", (code, childSignal) => {
-      if (settled) return;
-      settled = true;
-      state.childExitObserved = true;
-      if (lineBuffer.trim()) consumeLine(lineBuffer);
-      onProcessEvent({ type: "exit", pid: child.pid, parentPid: process.pid, exitCode: Number.isInteger(code) ? code : null, signal: childSignal || "none" });
-      clearTimeout(timer);
-      if (forceTimer) clearTimeout(forceTimer);
-      if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
-      const supervision = supervised.finalize({
-        exactSupervisorExitObserved: state.childExitObserved,
-        terminationRequested: state.terminationRequested,
-      });
-      if (supervision.controlInvalid) providerDiagnosticCodes.add("codex.supervisor-control-invalid");
-      if (!supervision.providerChildExitObserved && supervision.providerPid) {
-        onProcessEvent({ type: "exit", pid: supervision.providerPid, parentPid: child.pid, exitCode: null, signal: state.terminationRequested ? "terminated-tree" : "unknown" });
-      }
-      const sessionCreated = events.some((item) => item.providerSessionReferenceDigests.length > 0);
-      const turnCompleted = events.some((item) => item.eventType === "turn.completed");
-      const providerOutputComplete = providerResult !== null && sessionCreated && turnCompleted
-        && inputDigestObserved === authorization.executionInput.digest && supervision.requestWritten;
-      const status = state.cancelled ? "cancelled" : state.timedOut ? "timed-out" : state.outputLimited ? "output-limited"
-        : state.invalidEvent || supervision.controlInvalid ? "invalid-event"
-          : code === 0 && providerOutputComplete && supervision.ownershipEstablished && supervision.treeCleanupVerified ? "completed" : "failed";
-      if (state.invalidEvent
-        && ![...providerDiagnosticCodes].some((item) => CODEX_INVALID_EVENT_DIAGNOSTIC_CODES.has(item))) {
-        providerDiagnosticCodes.add("codex.invalid-event-unclassified");
-      }
-      for (const diagnosticCode of classifyCodexProviderDiagnostics({
-        stderr: stderr.toString("utf8"),
-        exitCode: Number.isInteger(code) ? code : null,
-        structuredResultObserved: providerResult !== null,
-        eventTypes: events.map((item) => item.eventType),
-      })) providerDiagnosticCodes.add(diagnosticCode);
-      const receiptDocument = buildRuntimeInvocationLifecycleReceipt({
-        authorization,
-        events: events.sort((left, right) => compareText(left.eventId, right.eventId)),
-        status,
-        exitCode: Number.isInteger(code) ? code : null,
-        signal: childSignal || "",
-        stdoutBytes: stdout.length,
-        stderrBytes: stderr.length,
-        stdoutDigest: digest(stdout),
-        stderrDigest: digest(stderr),
-        callerFenceDigest,
-        childFenceDigest,
-        childStarted: state.childStarted,
-        childExitObserved: state.childExitObserved,
-        terminationRequested: state.terminationRequested,
-        projectFenceValidated: true,
-        inputDigestObserved,
-        noDescendantFixture: false,
-        descendantTreeOwnershipValidated: supervision.ownershipEstablished && supervision.treeCleanupVerified
-          && state.childStarted && state.childExitObserved,
-        supervision,
-        consumption,
-        providerMode,
-        providerSessionCreated: sessionCreated,
-        providerDiagnosticCodes: [...providerDiagnosticCodes],
-        structuredResult: providerResult,
-      });
-      resolve({ receipt: receiptDocument, events, providerResult });
-    });
-  });
-  return receipt;
 }
 
 export async function executeCodexRuntimeInvocation({
@@ -581,13 +345,14 @@ export async function executeCodexRuntimeInvocation({
     let schemaState;
     try {
       schemaState = createOperationalSchemaFile(operationalStateRoot, verified);
-      return await runCodexChild({
+      return await runSupervisedRuntimeOneShot({
+        runtime: "codex",
         executablePath: target.executablePath,
         args: providerArguments === null
           ? codexArguments({ projectRoot: prepared.projectRoot, schemaFile: schemaState.file, workspaceMode: verified.workspaceMode })
           : selectedArguments,
         projectRoot: prepared.projectRoot,
-        environment,
+        providerEnvironment: providerEnvironment(environment),
         authorization: verified,
         input: prepared.input,
         consumption,
@@ -599,6 +364,11 @@ export async function executeCodexRuntimeInvocation({
         sensitiveRoots: [prepared.projectRoot, operationalStateRoot],
         supervisorSelection: selectedSupervisor,
         supervisorControlFile: schemaState.controlFile,
+        commandLabel: "codex exec",
+        spawnFailureCode: "CODEX_EXEC_SPAWN_FAILED",
+        classifyProviderDiagnostics: classifyCodexProviderDiagnostics,
+        extractStructuredResult: extractCodexStructuredResult,
+        completionEventTypes: ["turn.completed"],
       });
     } finally {
       removeOperationalSchemaFile(operationalStateRoot, verified, schemaState);

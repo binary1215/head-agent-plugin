@@ -12,16 +12,16 @@ import { buildRuntimeVersionEvidence } from "./lib/runtime-machine-execution.mjs
 import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "./lib/runtime-protocol-evidence.mjs";
 import { buildRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { RUNTIME_OPERATIONAL_STATE_ENV } from "./lib/runtime-execution-lease.mjs";
-import {
-  executeCodexRuntimeInvocation,
-} from "./lib/runtime-codex-exec.mjs";
+import { executeRuntimeInvocation } from "./lib/runtime-one-shot-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { resolveVerifiedProcessSupervisor } from "./lib/runtime-process-supervisor.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const nonce = `${process.pid}-${Date.now()}`;
-const projectRoot = path.join(pluginRoot, `.qa-live-codex-${nonce}`);
-const operationalRoot = path.join(pluginRoot, `.qa-live-codex-operational-${nonce}`);
+const providerRuntime = String(process.env.HEAD_AGENT_LIVE_RUNTIME || "codex").trim().toLowerCase();
+const providerName = providerRuntime === "opencode" ? "OpenCode" : "Codex";
+const projectRoot = path.join(pluginRoot, `.qa-live-${providerRuntime}-${nonce}`);
+const operationalRoot = path.join(pluginRoot, `.qa-live-${providerRuntime}-operational-${nonce}`);
 const liveOptIn = "HEAD_AGENT_LIVE_CODEX_E2E";
 const liveModeEnv = "HEAD_AGENT_LIVE_CODEX_E2E_MODE";
 const LIVE_MODE_PLANS = Object.freeze({
@@ -96,16 +96,16 @@ function recordingSpawn(command, args, options) {
 async function buildActualRuntimeEvidence(root) {
   const inspected = inspectProject(root);
   const versionEvidence = await buildRuntimeVersionEvidence({
-    runtimes: ["codex"],
+    runtimes: [providerRuntime],
     spawnImplementation: recordingSpawn,
   });
-  assert(versionEvidence.summary.allRequestedVersionsVerified, "Installed Codex version evidence was not verified.");
+  assert(versionEvidence.summary.allRequestedVersionsVerified, `Installed ${providerName} version evidence was not verified.`);
   const protocolEvidence = await buildRuntimeProtocolEvidence({
-    runtimes: ["codex"],
+    runtimes: [providerRuntime],
     versionEvidence,
     spawnImplementation: recordingSpawn,
   });
-  assert(protocolEvidence.summary.allRequestedProtocolsObserved, "Installed Codex protocol evidence was not verified.");
+  assert(protocolEvidence.summary.allRequestedProtocolsObserved, `Installed ${providerName} protocol evidence was not verified.`);
   const projectBinding = buildRuntimeProjectBinding({
     projectId: inspected.project.projectId,
     headSessionId: inspected.state.sessionId,
@@ -118,13 +118,14 @@ async function buildActualRuntimeEvidence(root) {
 }
 
 async function main() {
+  assert(new Set(["codex", "opencode"]).has(providerRuntime), "HEAD_AGENT_LIVE_RUNTIME must be codex or opencode.");
   activeLivePlan = resolveLivePlan();
   if (process.env[liveOptIn] !== "1") {
-    throw Object.assign(new Error(`${liveOptIn}=1 is required because ${activeLivePlan.mode} performs real Codex model calls.`), { code: "LIVE_CODEX_E2E_OPT_IN_REQUIRED" });
+    throw Object.assign(new Error(`${liveOptIn}=1 is required because ${activeLivePlan.mode} performs real ${providerName} model calls.`), { code: "LIVE_CODEX_E2E_OPT_IN_REQUIRED" });
   }
-  for (const [root, prefix] of [[projectRoot, ".qa-live-codex-"], [operationalRoot, ".qa-live-codex-operational-"]]) {
-    assert(root.startsWith(`${pluginRoot}${path.sep}`) && path.basename(root).startsWith(prefix), "Live Codex fixture root escaped the plugin workspace.");
-    assert(!fs.existsSync(root), "Live Codex fixture root already exists.");
+  for (const [root, prefix] of [[projectRoot, `.qa-live-${providerRuntime}-`], [operationalRoot, `.qa-live-${providerRuntime}-operational-`]]) {
+    assert(root.startsWith(`${pluginRoot}${path.sep}`) && path.basename(root).startsWith(prefix), `Live ${providerName} fixture root escaped the plugin workspace.`);
+    assert(!fs.existsSync(root), `Live ${providerName} fixture root already exists.`);
   }
   const supervisorFixtureRoot = path.resolve(process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
   const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: supervisorFixtureRoot });
@@ -136,8 +137,8 @@ async function main() {
     const fixtureFile = path.join(projectRoot, "fixture.txt");
     fs.writeFileSync(fixtureFile, "HEAD live Session marker: SESSION-READ-ONLY-OK\n", "utf8");
     const fixtureDigest = digest(fs.readFileSync(fixtureFile));
-    const initialized = initializeProject({ root: projectRoot, pluginRoot, runtimes: ["codex"] });
-    assert(initialized.status === "ready", "Live Codex fixture project did not initialize.");
+    const initialized = initializeProject({ root: projectRoot, pluginRoot, runtimes: [providerRuntime] });
+    assert(initialized.status === "ready", `Live ${providerName} fixture project did not initialize.`);
 
     let sessionSummary = null;
     if (activeLivePlan.includeSession) {
@@ -149,7 +150,7 @@ async function main() {
       ].join(" ");
       const sessionAuthorization = buildRuntimeInvocationAuthorization({
         root: projectRoot,
-        runtime: "codex",
+        runtime: providerRuntime,
         scope: { kind: "session", request: sessionRequest, contextCapsuleId: null },
         workspaceMode: "read-only",
         protocolEvidence: sessionEvidence.protocolEvidence,
@@ -163,7 +164,7 @@ async function main() {
         },
         persist: true,
       }).authorization;
-      const sessionExecution = await executeCodexRuntimeInvocation({
+      const sessionExecution = await executeRuntimeInvocation({
         root: projectRoot,
         authorization: sessionAuthorization,
         sessionRequest,
@@ -174,11 +175,11 @@ async function main() {
         persist: true,
       });
       assert(sessionExecution.receipt.status === "completed" && sessionExecution.actualProviderInvoked === true,
-        `Live Codex Session did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(sessionExecution))}`);
-      assert(sessionExecution.descendantTreeOwnershipValidated === true, "Live Codex Session did not prove descendant-tree ownership.");
-      assert(sessionExecution.draft.scopeKind === "session" && sessionExecution.draft.freshHeadReviewRequired === false, "Live Codex Session acquired Run review semantics.");
-      assert(sessionExecution.draft.providerResult?.planDelta === "" && sessionExecution.draft.providerResult?.impactRadius.length === 0, "Live Codex Session returned a Run-shaped result.");
-      assert(digest(fs.readFileSync(fixtureFile)) === fixtureDigest, "Live Codex Session changed the read-only fixture.");
+        `Live ${providerName} Session did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(sessionExecution))}`);
+      assert(sessionExecution.descendantTreeOwnershipValidated === true, `Live ${providerName} Session did not prove descendant-tree ownership.`);
+      assert(sessionExecution.draft.scopeKind === "session" && sessionExecution.draft.freshHeadReviewRequired === false, `Live ${providerName} Session acquired Run review semantics.`);
+      assert(sessionExecution.draft.providerResult?.planDelta === "" && sessionExecution.draft.providerResult?.impactRadius.length === 0, `Live ${providerName} Session returned a Run-shaped result.`);
+      assert(digest(fs.readFileSync(fixtureFile)) === fixtureDigest, `Live ${providerName} Session changed the read-only fixture.`);
       const afterSession = inspectProject(projectRoot);
       assert(afterSession.state.mode === "session" && !afterSession.state.activeRunId && !afterSession.state.pendingReview, "Live Codex Session manufactured Run or Review state.");
       sessionSummary = {
@@ -224,7 +225,7 @@ async function main() {
     const runEvidence = await buildActualRuntimeEvidence(projectRoot);
     const runAuthorization = buildRuntimeInvocationAuthorization({
       root: projectRoot,
-      runtime: "codex",
+      runtime: providerRuntime,
       scope: { kind: "run" },
       workspaceMode: "workspace-write",
       protocolEvidence: runEvidence.protocolEvidence,
@@ -239,7 +240,7 @@ async function main() {
       },
       persist: true,
     }).authorization;
-    const runExecution = await executeCodexRuntimeInvocation({
+    const runExecution = await executeRuntimeInvocation({
       root: projectRoot,
       authorization: runAuthorization,
       protocolEvidence: runEvidence.protocolEvidence,
@@ -249,11 +250,11 @@ async function main() {
       persist: true,
     });
     assert(runExecution.receipt.status === "completed" && runExecution.actualProviderInvoked === true,
-      `Live Codex Run did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(runExecution))}`);
-    assert(runExecution.descendantTreeOwnershipValidated === true, "Live Codex Run did not prove descendant-tree ownership.");
-    assert(runExecution.draft.scopeKind === "run" && runExecution.draft.freshHeadReviewRequired === true, "Live Codex Run did not retain Run review semantics.");
-    assert(fs.readFileSync(path.join(projectRoot, "run-output.txt"), "utf8") === "HEAD live Run verified\n", "Live Codex Run did not create the exact accepted output.");
-    assert(digest(fs.readFileSync(fixtureFile)) === fixtureDigest, "Live Codex Run changed the protected fixture marker.");
+      `Live ${providerName} Run did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(runExecution))}`);
+    assert(runExecution.descendantTreeOwnershipValidated === true, `Live ${providerName} Run did not prove descendant-tree ownership.`);
+    assert(runExecution.draft.scopeKind === "run" && runExecution.draft.freshHeadReviewRequired === true, `Live ${providerName} Run did not retain Run review semantics.`);
+    assert(fs.readFileSync(path.join(projectRoot, "run-output.txt"), "utf8") === "HEAD live Run verified\n", `Live ${providerName} Run did not create the exact accepted output.`);
+    assert(digest(fs.readFileSync(fixtureFile)) === fixtureDigest, `Live ${providerName} Run changed the protected fixture marker.`);
 
     const applied = applyRuntimeRunResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
     assert(applied.status === "runtime_run_result_applied", "Live Codex Run draft was not applied to canonical Execution Lineage.");
@@ -264,8 +265,8 @@ async function main() {
       root: projectRoot,
       reviewContextId: pending.review.reviewContextId,
       disposition: "accept",
-      rationale: "The isolated live Codex E2E produced the exact file, verified native lifecycle evidence, and preserved Product Canon.",
-      nextActions: ["Reuse the conformed provider-neutral lifecycle for the OpenCode adapter after Codex timeout and cancellation evidence."],
+      rationale: `The isolated live ${providerName} E2E produced the exact file, verified native lifecycle evidence, and preserved Product Canon.`,
+      nextActions: ["Retain this provider behind the same provider-neutral lifecycle and authority contract."],
     });
     const recorded = readRuntimeInvocationResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
     const completed = inspectProject(projectRoot);
@@ -273,7 +274,8 @@ async function main() {
     assert(completed.state.mode === "session" && completed.state.lastReviewDecisionId === reviewed.reviewDecision.reviewDecisionId, "Live Run did not return to the reviewed HEAD Session state.");
 
     process.stdout.write(`${JSON.stringify({
-      status: activeLivePlan.includeSession ? "live_codex_session_and_run_verified" : "live_codex_run_verified",
+      status: activeLivePlan.includeSession ? `live_${providerRuntime}_session_and_run_verified` : `live_${providerRuntime}_run_verified`,
+      runtime: providerRuntime,
       mode: activeLivePlan.mode,
       projectId: initialized.project.projectId,
       headSessionId: completed.state.sessionId,
@@ -298,9 +300,9 @@ async function main() {
   } finally {
     if (previousOperationalRoot === undefined) delete process.env[RUNTIME_OPERATIONAL_STATE_ENV];
     else process.env[RUNTIME_OPERATIONAL_STATE_ENV] = previousOperationalRoot;
-    for (const [root, prefix] of [[projectRoot, ".qa-live-codex-"], [operationalRoot, ".qa-live-codex-operational-"]]) {
+    for (const [root, prefix] of [[projectRoot, `.qa-live-${providerRuntime}-`], [operationalRoot, `.qa-live-${providerRuntime}-operational-`]]) {
       if (!root.startsWith(`${pluginRoot}${path.sep}`) || !path.basename(root).startsWith(prefix)) {
-        throw new Error("Refusing to remove an unverified live Codex fixture directory.");
+        throw new Error(`Refusing to remove an unverified live ${providerName} fixture directory.`);
       }
       fs.rmSync(root, { recursive: true, force: true });
     }

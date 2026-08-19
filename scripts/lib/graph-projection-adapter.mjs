@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { ONBOARDING_STORAGE_DIRECTORY, verifyOnboardingState, verifyStorageSelection } from "./onboarding-contract.mjs";
 import { queryTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "./temporal-provenance.mjs";
@@ -14,16 +15,20 @@ export const ARCADEDB_SERVER_TRAVERSAL_VERSION = "0.1.0";
 export const PREPARED_TRAVERSAL_VERSION = "0.1.0";
 
 const ARCADEDB_SNAPSHOT_TYPE = "HeadAgentGraphSnapshot";
+const ARCADEDB_SNAPSHOT_CHUNK_TYPE = "HeadAgentGraphSnapshotChunk";
 const ARCADEDB_POINTER_TYPE = "HeadAgentGraphPointer";
 const ARCADEDB_NODE_TYPE = "HeadAgentGraphNode";
 const ARCADEDB_EDGE_TYPE = "HeadAgentGraphEdge";
 const ARCADEDB_TOPOLOGY_TYPE = "HeadAgentGraphTopology";
+const ARCADEDB_TOPOLOGY_CHUNK_TYPE = "HeadAgentGraphTopologyChunk";
 export const ARCADEDB_GRAPH_RESERVED_SCHEMA = Object.freeze([
   Object.freeze({ name: ARCADEDB_SNAPSHOT_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", graphSnapshotHash: "STRING", sourceSnapshotId: "STRING", documentJson: "STRING" }) }),
+  Object.freeze({ name: ARCADEDB_SNAPSHOT_CHUNK_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", chunkIndex: "INTEGER", chunkJson: "STRING" }) }),
   Object.freeze({ name: ARCADEDB_POINTER_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", pointerJson: "STRING" }) }),
   Object.freeze({ name: ARCADEDB_NODE_TYPE, type: "vertex", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", graphSnapshotHash: "STRING", sourceSnapshotId: "STRING", nodeId: "STRING", nodeKind: "STRING", nodeJson: "STRING" }) }),
   Object.freeze({ name: ARCADEDB_EDGE_TYPE, type: "edge", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", graphSnapshotHash: "STRING", sourceSnapshotId: "STRING", edgeId: "STRING", edgeType: "STRING", edgeJson: "STRING" }) }),
   Object.freeze({ name: ARCADEDB_TOPOLOGY_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", topologyId: "STRING", topologyJson: "STRING" }) }),
+  Object.freeze({ name: ARCADEDB_TOPOLOGY_CHUNK_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", chunkIndex: "INTEGER", chunkJson: "STRING" }) }),
 ]);
 const ARCADEDB_ACTIVATION_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "activations");
 const ARCADEDB_CONFORMANCE_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "conformance");
@@ -36,6 +41,7 @@ const ARCADEDB_SERVER_TRAVERSAL_TRANSPORT_METHODS = ["queryTopology"];
 const ARCADEDB_PREPARED_TRAVERSAL_TRANSPORT_METHODS = ["readTopologyManifest", "queryTopology"];
 const ARCADEDB_SERVER_TRAVERSAL_MODE = "server-expanded-client-canonicalized";
 const ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS = 8192;
+const ARCADEDB_SNAPSHOT_CHUNK_BYTES = 8 * 1024;
 const PREPARED_TRAVERSAL_ORDERING = "record-depth-then-semantic-id-ascending";
 const BRIDGE_FILE = fileURLToPath(new URL("./arcadedb-http-bridge.mjs", import.meta.url));
 
@@ -412,6 +418,12 @@ export class ArcadeDbHttpTransport {
       `CREATE PROPERTY ${ARCADEDB_SNAPSHOT_TYPE}.sourceSnapshotId IF NOT EXISTS STRING`,
       `CREATE PROPERTY ${ARCADEDB_SNAPSHOT_TYPE}.documentJson IF NOT EXISTS STRING`,
       `CREATE INDEX IF NOT EXISTS ON ${ARCADEDB_SNAPSHOT_TYPE} (projectId, graphSnapshotId) UNIQUE`,
+      `CREATE DOCUMENT TYPE ${ARCADEDB_SNAPSHOT_CHUNK_TYPE} IF NOT EXISTS`,
+      `CREATE PROPERTY ${ARCADEDB_SNAPSHOT_CHUNK_TYPE}.projectId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_SNAPSHOT_CHUNK_TYPE}.graphSnapshotId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_SNAPSHOT_CHUNK_TYPE}.chunkIndex IF NOT EXISTS INTEGER`,
+      `CREATE PROPERTY ${ARCADEDB_SNAPSHOT_CHUNK_TYPE}.chunkJson IF NOT EXISTS STRING`,
+      `CREATE INDEX IF NOT EXISTS ON ${ARCADEDB_SNAPSHOT_CHUNK_TYPE} (projectId, graphSnapshotId, chunkIndex) UNIQUE`,
       `CREATE DOCUMENT TYPE ${ARCADEDB_POINTER_TYPE} IF NOT EXISTS`,
       `CREATE PROPERTY ${ARCADEDB_POINTER_TYPE}.projectId IF NOT EXISTS STRING`,
       `CREATE PROPERTY ${ARCADEDB_POINTER_TYPE}.pointerJson IF NOT EXISTS STRING`,
@@ -421,7 +433,7 @@ export class ArcadeDbHttpTransport {
   }
 
   ensureTopologySchema() {
-    const command = [
+    const commands = [
       `CREATE VERTEX TYPE ${ARCADEDB_NODE_TYPE} IF NOT EXISTS`,
       `CREATE PROPERTY ${ARCADEDB_NODE_TYPE}.projectId IF NOT EXISTS STRING`,
       `CREATE PROPERTY ${ARCADEDB_NODE_TYPE}.graphSnapshotId IF NOT EXISTS STRING`,
@@ -431,7 +443,7 @@ export class ArcadeDbHttpTransport {
       `CREATE PROPERTY ${ARCADEDB_NODE_TYPE}.nodeKind IF NOT EXISTS STRING`,
       `CREATE PROPERTY ${ARCADEDB_NODE_TYPE}.nodeJson IF NOT EXISTS STRING`,
       `CREATE INDEX IF NOT EXISTS ON ${ARCADEDB_NODE_TYPE} (projectId, graphSnapshotId, nodeId) UNIQUE`,
-      `CREATE EDGE TYPE ${ARCADEDB_EDGE_TYPE} UNIDIRECTIONAL IF NOT EXISTS`,
+      `CREATE EDGE TYPE ${ARCADEDB_EDGE_TYPE} IF NOT EXISTS`,
       `CREATE PROPERTY ${ARCADEDB_EDGE_TYPE}.projectId IF NOT EXISTS STRING`,
       `CREATE PROPERTY ${ARCADEDB_EDGE_TYPE}.graphSnapshotId IF NOT EXISTS STRING`,
       `CREATE PROPERTY ${ARCADEDB_EDGE_TYPE}.graphSnapshotHash IF NOT EXISTS STRING`,
@@ -446,8 +458,14 @@ export class ArcadeDbHttpTransport {
       `CREATE PROPERTY ${ARCADEDB_TOPOLOGY_TYPE}.topologyId IF NOT EXISTS STRING`,
       `CREATE PROPERTY ${ARCADEDB_TOPOLOGY_TYPE}.topologyJson IF NOT EXISTS STRING`,
       `CREATE INDEX IF NOT EXISTS ON ${ARCADEDB_TOPOLOGY_TYPE} (projectId, graphSnapshotId) UNIQUE`,
-    ].join(";\n");
-    this.invoke("command", { language: "sqlscript", command });
+      `CREATE DOCUMENT TYPE ${ARCADEDB_TOPOLOGY_CHUNK_TYPE} IF NOT EXISTS`,
+      `CREATE PROPERTY ${ARCADEDB_TOPOLOGY_CHUNK_TYPE}.projectId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_TOPOLOGY_CHUNK_TYPE}.graphSnapshotId IF NOT EXISTS STRING`,
+      `CREATE PROPERTY ${ARCADEDB_TOPOLOGY_CHUNK_TYPE}.chunkIndex IF NOT EXISTS INTEGER`,
+      `CREATE PROPERTY ${ARCADEDB_TOPOLOGY_CHUNK_TYPE}.chunkJson IF NOT EXISTS STRING`,
+      `CREATE INDEX IF NOT EXISTS ON ${ARCADEDB_TOPOLOGY_CHUNK_TYPE} (projectId, graphSnapshotId, chunkIndex) UNIQUE`,
+    ];
+    for (const command of commands) this.invoke("command", { command });
   }
 
   readPointer(projectId) {
@@ -463,15 +481,96 @@ export class ArcadeDbHttpTransport {
       command: `SELECT documentJson FROM ${ARCADEDB_SNAPSHOT_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId LIMIT 1`,
       params: { projectId, graphSnapshotId: id },
     });
-    return responseRecords(response)[0]?.documentJson ?? null;
+    const documentJson = responseRecords(response)[0]?.documentJson ?? null;
+    if (documentJson == null) return null;
+    let manifest;
+    try { manifest = JSON.parse(documentJson); }
+    catch { return documentJson; }
+    if (manifest?.kind !== "HeadAgentGraphSnapshotChunkManifest") return documentJson;
+    if (manifest.schemaVersion !== 1 || manifest.encoding !== "gzip-base64-json-chunks"
+      || !Number.isSafeInteger(manifest.chunkCount) || manifest.chunkCount < 1
+      || !Number.isSafeInteger(manifest.byteLength) || manifest.byteLength < 1
+      || !/^[a-f0-9]{64}$/.test(manifest.sha256 || "")) {
+      fail("ArcadeDB graph snapshot chunk manifest is invalid.", "ARCADEDB_GRAPH_SNAPSHOT_CHUNK_MISMATCH");
+    }
+    const chunks = [];
+    let afterChunkIndex = -1;
+    for (;;) {
+      const page = responseRecords(this.invoke("query", {
+        command: `SELECT chunkIndex, chunkJson FROM ${ARCADEDB_SNAPSHOT_CHUNK_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND chunkIndex > :afterChunkIndex ORDER BY chunkIndex LIMIT 10`,
+        params: { projectId, graphSnapshotId: id, afterChunkIndex },
+      }));
+      chunks.push(...page);
+      if (page.length < 10) break;
+      afterChunkIndex = page.at(-1).chunkIndex;
+    }
+    if (chunks.length !== manifest.chunkCount || chunks.some((item, index) => item.chunkIndex !== index || typeof item.chunkJson !== "string")) {
+      fail("ArcadeDB graph snapshot chunks are incomplete.", "ARCADEDB_GRAPH_SNAPSHOT_CHUNK_MISMATCH");
+    }
+    let assembled;
+    try { assembled = zlib.gunzipSync(Buffer.from(chunks.map((item) => item.chunkJson).join(""), "base64")).toString("utf8"); }
+    catch { fail("ArcadeDB graph snapshot chunks could not be decompressed.", "ARCADEDB_GRAPH_SNAPSHOT_CHUNK_MISMATCH"); }
+    if (Buffer.byteLength(assembled, "utf8") !== manifest.byteLength || digest(assembled) !== manifest.sha256) {
+      fail("ArcadeDB graph snapshot chunks failed content verification.", "ARCADEDB_GRAPH_SNAPSHOT_CHUNK_MISMATCH");
+    }
+    return assembled;
   }
 
   writeSnapshot(projectId, id, documentJson, metadata) {
     try {
-      this.invoke("command", {
-        command: `INSERT INTO ${ARCADEDB_SNAPSHOT_TYPE} SET projectId = :projectId, graphSnapshotId = :graphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, documentJson = :documentJson`,
-        params: { projectId, graphSnapshotId: id, documentJson, ...metadata },
-      });
+      let storedDocumentJson = documentJson;
+      if (Buffer.byteLength(documentJson, "utf8") > ARCADEDB_SNAPSHOT_CHUNK_BYTES) {
+        const encoded = zlib.gzipSync(Buffer.from(documentJson, "utf8"), { level: 9 }).toString("base64");
+        const chunks = [];
+        for (let offset = 0; offset < encoded.length; offset += ARCADEDB_SNAPSHOT_CHUNK_BYTES) {
+          chunks.push(encoded.slice(offset, offset + ARCADEDB_SNAPSHOT_CHUNK_BYTES));
+        }
+        const existingChunks = new Map();
+        let afterExistingChunkIndex = -1;
+        for (;;) {
+          const page = responseRecords(this.invoke("query", {
+            command: `SELECT chunkIndex, chunkJson FROM ${ARCADEDB_SNAPSHOT_CHUNK_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND chunkIndex > :afterExistingChunkIndex ORDER BY chunkIndex LIMIT 10`,
+            params: { projectId, graphSnapshotId: id, afterExistingChunkIndex },
+          }));
+          for (const item of page) existingChunks.set(item.chunkIndex, item.chunkJson);
+          if (page.length < 10) break;
+          afterExistingChunkIndex = page.at(-1).chunkIndex;
+        }
+        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+          if (existingChunks.has(chunkIndex)) {
+            if (existingChunks.get(chunkIndex) !== chunks[chunkIndex]) {
+              fail("ArcadeDB graph snapshot contains a conflicting partial chunk.", "ARCADEDB_GRAPH_SNAPSHOT_CHUNK_MISMATCH");
+            }
+            continue;
+          }
+          try {
+            this.invoke("command", {
+              command: `INSERT INTO ${ARCADEDB_SNAPSHOT_CHUNK_TYPE} SET projectId = :projectId, graphSnapshotId = :graphSnapshotId, chunkIndex = :chunkIndex, chunkJson = :chunkJson`,
+              params: { projectId, graphSnapshotId: id, chunkIndex, chunkJson: chunks[chunkIndex] },
+            });
+          } catch (error) { fail("ArcadeDB snapshot chunk write failed.", `ARCADEDB_SNAPSHOT_CHUNK_WRITE_FAILED:${error.code || "UNKNOWN"}`); }
+        }
+        storedDocumentJson = graphProjectionCanonicalJson({
+          schemaVersion: 1,
+          kind: "HeadAgentGraphSnapshotChunkManifest",
+          encoding: "gzip-base64-json-chunks",
+          chunkCount: chunks.length,
+          byteLength: Buffer.byteLength(documentJson, "utf8"),
+          sha256: digest(documentJson),
+        });
+      }
+      const snapshotExists = responseRecords(this.invoke("query", {
+        command: `SELECT graphSnapshotId FROM ${ARCADEDB_SNAPSHOT_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId LIMIT 1`,
+        params: { projectId, graphSnapshotId: id },
+      })).length > 0;
+      try {
+        this.invoke("command", {
+          command: snapshotExists
+            ? `UPDATE ${ARCADEDB_SNAPSHOT_TYPE} SET graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, documentJson = :documentJson WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId`
+            : `INSERT INTO ${ARCADEDB_SNAPSHOT_TYPE} SET projectId = :projectId, graphSnapshotId = :graphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, documentJson = :documentJson`,
+          params: { projectId, graphSnapshotId: id, documentJson: storedDocumentJson, ...metadata },
+        });
+      } catch (error) { fail("ArcadeDB snapshot manifest write failed.", `ARCADEDB_SNAPSHOT_MANIFEST_WRITE_FAILED:${error.code || "UNKNOWN"}`); }
       return true;
     } catch (error) {
       if (error.code === "ARCADEDB_REQUEST_REJECTED" && this.readSnapshot(projectId, id) != null) return false;
@@ -480,8 +579,14 @@ export class ArcadeDbHttpTransport {
   }
 
   writePointer(projectId, pointerJson) {
+    const exists = responseRecords(this.invoke("query", {
+      command: `SELECT projectId FROM ${ARCADEDB_POINTER_TYPE} WHERE projectId = :projectId LIMIT 1`,
+      params: { projectId },
+    })).length > 0;
     this.invoke("command", {
-      command: `UPDATE ${ARCADEDB_POINTER_TYPE} SET pointerJson = :pointerJson UPSERT WHERE projectId = :projectId`,
+      command: exists
+        ? `UPDATE ${ARCADEDB_POINTER_TYPE} SET pointerJson = :pointerJson WHERE projectId = :projectId`
+        : `INSERT INTO ${ARCADEDB_POINTER_TYPE} SET projectId = :projectId, pointerJson = :pointerJson`,
       params: { projectId, pointerJson },
     });
   }
@@ -499,21 +604,64 @@ export class ArcadeDbHttpTransport {
       command: `SELECT topologyJson FROM ${ARCADEDB_TOPOLOGY_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId LIMIT 1`,
       params: { projectId, graphSnapshotId },
     });
-    return responseRecords(response)[0]?.topologyJson ?? null;
+    const topologyJson = responseRecords(response)[0]?.topologyJson ?? null;
+    if (topologyJson == null) return null;
+    let manifest;
+    try { manifest = JSON.parse(topologyJson); }
+    catch { return topologyJson; }
+    if (manifest?.kind !== "HeadAgentGraphTopologyChunkManifest") return topologyJson;
+    if (manifest.schemaVersion !== 1 || manifest.encoding !== "gzip-base64-json-chunks"
+      || !Number.isSafeInteger(manifest.chunkCount) || manifest.chunkCount < 1
+      || !Number.isSafeInteger(manifest.byteLength) || manifest.byteLength < 1
+      || !/^[a-f0-9]{64}$/.test(manifest.sha256 || "")) {
+      fail("ArcadeDB graph topology chunk manifest is invalid.", "ARCADEDB_GRAPH_TOPOLOGY_CHUNK_MISMATCH");
+    }
+    const chunks = [];
+    let afterChunkIndex = -1;
+    for (;;) {
+      const page = responseRecords(this.invoke("query", {
+        command: `SELECT chunkIndex, chunkJson FROM ${ARCADEDB_TOPOLOGY_CHUNK_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND chunkIndex > :afterChunkIndex ORDER BY chunkIndex LIMIT 10`,
+        params: { projectId, graphSnapshotId, afterChunkIndex },
+      }));
+      chunks.push(...page);
+      if (page.length < 10) break;
+      afterChunkIndex = page.at(-1).chunkIndex;
+    }
+    if (chunks.length !== manifest.chunkCount || chunks.some((item, index) => item.chunkIndex !== index || typeof item.chunkJson !== "string")) {
+      fail("ArcadeDB graph topology chunks are incomplete.", "ARCADEDB_GRAPH_TOPOLOGY_CHUNK_MISMATCH");
+    }
+    let assembled;
+    try { assembled = zlib.gunzipSync(Buffer.from(chunks.map((item) => item.chunkJson).join(""), "base64")).toString("utf8"); }
+    catch { fail("ArcadeDB graph topology chunks could not be decompressed.", "ARCADEDB_GRAPH_TOPOLOGY_CHUNK_MISMATCH"); }
+    if (Buffer.byteLength(assembled, "utf8") !== manifest.byteLength || digest(assembled) !== manifest.sha256) {
+      fail("ArcadeDB graph topology chunks failed content verification.", "ARCADEDB_GRAPH_TOPOLOGY_CHUNK_MISMATCH");
+    }
+    return assembled;
   }
 
   readTopology(projectId, graphSnapshotId) {
     const topologyJson = this.readTopologyManifest(projectId, graphSnapshotId);
-    const nodeResponse = this.invoke("query", {
-      command: `SELECT nodeJson FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId ORDER BY nodeId`,
-      params: { projectId, graphSnapshotId },
-    });
-    const edgeResponse = this.invoke("query", {
-      command: `SELECT edgeJson FROM ${ARCADEDB_EDGE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId ORDER BY edgeId`,
-      params: { projectId, graphSnapshotId },
-    });
-    const nodeJsons = responseRecords(nodeResponse).map((record) => record.nodeJson);
-    const edgeJsons = responseRecords(edgeResponse).map((record) => record.edgeJson);
+    const readPaged = (type, field, orderField) => {
+      const values = [];
+      const pageSize = 50;
+      let afterId = "";
+      for (;;) {
+        const page = responseRecords(this.invoke("query", {
+          command: `SELECT ${field}, ${orderField} FROM ${type} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND ${orderField} > :afterId ORDER BY ${orderField} LIMIT ${pageSize}`,
+          params: { projectId, graphSnapshotId, afterId },
+        }));
+        values.push(...page.map((record) => record[field]));
+        if (page.length < pageSize) break;
+        afterId = page.at(-1)[orderField];
+      }
+      return values;
+    };
+    let nodeJsons;
+    let edgeJsons;
+    try { nodeJsons = readPaged(ARCADEDB_NODE_TYPE, "nodeJson", "nodeId"); }
+    catch (error) { fail("ArcadeDB paged topology node read failed.", `ARCADEDB_TOPOLOGY_NODE_PAGE_READ_FAILED:${error.code || "UNKNOWN"}`); }
+    try { edgeJsons = readPaged(ARCADEDB_EDGE_TYPE, "edgeJson", "edgeId"); }
+    catch (error) { fail("ArcadeDB paged topology edge read failed.", `ARCADEDB_TOPOLOGY_EDGE_PAGE_READ_FAILED:${error.code || "UNKNOWN"}`); }
     if (topologyJson == null && nodeJsons.length === 0 && edgeJsons.length === 0) return null;
     return {
       topologyJson,
@@ -524,54 +672,98 @@ export class ArcadeDbHttpTransport {
 
   writeTopology(projectId, graphSnapshotId, graph, topology) {
     this.ensureTopologySchema();
-    for (const node of graph.nodes) {
-      this.invoke("command", {
-        command: `UPDATE ${ARCADEDB_NODE_TYPE} SET projectId = :projectId, graphSnapshotId = :graphSnapshotId, nodeId = :nodeId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, nodeKind = :nodeKind, nodeJson = :nodeJson UPSERT WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND nodeId = :nodeId`,
-        params: {
-          projectId,
-          graphSnapshotId,
-          graphSnapshotHash: graph.graphSnapshotHash,
-          sourceSnapshotId: graph.sourceSnapshotId,
-          nodeId: node.nodeId,
-          nodeKind: node.kind,
-          nodeJson: graphProjectionCanonicalJson(node),
-        },
-      });
-    }
-    for (const edge of graph.edges) {
-      const params = {
-        projectId,
-        graphSnapshotId,
-        graphSnapshotHash: graph.graphSnapshotHash,
-        sourceSnapshotId: graph.sourceSnapshotId,
-        edgeId: edge.edgeId,
-        edgeType: edge.type,
-        edgeJson: graphProjectionCanonicalJson(edge),
-        fromNodeId: edge.from,
-        toNodeId: edge.to,
-      };
-      const existing = responseRecords(this.invoke("query", {
-        command: `SELECT edgeId FROM ${ARCADEDB_EDGE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND edgeId = :edgeId LIMIT 1`,
-        params,
-      }));
-      if (existing.length) continue;
-      try {
-        this.invoke("command", {
-          command: `CREATE EDGE ${ARCADEDB_EDGE_TYPE} FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND nodeId = :fromNodeId) TO (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND nodeId = :toNodeId) SET projectId = :projectId, graphSnapshotId = :graphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, edgeId = :edgeId, edgeType = :edgeType, edgeJson = :edgeJson`,
-          params,
-        });
-      } catch (error) {
-        const raced = responseRecords(this.invoke("query", {
-          command: `SELECT edgeId FROM ${ARCADEDB_EDGE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND edgeId = :edgeId LIMIT 1`,
-          params,
+    const batchSize = 10;
+    const readExistingIds = (type, field) => {
+      const ids = [];
+      let afterId = "";
+      for (;;) {
+        const page = responseRecords(this.invoke("query", {
+          command: `SELECT ${field} FROM ${type} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND ${field} > :afterId ORDER BY ${field} LIMIT 200`,
+          params: { projectId, graphSnapshotId, afterId },
         }));
-        if (!raced.length) throw error;
+        ids.push(...page.map((item) => item[field]));
+        if (page.length < 200) break;
+        afterId = page.at(-1)[field];
       }
+      return new Set(ids);
+    };
+    const existingNodeIds = readExistingIds(ARCADEDB_NODE_TYPE, "nodeId");
+    const missingNodes = graph.nodes.filter((node) => !existingNodeIds.has(node.nodeId));
+    for (let start = 0; start < missingNodes.length; start += batchSize) {
+      const params = {};
+      const commands = missingNodes.slice(start, start + batchSize).map((node, index) => {
+        const suffix = `${start + index}`;
+        Object.assign(params, {
+          [`projectId${suffix}`]: projectId, [`graphSnapshotId${suffix}`]: graphSnapshotId,
+          [`graphSnapshotHash${suffix}`]: graph.graphSnapshotHash, [`sourceSnapshotId${suffix}`]: graph.sourceSnapshotId,
+          [`nodeId${suffix}`]: node.nodeId, [`nodeKind${suffix}`]: node.kind,
+          [`nodeJson${suffix}`]: graphProjectionCanonicalJson(node),
+        });
+        return `UPDATE ${ARCADEDB_NODE_TYPE} SET projectId = :projectId${suffix}, graphSnapshotId = :graphSnapshotId${suffix}, nodeId = :nodeId${suffix}, graphSnapshotHash = :graphSnapshotHash${suffix}, sourceSnapshotId = :sourceSnapshotId${suffix}, nodeKind = :nodeKind${suffix}, nodeJson = :nodeJson${suffix} UPSERT WHERE projectId = :projectId${suffix} AND graphSnapshotId = :graphSnapshotId${suffix} AND nodeId = :nodeId${suffix}`;
+      });
+      this.invoke("command", { language: "sqlscript", command: commands.join(";\n"), params });
     }
-    this.invoke("command", {
-      command: `UPDATE ${ARCADEDB_TOPOLOGY_TYPE} SET projectId = :projectId, graphSnapshotId = :graphSnapshotId, topologyId = :topologyId, topologyJson = :topologyJson UPSERT WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId`,
-      params: { projectId, graphSnapshotId, topologyId: topology.topologyId, topologyJson: graphProjectionCanonicalJson(topology) },
-    });
+    const existingEdgeIds = readExistingIds(ARCADEDB_EDGE_TYPE, "edgeId");
+    const missingEdges = graph.edges.filter((edge) => !existingEdgeIds.has(edge.edgeId));
+    for (let start = 0; start < missingEdges.length; start += batchSize) {
+      const params = {};
+      const commands = missingEdges.slice(start, start + batchSize).map((edge, index) => {
+        const suffix = `${start + index}`;
+        Object.assign(params, {
+          [`projectId${suffix}`]: projectId, [`graphSnapshotId${suffix}`]: graphSnapshotId,
+          [`graphSnapshotHash${suffix}`]: graph.graphSnapshotHash, [`sourceSnapshotId${suffix}`]: graph.sourceSnapshotId,
+          [`edgeId${suffix}`]: edge.edgeId, [`edgeType${suffix}`]: edge.type,
+          [`edgeJson${suffix}`]: graphProjectionCanonicalJson(edge), [`fromNodeId${suffix}`]: edge.from,
+          [`toNodeId${suffix}`]: edge.to,
+        });
+        return `CREATE EDGE ${ARCADEDB_EDGE_TYPE} FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId${suffix} AND graphSnapshotId = :graphSnapshotId${suffix} AND nodeId = :fromNodeId${suffix}) TO (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId${suffix} AND graphSnapshotId = :graphSnapshotId${suffix} AND nodeId = :toNodeId${suffix}) SET projectId = :projectId${suffix}, graphSnapshotId = :graphSnapshotId${suffix}, graphSnapshotHash = :graphSnapshotHash${suffix}, sourceSnapshotId = :sourceSnapshotId${suffix}, edgeId = :edgeId${suffix}, edgeType = :edgeType${suffix}, edgeJson = :edgeJson${suffix}`;
+      });
+      this.invoke("command", { language: "sqlscript", command: commands.join(";\n"), params });
+    }
+    let topologyJson = graphProjectionCanonicalJson(topology);
+    if (Buffer.byteLength(topologyJson, "utf8") > ARCADEDB_SNAPSHOT_CHUNK_BYTES) {
+      const encoded = zlib.gzipSync(Buffer.from(topologyJson, "utf8"), { level: 9 }).toString("base64");
+      const chunks = [];
+      for (let offset = 0; offset < encoded.length; offset += ARCADEDB_SNAPSHOT_CHUNK_BYTES) {
+        chunks.push(encoded.slice(offset, offset + ARCADEDB_SNAPSHOT_CHUNK_BYTES));
+      }
+      const existingChunks = new Map();
+      let afterExistingChunkIndex = -1;
+      for (;;) {
+        const page = responseRecords(this.invoke("query", {
+          command: `SELECT chunkIndex, chunkJson FROM ${ARCADEDB_TOPOLOGY_CHUNK_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND chunkIndex > :afterExistingChunkIndex ORDER BY chunkIndex LIMIT 10`,
+          params: { projectId, graphSnapshotId, afterExistingChunkIndex },
+        }));
+        for (const item of page) existingChunks.set(item.chunkIndex, item.chunkJson);
+        if (page.length < 10) break;
+        afterExistingChunkIndex = page.at(-1).chunkIndex;
+      }
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+        if (existingChunks.has(chunkIndex)) {
+          if (existingChunks.get(chunkIndex) !== chunks[chunkIndex]) fail("ArcadeDB graph topology contains a conflicting partial chunk.", "ARCADEDB_GRAPH_TOPOLOGY_CHUNK_MISMATCH");
+          continue;
+        }
+        try {
+          this.invoke("command", {
+            command: `INSERT INTO ${ARCADEDB_TOPOLOGY_CHUNK_TYPE} SET projectId = :projectId, graphSnapshotId = :graphSnapshotId, chunkIndex = :chunkIndex, chunkJson = :chunkJson`,
+            params: { projectId, graphSnapshotId, chunkIndex, chunkJson: chunks[chunkIndex] },
+          });
+        } catch (error) { fail("ArcadeDB topology chunk write failed.", `ARCADEDB_TOPOLOGY_CHUNK_WRITE_FAILED:${error.code || "UNKNOWN"}`); }
+      }
+      topologyJson = graphProjectionCanonicalJson({ schemaVersion: 1, kind: "HeadAgentGraphTopologyChunkManifest", encoding: "gzip-base64-json-chunks", chunkCount: chunks.length, byteLength: Buffer.byteLength(topologyJson, "utf8"), sha256: digest(topologyJson) });
+    }
+    const topologyExists = responseRecords(this.invoke("query", {
+      command: `SELECT topologyId FROM ${ARCADEDB_TOPOLOGY_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId LIMIT 1`,
+      params: { projectId, graphSnapshotId },
+    })).length > 0;
+    try {
+      this.invoke("command", {
+        command: topologyExists
+          ? `UPDATE ${ARCADEDB_TOPOLOGY_TYPE} SET topologyId = :topologyId, topologyJson = :topologyJson WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId`
+          : `INSERT INTO ${ARCADEDB_TOPOLOGY_TYPE} SET projectId = :projectId, graphSnapshotId = :graphSnapshotId, topologyId = :topologyId, topologyJson = :topologyJson`,
+        params: { projectId, graphSnapshotId, topologyId: topology.topologyId, topologyJson },
+      });
+    } catch (error) { fail("ArcadeDB topology manifest write failed.", `ARCADEDB_TOPOLOGY_MANIFEST_WRITE_FAILED:${error.code || "UNKNOWN"}`); }
   }
 
   queryTopology(projectId, graphSnapshotId, { anchorIds, maxDepth, maxRecords }) {
@@ -1003,6 +1195,7 @@ export class ArcadeDbGraphProjectionAdapter {
     topologyRequired = false,
     serverTraversalRequired = false,
     preparedTraversalRequired = false,
+    rewriteTopologyManifest = false,
   } = {}) {
     this.storageSelection = verifyStorageSelection(storageSelection);
     if (this.storageSelection.mode !== "graphdb") fail("ArcadeDB adapter requires a GraphDB storage selection.", "ARCADEDB_SELECTION_REQUIRED");
@@ -1014,6 +1207,7 @@ export class ArcadeDbGraphProjectionAdapter {
     this.schemaReady = false;
     this.topologySchemaReady = false;
     this.preparedTraversalRequired = preparedTraversalRequired === true;
+    this.rewriteTopologyManifest = rewriteTopologyManifest === true;
     this.serverTraversalRequired = serverTraversalRequired === true || this.preparedTraversalRequired;
     this.topologyRequired = topologyRequired === true || this.serverTraversalRequired;
     if (this.serverTraversalRequired) assertArcadeDbServerTraversalTransport(this.transport);
@@ -1099,9 +1293,11 @@ export class ArcadeDbGraphProjectionAdapter {
     this.ensureTopologySchema();
     const transport = assertArcadeDbTopologyTransport(this.transport);
     const topology = buildArcadeDbGraphTopology(graph);
-    const existing = transport.readTopology(this.projectId, graph.graphSnapshotId);
-    if (existing?.topologyJson != null) return this.readTopology(graph).topology;
-    if (existing) verifyResumablePartialTopology(existing, graph);
+    if (!this.rewriteTopologyManifest) {
+      const existing = transport.readTopology(this.projectId, graph.graphSnapshotId);
+      if (existing?.topologyJson != null) return this.readTopology(graph).topology;
+      if (existing) verifyResumablePartialTopology(existing, graph);
+    }
     transport.writeTopology(this.projectId, graph.graphSnapshotId, clone(graph), clone(topology));
     return this.readTopology(graph).topology;
   }
@@ -1141,15 +1337,18 @@ export class ArcadeDbGraphProjectionAdapter {
       fail("ArcadeDB server traversal expansion exceeds the record budget.", "ARCADEDB_SERVER_TRAVERSAL_RECORD_LIMIT");
     }
     const maxRecords = Math.max(1, request.expansion.recordCount);
-    const response = assertArcadeDbServerTraversalTransport(this.transport).queryTopology(
-      this.projectId,
-      entry.document.graphSnapshotId,
-      {
-        anchorIds: [...reference.traversalQuery.anchorIds],
-        maxDepth: reference.traversalQuery.maxDepth,
-        maxRecords,
-      },
-    );
+    let response;
+    try {
+      response = assertArcadeDbServerTraversalTransport(this.transport).queryTopology(
+        this.projectId,
+        entry.document.graphSnapshotId,
+        {
+          anchorIds: [...reference.traversalQuery.anchorIds],
+          maxDepth: reference.traversalQuery.maxDepth,
+          maxRecords,
+        },
+      );
+    } catch (error) { fail("ArcadeDB server traversal query failed.", `ARCADEDB_SERVER_TRAVERSAL_QUERY_FAILED_DEPTH_${reference.traversalQuery.maxDepth}:${error.code || "UNKNOWN"}`); }
     verifyArcadeDbServerTraversalResponse({ request, response, maxRecords });
     return reference;
   }
@@ -2027,10 +2226,13 @@ export function verifyGraphProjectionAdapterConformance({
   }).sort((left, right) => left.name.localeCompare(right.name));
 
   materializeGraphProjection({ projectRoot, graph, adapter: reference });
-  materializeGraphProjection({ projectRoot, graph, adapter: candidate });
+  try { materializeGraphProjection({ projectRoot, graph, adapter: candidate }); }
+  catch (error) { fail("Candidate graph projection materialization failed during conformance.", `GRAPH_PROJECTION_CANDIDATE_MATERIALIZATION_FAILED:${error.code || "UNKNOWN"}`); }
   const cases = normalized.map((fixture) => {
     const referenceResult = queryGraphProjection({ projectRoot, graph, adapter: reference, query: fixture.query }).result;
-    const candidateResult = queryGraphProjection({ projectRoot, graph, adapter: candidate, query: fixture.query }).result;
+    let candidateResult;
+    try { candidateResult = queryGraphProjection({ projectRoot, graph, adapter: candidate, query: fixture.query }).result; }
+    catch (error) { fail(`Candidate graph projection query failed: ${fixture.name}.`, `GRAPH_PROJECTION_CANDIDATE_QUERY_FAILED:${error.code || "UNKNOWN"}`); }
     if (graphProjectionCanonicalJson(referenceResult) !== graphProjectionCanonicalJson(candidateResult)) {
       fail(`Graph projection adapters diverged for fixture: ${fixture.name}`, "GRAPH_PROJECTION_CONFORMANCE_MISMATCH");
     }

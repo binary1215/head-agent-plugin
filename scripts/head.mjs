@@ -23,7 +23,7 @@ import {
   inspectRuntimeInvocationExecutionLease,
   readRuntimeInvocationAuthorization,
 } from "./lib/runtime-invocation-lifecycle.mjs";
-import { executeCodexRuntimeInvocation } from "./lib/runtime-codex-exec.mjs";
+import { executeRuntimeInvocation } from "./lib/runtime-one-shot-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
 
@@ -165,7 +165,7 @@ export function runCommand(argv = process.argv.slice(2)) {
     const input = optionalInputJson(options, "Runtime invocation execution");
     const unexpected = Object.keys(input).filter((key) => key !== "sessionRequest");
     if (unexpected.length) throw new Error(`Runtime invocation execution contains unsupported fields: ${unexpected.sort().join(", ")}`);
-    return inspectRuntimeAdapters(root).then((runtimeStatus) => executeCodexRuntimeInvocation({
+    return inspectRuntimeAdapters(root).then((runtimeStatus) => executeRuntimeInvocation({
       root,
       authorization,
       sessionRequest: input.sessionRequest || "",

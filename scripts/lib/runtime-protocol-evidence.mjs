@@ -170,6 +170,9 @@ const RUNTIME_PROFILES = Object.freeze({
           signal("execution:non-interactive", /run opencode with a message/i),
           signal("events:format-option", /--format\b/i),
           signal("events:json", /choices:[^\r\n]*[\"']?json[\"']?/i),
+          signal("execution:pure", /--pure\b/i),
+          signal("binding:dir-option", /--dir\b/i),
+          signal("session:title-option", /--title\b/i),
           signal("session:resume", /--session\b/i),
           signal("session:continue", /--continue\b/i),
         ]),
@@ -187,6 +190,7 @@ const RUNTIME_PROFILES = Object.freeze({
     capabilities: Object.freeze([
       Object.freeze({ name: "non-interactive-execution", requirements: Object.freeze(["execution:non-interactive", "events:format-option", "events:json"]) }),
       Object.freeze({ name: "structured-event-stream", requirements: Object.freeze(["events:format-option", "events:json"]) }),
+      Object.freeze({ name: "one-shot-invocation-surface", requirements: Object.freeze(["execution:non-interactive", "events:json", "execution:pure", "binding:dir-option", "session:title-option"]) }),
       Object.freeze({ name: "provider-session-resume-surface", requirements: Object.freeze(["session:resume", "session:continue"]) }),
       Object.freeze({ name: "agent-client-protocol-server", requirements: Object.freeze(["protocol:agent-client", "binding:cwd-option"]) }),
       Object.freeze({ name: "headless-server-command", requirements: Object.freeze(["command:serve"]) }),

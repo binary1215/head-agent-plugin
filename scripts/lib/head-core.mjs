@@ -367,6 +367,8 @@ export function coreContract() {
     "runtime-structured-result-contract",
     "codex-exec-one-shot-composition",
     "codex-exec-protocol-fixture",
+    "opencode-run-one-shot-composition",
+    "opencode-run-protocol-fixture",
     "durable-runtime-invocation-record",
     "native-runtime-process-supervisor",
     "runtime-descendant-tree-supervision",
@@ -375,9 +377,10 @@ export function coreContract() {
   ];
   contract.deferredCapabilities = [
     ...contract.deferredCapabilities,
-    "live-codex-session-run-conformance",
     "runtime-descendant-tree-supervision",
-    "opencode-one-shot-execution",
-  ].filter((capability) => capability !== "runtime-descendant-tree-supervision");
+  ].filter((capability) => !new Set([
+    "runtime-descendant-tree-supervision",
+    "actual-provider-runtime-event-normalization",
+  ]).has(capability));
   return contract;
 }

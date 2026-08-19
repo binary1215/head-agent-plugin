@@ -39,6 +39,11 @@ import {
   verifyCodexExecWireResultSchema,
 } from "./lib/runtime-codex-exec.mjs";
 import {
+  classifyOpenCodeProviderDiagnostics,
+  executeOpenCodeRuntimeInvocation,
+  extractOpenCodeStructuredResult,
+} from "./lib/runtime-opencode-run.mjs";
+import {
   applyRuntimeRunResult,
   normalizeRuntimeRunResultTextProjection,
   readRuntimeInvocationResult,
@@ -90,7 +95,7 @@ function evidenceFixtureOutput(command, args) {
   if (runtime === "codex" && key === "exec --help") return "Run Codex non-interactively\n--json\n--output-schema\n--color\n--sandbox\n--skip-git-repo-check\n--cd\n--ephemeral\nresume\n";
   if (runtime === "codex" && key === "app-server --help") return "stdio://\ngenerate-json-schema\n--listen\n";
   if (runtime === "opencode" && key === "--help") return "opencode run\nopencode acp\nopencode serve\nopencode session\n";
-  if (runtime === "opencode" && key === "run --help") return "Run OpenCode with a message\n--format choices: json\n--session\n--continue\n";
+  if (runtime === "opencode" && key === "run --help") return "Run OpenCode with a message\n--format choices: json\n--pure\n--dir\n--title\n--session\n--continue\n";
   if (runtime === "opencode" && key === "acp --help") return "Agent Client Protocol\n--cwd\n--port\n";
   return "unsupported fixture invocation\n";
 }
@@ -158,6 +163,24 @@ process.stdin.on('end', () => {
 });
 `;
 
+const OPENCODE_RUN_PROTOCOL_FIXTURE = String.raw`
+let input = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => { input = Buffer.concat([input, chunk]); });
+process.stdin.on('end', () => {
+  const result = {
+    outcome: 'OpenCode protocol fixture completed.',
+    evidence: ['Authorized input reached the exact fixture child.'],
+    verification: ['Provider-specific text output normalized into the common structured result.'],
+    unknowns: [],
+  };
+  const sessionID = 'opencode-protocol-fixture-session';
+  const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
+  write({ type: 'step_start', timestamp: 1, sessionID, part: { type: 'step-start', sessionID } });
+  write({ type: 'text', timestamp: 2, sessionID, part: { type: 'text', sessionID, text: JSON.stringify(result), time: { start: 1, end: 2 } } });
+  write({ type: 'step_finish', timestamp: 3, sessionID, part: { type: 'step-finish', sessionID, tokens: { input: input.length, output: 1 } } });
+});
+`;
+
 async function main() {
   const resolvedRoot = path.resolve(temporaryRoot);
   const resolvedOperationalRoot = path.resolve(temporaryOperationalRoot);
@@ -205,6 +228,37 @@ async function main() {
       "codex.turn-failed",
     ]), "Codex provider diagnostics were not classified deterministically.");
     assert(!JSON.stringify(classifiedCodexDiagnostics).includes("private"), "Codex provider diagnostics retained raw error content.");
+    const normalizedOpenCodeResult = extractOpenCodeStructuredResult({
+      type: "text",
+      part: {
+        type: "text",
+        text: JSON.stringify({
+          outcome: "OpenCode output normalized.",
+          evidence: ["bounded event"],
+          verification: ["schema verified"],
+          unknowns: [],
+        }),
+      },
+    }, { scopeKind: "session" });
+    assert(normalizedOpenCodeResult?.kind === "RuntimeStructuredResult"
+      && normalizedOpenCodeResult.planDelta === ""
+      && normalizedOpenCodeResult.impactRadius.length === 0,
+    "OpenCode text event did not normalize into the provider-neutral Session result contract.");
+    const classifiedOpenCodeDiagnostics = classifyOpenCodeProviderDiagnostics({
+      record: { type: "error", error: { message: "Permission denied while connecting" } },
+      stderr: "rate limit 429",
+      exitCode: 1,
+      structuredResultObserved: false,
+      eventTypes: ["error"],
+    });
+    assert(JSON.stringify(classifiedOpenCodeDiagnostics) === JSON.stringify([
+      "opencode.missing-structured-result",
+      "opencode.nonzero-exit",
+      "opencode.permission",
+      "opencode.provider-error",
+      "opencode.rate-limit",
+      "opencode.transport",
+    ]), "OpenCode provider diagnostics were not classified deterministically.");
     const normalizedRunText = normalizeRuntimeRunResultTextProjection({
       outcome: "  completed  ",
       planDelta: "  wrote one file  ",
@@ -470,6 +524,52 @@ async function main() {
       },
     });
     assert(mcpCodexProtocolResult.result?.structuredContent?.draft?.draftHash === codexProtocolExecution.draft.draftHash, "Codex invocation MCP read failed.");
+    const opencodeProtocolRequest = "Return one bounded structured Session result through the OpenCode run JSONL protocol fixture.";
+    const opencodeProtocolAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "opencode",
+      scope: { kind: "session", request: opencodeProtocolRequest },
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000 },
+      persist: true,
+    }).authorization;
+    const opencodeObservation = protocolEvidence.observations.find((item) => item.runtime === "opencode");
+    const opencodeProtocolExecution = await executeOpenCodeRuntimeInvocation({
+      root: resolvedRoot,
+      authorization: opencodeProtocolAuthorization,
+      sessionRequest: opencodeProtocolRequest,
+      protocolEvidence,
+      projectBinding,
+      targetResolver: () => ({ executablePath: process.execPath, observation: opencodeObservation.executable }),
+      supervisorSelection,
+      providerArguments: ["-e", OPENCODE_RUN_PROTOCOL_FIXTURE],
+      evidenceMode: "protocol-fixture",
+      onProcessEvent: recordProcess,
+      persist: true,
+    });
+    assert(opencodeProtocolExecution.receipt.status === "completed", "OpenCode run protocol fixture did not complete.");
+    assert(opencodeProtocolExecution.actualProviderInvoked === false, "OpenCode protocol fixture was represented as an actual provider invocation.");
+    assert(opencodeProtocolExecution.receipt.providerBoundary.structuredResultObserved === true,
+      "OpenCode structured result was not observed.");
+    assert(opencodeProtocolExecution.receipt.processBoundary.supervisionMode === "native-process-tree"
+      && opencodeProtocolExecution.receipt.processBoundary.descendantTreeOwnershipValidated === true,
+    "OpenCode protocol fixture did not pass native descendant-tree supervision.");
+    assert(opencodeProtocolExecution.draft.providerResult?.outcome === "OpenCode protocol fixture completed.",
+      "OpenCode structured result was not carried into the draft.");
+    assert(opencodeProtocolExecution.draft.freshHeadReviewRequired === false,
+      "OpenCode Session protocol fixture incorrectly required Fresh HEAD review.");
+    const recordedOpenCodeProtocolExecution = readRuntimeInvocationResult({
+      root: resolvedRoot,
+      authorizationId: opencodeProtocolAuthorization.authorizationId,
+    });
+    assert(recordedOpenCodeProtocolExecution.application === null,
+      "OpenCode Session protocol fixture acquired a Run result application.");
+    assert(recordedOpenCodeProtocolExecution.draft.draftHash === opencodeProtocolExecution.draft.draftHash,
+      "OpenCode invocation record did not round-trip.");
+    assert(!JSON.stringify(recordedOpenCodeProtocolExecution).includes(opencodeProtocolRequest),
+      "OpenCode invocation record persisted the raw Session request.");
     const legacyEventRequest = "Reproduce the historical Codex large-event boundary with the former explicit 128 KiB limit.";
     const legacyEventAuthorization = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
@@ -835,6 +935,9 @@ async function main() {
       codexPortableWireSchemaValidated: true,
       semanticResultBoundsRetained: true,
       codexPrivacyReducedDiagnosticsValidated: true,
+      opencodeRunProtocolFixtureValidated: true,
+      opencodeStructuredResultRecorded: true,
+      opencodeDescendantTreeSupervisionValidated: true,
       codexLargeEventBoundaryReproduced: true,
       codexLargeEventDefaultValidated: true,
       providerNeutralInvocationRecordValidated: true,

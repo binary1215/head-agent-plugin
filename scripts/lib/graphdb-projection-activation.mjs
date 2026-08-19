@@ -19,6 +19,11 @@ const fail = (message, code = "ARCADEDB_ACTIVATION_ERROR") => {
   throw error;
 };
 
+function activationStage(name, operation) {
+  try { return operation(); }
+  catch (error) { fail(`ArcadeDB activation stage failed: ${name}.`, `ARCADEDB_ACTIVATION_STAGE_${name.toUpperCase().replaceAll("-", "_")}:${error.code || "UNKNOWN"}`); }
+}
+
 function conformanceQueries(graph) {
   const candidateKinds = new Set([
     "OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "ProductConceptReference",
@@ -55,16 +60,17 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     fail("The selected ArcadeDB database has an incompatible reserved schema.", "ARCADEDB_DATABASE_INCOMPATIBLE");
   }
   const graph = world.snapshot.temporalProvenanceGraph;
-  const remoteAdapter = new ArcadeDbGraphProjectionAdapter({ storageSelection: configured.storageSelection, transport });
+  const remoteAdapter = new ArcadeDbGraphProjectionAdapter({ storageSelection: configured.storageSelection, transport, rewriteTopologyManifest: true });
   remoteAdapter.ensureSchema();
-  verifyGraphProjectionAdapterConformance({
+  activationStage("snapshot-migration", () => remoteAdapter.writeSnapshot(graph.graphSnapshotId, graph));
+  activationStage("baseline-conformance", () => verifyGraphProjectionAdapterConformance({
     projectRoot: world.snapshot.projectRoot,
     graph,
     referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: world.snapshot.projectRoot }),
     candidateAdapter: remoteAdapter,
     queries: conformanceQueries(graph),
-  });
-  const topology = remoteAdapter.materializeTopology(graph);
+  }));
+  const topology = activationStage("topology-materialization", () => remoteAdapter.materializeTopology(graph));
   const serverTraversalAdapter = new ArcadeDbGraphProjectionAdapter({
     storageSelection: configured.storageSelection,
     transport,
@@ -72,13 +78,13 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     serverTraversalRequired: true,
     preparedTraversalRequired: true,
   });
-  const conformanceReport = verifyGraphProjectionAdapterConformance({
+  const conformanceReport = activationStage("server-conformance", () => verifyGraphProjectionAdapterConformance({
     projectRoot: world.snapshot.projectRoot,
     graph,
     referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: world.snapshot.projectRoot }),
     candidateAdapter: serverTraversalAdapter,
     queries: conformanceQueries(graph),
-  });
+  }));
   const topologyActivation = buildArcadeDbGraphTopologyActivation({
     storageSelection: configured.storageSelection,
     graph,
