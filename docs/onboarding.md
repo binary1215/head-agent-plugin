@@ -33,6 +33,20 @@ Candidate protocol `0.2.0` derives candidate-set identity from project, Session,
 
 ## Public initialize and resume path
 
+The preferred human-facing path is the bundled `head-agent-onboarding` Skill
+inside a Codex or OpenCode conversation. It first calls the read-only
+`head_onboarding_guide` tool, asks only for unresolved material choices, and
+then invokes the same Core through typed MCP operations:
+
+- `head_project_initialize_or_resume` for idempotent project and HEAD Session
+  composition;
+- `head_onboarding_review` for an explicit evidence-linked candidate decision;
+- `head_markdown_projection_build` for a derived, recoverable document view.
+
+The Skill does not create a second onboarding protocol. It cannot infer a user
+ReviewDecision, widen source scope, or persist GraphDB credentials. If MCP is
+unavailable, the CLI below is the equivalent recovery and automation surface.
+
 The primary public command composes project creation or verification,
 installation-projection convergence, and onboarding start or resume:
 
@@ -215,7 +229,7 @@ Acceptance validates stable keys and references, rejects conflicts, records prev
 
 Later source changes do not erase the historical onboarding decision. Read-only status reports `ready_world_changed` when the current World Model is stale or has advanced beyond the snapshot that completed onboarding; normal World Model refresh and HEAD drift handling must then decide how execution context advances.
 
-The read-only MCP tool `head_onboarding_status` verifies the state pointer, Session record, storage selection, current candidate set, linked ReviewDecision, Product Model revisions, Product Canon identity, and World Model freshness. It cannot review or promote candidates.
+The read-only MCP tool `head_onboarding_status` verifies the state pointer, Session record, storage selection, current candidate set, linked ReviewDecision, Product Model revisions, Product Canon identity, and World Model freshness. The separate `head_onboarding_review` transaction accepts only an explicit user-authored disposition against the exact current candidate-set identity and delegates every promotion check to Core.
 
 ## Temporal graph projection
 
@@ -229,7 +243,7 @@ Run the dependency-free verifier with:
 npm run verify:onboarding
 ```
 
-It covers existing code, a new-project brief, empty evidence, revision, rejection, selection, deterministic restart, candidate/review/promotion graph projection, default candidate exclusion, explicit candidate traversal, graph and artifact tampering, pre-existing canon, stale source, secret rejection, legacy migration, read-only MCP, and operation without Git, GraphDB, or a Go binary.
+It covers existing code, a new-project brief, empty evidence, revision, rejection, selection, deterministic restart, candidate/review/promotion graph projection, default candidate exclusion, explicit candidate traversal, graph and artifact tampering, pre-existing canon, stale source, secret rejection, legacy migration, read-only status MCP, and operation without Git, GraphDB, or a Go binary. `npm run verify:conversational-onboarding` separately proves the typed conversation-native vertical.
 
 ## Explicitly deferred
 

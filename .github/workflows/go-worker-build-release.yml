@@ -20,6 +20,7 @@ on:
       - "scripts/lib/onboarding-contract.mjs"
       - "scripts/lib/onboarding.mjs"
       - "scripts/lib/onboarding-projection.mjs"
+      - "scripts/lib/onboarding-conversation.mjs"
       - "scripts/lib/product-model.mjs"
       - "scripts/lib/temporal-provenance.mjs"
       - "scripts/lib/world-model.mjs"
@@ -54,7 +55,11 @@ on:
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
       - "scripts/verify-onboarding.mjs"
+      - "scripts/verify-conversational-onboarding.mjs"
       - "scripts/verify-arcadedb-database-lifecycle.mjs"
+      - "skills/**"
+      - "package.json"
+      - ".codex-plugin/plugin.json"
       - "benchmarks/repository-scan-v1/**"
       - "benchmarks/prepared-traversal-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
@@ -75,6 +80,7 @@ on:
       - "scripts/lib/onboarding-contract.mjs"
       - "scripts/lib/onboarding.mjs"
       - "scripts/lib/onboarding-projection.mjs"
+      - "scripts/lib/onboarding-conversation.mjs"
       - "scripts/lib/product-model.mjs"
       - "scripts/lib/temporal-provenance.mjs"
       - "scripts/lib/world-model.mjs"
@@ -109,7 +115,11 @@ on:
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
       - "scripts/verify-onboarding.mjs"
+      - "scripts/verify-conversational-onboarding.mjs"
       - "scripts/verify-arcadedb-database-lifecycle.mjs"
+      - "skills/**"
+      - "package.json"
+      - ".codex-plugin/plugin.json"
       - "benchmarks/repository-scan-v1/**"
       - "benchmarks/prepared-traversal-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
@@ -234,6 +244,9 @@ jobs:
 
       - name: Verify README-only newcomer onboarding lifecycle
         run: node scripts/verify-newcomer-readme.mjs
+
+      - name: Verify conversation-native onboarding through typed MCP
+        run: node scripts/verify-conversational-onboarding.mjs
 
       - name: Verify native stdio and JavaScript conformance
         shell: bash

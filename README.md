@@ -71,6 +71,29 @@ or upgrade with `--native required` only when a native package is mandatory.
 No command above writes to a remote GraphDB unless that projection is
 separately configured and explicitly activated.
 
+## Conversation-first onboarding
+
+The preferred interactive path is now the bundled `head-agent-onboarding`
+Skill. In Codex or OpenCode, ask HEAD Agent to initialize or resume the current
+project. The Skill uses the typed MCP/Core boundary to:
+
+1. inspect the current project and onboarding state,
+2. ask only for material choices such as repository scope and storage mode,
+3. initialize or resume the same project and HEAD Session identities,
+4. present bounded, evidence-linked Feature candidates for explicit review,
+5. verify the World Model, graph projection, Context Compiler, and derived
+   Markdown projection.
+
+Inferred Features do not become Product Canon merely because onboarding is
+conversational. Candidate acceptance, rejection, or editing remains an explicit
+user decision. Endpoint values and credentials remain operational inputs and
+are not copied into the project graph or generated documents.
+
+The source installer currently makes this Skill and MCP server available from
+the alpha distribution. Marketplace publication is planned. The CLI quick start
+above remains the recovery and automation interface, not a separate authority
+model.
+
 ## Why this architecture is different
 
 | Common failure mode | HEAD Agent Core response |
@@ -258,6 +281,7 @@ Status terms in this README have exact meanings:
 | --- | --- |
 | Source-based CLI execution | **Available** |
 | One-command install, initialize, and onboarding resume | **Available** |
+| Conversation-guided onboarding Skill and typed MCP init/review/docs flow | **Available** |
 | Project initialization and project-scoped HEAD Session | **Available** |
 | Repository Source Scope | **Available** |
 | Review-gated onboarding and Product Canon bootstrap | **Available** |

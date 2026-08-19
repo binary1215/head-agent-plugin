@@ -84,7 +84,7 @@ Read-only MCP exposes:
 - `head_post_refresh_projection_status`;
 - `head_post_refresh_projection_receipt`.
 
-MCP cannot change the policy, trigger refresh, regenerate documents, review candidates, apply decisions, or mutate Canon. Separate read-only document-review MCP tools inspect status and immutable artifacts.
+MCP cannot change the post-refresh policy, trigger refresh, review document-change candidates, apply decisions, or mutate Canon. The separate typed `head_markdown_projection_build` operation may perform an explicit deterministic document build outside the automatic post-refresh policy; read-only document-review MCP tools inspect status and immutable artifacts.
 
 ## Authority and optional infrastructure
 

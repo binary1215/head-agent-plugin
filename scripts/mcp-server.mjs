@@ -6,8 +6,10 @@ import { coreContract, inspectProject, inspectRuntimeAdapters } from "./lib/head
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
-import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
-import { inspectOnboarding } from "./lib/onboarding.mjs";
+import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
+import { inspectOnboarding, reviewOnboarding } from "./lib/onboarding.mjs";
+import { inspectConversationalOnboarding } from "./lib/onboarding-conversation.mjs";
+import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
 import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
 import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
@@ -37,6 +39,127 @@ export const tools = [
       required: ["project_root"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "head_onboarding_guide",
+    description: "Read a compact conversation-oriented onboarding projection with the next material action, bounded evidence-linked candidates, and World/graph/document readiness. This tool never promotes candidates or mutates project state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        candidate_limit: { type: "integer", minimum: 1, maximum: 200, default: 25 },
+      },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_project_initialize_or_resume",
+    description: "Initialize or resume exactly one HEAD project and project-scoped Session, converge managed plugin projections, and start or resume evidence-linked onboarding through the same Core transaction as the public CLI. This writes only the selected project and never contacts GraphDB.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        runtimes: {
+          type: "array", minItems: 1, maxItems: 2, uniqueItems: true,
+          items: { type: "string", enum: ["codex", "opencode"] },
+        },
+        mode: { type: "string", enum: ["existing", "new"], default: "existing" },
+        source_scope: {
+          type: "object",
+          properties: {
+            include_roots: { type: "array", items: { type: "string" }, default: [] },
+            exclude_roots: { type: "array", items: { type: "string" }, default: [] },
+          },
+          additionalProperties: false,
+        },
+        storage: {
+          type: "object",
+          properties: {
+            mode: { type: "string", enum: ["local", "graphdb"] },
+            endpoint: { type: "string" },
+            database: { type: "string" },
+            username_secret_reference: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,127}$" },
+            password_secret_reference: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,127}$" },
+          },
+          required: ["mode"],
+          additionalProperties: false,
+        },
+        brief: {
+          type: "object",
+          properties: {
+            schemaVersion: { type: "integer", const: 1 },
+            name: { type: "string" },
+            summary: { type: "string" },
+            featureGroups: { type: "array", items: { type: "object" } },
+            capabilities: { type: "array", items: { type: "object" } },
+            features: { type: "array", items: { type: "object" } },
+            requirements: { type: "array", items: { type: "object" } },
+            constraints: { type: "array", items: { type: "object" } },
+            decisions: { type: "array", items: { type: "object" } },
+          },
+          required: ["schemaVersion"],
+          additionalProperties: false,
+        },
+      },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_onboarding_review",
+    description: "Apply one explicit user-authored ReviewDecision to the exact current onboarding candidate set. Accept dispositions may change Product Canon; revise and reject preserve candidate or canon boundaries enforced by Core.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        candidate_set_id: { type: "string", pattern: "^onboarding-candidates-[a-f0-9]{24}$" },
+        disposition: { type: "string", enum: ["accept-all", "accept-selection", "revise", "reject"] },
+        accepted_candidate_ids: { type: "array", uniqueItems: true, items: { type: "string", pattern: "^onboarding-candidate-[a-f0-9]{24}$" } },
+        removed_candidate_ids: { type: "array", uniqueItems: true, items: { type: "string", pattern: "^onboarding-candidate-[a-f0-9]{24}$" } },
+        user_edits: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              candidate_id: { type: "string", pattern: "^onboarding-candidate-[a-f0-9]{24}$" },
+              entity: { type: "object" },
+            },
+            required: ["candidate_id", "entity"],
+            additionalProperties: false,
+          },
+        },
+        added_entities: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"] },
+              entity: { type: "object" },
+            },
+            required: ["kind", "entity"],
+            additionalProperties: false,
+          },
+        },
+        rationale: { type: "string", minLength: 1 },
+      },
+      required: ["project_root", "candidate_set_id", "disposition", "rationale"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "head_markdown_projection_build",
+    description: "Build or verify the deterministic local Markdown projection from the current verified GraphSnapshot. The generated view is rebuildable, non-authoritative, and never changes Product Canon.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_runtime_adapters",
@@ -422,6 +545,66 @@ export const tools = [
 const success = (id, result) => ({ jsonrpc: "2.0", id, result });
 const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, message } });
 
+function onboardingInputFromMcp(args) {
+  const onboarding = {};
+  if (args.mode != null) onboarding.mode = args.mode;
+  if (args.source_scope != null) onboarding.sourceScope = {
+    includeRoots: args.source_scope.include_roots || [],
+    excludeRoots: args.source_scope.exclude_roots || [],
+  };
+  if (args.storage != null) onboarding.storage = args.storage.mode === "local" ? { mode: "local" } : {
+    mode: "graphdb",
+    endpoint: args.storage.endpoint,
+    database: args.storage.database,
+    secretReferenceNames: {
+      username: args.storage.username_secret_reference,
+      password: args.storage.password_secret_reference,
+    },
+  };
+  if (args.brief != null) onboarding.brief = args.brief;
+  return onboarding;
+}
+
+function compactReviewResult(result) {
+  return {
+    status: result.status,
+    state: {
+      phase: result.state.phase,
+      stateRevision: result.state.stateRevision,
+      candidateSetId: result.state.candidateSetId,
+      reviewDecisionId: result.state.reviewDecisionId,
+      productModelId: result.state.productModelId,
+      worldModelId: result.state.worldModelId,
+      sourceSnapshotId: result.state.sourceSnapshotId,
+    },
+    reviewDecision: result.reviewDecision ? {
+      reviewDecisionId: result.reviewDecision.reviewDecisionId,
+      disposition: result.reviewDecision.disposition,
+      promotionAuthority: result.reviewDecision.promotionAuthority,
+      resultingProductModelId: result.reviewDecision.resultingProductModelId || null,
+    } : null,
+    successorCandidateSet: result.candidateSet ? {
+      candidateSetId: result.candidateSet.candidateSetId,
+      candidateCount: result.candidateSet.candidates.length,
+    } : null,
+    productModelId: result.productModel?.productModelId || null,
+    worldModel: result.worldModel,
+    authorityEffect: result.reviewDecision?.promotionAuthority ? "explicit-product-canon-transition" : "none",
+  };
+}
+
+function compactMarkdownBuild(result) {
+  return {
+    status: result.status,
+    worldModelStatus: result.worldModelStatus,
+    worldModelId: result.worldModelId,
+    graphSnapshotId: result.graphSnapshotId,
+    documentProjectionId: result.documentProjectionId,
+    publishedPageCount: result.projection?.projection?.pages?.length || 0,
+    authority: result.authority,
+  };
+}
+
 export async function dispatch(request) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
@@ -437,7 +620,29 @@ export async function dispatch(request) {
       ? coreContract()
       : name === "head_project_status"
         ? inspectProject(args.project_root)
-        : name === "head_runtime_adapters"
+      : name === "head_onboarding_guide"
+        ? inspectConversationalOnboarding({ root: args.project_root, candidateLimit: args.candidate_limit ?? 25 })
+      : name === "head_project_initialize_or_resume"
+        ? initializeOrResumeProject({
+          root: args.project_root,
+          pluginRoot,
+          runtimes: args.runtimes || null,
+          onboarding: onboardingInputFromMcp(args),
+        })
+      : name === "head_onboarding_review"
+        ? compactReviewResult(await reviewOnboarding({
+          root: args.project_root,
+          candidateSetId: args.candidate_set_id,
+          disposition: args.disposition,
+          acceptedCandidateIds: args.accepted_candidate_ids || [],
+          removedCandidateIds: args.removed_candidate_ids || [],
+          userEdits: (args.user_edits || []).map((edit) => ({ candidateId: edit.candidate_id, entity: edit.entity })),
+          addedEntities: args.added_entities || [],
+          rationale: args.rationale,
+        }))
+      : name === "head_markdown_projection_build"
+        ? compactMarkdownBuild(materializeWorldMarkdownProjection({ root: args.project_root }))
+      : name === "head_runtime_adapters"
           ? inspectRuntimeAdapters(args.project_root)
         : name === "head_runtime_invocation_authorization"
           ? readRuntimeInvocationAuthorization({ root: args.project_root, authorizationId: args.authorization_id })
