@@ -69,8 +69,22 @@ function permissionPolicy(workspaceMode) {
   return { ...base, edit: "deny", write: "deny", patch: "deny", multiedit: "deny" };
 }
 
-function providerEnvironment(environment, workspaceMode, model) {
-  const providerId = typeof model === "string" && model.includes("/") ? model.split("/", 1)[0] : "";
+function normalizeOpenAICompatibleBaseUrl(value) {
+  let parsed;
+  try { parsed = new URL(value); }
+  catch { fail("OpenCode provider base URL is invalid.", "INVALID_OPENCODE_PROVIDER_BASE_URL"); }
+  if (!new Set(["http:", "https:"]).has(parsed.protocol) || parsed.username || parsed.password || parsed.hash) {
+    fail("OpenCode provider base URL is outside the supported HTTP boundary.", "INVALID_OPENCODE_PROVIDER_BASE_URL");
+  }
+  if (parsed.pathname === "/" || parsed.pathname === "") parsed.pathname = "/v1";
+  else parsed.pathname = parsed.pathname.replace(/\/+$/u, "");
+  return parsed.toString().replace(/\/$/u, "");
+}
+
+export function buildOpenCodeProviderEnvironment(environment, workspaceMode, model) {
+  const separator = typeof model === "string" ? model.indexOf("/") : -1;
+  const providerId = separator > 0 ? model.slice(0, separator) : "";
+  const modelId = separator > 0 ? model.slice(separator + 1) : "";
   const providerEnvironmentPrefix = providerId ? providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_") : "";
   const providerApiKeyName = providerEnvironmentPrefix ? `${providerEnvironmentPrefix}_API_KEY` : "";
   const providerBaseUrlName = providerEnvironmentPrefix ? `${providerEnvironmentPrefix}_BASE_URL` : "";
@@ -82,16 +96,22 @@ function providerEnvironment(environment, workspaceMode, model) {
   const result = {};
   for (const [key, value] of Object.entries(environment || {})) {
     const normalized = key.toLowerCase();
-    if ((fixedNames.has(normalized) || /_api_key$/iu.test(key) || selectedProviderEnvironmentNames.has(key))
+    if ((fixedNames.has(normalized) || selectedProviderEnvironmentNames.has(key))
       && typeof value === "string") result[key] = value;
   }
+  if (result[providerBaseUrlName]) {
+    result[providerBaseUrlName] = normalizeOpenAICompatibleBaseUrl(result[providerBaseUrlName]);
+  }
   const permission = permissionPolicy(workspaceMode);
-  const provider = providerId && result[providerApiKeyName] && result[providerBaseUrlName] ? {
+  const provider = providerId && modelId && result[providerBaseUrlName] ? {
     [providerId]: {
+      npm: "@ai-sdk/openai-compatible",
+      name: providerId,
       options: {
-        apiKey: `{env:${providerApiKeyName}}`,
         baseURL: `{env:${providerBaseUrlName}}`,
+        ...(result[providerApiKeyName] ? { apiKey: `{env:${providerApiKeyName}}` } : {}),
       },
+      models: { [modelId]: { name: modelId } },
     },
   } : undefined;
   result.CI = "1";
@@ -295,6 +315,11 @@ export async function executeOpenCodeRuntimeInvocation({
   if (evidenceMode === "actual-provider" && providerArguments !== null) {
     fail("Actual OpenCode execution arguments cannot be replaced.", "OPENCODE_RUN_ARGUMENT_OVERRIDE_REJECTED");
   }
+  const selectedProviderEnvironment = buildOpenCodeProviderEnvironment(
+    environment,
+    verified.workspaceMode,
+    verified.runtimeSelection?.model || null,
+  );
   const selectedSupervisor = supervisorSelection || resolveVerifiedProcessSupervisor({ pluginRoot });
   const callerFenceDigest = buildRuntimeInvocationCallerFence(prepared.projectRoot, verified.authorizationId);
   const providerMode = evidenceMode === "actual-provider" ? "actual-opencode" : "opencode-protocol-fixture";
@@ -321,11 +346,7 @@ export async function executeOpenCodeRuntimeInvocation({
           model: verified.runtimeSelection?.model || null,
         }) : providerArguments,
         projectRoot: prepared.projectRoot,
-        providerEnvironment: providerEnvironment(
-          environment,
-          verified.workspaceMode,
-          verified.runtimeSelection?.model || null,
-        ),
+        providerEnvironment: selectedProviderEnvironment,
         authorization: verified,
         input: prepared.input,
         consumption,

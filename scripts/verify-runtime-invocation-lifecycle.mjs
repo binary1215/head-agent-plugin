@@ -40,6 +40,7 @@ import {
   verifyCodexExecWireResultSchema,
 } from "./lib/runtime-codex-exec.mjs";
 import {
+  buildOpenCodeProviderEnvironment,
   classifyOpenCodeProviderDiagnostics,
   executeOpenCodeRuntimeInvocation,
   extractOpenCodeStructuredResult,
@@ -204,6 +205,33 @@ process.stdin.on('end', () => {
 `;
 
 async function main() {
+  const customProviderEnvironment = buildOpenCodeProviderEnvironment({
+    PATH: process.env.PATH || "",
+    LITELLM_API_KEY: "fixture-key",
+    LITELLM_BASE_URL: "https://provider.invalid/",
+    UNSELECTED_API_KEY: "must-not-be-forwarded",
+  }, "read-only", "litellm/gpt-5.4-mini");
+  const customProviderConfig = JSON.parse(customProviderEnvironment.OPENCODE_CONFIG_CONTENT);
+  assert(customProviderEnvironment.LITELLM_API_KEY === "fixture-key"
+    && customProviderEnvironment.LITELLM_BASE_URL === "https://provider.invalid/v1"
+    && customProviderEnvironment.UNSELECTED_API_KEY === undefined,
+  "OpenCode provider environment did not remain scoped to the selected provider.");
+  assert(JSON.stringify(canonicalFixtureValue(customProviderConfig.provider?.litellm)) === JSON.stringify(canonicalFixtureValue({
+    npm: "@ai-sdk/openai-compatible",
+    name: "litellm",
+    options: {
+      apiKey: "{env:LITELLM_API_KEY}",
+      baseURL: "{env:LITELLM_BASE_URL}",
+    },
+    models: { "gpt-5.4-mini": { name: "gpt-5.4-mini" } },
+  })), "OpenCode custom-provider configuration does not match the official OpenAI-compatible shape.");
+  let invalidProviderBaseUrlRejected = false;
+  try {
+    buildOpenCodeProviderEnvironment({ LITELLM_BASE_URL: "file:///unsafe" }, "read-only", "litellm/model");
+  } catch (error) {
+    invalidProviderBaseUrlRejected = error.code === "INVALID_OPENCODE_PROVIDER_BASE_URL";
+  }
+  assert(invalidProviderBaseUrlRejected, "OpenCode accepted a non-HTTP custom-provider base URL.");
   const resolvedRoot = path.resolve(temporaryRoot);
   const resolvedOperationalRoot = path.resolve(temporaryOperationalRoot);
   assert(resolvedRoot.startsWith(`${pluginRoot}${path.sep}`) && path.basename(resolvedRoot).startsWith(".test-tmp-runtime-lifecycle-"), "Temporary lifecycle root escaped the plugin workspace.");
@@ -1007,8 +1035,11 @@ async function main() {
       codexPortableWireSchemaValidated: true,
       semanticResultBoundsRetained: true,
       codexPrivacyReducedDiagnosticsValidated: true,
-      opencodeRunProtocolFixtureValidated: true,
-      opencodeStructuredResultRecorded: true,
+    opencodeRunProtocolFixtureValidated: true,
+    opencodeCustomProviderConfigValidated: true,
+    opencodeProviderRootBaseUrlNormalized: true,
+    unselectedProviderCredentialsForwarded: false,
+    opencodeStructuredResultRecorded: true,
       opencodeDescendantTreeSupervisionValidated: true,
       codexLargeEventBoundaryReproduced: true,
       codexLargeEventDefaultValidated: true,
