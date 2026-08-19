@@ -88,6 +88,28 @@ The adoption target is operational completeness through smaller provider-neutral
 | immutable release and rollback | native/plugin files are manifested and content-verified | add atomic install/activation rollback without in-place cache edits |
 | durable/ephemeral state separation | project lineage and host-local operational state are separated | preserve this boundary for every future service or workspace-host adapter |
 
+## Reference convergence without ritual parity goal
+
+The convergence target is behavioral completeness, not package-tree, artifact-count, or ritual parity with the reference runtime. A supported provider path should recover the same user outcome under failure while the provider-neutral core requires fewer globally loaded rules.
+
+| Reference capability | Adopt, adapt, or defer | Proportional constraint |
+| --- | --- | --- |
+| public initialization with resumable phases | adopt as one provider-neutral initialize/resume composition | transaction and rollback evidence is required only for phases that mutate host or project state; read-only observation does not manufacture it |
+| exact project, caller, and authority fencing | adopt for every executing or mutating path | canonical read-only inspection may use a verified project root without requiring a live provider caller or Run lineage |
+| launch, wait, result, delivery, and owned cleanup | adopt as one common lifecycle safety core for Session and Run | Session returns bounded evidence; only consequential Run and Authority work pays the full WholePlan/ResultPacket/Review cost |
+| canon and checkpoint recovery | adopt and extend through Capsules, Results, Reviews, and graph-backed retrieval | durable handoff artifacts are created when risk, duration, delegation, or context-loss exposure justifies them, not for every local interaction |
+| durable role messaging | defer until the single-provider Session/Run vertical is complete | messaging remains optional, project-scoped, and unable to create a new authority identity |
+| immutable distribution and rollback | adopt at release installation and activation boundaries | release safeguards do not become per-command execution gates |
+| Herdr panes/tabs, `.claude` paths, OpenCode-only sessions, POSIX services, and shell wrappers | reject as core identity; permit only through optional adapters | an adapter may add host evidence but cannot redefine HEAD project, Session, Run, canon, or semantic graph identity |
+
+This goal is complete when:
+
+1. one public initialize/resume path can recover a partially completed installation or onboarding without duplicating project authority;
+2. Codex Session and Run complete through one shared lifecycle safety core, after which OpenCode conforms by adapter substitution rather than new core identities;
+3. provider-session loss can be recovered from canon and verified lineage without TUI scraping, hidden conversation history, or a mandatory GraphDB/Git dependency;
+4. installation or activation failure can restore the last verified plugin/native release without editing an installed cache in place;
+5. every remaining reference-specific behavior is either an explicitly optional adapter responsibility or a documented non-goal.
+
 ## Core and subsystem design decisions
 
 These decisions are not one global ritual. Authority, canon/evidence separation, credential safety, path/process ownership, honest capability disclosure, and optional-adapter recovery are universal invariants. Execution-lineage rules apply to Run and Authority work; graph/canon/document rules apply when those surfaces are read or changed; compute rules apply to native operations; and remote-write rules apply only to external activation. Observe or Session work must not be escalated merely to satisfy an unrelated subsystem contract.
@@ -172,6 +194,10 @@ Complexity is reduced in this order:
 5. express Codex, OpenCode, operating-system, GraphDB, Git, document, and workspace-host differences behind adapters rather than branching core identity;
 6. prefer one integrated vertical proof over repeated per-feature validation once minimum fail-closed authority, credential, identity, and process checks pass;
 7. delete or demote duplicate rules, unreachable states, speculative gates, and validations that do not change an observable failure outcome.
+
+Every active rule is classified as `universal`, `lane-scoped`, `subsystem-scoped`, `adapter-scoped`, or `advisory`, with the narrowest valid scope as the default. Promotion to a wider scope requires concrete cross-lane evidence. A rule is narrowed, demoted, or removed when its failure mode is eliminated, its check is absorbed by a canonical boundary, or its enforcement no longer changes an observable outcome. This classification is a design/release review aid, not a new runtime artifact or gate.
+
+Relaxation never removes the minimum safety floor: user and canon authority, exact identity and action scope, credential isolation, owned-process cleanup, truthful capability disclosure, and explicit user control at Authority boundaries. Everything beyond that floor must justify its cost against the selected lane and touched subsystem.
 
 Completion criteria for this rule-complexity goal are:
 
@@ -616,6 +642,10 @@ The contract foundation defines and tests `PlatformAdapter`, `AgentRuntimeAdapte
 
 Before adding general provider controls, apply the reference HEAD Core's complete launch/wait/result/delivery/cleanup behavior through provider-neutral adapters. The common `ExecutionAuthorization`, external operational-state boundary, and native descendant-tree supervisor are now established; next prove both a bounded Session invocation and a full Run invocation against Codex. Session mode must remain useful for reversible one-shot work without manufacturing WholePlan, persistent Capsule, or ReviewDecision artifacts; Run mode retains the complete auditable lineage. After Codex passes live caller, event normalization, timeout/cancellation, cleanup, and result-evidence conformance, add OpenCode through the same core contract. Role messaging, daemon/service installation, provider resume, and Herdr integration remain later optional adapter work.
 
+### Cross-cutting exit goal — Operational completeness with a smaller rule surface
+
+Before v1.0, demonstrate the adopted reference behaviors through the public plugin path and perform a rule-deletion review. The milestone report must distinguish retained universal invariants, lane- or subsystem-scoped constraints, adapter-local quirks, deferred optional capabilities, and removed duplicate or outcome-neutral gates. Success is measured by recoverable user outcomes across initialization, Session, Run, failure, and provider replacement—not by the number of schemas, checks, tests, or policy statements retained.
+
 ### v1.0 — Auditable provider-neutral HEAD runtime
 
 Demonstrate reproducible lineage and recovery across supported runtimes, verify authority and failure boundaries, and prove that a provider session can be replaced without losing the whole objective or evidence chain.
@@ -730,5 +760,5 @@ If an applicable answer is “no” or “unknown,” record the gap before proc
 - 2026-08-19: completed the external operational-state boundary required before actual-provider execution. Execution-lease protocol `0.3.0` keeps immutable authorization consumption/release evidence in project lineage while moving PID, token, and owner-lock state to a validated host-local root; unsafe roots and legacy project-local locks fail closed, CLI/MCP disclose no path or owner secrets, and exact-owner cleanup is verified across completion, timeout, cancellation, spawn failure, replay, and concurrent contention. The next milestone is now one actual provider through both bounded Session and consequential Run lanes.
 - 2026-08-19: connected the first Codex one-shot provider composition without claiming live completion. The implementation revalidates exact executable/protocol/project binding, consumes one Session- or Run-scoped authorization, invokes the official non-interactive JSONL/ephemeral surface through direct spawn, extracts a bounded `RuntimeStructuredResult`, and stores only digest-verifiable transcript-free events, lifecycle receipt, and ResultPacket draft for CLI/read-only MCP recovery. A Codex protocol fixture proves thread reference hashing, structured result extraction, Session scope, durable recording, and exact fixture-child cleanup. A live model call, descendant-tree ownership, and canonical Run ResultPacket conversion remain explicit gates; until then actual receipts fail verification rather than overstating control conformance.
 - 2026-08-19: completed the cross-platform runtime descendant-tree supervision slice without widening provider authority. A separately manifested Go helper owns the provider subtree through Windows Job Object kill-on-close or an isolated POSIX process group, receives its bounded request over stdin, writes operational-only control evidence to the external state root, and leaves only manifest/ownership/cleanup digests in project lineage. Windows normal completion and cancellation remove a real lingering grandchild; the Codex JSONL protocol fixture now runs through this supervisor and produces a verification-passed tree boundary. No live model call, canonical Run ResultPacket conversion, OpenCode execution, resume/attachment, or general control is claimed; bounded live Codex Session then Run conformance is the next gate.
-- 2026-08-19: converted the HEAD Core comparison and governance-relaxation decision into explicit adoption and rule-complexity goals. Operationally complete initialization, fencing, lifecycle, recovery, scoped coordination, rollback, and state separation are adopted through provider-neutral contracts; provider/host coupling is not. Every new mandatory rule now needs a bounded scope, enforcement point, observable failure, and narrowing/removal condition, and milestone review includes a rule-deletion pass rather than treating accumulated gates or tests as progress.
+- 2026-08-19: converted the HEAD Core comparison and governance-relaxation decision into explicit adoption, convergence, and rule-complexity goals. Operationally complete initialization, fencing, lifecycle, recovery, scoped coordination, rollback, and state separation are adopted through provider-neutral contracts; provider/host coupling is not. Reference parity now means recoverable behavioral outcomes rather than package-tree or ritual parity. Every active rule receives the narrowest universal/lane/subsystem/adapter/advisory scope, every new mandatory rule needs an enforcement point, observable failure, and narrowing/removal condition, and milestone review includes a rule-deletion pass rather than treating accumulated gates or tests as progress.
 - 2026-08-19: implemented the deterministic Codex Run-result application bridge without overstating live conformance. Only a completed exit-zero actual-provider Run with verified structured output, exact project/input fences, and native descendant-tree ownership may create the canonical ResultPacket and Fresh HEAD review; an immutable content-derived receipt makes the transition recoverable and idempotent, while Session results, divergent recovery, raw transcripts, provider identities, promotion, and Product Canon mutation fail closed. The explicit live verifier remains opt-in because it performs two real Codex model calls and an isolated workspace write.
