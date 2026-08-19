@@ -1,11 +1,11 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.51",
+  "version": "0.3.0-alpha.52",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
   "scripts": {
-    "test": "node --test --test-isolation=none test/*.test.mjs",
+    "test": "node --test --test-isolation=none --test-concurrency=1 test/*.test.mjs",
     "check": "npm test",
     "benchmark:repository-scan": "node scripts/benchmark-repository-scan.mjs",
     "benchmark:prepared-traversal": "node scripts/benchmark-prepared-traversal.mjs",
@@ -17,6 +17,7 @@
     "verify:onboarding": "node scripts/verify-onboarding.mjs",
     "verify:distribution": "node scripts/verify-distribution-lifecycle.mjs",
     "verify:native-delivery": "node scripts/verify-native-artifact-delivery.mjs",
+    "verify:newcomer": "node scripts/verify-newcomer-readme.mjs",
     "distribution:status": "node scripts/distribution.mjs status"
   }
 }

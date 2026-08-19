@@ -44,6 +44,7 @@ on:
       - "scripts/distribution.mjs"
       - "scripts/verify-distribution-lifecycle.mjs"
       - "scripts/verify-native-artifact-delivery.mjs"
+      - "scripts/verify-newcomer-readme.mjs"
       - "scripts/benchmark-prepared-traversal.mjs"
       - "scripts/verify-runtime-adapters.mjs"
       - "scripts/verify-runtime-invocation-lifecycle.mjs"
@@ -98,6 +99,7 @@ on:
       - "scripts/distribution.mjs"
       - "scripts/verify-distribution-lifecycle.mjs"
       - "scripts/verify-native-artifact-delivery.mjs"
+      - "scripts/verify-newcomer-readme.mjs"
       - "scripts/benchmark-prepared-traversal.mjs"
       - "scripts/verify-runtime-adapters.mjs"
       - "scripts/verify-runtime-invocation-lifecycle.mjs"
@@ -229,6 +231,9 @@ jobs:
 
       - name: Verify automatic native artifact delivery contract
         run: node scripts/verify-native-artifact-delivery.mjs
+
+      - name: Verify README-only newcomer onboarding lifecycle
+        run: node scripts/verify-newcomer-readme.mjs
 
       - name: Verify native stdio and JavaScript conformance
         shell: bash

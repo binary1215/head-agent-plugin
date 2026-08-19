@@ -77,12 +77,13 @@ When the World Model is current, task-relevant observations compete under the no
 
 Stale observations and their metadata are excluded. A Capsule can request expansion through `get_runtime_state`, but that remains a read operation.
 
-## Explicitly deferred
+## Boundary and deferred controls
 
-- live runtime execution probing, streaming, and subscription beyond read-only executable discovery;
-- provider-session hydration or restoration;
-- process launch, resume, interrupt, close, messaging, or fencing;
-- caller identity and child-process ownership enforcement;
-- live Codex/OpenCode machine-interface implementations beyond the projection-only contract references.
+`RuntimeStateAdapter` remains observation-only. Live Codex/OpenCode one-shot
+Session and Run execution, caller fencing, at-most-once leases, and native
+descendant ownership are active through the separate Runtime Adapter contracts;
+they do not widen this import adapter into a control plane.
 
-Those remain v0.6 activation work and require platform-specific capability, project-binding, process-ownership, and lifecycle-cleanup QA.
+Provider-session hydration or restoration, durable resume/attachment,
+stream/interrupt/close, messaging, and subscription remain deferred optional
+Runtime Adapter capabilities.

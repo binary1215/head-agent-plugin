@@ -2,9 +2,9 @@
 
 Status: active direction authority
 
-Current milestone: v0.6 provider-neutral Runtime Adapter contracts
+Current milestone: v0.7 plugin-native conversation onboarding and incremental GraphDB data plane
 
-Immediate next slice: complete the remaining actual-provider and distribution proof after the public initialize/resume and artifact-only provider-replacement milestones. The installed `init`/`resume` path composes project verification, drift-free managed integration convergence, and onboarding start/recovery without duplicating Project, HEAD Session, candidate, or Product Canon authority; the same path is available directly from install/upgrade. A fresh-process Codex-to-OpenCode E2E now recovers the same canonical Project/HEAD Session from persisted HEAD artifacts without Git, GraphDB, or provider-session identity. Automatic verified native-artifact delivery is now implemented; next complete an independent README-only newcomer walkthrough, decide the Codex marketplace publication target, and resolve the remaining OpenCode custom LiteLLM-provider authentication/transport gap before the final rule-deletion audit. User-supplied visual evidence confirms that OpenCode itself runs `GPT-5.6 Sol` through its direct OpenAI provider, so model nonexistence is not a valid explanation for the separate custom-provider failure. The retained NeoPick onboarding Session contains 23 evidence-linked candidates and a bounded `revise` proposal; no Product Canon promotion is implied by remote graph projection. Provider-session resume, general stream/interrupt/close, messaging, shell interpretation, TUI scraping, and automatic merge remain disabled.
+Immediate next slice: make the verified public initialize/resume and onboarding vertical directly usable from Codex and OpenCode conversation surfaces. Add a guided Skill that detects project/onboarding state, asks only for material source/storage/review choices, presents evidence-linked candidates, and calls typed MCP/Core operations; retain the CLI as the equivalent automation, CI, diagnosis, and recovery interface rather than the primary human UX. In parallel, finish the GraphDB data plane with resumable content-addressed delta upload, bounded batch/checkpoint behavior, atomic verified pointer activation, and prepared bounded traversal while preserving local GraphSnapshot recovery. Re-run the authorized NeoPick upload/read/traversal/recovery acceptance after the local public-path regression is green. OpenCode provider authority remains in each user's resolved global configuration and authentication; this machine and NeoPick are integration fixtures, never product presets or unique authority. Provider-session resume, general stream/interrupt/close, messaging, shell interpretation, TUI scraping, automatic merge, and marketplace publication remain separate optional work.
 
 Last reviewed: 2026-08-20
 
@@ -54,6 +54,114 @@ User objective and project canon
 HEAD owns the whole-outcome judgment. Executors may accumulate detailed investigation, code, failures, fixes, and verification, but they do not silently redefine the whole plan. Only the result, evidence, plan delta, impact radius, verification, and explicit unknowns return to HEAD by default.
 
 “Fresh HEAD” means a new logical review context hydrated from immutable project artifacts. It does not require resuming a hidden provider conversation or scraping a TUI session.
+
+## Plugin-native interaction and installation goal
+
+HEAD Agent is installed once and then operated inside Codex, OpenCode, or a future
+runtime conversation. Users should not need to discover repository scripts or
+manually assemble an `init` command for the normal path. The public product
+composition has three layers:
+
+```text
+Codex / OpenCode conversation
+  -> guided HEAD Skill: intent, explanation, material questions, candidate review
+      -> typed MCP/Core operation: validation, transaction, authority transition
+          -> provider-neutral HEAD Core and recoverable project artifacts
+```
+
+The Skill is a progressive conversational projection, not an execution engine or
+new authority plane. It may inspect status, explain evidence, gather a bounded
+choice, and invoke an allowlisted typed operation. It may not manufacture a
+ReviewDecision, silently widen source scope, embed credentials, reinterpret a
+failed mutation as success, or replace canonical Core validation with prompt
+instructions. MCP/Core operations own schemas, digests, project fences,
+idempotency, state transitions, and structured results. The CLI exposes the same
+Core behavior for CI, automation, diagnosis, offline recovery, and hosts without
+MCP; CLI and MCP must not create different semantic identities.
+
+Installation alone does not initialize an arbitrary workspace or contact a
+GraphDB. On first project use, the Skill performs a read-only status check and
+then guides one resumable flow:
+
+1. identify the exact project root and existing HEAD state;
+2. ask only for missing material choices such as source scope, existing/new
+   project mode, and local versus explicitly selected GraphDB storage;
+3. invoke the public initialize/resume operation;
+4. present the inferred FeatureGroup/Feature/product candidates with evidence;
+5. collect an explicit accept, reject, revise, merge, split, or selection choice;
+6. invoke the typed onboarding review transition;
+7. verify current World Model, graph, Context preview, and document projection;
+8. return the ready HEAD Project/Session identity and explicit Unknowns.
+
+Existing projects infer candidates from code, tests, configuration, and documents;
+new projects request a structured brief. Repeated conversation entry resumes the
+same project/onboarding state and never duplicates Project, HEAD Session,
+candidate-set, or Product Canon authority. Codex and OpenCode receive runtime-
+specific Skill/MCP projections from one plugin source rather than separate forks.
+
+Completion evidence requires a clean-user installation followed by a first-use
+conversation that reaches reviewed onboarding and graph/context readiness without
+the user manually invoking a repository script, plus an equivalent CLI recovery
+path that preserves the same identities.
+
+## GraphDB data-plane optimization goal
+
+GraphDB remains an optional high-performance materialization of the recoverable
+embedded GraphSnapshot. Optimization must reduce transfer, reload, and traversal
+cost without moving semantic authority or recovery into the remote database.
+
+The upload path converges on a content-addressed synchronization protocol:
+
+- compare a local snapshot manifest with the verified remote project pointer;
+- derive immutable added/changed node, edge, snapshot, and topology batches;
+- use bounded idempotent upserts with per-batch digests and resumable checkpoints;
+- retry only failed/unacknowledged batches with adaptive concurrency and backoff;
+- verify remote counts, content digests, snapshot reconstruction, and topology;
+- advance the current pointer atomically only after complete verification;
+- retain the prior verified pointer for recovery and never delete unrelated data.
+
+The read/query path uses indexed, prepared, parameterized query templates rather
+than model-generated arbitrary SQL. Exact and neighborhood traversal bind the
+project, GraphSnapshot, query policy, depth, node/edge limits, authority/freshness
+filters, ordering, and cursor. Server expansion may accelerate retrieval, but the
+client canonicalizes and verifies the same `TraversalResult` identity as the
+embedded reference path. Snapshot/topology manifests, query/result digests, and
+safe caches avoid full reload while endpoint timing and cache state remain
+operational diagnostics rather than semantic identity.
+
+Performance acceptance measures initial upload, no-change sync, small delta sync,
+exact lookup, bounded neighborhood traversal, transferred bytes, request count,
+retry/recovery, and peak memory on representative small, medium, and NeoPick-scale
+graphs. A faster result is accepted only when semantic parity, authority flags,
+local fallback, credential non-persistence, and unrelated-record preservation also
+pass.
+
+## Continuous UX and latency improvement goal
+
+After the connected vertical is usable, continue improving installation effort,
+time-to-ready, GraphDB latency, and context cleanliness without weakening Core
+authority or introducing environment presets. Each patch starts from an observed
+bottleneck and reports before/after evidence appropriate to its layer:
+
+- installation: commands, required choices, downloaded bytes, verified fallback,
+  upgrade/rollback duration, and first successful conversational entry;
+- onboarding: time to first candidate batch, number of material questions, resume
+  behavior, and the amount of user work needed to reach reviewed readiness;
+- GraphDB: initial/no-change/delta synchronization time, request count, transferred
+  bytes, exact/prepared traversal latency, retries, and local-fallback behavior;
+- Context Compiler: selected/excluded evidence, token budget utilization, duplicate
+  or irrelevant evidence, explicit Unknowns, and reproducibility after provider-
+  session loss;
+- runtime: startup latency, structured-result completion, process cleanup, and the
+  absence of provider-session or transcript pollution in canonical project state.
+
+Wall-clock measurements, network conditions, machine capacity, provider cache, and
+database cache remain operational diagnostics and never enter semantic identities.
+An optimization is rejected if it makes installation environment-specific, hides a
+fallback, widens credential exposure, changes graph/Capsule/lineage semantics, or
+loads more context merely to improve a benchmark. Prefer removing round trips,
+avoiding unchanged work, and compiling smaller task-relevant evidence before adding
+new services, caches, or mandatory setup.
 
 ## Consolidated background
 
@@ -627,7 +735,7 @@ Current v0.6 alpha progress, verified on 2026-08-19; milestone remains active:
 - immutable project-lineage pre-start consumption and post-cleanup release receipts retain the honest shared at-most-once boundary; sequential and in-flight replay, receipt tamper, Run workspace-authority widening, Session/Run state drift, unsafe operational roots, and unknown-owner cleanup fail closed, while completion, timeout, and caller cancellation preserve non-replayable evidence and remove only exactly owned operational state;
 - structured-result protocol `0.1.0`, lifecycle-receipt `0.6.0`, and ResultPacket-draft `0.5.0` now add one common bounded outcome/evidence/plan-delta/impact/verification/Unknown contract; Session results forbid plan delta and impact radius, raw JSONL and raw provider errors remain ephemeral, fixed sorted provider diagnostic codes are evidence-only Unknowns, and immutable transcript-free event/receipt/draft records are recoverable through CLI and read-only MCP;
 - a Codex one-shot composition now revalidates the exact authorized executable/protocol/project binding and requires protocol evidence for every fixed invocation option before consuming the at-most-once lease, then invokes only the fixed `exec --json --ephemeral` surface with no shell, passes the exact authorized input over stdin, uses a host-local portable-subset output schema, hashes operational thread references, and persists no prompt, transcript, PID, raw command, absolute project root, or operational path; its protocol fixture is verified for both the lightweight Session result boundary and common lease/cleanup semantics, an incomplete option surface is rejected before consumption, and provider-neutral post-decode validation retains semantic byte/item/scope limits;
-- cross-platform process-tree supervision is implemented as a separate integrity-verified native helper. Windows uses a Job Object with kill-on-close and POSIX uses an isolated process group; operational control files and PIDs stay outside project canon, while durable receipts retain only the helper-manifest digest and bounded ownership/cleanup facts. Windows normal-exit/cancellation fixtures and the live Codex Run prove descendant cleanup. The fail-closed, idempotent application bridge maps only a completed actual-provider Run draft into canonical ResultPacket and Fresh HEAD state, mirroring Execution Lineage text normalization before exact comparison. Codex live Session and consequential Run both conform; the Run performed the exact isolated write, canonical application, and Fresh HEAD review. OpenCode uses the same supervisor, lease, record, and result-application core and passes protocol fixtures. Its custom OpenAI-compatible projection now has the required package/name/model registration and `/v1` base normalization; the latest live Run reached the selected endpoint but the currently inherited provider-specific credential was rejected, so actual-provider conformance remains unresolved and Experimental. A separately observed Bun crash was caused by external security software and is not evidence about authentication, model selection, or adapter correctness. Lifecycle receipt `0.6.0` and draft `0.5.0` preserve only privacy-reduced diagnostic codes. A 160 KiB JSONL tool-event fixture retains the former 128 KiB failure shape and completes under the enlarged transport default without persisting raw payload. The live verifier defaults to `run-only`, keeps `session-and-run` as optional broader coverage, requires deliberate live opt-in, and imposes no product-level model-call quota. Total stdout and one JSONL event remain bounded at 8 MiB and 2 MiB respectively, while the semantic structured result remains bounded at 128 KiB. Provider resume/attachment, messaging, and general runtime controls remain deferred.
+- cross-platform process-tree supervision is implemented as a separate integrity-verified native helper. Windows uses a Job Object with kill-on-close and POSIX uses an isolated process group; operational control files and PIDs stay outside project canon, while durable receipts retain only the helper-manifest digest and bounded ownership/cleanup facts. Windows normal-exit/cancellation fixtures and live Codex/OpenCode Runs prove descendant cleanup. The fail-closed, idempotent application bridge maps only a completed actual-provider Run draft into canonical ResultPacket and Fresh HEAD state, mirroring Execution Lineage text normalization before exact comparison. Codex and OpenCode live Session and consequential Run paths conform through the same supervisor, lease, record, and result-application core. HEAD no longer synthesizes an OpenCode provider package or rewrites an endpoint: the user's resolved global OpenCode configuration and authentication remain authoritative, while deterministic fixtures use arbitrary provider IDs to prove no environment-specific preset. A separately observed Bun crash was caused by external security software and is not evidence about authentication, model selection, or adapter correctness. Lifecycle receipt `0.6.0` and draft `0.5.0` preserve only privacy-reduced diagnostic codes. A 160 KiB JSONL tool-event fixture retains the former 128 KiB failure shape and completes under the enlarged transport default without persisting raw payload. The live verifier defaults to `run-only`, keeps `session-and-run` as optional broader coverage, requires deliberate live opt-in, and imposes no product-level model-call quota. Total stdout and one JSONL event remain bounded at 8 MiB and 2 MiB respectively, while the semantic structured result remains bounded at 128 KiB. Provider resume/attachment, messaging, and general runtime controls remain deferred.
 
 ## Roadmap
 
@@ -645,26 +753,26 @@ Add a provider-neutral `ComputeAdapter` before new heavy analysis paths, preserv
 
 ### v0.6 — Runtime adapters
 
-The contract foundation defines and tests `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references for Codex and OpenCode across Windows, macOS, Linux, and the native-process host. Privacy-preserving current-host discovery, bounded non-session version/help evidence, and canonical HEAD project/Session capability binding are active. One `ExecutionAuthorization` envelope expresses lightweight Session and full Run scopes; a common immutable pre-start consumption and post-cleanup release chain enforces at-most-once use, while provider-neutral event, lifecycle-receipt, structured-result, and scope-correct result-draft schemas prove request/input drift rejection, exact-child success, timeout, caller-cancellation cleanup, replay rejection, and privacy-reduced provider diagnostics. Ephemeral PID/token/owner-lock/schema/control-file state is externalized while durable transcript-free evidence remains project lineage. Codex is live-conformed for both Session and Run. OpenCode reuses the same supervised one-shot core and passes protocol-fixture conformance. The custom OpenAI-compatible projection now conforms to OpenCode's package/name/model registration contract, forwards only the selected provider's credentials, and normalizes a host-root base URL before lease consumption. The latest live Run reached the selected endpoint, which rejected the currently inherited provider-specific credential; actual-provider conformance therefore remains unresolved and experimental. The unrelated Bun crash is attributed to external security software and excluded from runtime conclusions. Invocation-record persistence/recovery and exact Run-result application are provider-neutral cores that derive runtime evidence from the verified authorization and bind an eligible draft to its canonical ResultPacket and Fresh HEAD review without granting Product Canon or promotion authority. NeoPick source scope, behavior-clustered onboarding inference, bounded Context latency, remote topology activation, and prepared traversal now conform while the 23 inferred concepts remain unreviewed candidates. Capability discovery never grants authorization, and provider sessions never replace HEAD Session or Run identities.
+The contract foundation defines and tests `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references for Codex and OpenCode across Windows, macOS, Linux, and the native-process host. Privacy-preserving current-host discovery, bounded non-session version/help evidence, and canonical HEAD project/Session capability binding are active. One `ExecutionAuthorization` envelope expresses lightweight Session and full Run scopes; a common immutable pre-start consumption and post-cleanup release chain enforces at-most-once use, while provider-neutral event, lifecycle-receipt, structured-result, and scope-correct result-draft schemas prove request/input drift rejection, exact-child success, timeout, caller-cancellation cleanup, replay rejection, and privacy-reduced provider diagnostics. Ephemeral PID/token/owner-lock/schema/control-file state is externalized while durable transcript-free evidence remains project lineage. Codex and OpenCode are live-conformed for both Session and Run through the same supervised one-shot core. OpenCode reads its user-global resolved provider configuration and authentication; HEAD binds the exact selected model and contributes no provider preset or endpoint rewrite. The unrelated Bun crash is attributed to external security software and excluded from runtime conclusions. Invocation-record persistence/recovery and exact Run-result application are provider-neutral cores that derive runtime evidence from the verified authorization and bind an eligible draft to its canonical ResultPacket and Fresh HEAD review without granting Product Canon or promotion authority. NeoPick source scope, behavior-clustered onboarding inference, bounded Context latency, remote topology activation, and prepared traversal now conform while the 23 inferred concepts remain unreviewed candidates. Capability discovery never grants authorization, and provider sessions never replace HEAD Session or Run identities.
 
 ### v0.6 exit goal — Risk-proportional actual-provider vertical
 
-Codex has passed bounded Session and full Run invocation, native descendant cleanup, structured-result recovery, canonical ResultPacket application, and Fresh HEAD review. OpenCode substitutes only its launch/event adapter over the same authorization, lease, supervisor, invocation-record, and result-application core. Protocol fixtures and a fresh-process Codex-to-OpenCode artifact-recovery E2E pass. The current isolated `litellm` custom-provider call reaches its provider boundary but stops at authentication/transport before structured output. Separately, current user-supplied visual evidence proves that OpenCode runs `GPT-5.6 Sol` successfully through its direct OpenAI provider; therefore the remaining v0.6 gap is specific to the custom LiteLLM route rather than model availability. Session must continue to avoid manufacturing WholePlan or Review artifacts, while Run retains complete lineage. Role messaging, daemon/service installation, provider resume, and Herdr integration remain later optional adapter work.
+Codex and OpenCode have each passed bounded Session and full Run invocation, native descendant cleanup, structured-result recovery, canonical ResultPacket application, and Fresh HEAD review through one provider-neutral lifecycle. Protocol fixtures and a fresh-process Codex-to-OpenCode artifact-recovery E2E also pass. OpenCode execution now deliberately reads each user's global resolved configuration and authentication; HEAD neither treats the current direct provider as a product default nor retains the earlier adapter-owned LiteLLM projection. Session continues to avoid manufacturing WholePlan or Review artifacts, while Run retains complete lineage. Role messaging, daemon/service installation, provider resume, and Herdr integration remain later optional adapter work.
 
 ### Current final-completion audit
 
 | Final condition | Current evidence | Status |
 | --- | --- | --- |
 | one public installation/project/onboarding initialize-resume path | isolated user-home E2E installs the current alpha, initializes one Git/GraphDB-free project, returns the same Project/Session/candidate state on repeat, resumes `awaiting-evidence`, converges only drift-free managed OpenCode paths across upgrade/rollback, and preserves user drift | **verified** |
-| Codex and OpenCode share one core identity and contract | common model-bound authorization, lease, supervisor, invocation record, result application, protocol fixtures, and fresh-process replacement recovery; Codex live passes while OpenCode custom-provider compatibility remains unresolved | **partial: OpenCode live pending** |
-| risk-proportional Session versus Run/Authority lineage | deterministic fixtures and Codex live evidence prove lightweight Session and full Run/Fresh HEAD behavior | **verified for Codex; OpenCode live pending** |
+| Codex and OpenCode share one core identity and contract | common model-bound authorization, lease, supervisor, invocation record, result application, protocol fixtures, fresh-process replacement recovery, and live Session/Run conformance on both runtimes | **verified** |
+| risk-proportional Session versus Run/Authority lineage | deterministic fixtures plus live Codex and OpenCode evidence prove lightweight Session and full Run/Fresh HEAD behavior | **verified** |
 | provider-session loss and context-pollution recovery | a completed Codex record is recovered in a fresh process and replaced by OpenCode while preserving the Project/HEAD Session and excluding provider-session identity; Git and GraphDB are absent | **verified** |
 | deterministic Capsule and lineage identity | repeated canonical-input compiler and lineage verification pass | **verified** |
 | core meaning and recovery without GraphDB or Git | integrated repository/onboarding/graph/Context/lineage tests plus public initialize/resume E2E pass without either dependency | **verified** |
 | remote graph acceptance | local conformance and the user-directed direct NeoPick acceptance pass; the earlier sandbox-first sequence was superseded by the user's explicit NeoPick-only direction | **verified under current user direction** |
 | installation, upgrade, distribution, and rollback | content-addressed user install/upgrade/rollback/remove, five-platform CI builds, and exact-version native package acquisition with release checksum, safe archive, build metadata, Worker manifest, Supervisor manifest, and immutable-release verification pass | **partial: Codex marketplace publication pending** |
-| README-only newcomer onboarding | primary one-command install/init/resume, source scope, review, optional GraphDB, status, security, upgrade, rollback, and removal are documented | **partial: independent newcomer walkthrough pending** |
-| final rule-deletion review | this milestone removed duplicate native-supervisor deferral and package/MCP version duplication, and narrowed public-path checks to project, runtime, managed-drift, and onboarding boundaries | **partial: final cross-system review pending** |
+| README-only newcomer onboarding | primary one-command install/init/resume, candidate inspection and explicit review, graph/context/document verification, same-Session resume, optional GraphDB, status, security, upgrade, rollback, and removal are documented and exercised by an isolated Git/GraphDB-free verifier | **verified** |
+| final rule-deletion review | [`rule-surface-audit.md`](rule-surface-audit.md) classifies universal, lane, subsystem, adapter-local, deferred, and removed rules with enforcement/failure/removal criteria; stale runtime deferrals and environment-specific provider synthesis were removed | **verified** |
 
 ### Cross-cutting exit goal — Operational completeness with a smaller rule surface
 
@@ -804,3 +912,6 @@ If an applicable answer is “no” or “unknown,” record the gap before proc
 - 2026-08-19: corrected the OpenCode custom-provider adapter against the official config contract. Its ephemeral config now registers `@ai-sdk/openai-compatible`, provider name, and the exact selected model, admits only the selected provider's credential variables, normalizes a host-root endpoint to `/v1`, and rejects invalid or credential-bearing URLs before consuming the authorization. Deterministic lifecycle conformance passed. A real OpenCode Run then loaded the provider and reached the endpoint, which rejected the currently inherited provider-specific credential; live conformance remains open pending a valid operational credential. This result is independent of the Bun crash, which remains attributed to external security software.
 - 2026-08-20: narrowed the OpenCode evidence boundary after the user supplied a current interactive screenshot. OpenCode responds successfully with the displayed model `GPT-5.6 Sol` through its direct `OpenAI` provider, so the model is available in that user session. The isolated HEAD invocation uses the separately configured `litellm` OpenAI-compatible provider and still stops at authentication/transport before structured output; this does not disprove the model and does not yet establish custom-provider conformance.
 - 2026-08-20: completed automatic verified native-artifact delivery for install and upgrade. `auto`, `off`, and `required` modes select only the exact plugin-version and current OS/architecture package; the downloader requires HTTPS, bounds checksum/archive/decompressed bytes, verifies the release `SHA256SUMS`, rejects traversal, links, unknown types, duplicates, and extra files, validates exact build metadata plus Worker and Supervisor manifests, and includes the verified target in the content-derived immutable release. Missing assets in `auto` produce a disclosed JavaScript fallback, while checksum, archive, metadata, or manifest drift fails closed. GitHub Actions now publishes one consistent `tar.gz` shape on all five targets, and an offline fixture E2E proves verified installation, immutable inclusion, fallback, checksum rejection, and path-escape rejection. Codex marketplace publication and the independent newcomer walkthrough remain open.
+- 2026-08-20: removed environment-specific OpenCode provider synthesis after verifying that `opencode debug config --pure` exposes the user's resolved global provider configuration. HEAD now passes only the immutable exact `provider/model` plus an ephemeral permission/privacy overlay, forwards only conventional variables for the selected provider, and does not inject provider packages or rewrite endpoints. Deterministic fixtures use arbitrary provider IDs. A real OpenCode `GPT-5.6 Sol` read-only Session and isolated consequential Run then passed structured-result recovery, exact workspace mutation, native descendant cleanup, canonical ResultPacket application, and Fresh HEAD review without persisting raw transcript or provider-session identity. The README-only newcomer verifier also completes install, explicit candidate review, graph/context/document checks, same-Session resume, and uninstall while preserving project state.
+- 2026-08-20: adopted the plugin-native three-layer interaction contract: one installable provider-neutral plugin is operated from Codex or OpenCode conversation through a guided Skill, while typed MCP/Core surfaces own validation, transactions, and evidence and the CLI remains an equivalent automation and recovery path. Installation does not silently initialize projects; first use performs status inspection, asks only material choices, initializes or resumes one HEAD Session, presents inferred candidates for explicit review, and verifies World Model, graph, Context, and document projections. A clean-user conversational walkthrough is required release evidence.
+- 2026-08-20: completed the remaining privacy-safe live GraphDB read and traversal acceptance on the isolated NeoPick projection without reset, promotion, or source mutation. The database reports all seven reserved types compatible and preserves 46 unrelated types; the active current GraphSnapshot contains 8,037 nodes and 12,441 edges. Seven prepared traversals retained identical semantic identities with zero writes and zero full snapshot/topology reads, processing 220,930 bytes rather than a 23,101,697-byte baseline (22,880,767 bytes and 9,904 basis points saved). End-to-end median was 2,942.2 ms while bounded database expansion was 134.7 ms median, making duplicate pointer reads and repeated local canonical verification the immediate query-latency targets. Incremental resumable delta upload, adaptive batching/retry, remote manifest verification, and atomic pointer advance remain the next GraphDB write-path slice; credential values and target details remain outside reports and semantic artifacts.

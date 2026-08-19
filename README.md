@@ -269,7 +269,7 @@ Status terms in this README have exact meanings:
 | Local graph and Markdown projections | **Available** |
 | ArcadeDB graph projection | **Experimental** |
 | OpenCode project projection | **Available** |
-| OpenCode one-shot Session and Run execution | **Experimental** |
+| OpenCode one-shot Session and Run execution | **Available** |
 | Artifact-only Codex-to-OpenCode provider replacement recovery | **Available** |
 | Codex marketplace distribution | **Planned** |
 | `install.ps1` and `install.sh` | **Available** |
@@ -288,6 +288,13 @@ Status terms in this README have exact meanings:
 - Git or a downloaded source archive for the initial source distribution;
 - Codex or OpenCode only when using the corresponding live execution adapter;
 - Go only when building native worker and supervisor binaries locally;
+
+OpenCode provider configuration remains owned by OpenCode. HEAD passes the exact
+authorized `provider/model`, adds only its ephemeral permission/privacy overlay,
+and lets OpenCode resolve its global provider definitions and authentication.
+HEAD does not install an OpenAI, LiteLLM, or other provider preset, and it does
+not rewrite a configured endpoint. Project-local OpenCode configuration and
+external plugins remain disabled during the isolated one-shot invocation.
 - ArcadeDB only when explicitly enabling the optional remote graph projection.
 
 Git, Go, GraphDB, and a provider runtime are not prerequisites for HEAD project
@@ -438,8 +445,9 @@ head-agent init C:\path\to\project --runtime codex,opencode `
 Initialization creates protected `.head/` project state, a project-scoped HEAD
 Session, onboarding state, an empty user-owned Product Model, and an immutable
 candidate batch. OpenCode uses the same project identity and onboarding state;
-fresh-process provider replacement is verified from HEAD artifacts alone, while
-OpenCode actual-provider execution remains Experimental.
+fresh-process provider replacement is verified from HEAD artifacts alone, and
+live OpenCode Session/Run execution is verified through the user's own resolved
+OpenCode provider settings.
 
 ### 2. Select the repository source scope before indexing
 
@@ -479,14 +487,29 @@ user-authored brief.
 Inspect the immutable candidate batch before promotion:
 
 ```powershell
-node .\scripts\head.mjs onboarding-candidates C:\path\to\project `
+$onboarding = head-agent onboarding-status C:\path\to\project | ConvertFrom-Json
+head-agent onboarding-candidates C:\path\to\project `
   --candidate-set onboarding-candidates-<id>
 ```
 
-Apply only an explicit user-authored review:
+After inspecting every candidate and its evidence, create an explicit review.
+The following bootstrap shortcut accepts the complete batch; replace the
+rationale with your own judgment. Use the selection or revise forms documented
+in [Onboarding](docs/onboarding.md) when any candidate should be excluded,
+renamed, merged, or split.
+
+```json
+{
+  "candidateSetId": "onboarding-candidates-<id>",
+  "disposition": "accept-all",
+  "rationale": "I reviewed every evidence-linked candidate and adopt this bootstrap batch."
+}
+```
+
+Save that document as `onboarding-review.json`, then apply it:
 
 ```powershell
-node .\scripts\head.mjs onboarding-review C:\path\to\project `
+head-agent onboarding-review C:\path\to\project `
   --input .\onboarding-review.json
 ```
 
@@ -494,6 +517,19 @@ A review may accept a dependency-complete selection, revise the candidate set,
 reject it, request additional evidence, or retain unresolved concepts as
 explicit Unknowns. `accept-all` is supported by the contract but is not the
 recommended default onboarding path.
+
+Verify the ready graph and try one bounded task context without persisting a
+Capsule. The document command creates a replaceable Markdown projection under
+the project-owned `.head` state; it does not change Product Canon.
+
+```powershell
+head-agent onboarding-status C:\path\to\project
+head-agent world-status C:\path\to\project
+head-agent context-preview C:\path\to\project `
+  --task "Find the implementation evidence for one reviewed Feature" --budget 2000
+head-agent world-docs-build C:\path\to\project
+head-agent resume C:\path\to\project --runtime codex,opencode
+```
 
 See [Onboarding](docs/onboarding.md) and
 [Product Model](docs/product-model.md) for the complete review contracts.

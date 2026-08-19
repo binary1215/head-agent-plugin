@@ -205,33 +205,32 @@ process.stdin.on('end', () => {
 `;
 
 async function main() {
-  const customProviderEnvironment = buildOpenCodeProviderEnvironment({
+  const configuredProviderEnvironment = buildOpenCodeProviderEnvironment({
     PATH: process.env.PATH || "",
-    LITELLM_API_KEY: "fixture-key",
-    LITELLM_BASE_URL: "https://provider.invalid/",
+    FIXTURE_CUSTOM_API_KEY: "fixture-key",
+    FIXTURE_CUSTOM_BASE_URL: "https://provider.invalid/custom-root/",
     UNSELECTED_API_KEY: "must-not-be-forwarded",
-  }, "read-only", "litellm/gpt-5.4-mini");
-  const customProviderConfig = JSON.parse(customProviderEnvironment.OPENCODE_CONFIG_CONTENT);
-  assert(customProviderEnvironment.LITELLM_API_KEY === "fixture-key"
-    && customProviderEnvironment.LITELLM_BASE_URL === "https://provider.invalid/v1"
-    && customProviderEnvironment.UNSELECTED_API_KEY === undefined,
+  }, "read-only", "fixture-custom/model-v1");
+  const configuredProviderOverlay = JSON.parse(configuredProviderEnvironment.OPENCODE_CONFIG_CONTENT);
+  assert(configuredProviderEnvironment.FIXTURE_CUSTOM_API_KEY === "fixture-key"
+    && configuredProviderEnvironment.FIXTURE_CUSTOM_BASE_URL === "https://provider.invalid/custom-root/"
+    && configuredProviderEnvironment.UNSELECTED_API_KEY === undefined,
   "OpenCode provider environment did not remain scoped to the selected provider.");
-  assert(JSON.stringify(canonicalFixtureValue(customProviderConfig.provider?.litellm)) === JSON.stringify(canonicalFixtureValue({
-    npm: "@ai-sdk/openai-compatible",
-    name: "litellm",
-    options: {
-      apiKey: "{env:LITELLM_API_KEY}",
-      baseURL: "{env:LITELLM_BASE_URL}",
-    },
-    models: { "gpt-5.4-mini": { name: "gpt-5.4-mini" } },
-  })), "OpenCode custom-provider configuration does not match the official OpenAI-compatible shape.");
-  let invalidProviderBaseUrlRejected = false;
-  try {
-    buildOpenCodeProviderEnvironment({ LITELLM_BASE_URL: "file:///unsafe" }, "read-only", "litellm/model");
-  } catch (error) {
-    invalidProviderBaseUrlRejected = error.code === "INVALID_OPENCODE_PROVIDER_BASE_URL";
-  }
-  assert(invalidProviderBaseUrlRejected, "OpenCode accepted a non-HTTP custom-provider base URL.");
+  assert(configuredProviderOverlay.provider === undefined,
+    "HEAD replaced the user's OpenCode provider configuration instead of preserving OpenCode authority.");
+  const nativeProviderEnvironment = buildOpenCodeProviderEnvironment({
+    PATH: process.env.PATH || "",
+    FIXTURE_NATIVE_API_KEY: "fixture-key",
+    FIXTURE_NATIVE_BASE_URL: "https://native.invalid/provider-root/",
+    FIXTURE_CUSTOM_API_KEY: "must-not-be-forwarded",
+  }, "read-only", "fixture-native/model-v2");
+  const nativeProviderOverlay = JSON.parse(nativeProviderEnvironment.OPENCODE_CONFIG_CONTENT);
+  assert(nativeProviderEnvironment.FIXTURE_NATIVE_API_KEY === "fixture-key"
+    && nativeProviderEnvironment.FIXTURE_NATIVE_BASE_URL === "https://native.invalid/provider-root/"
+    && nativeProviderEnvironment.FIXTURE_CUSTOM_API_KEY === undefined,
+  "OpenCode native provider environment did not remain scoped to the selected provider.");
+  assert(nativeProviderOverlay.provider === undefined,
+    "HEAD injected a provider preset into the OpenCode configuration overlay.");
   const resolvedRoot = path.resolve(temporaryRoot);
   const resolvedOperationalRoot = path.resolve(temporaryOperationalRoot);
   assert(resolvedRoot.startsWith(`${pluginRoot}${path.sep}`) && path.basename(resolvedRoot).startsWith(".test-tmp-runtime-lifecycle-"), "Temporary lifecycle root escaped the plugin workspace.");
@@ -459,7 +458,7 @@ async function main() {
       runtime: "opencode",
       scope: { kind: "session", request: selectedModelRequest },
       workspaceMode: "read-only",
-      runtimeSelection: { model: "litellm/gpt-5.4-mini" },
+      runtimeSelection: { model: "fixture-provider/model-v1" },
       protocolEvidence,
       projectBinding,
       limits: { timeoutMs: 5_000 },
@@ -470,13 +469,13 @@ async function main() {
       runtime: "opencode",
       scope: { kind: "session", request: selectedModelRequest },
       workspaceMode: "read-only",
-      runtimeSelection: { model: "litellm/gpt-5.4" },
+      runtimeSelection: { model: "fixture-provider/model-v2" },
       protocolEvidence,
       projectBinding,
       limits: { timeoutMs: 5_000 },
       persist: false,
     }).authorization;
-    assert(verifyRuntimeInvocationAuthorization(selectedModelAuthorization).runtimeSelection.model === "litellm/gpt-5.4-mini",
+    assert(verifyRuntimeInvocationAuthorization(selectedModelAuthorization).runtimeSelection.model === "fixture-provider/model-v1",
       "Runtime model selection did not round-trip through authorization verification.");
     assert(selectedModelAuthorization.authorizationId !== alternateModelAuthorization.authorizationId,
       "Runtime model drift did not change the immutable authorization identity.");
@@ -1036,8 +1035,8 @@ async function main() {
       semanticResultBoundsRetained: true,
       codexPrivacyReducedDiagnosticsValidated: true,
     opencodeRunProtocolFixtureValidated: true,
-    opencodeCustomProviderConfigValidated: true,
-    opencodeProviderRootBaseUrlNormalized: true,
+    opencodeConfiguredProviderAuthorityPreserved: true,
+    opencodeProviderEndpointRewritten: false,
     unselectedProviderCredentialsForwarded: false,
     opencodeStructuredResultRecorded: true,
       opencodeDescendantTreeSupervisionValidated: true,

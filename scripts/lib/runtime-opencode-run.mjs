@@ -21,7 +21,7 @@ import {
 import { resolveVerifiedProcessSupervisor } from "./runtime-process-supervisor.mjs";
 import { runSupervisedRuntimeOneShot } from "./runtime-supervised-one-shot.mjs";
 
-export const OPENCODE_RUN_PROVIDER_VERSION = "0.1.0";
+export const OPENCODE_RUN_PROVIDER_VERSION = "0.2.0";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const fail = (message, code = "OPENCODE_RUN_PROVIDER_ERROR") => {
@@ -69,22 +69,9 @@ function permissionPolicy(workspaceMode) {
   return { ...base, edit: "deny", write: "deny", patch: "deny", multiedit: "deny" };
 }
 
-function normalizeOpenAICompatibleBaseUrl(value) {
-  let parsed;
-  try { parsed = new URL(value); }
-  catch { fail("OpenCode provider base URL is invalid.", "INVALID_OPENCODE_PROVIDER_BASE_URL"); }
-  if (!new Set(["http:", "https:"]).has(parsed.protocol) || parsed.username || parsed.password || parsed.hash) {
-    fail("OpenCode provider base URL is outside the supported HTTP boundary.", "INVALID_OPENCODE_PROVIDER_BASE_URL");
-  }
-  if (parsed.pathname === "/" || parsed.pathname === "") parsed.pathname = "/v1";
-  else parsed.pathname = parsed.pathname.replace(/\/+$/u, "");
-  return parsed.toString().replace(/\/$/u, "");
-}
-
 export function buildOpenCodeProviderEnvironment(environment, workspaceMode, model) {
   const separator = typeof model === "string" ? model.indexOf("/") : -1;
   const providerId = separator > 0 ? model.slice(0, separator) : "";
-  const modelId = separator > 0 ? model.slice(separator + 1) : "";
   const providerEnvironmentPrefix = providerId ? providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_") : "";
   const providerApiKeyName = providerEnvironmentPrefix ? `${providerEnvironmentPrefix}_API_KEY` : "";
   const providerBaseUrlName = providerEnvironmentPrefix ? `${providerEnvironmentPrefix}_BASE_URL` : "";
@@ -99,21 +86,7 @@ export function buildOpenCodeProviderEnvironment(environment, workspaceMode, mod
     if ((fixedNames.has(normalized) || selectedProviderEnvironmentNames.has(key))
       && typeof value === "string") result[key] = value;
   }
-  if (result[providerBaseUrlName]) {
-    result[providerBaseUrlName] = normalizeOpenAICompatibleBaseUrl(result[providerBaseUrlName]);
-  }
   const permission = permissionPolicy(workspaceMode);
-  const provider = providerId && modelId && result[providerBaseUrlName] ? {
-    [providerId]: {
-      npm: "@ai-sdk/openai-compatible",
-      name: providerId,
-      options: {
-        baseURL: `{env:${providerBaseUrlName}}`,
-        ...(result[providerApiKeyName] ? { apiKey: `{env:${providerApiKeyName}}` } : {}),
-      },
-      models: { [modelId]: { name: modelId } },
-    },
-  } : undefined;
   result.CI = "1";
   result.NO_COLOR = "1";
   result.TERM = "dumb";
@@ -128,7 +101,6 @@ export function buildOpenCodeProviderEnvironment(environment, workspaceMode, mod
     autoupdate: false,
     share: "disabled",
     permission,
-    ...(provider ? { provider } : {}),
   });
   return result;
 }
