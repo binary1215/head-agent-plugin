@@ -122,7 +122,7 @@ The adapter descriptor and physical source path live only in the World Model poi
 - provenance-complete product/repository edges plus `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, and `PROMOTED_FROM` onboarding edges;
 - deterministic bounded temporal traversal with kind/relation/authority/freshness allowlists, confidence policy, inclusion/exclusion reasons, and graph/query/result digests;
 - local JSON and in-memory graph projection adapters with identical GraphSnapshot and traversal identities, verified pointer/snapshot materialization, embedded-graph fallback disclosure, and stale/tamper/authority rejection;
-- activated ArcadeDB projection with snapshot-scoped semantic vertices and edges, content-derived node/edge set receipts, exact partial-write resume, complete remote re-verification, and bounded server expansion whose full radius is verified before client canonicalization;
+- activated ArcadeDB projection with snapshot-scoped semantic vertices and edges, content-derived node/edge set receipts, exact partial-write resume, complete status-time remote re-verification, and prepared bounded server expansion that verifies the exact query radius without reloading the full remote snapshot/topology;
 - file digest and line provenance, heuristic confidence, unresolved counts, and bounded traversal;
 - local `.git/HEAD` and in-repository ref resolution without following external gitdir pointers;
 - content-addressed all-reachable Git commit-message evidence through replaceable CLI and host-export adapters;
@@ -159,7 +159,7 @@ Debounced filesystem and CI trigger ingestion plus single-writer event coalescin
 - temporal projection of document-review artifacts, Obsidian, and Notion adapters;
 - dedicated imported-backlog adapters beyond the active structured brief input;
 - automatic parent inference, merge, and conflict resolution;
-- prepared ArcadeDB query execution that avoids full remote snapshot/topology reload, and non-ArcadeDB transports;
+- live prepared-query performance evidence, compare-and-swap publication, and non-ArcadeDB transports;
 - production selection or transport amortization for the conformant Go `repository.scan.v1` candidate, plus benchmark-gated migration of graph/traversal/Context operations;
 - descendant process-tree supervision beyond the worker manifest's enforced no-descendant contract.
 

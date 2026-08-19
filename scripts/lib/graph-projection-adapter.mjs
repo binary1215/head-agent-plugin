@@ -11,6 +11,7 @@ export const GRAPH_PROJECTION_CONTRACT = "replaceable-rebuildable-derived-graph-
 export const ARCADEDB_GRAPH_PROJECTION_VERSION = "0.1.0";
 export const ARCADEDB_GRAPH_TOPOLOGY_VERSION = "0.1.0";
 export const ARCADEDB_SERVER_TRAVERSAL_VERSION = "0.1.0";
+export const PREPARED_TRAVERSAL_VERSION = "0.1.0";
 
 const ARCADEDB_SNAPSHOT_TYPE = "HeadAgentGraphSnapshot";
 const ARCADEDB_POINTER_TYPE = "HeadAgentGraphPointer";
@@ -25,8 +26,10 @@ const ARCADEDB_TOPOLOGY_ACTIVATION_POINTER = path.join(".head", "graph-projectio
 const ARCADEDB_TRANSPORT_METHODS = ["describe", "ensureSchema", "readPointer", "readSnapshot", "writePointer", "writeSnapshot", "listSnapshotIds"];
 const ARCADEDB_TOPOLOGY_TRANSPORT_METHODS = ["ensureTopologySchema", "readTopology", "writeTopology"];
 const ARCADEDB_SERVER_TRAVERSAL_TRANSPORT_METHODS = ["queryTopology"];
+const ARCADEDB_PREPARED_TRAVERSAL_TRANSPORT_METHODS = ["readTopologyManifest", "queryTopology"];
 const ARCADEDB_SERVER_TRAVERSAL_MODE = "server-expanded-client-canonicalized";
 const ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS = 8192;
+const PREPARED_TRAVERSAL_ORDERING = "record-depth-then-semantic-id-ascending";
 const BRIDGE_FILE = fileURLToPath(new URL("./arcadedb-http-bridge.mjs", import.meta.url));
 
 const REQUIRED_METHODS = [
@@ -112,6 +115,12 @@ export function assertGraphProjectionAdapter(adapter) {
   }
   if (typeof descriptor.remote !== "boolean" || typeof descriptor.durable !== "boolean") {
     fail("GraphProjectionAdapter must disclose remote and durable behavior.", "INVALID_GRAPH_PROJECTION_ADAPTER");
+  }
+  if (descriptor.preparedTraversalProtocolVersion != null
+    && (descriptor.preparedTraversalProtocolVersion !== PREPARED_TRAVERSAL_VERSION
+      || typeof descriptor.preparedTraversalMode !== "string" || !descriptor.preparedTraversalMode.trim()
+      || typeof adapter.queryPrepared !== "function")) {
+    fail("GraphProjectionAdapter prepared traversal capability is invalid.", "INVALID_GRAPH_PROJECTION_ADAPTER");
   }
   return adapter;
 }
@@ -275,6 +284,19 @@ function assertArcadeDbServerTraversalTransport(transport) {
   return transport;
 }
 
+function assertArcadeDbPreparedTraversalTransport(transport) {
+  for (const method of ARCADEDB_PREPARED_TRAVERSAL_TRANSPORT_METHODS) if (typeof transport?.[method] !== "function") {
+    fail(`ArcadeDB transport is missing prepared traversal method ${method}().`, "INVALID_ARCADEDB_PREPARED_TRAVERSAL_TRANSPORT");
+  }
+  return transport;
+}
+
+function supportsPreparedTraversal(adapter) {
+  const described = adapter.describe();
+  return described.preparedTraversalProtocolVersion === PREPARED_TRAVERSAL_VERSION
+    && typeof adapter.queryPrepared === "function";
+}
+
 function bridgeError(result) {
   let document = null;
   try { document = JSON.parse(String(result.stdout || "")); } catch { /* handled below */ }
@@ -436,12 +458,16 @@ export class ArcadeDbHttpTransport {
     return responseRecords(response).map((record) => record.graphSnapshotId);
   }
 
-  readTopology(projectId, graphSnapshotId) {
-    const manifestResponse = this.invoke("query", {
+  readTopologyManifest(projectId, graphSnapshotId) {
+    const response = this.invoke("query", {
       command: `SELECT topologyJson FROM ${ARCADEDB_TOPOLOGY_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId LIMIT 1`,
       params: { projectId, graphSnapshotId },
     });
-    const topologyJson = responseRecords(manifestResponse)[0]?.topologyJson ?? null;
+    return responseRecords(response)[0]?.topologyJson ?? null;
+  }
+
+  readTopology(projectId, graphSnapshotId) {
+    const topologyJson = this.readTopologyManifest(projectId, graphSnapshotId);
     const nodeResponse = this.invoke("query", {
       command: `SELECT nodeJson FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId ORDER BY nodeId`,
       params: { projectId, graphSnapshotId },
@@ -596,13 +622,292 @@ function unfilteredTraversalRadius(graph, anchorIds, maxDepth) {
   return { nodeDepths, edgeDepths };
 }
 
-function verifyArcadeDbServerTraversalResponse({ graph, reference, response, maxRecords }) {
-  const query = reference.traversalQuery;
+function traversalOptionsFromQuery(query) {
+  return {
+    query: query.normalizedQuery,
+    kinds: [...query.allowedKinds],
+    relations: [...query.allowedRelations],
+    authorityClasses: [...query.allowedAuthorityClasses],
+    freshness: [...query.allowedFreshness],
+    minConfidence: query.minConfidence,
+    includeUnreviewedCandidates: query.includeUnreviewedCandidates,
+    depth: query.maxDepth,
+    maxNodes: query.maxNodes,
+    maxEdges: query.maxEdges,
+  };
+}
+
+function preparedExpansion(graph, query) {
+  const radius = unfilteredTraversalRadius(graph, query.anchorIds, query.maxDepth);
+  const nodesById = new Map(graph.nodes.map((node) => [node.nodeId, node]));
+  const edgesById = new Map(graph.edges.map((edge) => [edge.edgeId, edge]));
+  const nodes = [...radius.nodeDepths.entries()].map(([nodeId, recordDepth]) => ({
+    nodeId,
+    recordDepth,
+    nodeJson: graphProjectionCanonicalJson(nodesById.get(nodeId)),
+  })).sort((left, right) => left.recordDepth - right.recordDepth || left.nodeId.localeCompare(right.nodeId));
+  const edges = [...radius.edgeDepths.entries()].map(([edgeId, recordDepth]) => ({
+    edgeId,
+    recordDepth,
+    edgeJson: graphProjectionCanonicalJson(edgesById.get(edgeId)),
+  })).sort((left, right) => left.recordDepth - right.recordDepth || left.edgeId.localeCompare(right.edgeId));
+  return {
+    ordering: PREPARED_TRAVERSAL_ORDERING,
+    nodeCount: nodes.length,
+    edgeCount: edges.length,
+    recordCount: nodes.length + edges.length,
+    nodes,
+    edges,
+  };
+}
+
+function preparedGraphManifest(graph) {
+  const payload = {
+    nodeCount: graph.nodes.length,
+    edgeCount: graph.edges.length,
+    nodeSetHash: digest(graphProjectionCanonicalJson(graph.nodes)),
+    edgeSetHash: digest(graphProjectionCanonicalJson(graph.edges)),
+  };
+  return { ...payload, graphManifestHash: digest(graphProjectionCanonicalJson(payload)) };
+}
+
+export function buildPreparedTraversalRequest({ graph, result } = {}) {
+  verifyTemporalProvenanceGraph(graph);
+  if (!result || result.kind !== "TemporalTraversalResult" || !result.traversalQuery) {
+    fail("Prepared traversal requires a deterministic TemporalTraversalResult.", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+  }
+  const recomputed = queryTemporalProvenanceGraph(graph, traversalOptionsFromQuery(result.traversalQuery));
+  if (graphProjectionCanonicalJson(recomputed) !== graphProjectionCanonicalJson(result)) {
+    fail("Prepared traversal result differs from the deterministic GraphSnapshot result.", "PREPARED_TRAVERSAL_RESULT_MISMATCH");
+  }
+  const expansion = preparedExpansion(graph, result.traversalQuery);
+  const expansionHash = digest(graphProjectionCanonicalJson(expansion));
+  const payload = {
+    schemaVersion: 1,
+    kind: "PreparedTraversalRequest",
+    protocol: { name: "head-agent-core-prepared-traversal", version: PREPARED_TRAVERSAL_VERSION },
+    projectId: graph.projectId,
+    graphSnapshotId: graph.graphSnapshotId,
+    graphSnapshotHash: graph.graphSnapshotHash,
+    sourceSnapshotId: graph.sourceSnapshotId,
+    traversalQuery: clone(result.traversalQuery),
+    queryId: result.queryId,
+    queryHash: result.queryHash,
+    resultId: result.resultId,
+    resultHash: result.resultHash,
+    graphManifest: preparedGraphManifest(graph),
+    expansion,
+    expansionHash,
+    authority: "derived-verification-evidence-only",
+    instructionAuthority: false,
+    promotionAuthority: false,
+  };
+  const requestHash = digest(graphProjectionCanonicalJson(payload));
+  return verifyPreparedTraversalRequest({ ...payload, requestId: `prepared-traversal-${requestHash.slice(0, 24)}`, requestHash });
+}
+
+export function verifyPreparedTraversalRequest(document, { graph = null, result = null } = {}) {
+  assertFields(document, [
+    "schemaVersion", "kind", "protocol", "projectId", "graphSnapshotId", "graphSnapshotHash", "sourceSnapshotId",
+    "traversalQuery", "queryId", "queryHash", "resultId", "resultHash", "graphManifest", "expansion", "expansionHash", "authority",
+    "instructionAuthority", "promotionAuthority", "requestId", "requestHash",
+  ], "Prepared traversal request", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+  const query = document?.traversalQuery;
+  if (query && typeof query === "object" && !Array.isArray(query)) assertFields(query, [
+    "normalizedQuery", "anchorIds", "allowedKinds", "allowedRelations", "allowedAuthorityClasses", "allowedFreshness",
+    "minConfidence", "includeUnreviewedCandidates", "maxDepth", "maxNodes", "maxEdges", "ordering",
+  ], "Prepared traversal query", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+  const expansion = document?.expansion;
+  const graphManifest = document?.graphManifest;
+  if (graphManifest && typeof graphManifest === "object" && !Array.isArray(graphManifest)) assertFields(graphManifest, [
+    "nodeCount", "edgeCount", "nodeSetHash", "edgeSetHash", "graphManifestHash",
+  ], "Prepared traversal graph manifest", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+  if (expansion && typeof expansion === "object" && !Array.isArray(expansion)) assertFields(expansion, [
+    "ordering", "nodeCount", "edgeCount", "recordCount", "nodes", "edges",
+  ], "Prepared traversal expansion", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+  if (!document || document.kind !== "PreparedTraversalRequest" || document.schemaVersion !== 1
+    || document.protocol?.name !== "head-agent-core-prepared-traversal" || document.protocol?.version !== PREPARED_TRAVERSAL_VERSION
+    || typeof document.projectId !== "string" || !document.projectId
+    || !/^graph-snapshot-[a-f0-9]{24}$/.test(document.graphSnapshotId || "")
+    || !/^[a-f0-9]{64}$/.test(document.graphSnapshotHash || "")
+    || !/^source-snapshot-[a-f0-9]{24}$/.test(document.sourceSnapshotId || "")
+    || !query || typeof query.normalizedQuery !== "string" || !query.normalizedQuery
+    || !Array.isArray(query.anchorIds) || query.anchorIds.length > 500
+    || query.anchorIds.some((nodeId) => typeof nodeId !== "string" || !nodeId)
+    || !Array.isArray(query.allowedKinds) || !Array.isArray(query.allowedRelations)
+    || !Array.isArray(query.allowedAuthorityClasses) || !Array.isArray(query.allowedFreshness)
+    || !Number.isFinite(query.minConfidence) || query.minConfidence < 0 || query.minConfidence > 1
+    || typeof query.includeUnreviewedCandidates !== "boolean"
+    || !Number.isInteger(query.maxDepth) || query.maxDepth < 0 || query.maxDepth > 3
+    || !Number.isInteger(query.maxNodes) || query.maxNodes < 1 || query.maxNodes > 500
+    || !Number.isInteger(query.maxEdges) || query.maxEdges < 0 || query.maxEdges > 1000
+    || query.ordering !== "nodeId-then-edgeId-ascending"
+    || !/^traversal-query-[a-f0-9]{24}$/.test(document.queryId || "") || !/^[a-f0-9]{64}$/.test(document.queryHash || "")
+    || !/^traversal-result-[a-f0-9]{24}$/.test(document.resultId || "") || !/^[a-f0-9]{64}$/.test(document.resultHash || "")
+    || !graphManifest || !Number.isInteger(graphManifest.nodeCount) || graphManifest.nodeCount < 0
+    || !Number.isInteger(graphManifest.edgeCount) || graphManifest.edgeCount < 0
+    || !/^[a-f0-9]{64}$/.test(graphManifest.nodeSetHash || "")
+    || !/^[a-f0-9]{64}$/.test(graphManifest.edgeSetHash || "")
+    || !/^[a-f0-9]{64}$/.test(graphManifest.graphManifestHash || "")
+    || !expansion || expansion.ordering !== PREPARED_TRAVERSAL_ORDERING
+    || !Number.isInteger(expansion.nodeCount) || expansion.nodeCount < 0
+    || !Number.isInteger(expansion.edgeCount) || expansion.edgeCount < 0
+    || !Number.isInteger(expansion.recordCount) || expansion.recordCount < 0
+    || !Array.isArray(expansion.nodes) || !Array.isArray(expansion.edges)
+    || expansion.nodeCount !== expansion.nodes.length || expansion.edgeCount !== expansion.edges.length
+    || expansion.recordCount !== expansion.nodes.length + expansion.edges.length
+    || expansion.nodeCount > graphManifest.nodeCount || expansion.edgeCount > graphManifest.edgeCount
+    || !/^[a-f0-9]{64}$/.test(document.expansionHash || "")
+    || document.authority !== "derived-verification-evidence-only"
+    || document.instructionAuthority !== false || document.promotionAuthority !== false
+    || !/^prepared-traversal-[a-f0-9]{24}$/.test(document.requestId || "")
+    || !/^[a-f0-9]{64}$/.test(document.requestHash || "")) {
+    fail("Prepared traversal request is invalid.", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+  }
+  const queryHash = digest(graphProjectionCanonicalJson(query));
+  if (document.queryHash !== queryHash || document.queryId !== `traversal-query-${queryHash.slice(0, 24)}`) {
+    fail("Prepared traversal query digest verification failed.", "PREPARED_TRAVERSAL_QUERY_DIGEST_MISMATCH");
+  }
+  const nodeIds = new Set();
+  for (const record of expansion.nodes) {
+    assertFields(record, ["nodeId", "recordDepth", "nodeJson"], "Prepared traversal node", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+    let node;
+    try { node = JSON.parse(record.nodeJson); } catch { fail("Prepared traversal node JSON is invalid.", "INVALID_PREPARED_TRAVERSAL_REQUEST"); }
+    if (!node || typeof node !== "object" || Array.isArray(node) || node.nodeId !== record.nodeId
+      || nodeIds.has(record.nodeId) || record.nodeJson !== graphProjectionCanonicalJson(node)
+      || !Number.isInteger(record.recordDepth) || record.recordDepth < 0 || record.recordDepth > query.maxDepth * 2
+      || record.recordDepth % 2 !== 0) {
+      fail("Prepared traversal node is invalid, duplicated, or out of bounds.", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+    }
+    nodeIds.add(record.nodeId);
+  }
+  const edgeIds = new Set();
+  for (const record of expansion.edges) {
+    assertFields(record, ["edgeId", "recordDepth", "edgeJson"], "Prepared traversal edge", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+    let edge;
+    try { edge = JSON.parse(record.edgeJson); } catch { fail("Prepared traversal edge JSON is invalid.", "INVALID_PREPARED_TRAVERSAL_REQUEST"); }
+    if (!edge || typeof edge !== "object" || Array.isArray(edge) || edge.edgeId !== record.edgeId
+      || edgeIds.has(record.edgeId) || record.edgeJson !== graphProjectionCanonicalJson(edge)
+      || !Number.isInteger(record.recordDepth) || record.recordDepth < 1 || record.recordDepth > query.maxDepth * 2
+      || record.recordDepth % 2 !== 1) {
+      fail("Prepared traversal edge is invalid, duplicated, or out of bounds.", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+    }
+    edgeIds.add(record.edgeId);
+  }
+  const canonicalNodes = [...expansion.nodes].sort((left, right) => left.recordDepth - right.recordDepth || left.nodeId.localeCompare(right.nodeId));
+  const canonicalEdges = [...expansion.edges].sort((left, right) => left.recordDepth - right.recordDepth || left.edgeId.localeCompare(right.edgeId));
+  const rootIds = expansion.nodes.filter((record) => record.recordDepth === 0).map((record) => record.nodeId).sort();
+  if (graphProjectionCanonicalJson(expansion.nodes) !== graphProjectionCanonicalJson(canonicalNodes)
+    || graphProjectionCanonicalJson(expansion.edges) !== graphProjectionCanonicalJson(canonicalEdges)
+    || graphProjectionCanonicalJson(rootIds) !== graphProjectionCanonicalJson([...query.anchorIds].sort())) {
+    fail("Prepared traversal expansion ordering or anchors are invalid.", "INVALID_PREPARED_TRAVERSAL_REQUEST");
+  }
+  if (document.expansionHash !== digest(graphProjectionCanonicalJson(expansion))) {
+    fail("Prepared traversal expansion digest verification failed.", "PREPARED_TRAVERSAL_EXPANSION_DIGEST_MISMATCH");
+  }
+  const graphManifestPayload = { ...graphManifest };
+  delete graphManifestPayload.graphManifestHash;
+  if (graphManifest.graphManifestHash !== digest(graphProjectionCanonicalJson(graphManifestPayload))) {
+    fail("Prepared traversal graph manifest digest verification failed.", "PREPARED_TRAVERSAL_GRAPH_MANIFEST_DIGEST_MISMATCH");
+  }
+  const payload = { ...document };
+  delete payload.requestId;
+  delete payload.requestHash;
+  const requestHash = digest(graphProjectionCanonicalJson(payload));
+  if (document.requestHash !== requestHash || document.requestId !== `prepared-traversal-${requestHash.slice(0, 24)}`) {
+    fail("Prepared traversal request digest verification failed.", "PREPARED_TRAVERSAL_DIGEST_MISMATCH");
+  }
+  if (graph || result) {
+    if (!graph || !result) fail("Prepared traversal expected graph and result must be supplied together.", "INVALID_PREPARED_TRAVERSAL_EXPECTATION");
+    const expected = buildPreparedTraversalRequest({ graph, result });
+    if (graphProjectionCanonicalJson(document) !== graphProjectionCanonicalJson(expected)) {
+      fail("Prepared traversal request differs from the deterministic expected request.", "PREPARED_TRAVERSAL_REQUEST_MISMATCH");
+    }
+  }
+  return document;
+}
+
+function buildPreparedTraversalVerification(request, verificationMode) {
+  const prepared = verifyPreparedTraversalRequest(request);
+  if (typeof verificationMode !== "string" || !/^[a-z0-9-]+$/.test(verificationMode)) {
+    fail("Prepared traversal verification mode is invalid.", "INVALID_PREPARED_TRAVERSAL_VERIFICATION");
+  }
+  const payload = {
+    schemaVersion: 1,
+    kind: "PreparedTraversalVerification",
+    protocol: { name: "head-agent-core-prepared-traversal", version: PREPARED_TRAVERSAL_VERSION },
+    requestId: prepared.requestId,
+    requestHash: prepared.requestHash,
+    graphSnapshotId: prepared.graphSnapshotId,
+    graphSnapshotHash: prepared.graphSnapshotHash,
+    queryId: prepared.queryId,
+    queryHash: prepared.queryHash,
+    resultId: prepared.resultId,
+    resultHash: prepared.resultHash,
+    expansionHash: prepared.expansionHash,
+    nodeCount: prepared.expansion.nodeCount,
+    edgeCount: prepared.expansion.edgeCount,
+    verificationMode,
+    authority: "derived-verification-evidence-only",
+    instructionAuthority: false,
+    promotionAuthority: false,
+  };
+  const verificationHash = digest(graphProjectionCanonicalJson(payload));
+  return verifyPreparedTraversalVerification({
+    ...payload,
+    verificationId: `prepared-traversal-verification-${verificationHash.slice(0, 24)}`,
+    verificationHash,
+  });
+}
+
+export function verifyPreparedTraversalVerification(document, expectedRequest = null) {
+  assertFields(document, [
+    "schemaVersion", "kind", "protocol", "requestId", "requestHash", "graphSnapshotId", "graphSnapshotHash",
+    "queryId", "queryHash", "resultId", "resultHash", "expansionHash", "nodeCount", "edgeCount", "verificationMode",
+    "authority", "instructionAuthority", "promotionAuthority", "verificationId", "verificationHash",
+  ], "Prepared traversal verification", "INVALID_PREPARED_TRAVERSAL_VERIFICATION");
+  if (!document || document.kind !== "PreparedTraversalVerification" || document.schemaVersion !== 1
+    || document.protocol?.name !== "head-agent-core-prepared-traversal" || document.protocol?.version !== PREPARED_TRAVERSAL_VERSION
+    || !/^prepared-traversal-[a-f0-9]{24}$/.test(document.requestId || "") || !/^[a-f0-9]{64}$/.test(document.requestHash || "")
+    || !/^graph-snapshot-[a-f0-9]{24}$/.test(document.graphSnapshotId || "") || !/^[a-f0-9]{64}$/.test(document.graphSnapshotHash || "")
+    || !/^traversal-query-[a-f0-9]{24}$/.test(document.queryId || "") || !/^[a-f0-9]{64}$/.test(document.queryHash || "")
+    || !/^traversal-result-[a-f0-9]{24}$/.test(document.resultId || "") || !/^[a-f0-9]{64}$/.test(document.resultHash || "")
+    || !/^[a-f0-9]{64}$/.test(document.expansionHash || "")
+    || !Number.isInteger(document.nodeCount) || document.nodeCount < 0
+    || !Number.isInteger(document.edgeCount) || document.edgeCount < 0
+    || typeof document.verificationMode !== "string" || !/^[a-z0-9-]+$/.test(document.verificationMode)
+    || document.authority !== "derived-verification-evidence-only"
+    || document.instructionAuthority !== false || document.promotionAuthority !== false
+    || !/^prepared-traversal-verification-[a-f0-9]{24}$/.test(document.verificationId || "")
+    || !/^[a-f0-9]{64}$/.test(document.verificationHash || "")) {
+    fail("Prepared traversal verification is invalid.", "INVALID_PREPARED_TRAVERSAL_VERIFICATION");
+  }
+  const payload = { ...document };
+  delete payload.verificationId;
+  delete payload.verificationHash;
+  const verificationHash = digest(graphProjectionCanonicalJson(payload));
+  if (document.verificationHash !== verificationHash
+    || document.verificationId !== `prepared-traversal-verification-${verificationHash.slice(0, 24)}`) {
+    fail("Prepared traversal verification digest verification failed.", "PREPARED_TRAVERSAL_VERIFICATION_DIGEST_MISMATCH");
+  }
+  if (expectedRequest) {
+    const request = verifyPreparedTraversalRequest(expectedRequest);
+    const expected = buildPreparedTraversalVerification(request, document.verificationMode);
+    if (graphProjectionCanonicalJson(document) !== graphProjectionCanonicalJson(expected)) {
+      fail("Prepared traversal verification does not match its request.", "PREPARED_TRAVERSAL_VERIFICATION_MISMATCH");
+    }
+  }
+  return document;
+}
+
+function verifyArcadeDbServerTraversalResponse({ request, response, maxRecords }) {
+  const prepared = verifyPreparedTraversalRequest(request);
+  const query = prepared.traversalQuery;
   assertFields(response, [
     "protocolVersion", "graphSnapshotId", "anchorIds", "maxDepth", "maxRecords", "truncated", "records",
   ], "ArcadeDB server traversal response", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
   if (response.protocolVersion !== ARCADEDB_SERVER_TRAVERSAL_VERSION
-    || response.graphSnapshotId !== graph.graphSnapshotId
+    || response.graphSnapshotId !== prepared.graphSnapshotId
     || graphProjectionCanonicalJson(response.anchorIds) !== graphProjectionCanonicalJson(query.anchorIds)
     || response.maxDepth !== query.maxDepth || response.maxRecords !== maxRecords
     || typeof response.truncated !== "boolean" || !Array.isArray(response.records)
@@ -613,9 +918,8 @@ function verifyArcadeDbServerTraversalResponse({ graph, reference, response, max
     fail("ArcadeDB server traversal exceeded its bounded response budget.", "ARCADEDB_SERVER_TRAVERSAL_TRUNCATED");
   }
 
-  const expectedNodes = new Map(graph.nodes.map((node) => [node.nodeId, node]));
-  const expectedEdges = new Map(graph.edges.map((edge) => [edge.edgeId, edge]));
-  const radius = unfilteredTraversalRadius(graph, query.anchorIds, query.maxDepth);
+  const expectedNodes = new Map(prepared.expansion.nodes.map((record) => [record.nodeId, record]));
+  const expectedEdges = new Map(prepared.expansion.edges.map((record) => [record.edgeId, record]));
   const returnedNodes = new Set();
   const returnedEdges = new Set();
   for (const record of response.records) {
@@ -627,8 +931,8 @@ function verifyArcadeDbServerTraversalResponse({ graph, reference, response, max
       const node = parseRemoteJson(record.nodeJson, "ArcadeDB server traversal node");
       const expected = expectedNodes.get(node.nodeId);
       if (!expected || returnedNodes.has(node.nodeId)
-        || graphProjectionCanonicalJson(node) !== graphProjectionCanonicalJson(expected)
-        || radius.nodeDepths.get(node.nodeId) !== record.recordDepth) {
+        || graphProjectionCanonicalJson(node) !== expected.nodeJson
+        || expected.recordDepth !== record.recordDepth) {
         fail("ArcadeDB server traversal returned a duplicate, forged, or out-of-radius node.", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
       }
       returnedNodes.add(node.nodeId);
@@ -638,8 +942,8 @@ function verifyArcadeDbServerTraversalResponse({ graph, reference, response, max
       const edge = parseRemoteJson(record.edgeJson, "ArcadeDB server traversal edge");
       const expected = expectedEdges.get(edge.edgeId);
       if (!expected || returnedEdges.has(edge.edgeId)
-        || graphProjectionCanonicalJson(edge) !== graphProjectionCanonicalJson(expected)
-        || radius.edgeDepths.get(edge.edgeId) !== record.recordDepth) {
+        || graphProjectionCanonicalJson(edge) !== expected.edgeJson
+        || expected.recordDepth !== record.recordDepth) {
         fail("ArcadeDB server traversal returned a duplicate, forged, or out-of-radius edge.", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
       }
       returnedEdges.add(edge.edgeId);
@@ -648,20 +952,22 @@ function verifyArcadeDbServerTraversalResponse({ graph, reference, response, max
     fail("ArcadeDB server traversal returned an unknown record type.", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH");
   }
 
-  if (returnedNodes.size !== radius.nodeDepths.size || returnedEdges.size !== radius.edgeDepths.size
-    || [...radius.nodeDepths.keys()].some((nodeId) => !returnedNodes.has(nodeId))
-    || [...radius.edgeDepths.keys()].some((edgeId) => !returnedEdges.has(edgeId))) {
+  if (returnedNodes.size !== expectedNodes.size || returnedEdges.size !== expectedEdges.size
+    || [...expectedNodes.keys()].some((nodeId) => !returnedNodes.has(nodeId))
+    || [...expectedEdges.keys()].some((edgeId) => !returnedEdges.has(edgeId))) {
     fail("ArcadeDB server traversal did not return the complete bounded graph radius.", "ARCADEDB_SERVER_TRAVERSAL_COVERAGE_MISMATCH");
-  }
-  if (reference.nodes.some((node) => !returnedNodes.has(node.nodeId))
-    || reference.edges.some((edge) => !returnedEdges.has(edge.edgeId))) {
-    fail("ArcadeDB server traversal does not cover the deterministic reference result.", "ARCADEDB_SERVER_TRAVERSAL_COVERAGE_MISMATCH");
   }
   return true;
 }
 
 export class ArcadeDbGraphProjectionAdapter {
-  constructor({ storageSelection, transport = null, topologyRequired = false, serverTraversalRequired = false } = {}) {
+  constructor({
+    storageSelection,
+    transport = null,
+    topologyRequired = false,
+    serverTraversalRequired = false,
+    preparedTraversalRequired = false,
+  } = {}) {
     this.storageSelection = verifyStorageSelection(storageSelection);
     if (this.storageSelection.mode !== "graphdb") fail("ArcadeDB adapter requires a GraphDB storage selection.", "ARCADEDB_SELECTION_REQUIRED");
     this.projectId = this.storageSelection.projectId;
@@ -671,9 +977,11 @@ export class ArcadeDbGraphProjectionAdapter {
     this.locationBase = `arcadedb://${endpoint.host}/${encodeURIComponent(this.storageSelection.graphdb.database)}/head-agent/${encodeURIComponent(this.projectId)}`;
     this.schemaReady = false;
     this.topologySchemaReady = false;
-    this.serverTraversalRequired = serverTraversalRequired === true;
+    this.preparedTraversalRequired = preparedTraversalRequired === true;
+    this.serverTraversalRequired = serverTraversalRequired === true || this.preparedTraversalRequired;
     this.topologyRequired = topologyRequired === true || this.serverTraversalRequired;
     if (this.serverTraversalRequired) assertArcadeDbServerTraversalTransport(this.transport);
+    if (this.preparedTraversalRequired) assertArcadeDbPreparedTraversalTransport(this.transport);
   }
 
   describe() {
@@ -687,7 +995,13 @@ export class ArcadeDbGraphProjectionAdapter {
       traversalMode: this.serverTraversalRequired
         ? ARCADEDB_SERVER_TRAVERSAL_MODE
         : this.topologyRequired ? "verified-topology-client-reference" : "verified-snapshot-client-reference",
-      ...(this.serverTraversalRequired ? { serverTraversalProtocolVersion: ARCADEDB_SERVER_TRAVERSAL_VERSION } : {}),
+      ...(this.serverTraversalRequired ? {
+        serverTraversalProtocolVersion: ARCADEDB_SERVER_TRAVERSAL_VERSION,
+      } : {}),
+      ...(this.preparedTraversalRequired ? {
+        preparedTraversalProtocolVersion: PREPARED_TRAVERSAL_VERSION,
+        preparedTraversalMode: "manifest-and-bounded-records",
+      } : {}),
     };
   }
 
@@ -786,10 +1100,11 @@ export class ArcadeDbGraphProjectionAdapter {
     if (!entry) fail(`Graph projection snapshot is missing: ${id}`, "GRAPH_PROJECTION_SNAPSHOT_MISSING");
     const reference = queryTemporalProvenanceGraph(entry.document, options);
     if (!this.serverTraversalRequired || reference.traversalQuery.anchorIds.length === 0) return reference;
-    const maxRecords = Math.max(1, Math.min(
-      ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS,
-      entry.document.nodes.length + entry.document.edges.length,
-    ));
+    const request = buildPreparedTraversalRequest({ graph: entry.document, result: reference });
+    if (request.expansion.recordCount > ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS) {
+      fail("ArcadeDB server traversal expansion exceeds the record budget.", "ARCADEDB_SERVER_TRAVERSAL_RECORD_LIMIT");
+    }
+    const maxRecords = Math.max(1, request.expansion.recordCount);
     const response = assertArcadeDbServerTraversalTransport(this.transport).queryTopology(
       this.projectId,
       entry.document.graphSnapshotId,
@@ -799,8 +1114,45 @@ export class ArcadeDbGraphProjectionAdapter {
         maxRecords,
       },
     );
-    verifyArcadeDbServerTraversalResponse({ graph: entry.document, reference, response, maxRecords });
+    verifyArcadeDbServerTraversalResponse({ request, response, maxRecords });
     return reference;
+  }
+
+  queryPrepared(request) {
+    if (!this.preparedTraversalRequired) {
+      fail("ArcadeDB prepared traversal is not active for this adapter.", "PREPARED_TRAVERSAL_NOT_ACTIVE");
+    }
+    const prepared = verifyPreparedTraversalRequest(request);
+    if (prepared.projectId !== this.projectId) {
+      fail("Prepared traversal project does not match the ArcadeDB adapter.", "PREPARED_TRAVERSAL_PROJECT_MISMATCH");
+    }
+    if (prepared.expansion.recordCount > ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS) {
+      fail("ArcadeDB prepared traversal expansion exceeds the record budget.", "ARCADEDB_SERVER_TRAVERSAL_RECORD_LIMIT");
+    }
+    const pointerEntry = this.readPointer();
+    if (!pointerEntry) fail("ArcadeDB graph projection pointer is missing.", "GRAPH_PROJECTION_SNAPSHOT_MISSING");
+    verifyGraphProjectionPointer(pointerEntry.document, prepared);
+    const transport = assertArcadeDbPreparedTraversalTransport(this.transport);
+    const topologyJson = transport.readTopologyManifest(this.projectId, prepared.graphSnapshotId);
+    if (typeof topologyJson !== "string") fail("ArcadeDB graph topology manifest is missing.", "ARCADEDB_GRAPH_TOPOLOGY_MISSING");
+    const topology = verifyArcadeDbGraphTopology(parseRemoteJson(topologyJson, "ArcadeDB graph topology manifest"));
+    const graphManifest = prepared.graphManifest;
+    if (topology.projectId !== prepared.projectId || topology.graphSnapshotId !== prepared.graphSnapshotId
+      || topology.graphSnapshotHash !== prepared.graphSnapshotHash || topology.sourceSnapshotId !== prepared.sourceSnapshotId
+      || topology.nodeCount !== graphManifest.nodeCount || topology.edgeCount !== graphManifest.edgeCount
+      || topology.nodeSetHash !== graphManifest.nodeSetHash || topology.edgeSetHash !== graphManifest.edgeSetHash) {
+      fail("ArcadeDB graph topology manifest is stale or cannot cover the prepared traversal.", "ARCADEDB_GRAPH_TOPOLOGY_MISMATCH");
+    }
+    if (prepared.traversalQuery.anchorIds.length > 0) {
+      const maxRecords = Math.max(1, prepared.expansion.recordCount);
+      const response = transport.queryTopology(this.projectId, prepared.graphSnapshotId, {
+        anchorIds: [...prepared.traversalQuery.anchorIds],
+        maxDepth: prepared.traversalQuery.maxDepth,
+        maxRecords,
+      });
+      verifyArcadeDbServerTraversalResponse({ request: prepared, response, maxRecords });
+    }
+    return buildPreparedTraversalVerification(prepared, "arcadedb-manifest-bounded-expansion");
   }
 }
 
@@ -831,6 +1183,10 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
       ...(remoteDescriptor.serverTraversalProtocolVersion
         ? { serverTraversalProtocolVersion: remoteDescriptor.serverTraversalProtocolVersion }
         : {}),
+      ...(remoteDescriptor.preparedTraversalProtocolVersion ? {
+        preparedTraversalProtocolVersion: remoteDescriptor.preparedTraversalProtocolVersion,
+        preparedTraversalMode: remoteDescriptor.preparedTraversalMode,
+      } : {}),
     };
   }
 
@@ -915,6 +1271,15 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
     if (!this.fallbackUsed) this.remoteObserved = true;
     return result;
   }
+
+  queryPrepared(request) {
+    const verification = this.callRemote(
+      () => this.remote.queryPrepared(request),
+      () => this.local.queryPrepared(request),
+    );
+    if (!this.fallbackUsed) this.remoteObserved = true;
+    return verification;
+  }
 }
 
 export class LocalJsonGraphProjectionAdapter {
@@ -925,7 +1290,11 @@ export class LocalJsonGraphProjectionAdapter {
   }
 
   describe() {
-    return descriptor("local-json", { remote: false, durable: true });
+    return {
+      ...descriptor("local-json", { remote: false, durable: true }),
+      preparedTraversalProtocolVersion: PREPARED_TRAVERSAL_VERSION,
+      preparedTraversalMode: "local-snapshot-reference",
+    };
   }
 
   pointerLocation() {
@@ -972,6 +1341,15 @@ export class LocalJsonGraphProjectionAdapter {
     if (!entry) fail(`Graph projection snapshot is missing: ${id}`, "GRAPH_PROJECTION_SNAPSHOT_MISSING");
     return queryTemporalProvenanceGraph(entry.document, options);
   }
+
+  queryPrepared(request) {
+    const prepared = verifyPreparedTraversalRequest(request);
+    const entry = this.readSnapshot(prepared.graphSnapshotId);
+    if (!entry) fail(`Graph projection snapshot is missing: ${prepared.graphSnapshotId}`, "GRAPH_PROJECTION_SNAPSHOT_MISSING");
+    const result = queryTemporalProvenanceGraph(entry.document, traversalOptionsFromQuery(prepared.traversalQuery));
+    verifyPreparedTraversalRequest(prepared, { graph: entry.document, result });
+    return buildPreparedTraversalVerification(prepared, "local-snapshot-reference");
+  }
 }
 
 export class InMemoryGraphProjectionAdapter {
@@ -983,7 +1361,11 @@ export class InMemoryGraphProjectionAdapter {
   }
 
   describe() {
-    return descriptor(this.adapterKind, { remote: false, durable: false });
+    return {
+      ...descriptor(this.adapterKind, { remote: false, durable: false }),
+      preparedTraversalProtocolVersion: PREPARED_TRAVERSAL_VERSION,
+      preparedTraversalMode: "memory-snapshot-reference",
+    };
   }
 
   readPointer() {
@@ -1016,6 +1398,15 @@ export class InMemoryGraphProjectionAdapter {
     const entry = this.readSnapshot(id);
     if (!entry) fail(`Graph projection snapshot is missing: ${id}`, "GRAPH_PROJECTION_SNAPSHOT_MISSING");
     return queryTemporalProvenanceGraph(entry.document, options);
+  }
+
+  queryPrepared(request) {
+    const prepared = verifyPreparedTraversalRequest(request);
+    const entry = this.readSnapshot(prepared.graphSnapshotId);
+    if (!entry) fail(`Graph projection snapshot is missing: ${prepared.graphSnapshotId}`, "GRAPH_PROJECTION_SNAPSHOT_MISSING");
+    const result = queryTemporalProvenanceGraph(entry.document, traversalOptionsFromQuery(prepared.traversalQuery));
+    verifyPreparedTraversalRequest(prepared, { graph: entry.document, result });
+    return buildPreparedTraversalVerification(prepared, "memory-snapshot-reference");
   }
 }
 
@@ -1391,6 +1782,8 @@ export function createActivatedArcadeDbGraphProjectionAdapter({ projectRoot, tra
   if (inspected.status !== "verified-active") return null;
   const topology = inspectArcadeDbGraphTopologyActivation({ projectRoot });
   const serverTraversalRequired = inspected.conformanceReport?.candidateAdapter?.traversalMode === ARCADEDB_SERVER_TRAVERSAL_MODE;
+  const preparedTraversalRequired = inspected.conformanceReport?.candidateAdapter?.preparedTraversalProtocolVersion
+    === PREPARED_TRAVERSAL_VERSION;
   return new ActivatedArcadeDbGraphProjectionAdapter({
     projectRoot,
     storageSelection: inspected.storageSelection,
@@ -1399,6 +1792,7 @@ export function createActivatedArcadeDbGraphProjectionAdapter({ projectRoot, tra
       transport,
       topologyRequired: serverTraversalRequired || topology.status === "verified-active" || topology.status === "stale",
       serverTraversalRequired,
+      preparedTraversalRequired,
     }),
   });
 }
@@ -1485,10 +1879,46 @@ export function inspectGraphProjection({ projectRoot, graph, adapter = null } = 
   };
 }
 
+function inspectPreparedGraphProjection({ projectRoot, graph, adapter }) {
+  verifyTemporalProvenanceGraph(graph);
+  const selected = createGraphProjectionAdapter({ projectRoot, adapter });
+  const pointerEntry = selected.readPointer();
+  if (!pointerEntry) return {
+    status: "not-materialized",
+    graphSnapshotId: graph.graphSnapshotId,
+    fallbackAvailable: true,
+    adapter: adapterReport(selected),
+  };
+  const pointer = verifyGraphProjectionPointer(pointerEntry.document);
+  if (pointer.graphSnapshotId !== graph.graphSnapshotId || pointer.graphSnapshotHash !== graph.graphSnapshotHash
+    || pointer.sourceSnapshotId !== graph.sourceSnapshotId || pointer.projectId !== graph.projectId) {
+    return {
+      status: "stale",
+      expectedGraphSnapshotId: graph.graphSnapshotId,
+      projectedGraphSnapshotId: pointer.graphSnapshotId,
+      fallbackAvailable: false,
+      pointer,
+      adapter: adapterReport(selected),
+    };
+  }
+  return {
+    status: "current",
+    graphSnapshotId: graph.graphSnapshotId,
+    pointer,
+    pointerLocation: pointerEntry.location,
+    snapshotVerification: "query-scoped-prepared",
+    fallbackAvailable: true,
+    adapter: adapterReport(selected),
+  };
+}
+
 export function queryGraphProjection({ projectRoot, graph, adapter = null, query = {} } = {}) {
   const selected = createGraphProjectionAdapter({ projectRoot, adapter });
   const expected = queryTemporalProvenanceGraph(graph, query);
-  const inspected = inspectGraphProjection({ projectRoot, graph, adapter: selected });
+  const prepared = supportsPreparedTraversal(selected);
+  const inspected = prepared
+    ? inspectPreparedGraphProjection({ projectRoot, graph, adapter: selected })
+    : inspectGraphProjection({ projectRoot, graph, adapter: selected });
   if (inspected.status === "not-materialized") return {
     result: expected,
     diagnostics: {
@@ -1500,6 +1930,26 @@ export function queryGraphProjection({ projectRoot, graph, adapter = null, query
   };
   if (inspected.status === "stale") {
     fail("Graph projection adapter is stale and cannot answer a current query.", "GRAPH_PROJECTION_STALE");
+  }
+  if (prepared) {
+    const request = buildPreparedTraversalRequest({ graph, result: expected });
+    const verification = verifyPreparedTraversalVerification(selected.queryPrepared(clone(request)), request);
+    const selectedDiagnostics = typeof selected.diagnostics === "function" ? selected.diagnostics() : {};
+    return {
+      result: expected,
+      diagnostics: {
+        adapter: adapterReport(selected),
+        executionMode: "prepared-graph-projection-adapter",
+        fallbackUsed: selectedDiagnostics.fallbackUsed === true,
+        fallbackReasonCode: selectedDiagnostics.fallbackReasonCode || "",
+        preparedTraversal: {
+          requestId: request.requestId,
+          expansionHash: request.expansionHash,
+          verificationId: verification.verificationId,
+          verificationMode: verification.verificationMode,
+        },
+      },
+    };
   }
   const candidate = selected.query(graph.graphSnapshotId, clone(query));
   if (graphProjectionCanonicalJson(candidate) !== graphProjectionCanonicalJson(expected)) {

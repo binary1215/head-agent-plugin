@@ -62,6 +62,7 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     transport,
     topologyRequired: true,
     serverTraversalRequired: true,
+    preparedTraversalRequired: true,
   });
   const conformanceReport = verifyGraphProjectionAdapterConformance({
     projectRoot: world.snapshot.projectRoot,
