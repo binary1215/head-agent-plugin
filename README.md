@@ -1,146 +1,378 @@
-# HEAD Agent Core plugin
+<div align="center">
 
-This is a plugin-native reworking of the HEAD Agent Core design. It follows the packaging lesson from `oh-my-openagent`: one plugin namespace, a thin harness-facing surface, an isolated provider-neutral core, generated projections, and explicit capability gates. Version `0.3.0-alpha.45` adds a privacy-safe ArcadeDB database compatibility audit and an exact-target initialization boundary before remote graph activation. Missing databases can be created explicitly, unrelated existing types are preserved, and a whole-database reset is eligible only when a conflicting HEAD-reserved type is proven and the selected database name is confirmed exactly. The existing user-selected repository source scope, behavior-ranked evidence-only candidates, bounded Context expansion, provider-neutral runtime authorization, at-most-once lease, native process-tree supervision, live Codex Session/Run conformance, and independent transport/result budgets remain intact. OpenCode actual invocation, provider resume/attachment, and general start/stream/interrupt/close control remain disabled.
+# HEAD Agent Core Plugin
 
-Read [`docs/ULTIMATE_GOAL.md`](docs/ULTIMATE_GOAL.md) before planning a material change, starting a milestone, or declaring one complete. It consolidates the user conversations, design references, fixed decisions, capability boundaries, roadmap, and direction-check questions.
+**Provider-neutral coordination, context compilation, and execution lineage<br>
+for Codex, OpenCode, and future agent runtimes.**
 
-## What works
+[![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
+![Status](https://img.shields.io/badge/status-alpha-orange)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
+![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
 
-- Valid Codex plugin manifest and discoverable `head-agent-core` skill.
-- Dependency-free Node CLI for project initialization, status, checkpoints, and Run lifecycle.
-- Safe Codex and OpenCode projections that preserve existing `AGENTS.md` and `opencode.json` files.
-- `.head/` project, Session, Run, and managed-file canon with digest drift detection.
-- Immutable project-scoped HEAD Session records and a digest-verified onboarding state pointer with deterministic migration for older initialized projects.
-- Local-default, privacy-safe onboarding storage selection; GraphDB configuration stores only endpoint, database, and secret-reference names and continues locally until explicit conformance-gated activation.
-- Bounded evidence-linked FeatureGroup, Capability, and Feature candidate inference from repository evidence or a structured new-project brief.
-- Batch onboarding ReviewDecisions for accept-all, dependency-complete selection, revision, or rejection; candidates remain immutable and non-authoritative.
-- Review-gated Product Canon revisions with previous/next hashes, stale-source rejection, rollback on failed promotion, and a verified child GraphSnapshot before onboarding becomes ready.
-- Content-addressed onboarding CandidateSet, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipt projection with `PROPOSES_*`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, and `PROMOTED_FROM` lineage.
-- Bounded many-to-many Feature/Capability-to-File/Symbol/Test mapping candidates with immutable evidence, stale-source rejection, explicit accept/reject review, separate `ReviewedRelationship` receipts, and canonical-direction `IMPLEMENTS`/`VERIFIED_BY` edges.
-- Provider-neutral ChangeSets bound to exact pre/post SourceSnapshots, File/Symbol/Test revision differences, accepted ResultPackets and execution ReviewDecisions, with sorted zero-or-more ChangeSet parents and no Git prerequisite.
-- Immutable mapping-derived Change-impact candidates, explicit accept/reject review, separate `ReviewedImpact` receipts, and reviewed canonical `IMPACTS` edges consumed by bounded ProductContext traversal.
-- Six Context Compiler types: Snapshot, Evidence, Claim, Decision, Unknown, and ContextCapsule.
-- Budgeted minimum-sufficient Context Capsule compilation with explicit exclusions and Unknowns.
-- Read-only MCP tools for core status, project status, Capsule preview, and persisted Capsule verification.
-- Content-derived `WholePlanSnapshot`, `ExecutionContract`, `ResultPacket`, `ReviewDecision`, and `LineageLink` contract artifacts.
-- Contract-bound Runs that produce Result Packets and require a HEAD ReviewDecision before the next Run.
-- Deterministic Fresh HEAD review projections that omit executor transcripts and provider session state.
-- ReviewDecision-linked plan generations and non-authoritative knowledge-promotion proposals.
-- Incremental Repository World Model with digest verification, file-level freshness, a heuristic evidence-linked file/symbol/import/call graph, and Context Compiler integration.
-- Explicit incremental observed-state refresh with digest-gated unchanged-file analysis reuse, full-scan semantic equivalence, immutable request/receipt artifacts, automatic SourceSnapshot ancestry, and active-Run drift disclosure.
-- Debounced foreground filesystem watching and structured CI event ingestion with deterministic coalescing, bounded overflow, immutable trigger/delivery receipts, `.head` feedback-loop suppression, and single-writer refresh serialization.
-- Versioned `repository.scan.v1` operation with relative-path-only semantic output, strict limits and result validation, a JavaScript reference implementation, conformance coverage, and a repeatable benchmark corpus.
-- Content-addressed temporal provenance GraphSnapshot with stable Product/Repository/File/Symbol/Test identities, onboarding review receipts, immutable revisions, zero-or-more SourceSnapshot and Revision parents, and provenance-complete typed edges.
-- Explicit `.head/context/product-model.json` canon with stable product keys and validated FeatureGroup, Capability, Feature, Requirement, Constraint, and Decision relationships.
-- Canon-projected immutable product revisions and bounded Product Context retrieval without granting the derived graph instruction or promotion authority.
-- Versioned `ComputeAdapter` and WorkerProtocol contracts with canonical request/response validation, structured errors, resource bounds, timeout/cancellation, and no authority effect.
-- `JsReferenceComputeAdapter` as the deterministic semantic baseline plus fixture-driven backend conformance verification.
-- `GoWorkerComputeAdapter` with OS/architecture selection, plugin-root path confinement, SHA-256/size verification, bounded stdio, timeout/cancellation, exact child-PID cleanup, and operational-only diagnostics.
-- Cross-platform Go source and a release workflow that tests conformance before packaging per-platform worker manifests and binaries.
-- Conformance-ready Go `repository.scan.v1` covering bounded file discovery, hashing, classification, heuristic symbols, dependencies, import bindings, and calls without changing canonical scan identity.
-- Deterministic `TraversalQuery` results with relation/kind/authority/freshness allowlists, confidence policy, bounded depth and size, inclusion/exclusion reasons, and graph/query/result digests.
-- Versioned `WorldModelStoreAdapter` contract whose storage identity is excluded from content-derived World Model identity; local JSON is the active adapter.
-- Versioned `GraphProjectionAdapter` contract with local JSON, in-memory, and activated ArcadeDB HTTP implementations; prepared traversal binds the embedded GraphSnapshot and deterministic result to exact bounded expansion evidence, every successful remote write is locally mirrored, availability fallback is disclosed, and stale/tamper/auth/authority/divergence failures close the operation.
-- Read-only ArcadeDB database existence and reserved-schema compatibility audit plus explicit missing-database creation; unrelated schema is preserved, and an incompatible reset requires both proven reserved-name conflict and exact selected-target confirmation.
-- Content-derived prepared-traversal cost evidence separates canonical normalized payload size from operational latency, with a reviewed fixture and an optional no-write live ArcadeDB benchmark.
-- Versioned `DocumentProjectionAdapter` contract with deterministic graph-to-Markdown rendering, content-derived projection identity, local/in-memory conformance, explicit generation, and stale/tamper/authority rejection.
-- Published Markdown drift protection that never overwrites user edits and captures added/modified/removed pages as immutable, non-authoritative `DocumentChangeCandidateSet` evidence.
-- Explicit document-change ReviewDecisions that never infer canon from prose, plus review-gated acceptance of a complete structured Product Model, verified child GraphSnapshot rebuild, deterministic Markdown reconciliation, and immutable application receipts.
-- Content-derived `PostRefreshProjectionPolicy` and receipt artifacts with a manual safe default and explicit opt-in automatic Markdown regeneration after verified refresh; edited or unmanaged views are preserved rather than overwritten.
-- Versioned `GitHistoryAdapter` contract with content-addressed, all-reachable Git commit evidence. Commit messages remain non-authoritative evidence and are never promoted into canonical `Decision` records.
-- Default asynchronous Git CLI collection plus a byte-preserving host-export adapter for constrained runtimes where child-process Git is unavailable.
-- Bounded CLI/MCP semantic graph traversal that fails closed when the index is stale.
-- Bounded CLI/MCP temporal traversal that works without `.git` and keeps GraphDB, VCS objects, provider sessions, line locations, and document-provider IDs outside core logical identity.
-- Bounded CLI/MCP Git history queries and history-aware Context Capsules.
-- Versioned read-only `RuntimeStateAdapter` with strict point-in-time host exports, content-addressed observations, source freshness, and no runtime control authority.
-- Versioned runtime composition with projection-only Codex/OpenCode contract references, Windows/macOS/Linux PlatformAdapter references, a native-process WorkspaceHostAdapter reference, deterministic probe identities, current-host privacy-preserving CLI discovery, bounded direct version and fixed-help protocol evidence, canonical HEAD project/Session capability binding, and fail-closed disabled control methods.
-- Immutable runtime-invocation authorizations derived only from an exact active contract-bound Run with explicit `runtime.invoke` plus `project.read` or `project.write` allowed actions; raw execution input is represented only by digest and byte count.
-- Provider-neutral JSONL event envelopes, lifecycle receipts, `RuntimeStructuredResult`, and ResultPacket drafts that omit raw transcripts, commands, provider-session identifiers, and PIDs; a fixed fixture proves Codex/OpenCode lifecycle behavior, while an integrity-verified native supervisor uses Windows Job Objects or POSIX process groups and carries the Codex exec protocol fixture through structured JSONL extraction, descendant cleanup, and durable CLI/MCP retrieval without claiming successful live conformance.
-- Bounded CLI/MCP runtime-state queries and task-specific runtime evidence in Context Capsules.
-- Windows, macOS, and Linux-compatible filesystem code using Node standard libraries.
+</div>
 
-## What is intentionally deferred
+> **Design lineage**
+>
+> This project takes its core design philosophy from
+> [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core).
+> It independently adapts HEAD ownership, authority-preserving context, durable
+> canon, bounded delegation, evidence-based completion, and graph-assisted
+> retrieval into a provider-neutral Codex/OpenCode plugin architecture.
+>
+> This repository is an independent plugin-native reworking. It is not an
+> official upstream release or a drop-in replacement for the original runtime.
 
-Dedicated imported-backlog connectors, inferred commit-to-ChangeSet matching, conformance projection, general relationship promotion beyond Feature mapping and Change impact, automatic ChangeSet ancestry inference, automatic merge and conflict resolution, background watcher service installation, provider-specific CI webhooks, Obsidian/Notion projection adapters, compute-backed graph construction/traversal, production selection of native `repository.scan.v1`, AST-accurate semantic analysis, structured/promoted decision extraction from Git evidence, OpenCode actual invocation, provider resume or durable attachment, general runtime start/resume/stream/interrupt/close, an executed live prepared-query evaluation, compare-and-swap remote publication, non-ArcadeDB transports, automatic provider runtime hydration, general authorized candidate-knowledge promotion, role messaging, service installation, Rust backends, and Herdr integration are not active yet. NeoPick candidates still require human review, and remote `neopick` publication remains unexecuted. Those features require their explicit contracts and verification; the original OpenCode/Herdr implementation cannot safely be relabeled as cross-platform.
+## What is HEAD Agent Core?
 
-## Use from source
+HEAD Agent Core is an authority-preserving execution-lineage runtime for AI
+coding agents.
+
+It helps an agent preserve the user's objective across long-running work,
+compile only the context required for the current task, execute within an
+explicit boundary, and review the result without depending on one provider
+conversation.
+
+```text
+User objective and Project Canon
+        │
+        ▼
+  Whole-plan HEAD
+        │
+        ├── Context Compiler
+        │       └── reproducible Context Capsule
+        │
+        ├── Execution Contract
+        │       └── Codex / OpenCode adapter
+        │
+        └── Result Packet
+                └── Fresh HEAD Review
+```
+
+## Core principles
+
+| Principle | Meaning |
+| --- | --- |
+| HEAD owns the whole outcome | A local executor cannot silently redefine the parent objective. |
+| User authority comes first | Product, architecture, policy, cost, and external actions remain user-owned. |
+| Minimum sufficient context | Context is selected for one task instead of copying an entire conversation. |
+| Canon survives session loss | Project identity and accepted state live outside provider conversations. |
+| Evidence is not instruction | Repository content, model output, and graph records do not automatically become authority. |
+| GraphDB is replaceable | The graph is a rebuildable retrieval and provenance projection, not the sole source of truth. |
+| Git is optional | Git may enrich evidence but is not required for HEAD identity, lineage, or recovery. |
+
+## Implementation status
+
+Status terms in this README have exact meanings:
+
+- **Available** — implemented and usable through the current source distribution.
+- **Experimental** — implemented behind an explicit or limited activation path.
+- **Planned** — accepted direction, but not shipped in the current alpha.
+- **Deferred** — intentionally outside the current milestone.
+
+| Capability | Status |
+| --- | --- |
+| Source-based CLI execution | **Available** |
+| Project initialization and project-scoped HEAD Session | **Available** |
+| Repository Source Scope | **Available** |
+| Review-gated onboarding and Product Canon bootstrap | **Available** |
+| Repository World Model and incremental refresh | **Available** |
+| Context Compiler and reproducible Context Capsules | **Available** |
+| Execution Lineage and Fresh HEAD review | **Available** |
+| Codex Session and Run execution | **Available** |
+| Go worker and native process supervision | **Available** |
+| Local graph and Markdown projections | **Available** |
+| ArcadeDB graph projection | **Experimental** |
+| OpenCode project projection | **Available** |
+| OpenCode live execution | **Planned** |
+| Codex marketplace distribution | **Planned** |
+| `install.ps1` and `install.sh` | **Planned** |
+| Global `head-agent` command | **Planned** |
+| `head-agent --version` and `head-agent doctor` | **Planned** |
+| Automatic native binary installation | **Planned** |
+| Atomic upgrade, rollback, and safe removal | **Planned** |
+| Provider resume and durable attachment | **Deferred** |
+| Obsidian and Notion projection adapters | **Deferred** |
+
+## Installation
+
+### Requirements
+
+- a current Node.js LTS release;
+- Git to clone this source distribution;
+- Codex for the currently verified provider execution path;
+- Go only when building native worker and supervisor binaries locally;
+- ArcadeDB only when explicitly enabling the optional remote graph projection.
+
+Git, Go, and GraphDB are not prerequisites for HEAD project identity, local
+lineage, or recovery after the corresponding installation step is complete.
+
+### Install and run from source — available now
+
+The current alpha runs directly from the cloned repository.
+
+#### Windows PowerShell
+
+```powershell
+git clone https://github.com/binary1215/head-agent-plugin.git
+Set-Location .\head-agent-plugin
+
+node .\scripts\head.mjs init C:\path\to\project --runtime codex
+node .\scripts\head.mjs status C:\path\to\project
+```
+
+#### macOS or Linux
+
+```bash
+git clone https://github.com/binary1215/head-agent-plugin.git
+cd head-agent-plugin
+
+node ./scripts/head.mjs init /path/to/project --runtime codex
+node ./scripts/head.mjs status /path/to/project
+```
+
+The native compute worker is optional. When a verified binary is unavailable,
+supported operations use the JavaScript reference path and disclose the
+fallback instead of changing semantic identity or authority.
+
+### Simplified plugin installer — planned
+
+The intended installation interface is shown below for roadmap clarity. These
+scripts and the global command are **not included in the current alpha**.
+
+```powershell
+# Planned Windows interface — not currently runnable
+git clone https://github.com/binary1215/head-agent-plugin.git
+Set-Location .\head-agent-plugin
+.\scripts\install.ps1
+```
+
+```bash
+# Planned macOS/Linux interface — not currently runnable
+git clone https://github.com/binary1215/head-agent-plugin.git
+cd head-agent-plugin
+./scripts/install.sh
+```
+
+The planned installer will:
+
+1. verify Node.js, Git, and Codex;
+2. configure a user-scoped Codex marketplace;
+3. install `head-agent-core` through the Codex plugin interface;
+4. install a cross-platform `head-agent` command wrapper;
+5. install or build the matching native worker when available;
+6. verify plugin and binary manifests;
+7. preserve the JavaScript fallback when native compute is unavailable.
+
+Planned lifecycle work also includes version reporting, staged diagnostics,
+atomic upgrades with rollback, and removal that never deletes project `.head`
+canon or lineage.
+
+## Project onboarding
+
+Onboarding initializes HEAD project identity, observes the repository, and
+creates a reviewable product-model candidate batch. It does **not** automatically
+promote inferred Features into Product Canon.
+
+The examples below use the currently available source CLI. Replace
+`C:\path\to\project` with the target project root.
+
+### 1. Initialize the project
+
+```powershell
+node .\scripts\head.mjs init C:\path\to\project --runtime codex
+```
+
+Codex and OpenCode projections can be prepared together without claiming that
+OpenCode live execution is already available:
 
 ```powershell
 node .\scripts\head.mjs init C:\path\to\project --runtime codex,opencode
-node .\scripts\head.mjs status C:\path\to\project
-node .\scripts\head.mjs source-scope-set C:\path\to\project --input .\source-scope.json
-node .\scripts\head.mjs source-scope-status C:\path\to\project
-node .\scripts\head.mjs onboarding-start C:\path\to\project
-node .\scripts\head.mjs onboarding-status C:\path\to\project
-node .\scripts\head.mjs onboarding-review C:\path\to\project --input .\onboarding-review.json
-node .\scripts\head.mjs feature-mapping-start C:\path\to\project
-node .\scripts\head.mjs feature-mapping-status C:\path\to\project
-node .\scripts\head.mjs feature-mapping-review C:\path\to\project --input .\feature-mapping-review.json
-node .\scripts\head.mjs change-set-record C:\path\to\project --input .\change-set.json
-node .\scripts\head.mjs change-set-status C:\path\to\project
-node .\scripts\head.mjs change-impact-review C:\path\to\project --input .\change-impact-review.json
-node .\scripts\head.mjs world-index C:\path\to\project
-node .\scripts\head.mjs world-status C:\path\to\project
-node .\scripts\head.mjs world-refresh C:\path\to\project
-node .\scripts\head.mjs world-refresh C:\path\to\project --expect-changed src/service.mjs
-node .\scripts\head.mjs world-refresh-status C:\path\to\project
-node .\scripts\head.mjs world-refresh-read C:\path\to\project --receipt incremental-refresh-receipt-<24-hex>
-node .\scripts\head.mjs world-refresh-events C:\path\to\project --input .\refresh-events.json
-node .\scripts\head.mjs world-refresh-watch C:\path\to\project --debounce-ms 350 --max-events 1024
-node .\scripts\head.mjs world-refresh-trigger-status C:\path\to\project
-node .\scripts\head.mjs world-refresh-trigger-read C:\path\to\project --delivery refresh-trigger-delivery-<24-hex>
-node .\scripts\head.mjs world-graph-status C:\path\to\project
-node .\scripts\head.mjs world-graph-remote-database-status C:\path\to\project
-node .\scripts\head.mjs world-graph-remote-database-initialize C:\path\to\project
-node .\scripts\head.mjs world-graph-remote-database-initialize C:\path\to\project --reset-incompatible true --confirm-database <exact-selected-name>
-node .\scripts\head.mjs world-graph-remote-activate C:\path\to\project
-node .\scripts\head.mjs world-graph-remote-status C:\path\to\project
-node .\scripts\head.mjs world-docs-build C:\path\to\project
-node .\scripts\head.mjs world-docs-status C:\path\to\project
-node .\scripts\head.mjs world-docs-capture C:\path\to\project
-node .\scripts\head.mjs world-docs-candidates C:\path\to\project --candidate-set document-change-candidate-set-<24-hex>
-node .\scripts\head.mjs world-docs-review C:\path\to\project --input .\document-change-review.json
-node .\scripts\head.mjs world-docs-apply C:\path\to\project --review document-change-review-decision-<24-hex>
-node .\scripts\head.mjs world-docs-review-status C:\path\to\project --candidate-set document-change-candidate-set-<24-hex>
-node .\scripts\head.mjs world-docs-review-read C:\path\to\project --review document-change-review-decision-<24-hex>
-node .\scripts\head.mjs world-docs-application-read C:\path\to\project --application document-change-application-<24-hex>
-node .\scripts\head.mjs world-docs-policy-set C:\path\to\project --input .\post-refresh-policy.json
-node .\scripts\head.mjs world-docs-policy-status C:\path\to\project
-node .\scripts\head.mjs world-docs-refresh-status C:\path\to\project
-node .\scripts\head.mjs world-docs-refresh-read C:\path\to\project --receipt post-refresh-projection-receipt-<24-hex>
-node .\scripts\head.mjs world-query C:\path\to\project --query "symbol or path" --depth 1 --limit 100
-node .\scripts\head.mjs world-temporal C:\path\to\project --query "file or symbol" --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
-node .\scripts\head.mjs world-temporal C:\path\to\project --query "Message delivery" --kind Feature,FeatureRevision,Capability --relations REALIZES,HAS_REVISION,CURRENT_REVISION --depth 2 --limit 100 --edge-limit 200
-node .\scripts\head.mjs world-temporal C:\path\to\project --query "onboarding-candidate-..." --kind OnboardingProductCandidate,OnboardingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
-node .\scripts\head.mjs world-history C:\path\to\project --query "decision terms" --limit 20
-node .\scripts\head.mjs world-index C:\path\to\project --runtime-state C:\path\to\runtime-state.json
-node .\scripts\head.mjs world-runtime C:\path\to\project --runtime codex --state active --kind session --limit 20
-node .\scripts\head.mjs context-compile C:\path\to\project --task "Fix the accepted issue" --budget 4000
-node .\scripts\head.mjs lineage-plan C:\path\to\project --input .\whole-plan.json
-node .\scripts\head.mjs lineage-next-plan C:\path\to\project --input .\next-whole-plan.json
-node .\scripts\head.mjs lineage-contract C:\path\to\project --input .\execution-contract.json
-node .\scripts\head.mjs run-start C:\path\to\project --contract execution-contract-<24-hex>
-node .\scripts\head.mjs runtime-invocation-authorize C:\path\to\project --input .\runtime-invocation.json
-node .\scripts\head.mjs runtime-invocation-read C:\path\to\project --authorization execution-authorization-<24-hex>
-node .\scripts\head.mjs runtime-invocation-execute C:\path\to\project --authorization execution-authorization-<24-hex> --input .\runtime-execution.json
-node .\scripts\head.mjs runtime-invocation-result C:\path\to\project --authorization execution-authorization-<24-hex>
-node .\scripts\head.mjs runtime-invocation-apply-run-result C:\path\to\project --authorization execution-authorization-<24-hex>
-node .\scripts\head.mjs checkpoint C:\path\to\project --summary "Current verified state" --next "Next action"
-node .\scripts\head.mjs run-finish C:\path\to\project --input .\result.json
-node .\scripts\head.mjs run-review-context C:\path\to\project
-node .\scripts\head.mjs run-review C:\path\to\project --input .\review.json
 ```
 
-`world-index` uses the local Git CLI by default and fails open with an explicit coverage reason if the host forbids child processes. In that environment, export Git log bytes with the exact format in [`docs/world-model.md`](docs/world-model.md), then pass the file with `world-index <project> --git-log <file>`.
+Initialization creates protected `.head/` project state, a project-scoped HEAD
+Session, onboarding state, and an empty user-owned Product Model.
 
-`init` creates an empty `.head/context/product-model.json`, an immutable project-scoped HEAD Session record, a local storage-selection record, and an explicit onboarding pointer. Product Model content remains user-owned mutable canon, not generated graph output. Existing initialized projects receive these onboarding artifacts only through the deterministic missing-state migration path.
+### 2. Select the repository source scope
 
-Runtime execution keeps immutable authorization, consumption, and release evidence under `.head`, but stores ephemeral PID, token, and `owner.lock` state in the host-local operational root outside the project. Windows uses `%LOCALAPPDATA%\head-agent-core\operational-state`; Unix-like hosts use `$XDG_STATE_HOME/head-agent-core` or `~/.local/state/head-agent-core`. Isolated hosts and tests may configure an absolute `HEAD_AGENT_OPERATIONAL_STATE_ROOT`; project files and execution requests cannot select or discover that path.
+For repositories containing generated output, vendored dependencies, copied
+projects, model bundles, or large fixtures, record the exact project-relative
+roots that should participate in product inference.
 
-See [`docs/onboarding.md`](docs/onboarding.md) for the bootstrap state machine, [`docs/feature-mapping.md`](docs/feature-mapping.md) for mapping candidate and review contracts, [`docs/change-sets.md`](docs/change-sets.md) for provider-neutral change and reviewed-impact contracts, [`docs/execution-lineage.md`](docs/execution-lineage.md) for the Run contracts and state machine, [`docs/product-model.md`](docs/product-model.md) for Product Model authority and schema, [`docs/world-model.md`](docs/world-model.md) for indexing coverage and freshness behavior, [`docs/incremental-refresh.md`](docs/incremental-refresh.md) and [`docs/refresh-trigger.md`](docs/refresh-trigger.md) for refresh and event-ingestion contracts, [`docs/temporal-provenance.md`](docs/temporal-provenance.md) for identity and bounded traversal contracts, [`docs/graph-projection-adapter.md`](docs/graph-projection-adapter.md) for replaceable graph materialization and query semantics, [`docs/document-projection-adapter.md`](docs/document-projection-adapter.md) for deterministic Markdown and inbound-edit candidate semantics, [`docs/document-change-review.md`](docs/document-change-review.md) for explicit candidate review and exact Product Canon application, [`docs/compute-adapter.md`](docs/compute-adapter.md) for the native-compute semantic boundary, [`docs/runtime-state.md`](docs/runtime-state.md) for the strict host-export boundary, and [`docs/runtime-adapters.md`](docs/runtime-adapters.md) for provider/platform/host discovery and control gates.
+```json
+{
+  "includeRoots": [
+    "src",
+    "packages"
+  ],
+  "excludeRoots": [
+    "dist",
+    "vendor",
+    "generated",
+    "fixtures"
+  ]
+}
+```
 
-## Provenance boundary
+```powershell
+node .\scripts\head.mjs source-scope-set C:\path\to\project --input .\source-scope.json
+node .\scripts\head.mjs source-scope-status C:\path\to\project
+```
 
-The design was informed by the user-provided `head-agent-core-main` snapshot and by `oh-my-openagent-dev` as a structural example. This implementation is a fresh adapter/core split and does not copy the original host daemon or worker runtime. The provided HEAD snapshot did not expose a repository license in its root, so this plugin remains `UNLICENSED` pending an explicit distribution decision.
+Source Scope controls observation only. It cannot define Product Canon, approve
+an inferred Feature, or grant execution authority.
 
-The explicit live target is `neopick`, but this milestone does not claim a completed credentialed activation or remote write. Onboarding records a privacy-safe pending GraphDB selection; database audit and initialization resolve credentials only from referenced process environment variables. The verified local path remains complete and no remote database becomes canon or a prerequisite.
+### 3. Start onboarding
+
+```powershell
+node .\scripts\head.mjs onboarding-start C:\path\to\project
+node .\scripts\head.mjs onboarding-status C:\path\to\project
+```
+
+For an existing project, HEAD indexes the selected source scope and proposes
+evidence-linked FeatureGroup, Capability, and Feature candidates. A new project
+can instead begin from a structured user-authored brief.
+
+### 4. Review inferred product concepts
+
+Inspect the immutable candidate batch before promotion:
+
+```powershell
+node .\scripts\head.mjs onboarding-candidates C:\path\to\project `
+  --candidate-set onboarding-candidates-<id>
+```
+
+Apply only an explicit user-authored review:
+
+```powershell
+node .\scripts\head.mjs onboarding-review C:\path\to\project `
+  --input .\onboarding-review.json
+```
+
+A review may accept a dependency-complete selection, revise the candidate set,
+reject it, request additional evidence, or retain unresolved concepts as
+explicit Unknowns. `accept-all` is supported by the contract but is not the
+recommended default onboarding path.
+
+See [Onboarding](docs/onboarding.md) and
+[Product Model](docs/product-model.md) for the complete review contracts.
+
+## Optional GraphDB configuration
+
+Local JSON storage is the safe default. GraphDB is not required to initialize,
+onboard, compile context, or preserve execution lineage.
+
+ArcadeDB can be activated explicitly as a derived graph projection. Credentials
+are resolved only from environment-variable references; secret values must not
+be written into project artifacts, graph identities, generated documents, or
+execution receipts. Remote activation must pass local/remote conformance before
+it becomes current.
+
+See [Graph projection adapter](docs/graph-projection-adapter.md) for the current
+activation, recovery, and failure boundaries.
+
+## How execution works
+
+```mermaid
+flowchart LR
+    U[User Objective] --> H[Whole-plan HEAD]
+    P[Project Canon] --> H
+    S[Repository Evidence] --> W[World Model]
+    W --> C[Context Compiler]
+    H --> C
+    C --> X[Context Capsule]
+    X --> E[Execution Contract]
+    E --> A[Runtime Adapter]
+    A --> R[Result Packet]
+    R --> F[Fresh HEAD Review]
+    W --> G[Optional Graph Projection]
+    G --> D[Markdown and future document projections]
+```
+
+The graph and documents improve retrieval and navigation, but they remain
+replaceable projections. User-owned Product Canon, reviewed decisions, current
+source, and verified runtime evidence retain their respective authority.
+
+## Design lineage and acknowledgements
+
+The foundational HEAD model used by this project comes from
+[Won6314/head-agent-core](https://github.com/Won6314/head-agent-core).
+
+This plugin adopts and independently reinterprets the following ideas:
+
+- HEAD as the owner of the whole outcome;
+- user authority above generated conclusions;
+- minimum sufficient context instead of maximum context;
+- durable canon outside temporary model sessions;
+- bounded delegation without authority drift;
+- completion based on connected evidence;
+- graphs as retrieval indexes rather than unquestioned authority;
+- separation of project meaning from shared runtime mechanisms.
+
+Read the upstream
+[Foundations](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/FOUNDATIONS.md)
+and
+[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/TECHNICAL_ARCHITECTURE.md)
+for the original design context.
+
+This implementation adds its own plugin-native contracts for provider-neutral
+runtime adapters, deterministic Context Capsules, review-gated Product Canon,
+replaceable graph and document projections, and content-derived execution
+lineage.
+
+## Documentation
+
+- [Ultimate goal and design decisions](docs/ULTIMATE_GOAL.md)
+- [Architecture](docs/architecture.md)
+- [Onboarding](docs/onboarding.md)
+- [Product Model](docs/product-model.md)
+- [Context Compiler](docs/context-compiler.md)
+- [Repository World Model](docs/world-model.md)
+- [Incremental refresh](docs/incremental-refresh.md)
+- [Execution Lineage](docs/execution-lineage.md)
+- [Runtime adapters](docs/runtime-adapters.md)
+- [Graph projection adapter](docs/graph-projection-adapter.md)
+- [Document projection adapter](docs/document-projection-adapter.md)
+
+Read [the active ultimate goal](docs/ULTIMATE_GOAL.md) before planning a
+material change, starting a milestone, or declaring one complete.
+
+## Verification from source
+
+The repository tracks deterministic verification entry points alongside the
+implementation:
+
+```powershell
+node .\scripts\verify-onboarding.mjs
+node .\scripts\verify-runtime-adapters.mjs
+
+Set-Location .\native\head-agent-worker
+go test ./...
+go vet ./...
+```
+
+The JavaScript implementation is the semantic reference. Native backends must
+pass fixture-driven conformance before they are advertised for production use.
+
+## Installation roadmap
+
+The current alpha runs directly from source. Planned distribution work is:
+
+1. add cross-platform `head-agent` command wrappers;
+2. expose `head-agent --version`;
+3. provide Codex marketplace packaging;
+4. add `install.ps1` and `install.sh`;
+5. publish versioned native worker and supervisor releases;
+6. add staged `head-agent doctor` checks;
+7. implement atomic upgrades with rollback;
+8. implement safe removal without deleting project `.head` data.
+
+## Project status and licensing
+
+HEAD Agent Core Plugin is an alpha project. Capability labels above describe
+the current implementation boundary and must not be read as a promise of a
+specific release date.
+
+The repository remains `UNLICENSED` until an explicit distribution license is
+selected. Public source availability alone does not grant redistribution or
+derivative-use rights.
