@@ -115,7 +115,7 @@ node .\scripts\head.mjs lineage-next-plan C:\path\to\project --input .\next-whol
 node .\scripts\head.mjs lineage-contract C:\path\to\project --input .\execution-contract.json
 node .\scripts\head.mjs run-start C:\path\to\project --contract execution-contract-<24-hex>
 node .\scripts\head.mjs runtime-invocation-authorize C:\path\to\project --input .\runtime-invocation.json
-node .\scripts\head.mjs runtime-invocation-read C:\path\to\project --authorization runtime-invocation-authorization-<24-hex>
+node .\scripts\head.mjs runtime-invocation-read C:\path\to\project --authorization execution-authorization-<24-hex>
 node .\scripts\head.mjs checkpoint C:\path\to\project --summary "Current verified state" --next "Next action"
 node .\scripts\head.mjs run-finish C:\path\to\project --input .\result.json
 node .\scripts\head.mjs run-review-context C:\path\to\project

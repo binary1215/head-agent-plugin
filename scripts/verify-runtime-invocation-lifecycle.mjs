@@ -64,6 +64,24 @@ function recordingSpawn(command, args, options) {
   return child;
 }
 
+function evidenceFixtureOutput(command, args) {
+  const runtime = path.basename(command).toLowerCase().includes("opencode") ? "opencode" : "codex";
+  const key = args.join(" ");
+  if (key === "--version") return `${runtime} 1.2.3\n`;
+  if (runtime === "codex" && key === "--help") return "exec\nmcp-server\napp-server\n";
+  if (runtime === "codex" && key === "exec --help") return "Run Codex non-interactively\n--json\n--output-schema\n--ephemeral\nresume\n";
+  if (runtime === "codex" && key === "app-server --help") return "stdio://\ngenerate-json-schema\n--listen\n";
+  if (runtime === "opencode" && key === "--help") return "opencode run\nopencode acp\nopencode serve\nopencode session\n";
+  if (runtime === "opencode" && key === "run --help") return "Run OpenCode with a message\n--format choices: json\n--session\n--continue\n";
+  if (runtime === "opencode" && key === "acp --help") return "Agent Client Protocol\n--cwd\n--port\n";
+  return "unsupported fixture invocation\n";
+}
+
+function evidenceFixtureSpawn(command, args, options) {
+  const output = evidenceFixtureOutput(command, args);
+  return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", output], options);
+}
+
 async function main() {
   const resolvedRoot = path.resolve(temporaryRoot);
   assert(resolvedRoot.startsWith(`${pluginRoot}${path.sep}`) && path.basename(resolvedRoot).startsWith(".test-tmp-runtime-lifecycle-"), "Temporary lifecycle root escaped the plugin workspace.");
@@ -98,15 +116,14 @@ async function main() {
       forbiddenActions: ["project.write", "network.write", "canon.mutate"],
       persist: true,
     }).artifact;
-    const run = startRun({ root: resolvedRoot, executionContractId: contract.executionContractId }).run;
     const versionEvidence = await buildRuntimeVersionEvidence({
       runtimes: ["codex", "opencode"],
-      spawnImplementation: recordingSpawn,
+      spawnImplementation: evidenceFixtureSpawn,
     });
     const protocolEvidence = await buildRuntimeProtocolEvidence({
       runtimes: ["codex", "opencode"],
       versionEvidence,
-      spawnImplementation: recordingSpawn,
+      spawnImplementation: evidenceFixtureSpawn,
     });
     const projectBinding = buildRuntimeProjectBinding({
       projectId: initialized.project.projectId,
@@ -116,11 +133,84 @@ async function main() {
       versionEvidence,
       protocolEvidence,
     });
+    const sessionResults = [];
+    for (const runtime of ["codex", "opencode"]) {
+      const request = `Inspect the fixture locally through the ${runtime} Session lane without changing Product Canon.`;
+      const sessionAuthorization = buildRuntimeInvocationAuthorization({
+        root: resolvedRoot,
+        runtime,
+        scope: {
+          kind: "session",
+          request,
+          contextCapsuleId: runtime === "opencode" ? capsule.capsuleId : null,
+        },
+        workspaceMode: "read-only",
+        protocolEvidence,
+        projectBinding,
+        limits: { timeoutMs: 5_000 },
+        persist: true,
+      }).authorization;
+      assert(sessionAuthorization.kind === "ExecutionAuthorization", `${runtime} Session authorization kind is invalid.`);
+      assert(sessionAuthorization.scope.kind === "session", `${runtime} Session scope was not recorded.`);
+      assert(sessionAuthorization.scope.runId === null && sessionAuthorization.scope.executionContractId === null, `${runtime} Session authorization acquired Run authority.`);
+      let requestDriftRejected = false;
+      try {
+        await runRuntimeLifecycleConformance({
+          root: resolvedRoot,
+          authorization: sessionAuthorization,
+          sessionRequest: `${request} changed`,
+          mode: "success",
+          onProcessEvent: recordProcess,
+        });
+      } catch (error) {
+        requestDriftRejected = error.code === "RUNTIME_INVOCATION_INPUT_DRIFT";
+      }
+      assert(requestDriftRejected, `${runtime} Session request drift was accepted.`);
+      const sessionSuccess = await runRuntimeLifecycleConformance({
+        root: resolvedRoot,
+        authorization: sessionAuthorization,
+        sessionRequest: request,
+        mode: "success",
+        onProcessEvent: recordProcess,
+      });
+      const sessionDraft = buildRuntimeResultPacketDraft({
+        authorization: sessionAuthorization,
+        receipt: sessionSuccess.receipt,
+        leaseRelease: sessionSuccess.executionLease.release,
+      });
+      verifyRuntimeResultPacketDraft(sessionDraft);
+      assert(sessionSuccess.receipt.scopeKind === "session", `${runtime} Session receipt lost its scope.`);
+      assert(sessionDraft.scopeKind === "session" && sessionDraft.freshHeadReviewRequired === false, `${runtime} Session result incorrectly requires Fresh HEAD review.`);
+      const sessionPublicArtifacts = JSON.stringify({ authorization: sessionAuthorization, receipt: sessionSuccess.receipt, executionLease: sessionSuccess.executionLease, draft: sessionDraft });
+      assert(!sessionPublicArtifacts.includes(request), `${runtime} Session authorization persisted the raw request.`);
+      sessionResults.push({
+        runtime,
+        authorizationId: sessionAuthorization.authorizationId,
+        receiptId: sessionSuccess.receipt.receiptId,
+        draftId: sessionDraft.draftId,
+        requestDriftRejected,
+      });
+    }
+    const sessionWritePreview = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      scope: { kind: "session", request: "Apply one local reversible fixture edit without changing Product Canon." },
+      workspaceMode: "workspace-write",
+      protocolEvidence,
+      projectBinding,
+      persist: false,
+    }).authorization;
+    assert(sessionWritePreview.scope.kind === "session"
+      && sessionWritePreview.requiredAllowedActions.includes("project.write")
+      && sessionWritePreview.authorizationBoundary.freshHeadReviewRequired === false,
+    "Low-risk Session workspace-write was not authorized through the lightweight lane.");
+    const run = startRun({ root: resolvedRoot, executionContractId: contract.executionContractId }).run;
     const results = [];
     for (const runtime of ["codex", "opencode"]) {
       const authorization = buildRuntimeInvocationAuthorization({
         root: resolvedRoot,
         runtime,
+        scope: { kind: "run" },
         workspaceMode: "read-only",
         protocolEvidence,
         projectBinding,
@@ -130,6 +220,7 @@ async function main() {
       verifyRuntimeInvocationAuthorization(authorization);
       const read = readRuntimeInvocationAuthorization({ root: resolvedRoot, authorizationId: authorization.authorizationId });
       assert(read.authorization.authorizationHash === authorization.authorizationHash, `${runtime} authorization did not round-trip.`);
+      assert(authorization.scope.kind === "run", `${runtime} Run authorization scope is invalid.`);
       const cliRead = await runCommand(["runtime-invocation-read", resolvedRoot, "--authorization", authorization.authorizationId]);
       assert(cliRead.authorization.authorizationHash === authorization.authorizationHash, `${runtime} CLI authorization read failed.`);
       const mcpRead = await dispatch({
@@ -213,6 +304,7 @@ async function main() {
     const timeoutPlan = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
       runtime: "codex",
+      scope: { kind: "run" },
       workspaceMode: "read-only",
       protocolEvidence,
       projectBinding,
@@ -231,6 +323,7 @@ async function main() {
     const cancellationPlan = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
       runtime: "codex",
+      scope: { kind: "run" },
       workspaceMode: "read-only",
       protocolEvidence,
       projectBinding,
@@ -263,6 +356,7 @@ async function main() {
     const spawnFailureAuthorization = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
       runtime: "codex",
+      scope: { kind: "run" },
       workspaceMode: "read-only",
       protocolEvidence,
       projectBinding,
@@ -292,6 +386,7 @@ async function main() {
       buildRuntimeInvocationAuthorization({
         root: resolvedRoot,
         runtime: "codex",
+        scope: { kind: "run" },
         workspaceMode: "workspace-write",
         protocolEvidence,
         projectBinding,
@@ -310,6 +405,7 @@ async function main() {
       protocolEvidenceId: protocolEvidence.evidenceId,
       projectBindingId: projectBinding.bindingId,
       runtimes: results,
+      sessionScopes: sessionResults,
       timeoutReceiptId: timedOut.receipt.receiptId,
       cancellationReceiptId: cancelled.receipt.receiptId,
       singleUseLeaseVerified: true,
@@ -318,6 +414,8 @@ async function main() {
       spawnFailureReleased: true,
       exactChildCleanupVerified: true,
       workspaceWriteRejected: true,
+      sessionWorkspaceWriteAuthorized: true,
+      sessionFreshHeadReviewRequired: false,
       rawTranscriptPersisted: false,
       actualProviderInvoked: false,
       providerControlEnabled: false,

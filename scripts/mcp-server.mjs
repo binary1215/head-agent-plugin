@@ -45,12 +45,12 @@ export const tools = [
   },
   {
     name: "head_runtime_invocation_authorization",
-    description: "Read and digest-verify one ExecutionContract-bound runtime invocation authorization without invoking or controlling a provider.",
+    description: "Read and digest-verify one Session- or Run-scoped ExecutionAuthorization without invoking or controlling a provider.",
     inputSchema: {
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
-        authorization_id: { type: "string", pattern: "^runtime-invocation-authorization-[a-f0-9]{24}$" },
+        authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
       },
       required: ["project_root", "authorization_id"],
       additionalProperties: false,
@@ -63,7 +63,7 @@ export const tools = [
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
-        authorization_id: { type: "string", pattern: "^runtime-invocation-authorization-[a-f0-9]{24}$" },
+        authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
       },
       required: ["project_root", "authorization_id"],
       additionalProperties: false,

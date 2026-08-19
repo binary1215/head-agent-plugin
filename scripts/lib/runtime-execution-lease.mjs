@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const RUNTIME_EXECUTION_LEASE_VERSION = "0.1.0";
+export const RUNTIME_EXECUTION_LEASE_VERSION = "0.2.0";
 
 const fail = (message, code = "RUNTIME_EXECUTION_LEASE_ERROR") => {
   const error = new Error(message);
@@ -49,12 +49,14 @@ function assertFields(value, fields, label, code = "INVALID_RUNTIME_EXECUTION_LE
 
 function requireAuthorizationShape(authorization) {
   if (!authorization || typeof authorization !== "object" || Array.isArray(authorization)
-    || !/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(authorization.authorizationId || "")
+    || !/^execution-authorization-[a-f0-9]{24}$/.test(authorization.authorizationId || "")
     || !/^[a-f0-9]{64}$/.test(authorization.authorizationHash || "")
     || !/^head-[a-f0-9]{20}$/.test(authorization.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(authorization.headSessionId || "")
-    || !/^run-[0-9]+-[a-f0-9]{6}$/.test(authorization.runId || "")
-    || !/^execution-contract-[a-f0-9]{24}$/.test(authorization.executionContractId || "")
+    || !new Set(["session", "run"]).has(authorization.scope?.kind)
+    || authorization.scope.kind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(authorization.scope.runId || "")
+      || !/^execution-contract-[a-f0-9]{24}$/.test(authorization.scope.executionContractId || ""))
+    || authorization.scope.kind === "session" && (authorization.scope.runId !== null || authorization.scope.executionContractId !== null)
     || !new Set(["codex", "opencode"]).has(authorization.runtime)
     || !Number.isSafeInteger(authorization.limits?.timeoutMs)
     || !Number.isSafeInteger(authorization.limits?.terminationGraceMs)) {
@@ -65,7 +67,7 @@ function requireAuthorizationShape(authorization) {
   delete payload.authorizationHash;
   const authorizationHash = digest(canonicalJson(payload));
   if (authorization.authorizationHash !== authorizationHash
-    || authorization.authorizationId !== `runtime-invocation-authorization-${authorizationHash.slice(0, 24)}`) {
+    || authorization.authorizationId !== `execution-authorization-${authorizationHash.slice(0, 24)}`) {
     fail("Runtime invocation authorization digest verification failed at lease acquisition.", "RUNTIME_EXECUTION_LEASE_AUTHORIZATION_DIGEST_MISMATCH");
   }
   return authorization;
@@ -76,7 +78,7 @@ function verifyPersistedAuthorization(projectRoot, authorization) {
     path.resolve(projectRoot),
     ".head",
     "runtime",
-    "invocation-authorizations",
+    "execution-authorizations",
     `${authorization.authorizationId}.json`,
   );
   if (!fs.existsSync(file)) {
@@ -166,7 +168,7 @@ function processState(pid) {
 
 function verifyOwner(owner, { authorization, token = "" } = {}) {
   assertFields(owner, [
-    "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", "headSessionId", "runId",
+    "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", "headSessionId", "scopeKind", "runId",
     "executionContractId", "runtime", "pid", "token", "ownerFenceDigest", "claimedAt", "holdDeadlineAt",
     "authority", "instructionAuthority", "promotionAuthority", "mutatesCanon",
   ], "Runtime execution lease owner");
@@ -174,6 +176,10 @@ function verifyOwner(owner, { authorization, token = "" } = {}) {
   const deadline = Date.parse(owner.holdDeadlineAt);
   if (owner.schemaVersion !== 1 || owner.kind !== "RuntimeExecutionLeaseOwner"
     || owner.protocolVersion !== RUNTIME_EXECUTION_LEASE_VERSION
+    || !new Set(["session", "run"]).has(owner.scopeKind)
+    || owner.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(owner.runId || "")
+      || !/^execution-contract-[a-f0-9]{24}$/.test(owner.executionContractId || ""))
+    || owner.scopeKind === "session" && (owner.runId !== null || owner.executionContractId !== null)
     || !Number.isInteger(owner.pid) || owner.pid <= 0
     || !/^[a-f0-9]{32}$/.test(owner.token || "")
     || !/^[a-f0-9]{64}$/.test(owner.ownerFenceDigest || "")
@@ -183,8 +189,17 @@ function verifyOwner(owner, { authorization, token = "" } = {}) {
     fail("Runtime execution lease owner is invalid.", "INVALID_RUNTIME_EXECUTION_LEASE_OWNER");
   }
   if (authorization) {
-    for (const field of ["authorizationId", "projectId", "headSessionId", "runId", "executionContractId", "runtime"]) {
-      if (owner[field] !== authorization[field]) fail("Runtime execution lease owner does not match the authorization.", "RUNTIME_EXECUTION_LEASE_AUTHORIZATION_MISMATCH");
+    const expected = {
+      authorizationId: authorization.authorizationId,
+      projectId: authorization.projectId,
+      headSessionId: authorization.headSessionId,
+      scopeKind: authorization.scope.kind,
+      runId: authorization.scope.runId,
+      executionContractId: authorization.scope.executionContractId,
+      runtime: authorization.runtime,
+    };
+    for (const field of Object.keys(expected)) {
+      if (owner[field] !== expected[field]) fail("Runtime execution lease owner does not match the authorization.", "RUNTIME_EXECUTION_LEASE_AUTHORIZATION_MISMATCH");
     }
   }
   if (token && owner.token !== token) fail("Runtime execution lease token does not match the active owner.", "RUNTIME_EXECUTION_LEASE_TOKEN_MISMATCH");
@@ -252,8 +267,9 @@ function acquire({ projectRoot, authorization, ownerFenceDigest }) {
         authorizationId: verified.authorizationId,
         projectId: verified.projectId,
         headSessionId: verified.headSessionId,
-        runId: verified.runId,
-        executionContractId: verified.executionContractId,
+        scopeKind: verified.scope.kind,
+        runId: verified.scope.runId,
+        executionContractId: verified.scope.executionContractId,
         runtime: verified.runtime,
         pid: process.pid,
         token: crypto.randomBytes(16).toString("hex"),
@@ -293,7 +309,7 @@ function acquire({ projectRoot, authorization, ownerFenceDigest }) {
 export function verifyRuntimeExecutionLeaseConsumption(document) {
   assertFields(document, [
     "schemaVersion", "kind", "protocolVersion", "authorizationId", "authorizationHash", "projectId",
-    "headSessionId", "runId", "executionContractId", "runtime", "ownerFenceDigest", "claimedAt", "consumedAt",
+    "headSessionId", "scopeKind", "runId", "executionContractId", "runtime", "ownerFenceDigest", "claimedAt", "consumedAt",
     "holdDeadlineAt", "singleUseBoundary", "authority", "instructionAuthority", "promotionAuthority", "mutatesCanon",
     "consumptionId", "consumptionHash",
   ], "Runtime execution lease consumption");
@@ -306,12 +322,14 @@ export function verifyRuntimeExecutionLeaseConsumption(document) {
   const deadline = Date.parse(document.holdDeadlineAt);
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeExecutionLeaseConsumption"
     || document.protocolVersion !== RUNTIME_EXECUTION_LEASE_VERSION
-    || !/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
+    || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^[a-f0-9]{64}$/.test(document.authorizationHash || "")
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
-    || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
-    || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
+    || !new Set(["session", "run"]).has(document.scopeKind)
+    || document.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
+      || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || ""))
+    || document.scopeKind === "session" && (document.runId !== null || document.executionContractId !== null)
     || !new Set(["codex", "opencode"]).has(document.runtime)
     || !/^[a-f0-9]{64}$/.test(document.ownerFenceDigest || "")
     || Number.isNaN(claimedAt) || Number.isNaN(consumedAt) || Number.isNaN(deadline)
@@ -346,8 +364,9 @@ function consume(projectRoot, authorization, owner) {
     authorizationHash: authorization.authorizationHash,
     projectId: authorization.projectId,
     headSessionId: authorization.headSessionId,
-    runId: authorization.runId,
-    executionContractId: authorization.executionContractId,
+    scopeKind: authorization.scope.kind,
+    runId: authorization.scope.runId,
+    executionContractId: authorization.scope.executionContractId,
     runtime: authorization.runtime,
     ownerFenceDigest: owner.ownerFenceDigest,
     claimedAt: owner.claimedAt,
@@ -377,7 +396,7 @@ function consume(projectRoot, authorization, owner) {
 
 export function verifyRuntimeExecutionLeaseRelease(document) {
   assertFields(document, [
-    "schemaVersion", "kind", "protocolVersion", "authorizationId", "consumptionId", "projectId", "runId",
+    "schemaVersion", "kind", "protocolVersion", "authorizationId", "consumptionId", "projectId", "scopeKind", "runId",
     "executionContractId", "runtime", "operationStatus", "lifecycleReceiptId", "errorCodeDigest", "releasedAt",
     "releaseBoundary", "authority", "instructionAuthority", "promotionAuthority", "mutatesCanon", "releaseId", "releaseHash",
   ], "Runtime execution lease release");
@@ -387,11 +406,13 @@ export function verifyRuntimeExecutionLeaseRelease(document) {
   const statuses = new Set(["completed", "failed", "cancelled", "timed-out", "output-limited", "invalid-event", "threw"]);
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeExecutionLeaseRelease"
     || document.protocolVersion !== RUNTIME_EXECUTION_LEASE_VERSION
-    || !/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
+    || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^runtime-execution-consumption-[a-f0-9]{24}$/.test(document.consumptionId || "")
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
-    || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
-    || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
+    || !new Set(["session", "run"]).has(document.scopeKind)
+    || document.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
+      || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || ""))
+    || document.scopeKind === "session" && (document.runId !== null || document.executionContractId !== null)
     || !new Set(["codex", "opencode"]).has(document.runtime)
     || !statuses.has(document.operationStatus)
     || document.lifecycleReceiptId !== null && !/^runtime-lifecycle-receipt-[a-f0-9]{24}$/.test(document.lifecycleReceiptId || "")
@@ -424,8 +445,9 @@ function recordRelease({ projectRoot, authorization, consumption, operationStatu
     authorizationId: authorization.authorizationId,
     consumptionId: consumption.consumptionId,
     projectId: authorization.projectId,
-    runId: authorization.runId,
-    executionContractId: authorization.executionContractId,
+    scopeKind: authorization.scope.kind,
+    runId: authorization.scope.runId,
+    executionContractId: authorization.scope.executionContractId,
     runtime: authorization.runtime,
     operationStatus,
     lifecycleReceiptId,
@@ -526,7 +548,7 @@ export async function withRuntimeExecutionLease({ projectRoot, authorization, ow
 
 export function inspectRuntimeExecutionLease({ projectRoot, projectId, authorizationId }) {
   if (!/^head-[a-f0-9]{20}$/.test(projectId || "")
-    || !/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(authorizationId || "")) {
+    || !/^execution-authorization-[a-f0-9]{24}$/.test(authorizationId || "")) {
     fail("Runtime execution lease inspection input is invalid.", "INVALID_RUNTIME_EXECUTION_LEASE_INSPECTION");
   }
   const directory = leaseDirectory(projectRoot, authorizationId);

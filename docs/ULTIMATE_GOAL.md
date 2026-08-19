@@ -4,13 +4,13 @@ Status: active direction authority
 
 Current milestone: v0.6 provider-neutral Runtime Adapter contracts
 
-Immediate next slice: execute the integrated graph activation plus read-only prepared-traversal flow only against the user-designated ArcadeDB `sandbox` after explicit risk-informed external-write approval, then apply the now-durable at-most-once authorization lease and conformed event/receipt boundary to one actual provider invocation with live caller/descendant ownership. Provider-session resume, general stream/interrupt/close, messaging, shell interpretation, and TUI scraping remain disabled until actual-provider lifecycle conformance is proved. The live GraphDB evaluation remains derived operational evidence rather than a core prerequisite.
+Immediate next slice: establish the risk-proportional Observe, Session, Run, and Authority execution lanes, then apply one provider-neutral authorization envelope, the durable at-most-once lease, and the conformed event/receipt boundary to one actual provider. Prove a bounded Session invocation without forcing WholePlan/Run review artifacts and a consequential Run invocation with the complete Execution Lineage, both with live caller/descendant ownership and the same cleanup semantics. The integrated ArcadeDB activation and prepared-traversal evaluation remains a separate optional `sandbox` E2E that requires explicit risk-informed external-write approval. Provider-session resume, general stream/interrupt/close, messaging, shell interpretation, and TUI scraping remain disabled until actual-provider lifecycle conformance is proved.
 
 Last reviewed: 2026-08-19
 
 ## Mandatory direction check
 
-Read this document before planning a material change, starting an implementation milestone, or declaring a milestone complete. At each checkpoint, state whether the work still preserves the objective and invariants below. If it does not, stop and resolve the conflict instead of silently changing direction.
+Use progressive direction loading instead of treating this entire history as one global checklist. Before a material change, read the ultimate objective, the universal invariants, the current milestone, and only the subsystem contracts touched by the change. Read the complete decision history when changing product direction, resolving a conflict, or declaring a milestone complete. At each checkpoint, state whether the work still preserves the applicable objective and invariants. If it does not, stop and resolve the conflict instead of silently changing direction.
 
 This document records design direction. It does not override the user, system instructions, repository-specific authority, or verified project canon. Material changes to product direction remain user-owned.
 
@@ -18,7 +18,7 @@ This document records design direction. It does not override the user, system in
 
 Complete the design philosophy of `head-agent-core` as a provider-neutral plugin that works across Codex, OpenCode, and future agent runtimes.
 
-The plugin must preserve the user's objective and project canon as the highest project authority; maintain a Whole-plan HEAD that owns strategy, integration, and completion judgment; compile deterministic minimum-sufficient context for bounded execution; return evidence-linked execution results to a fresh review context; and preserve a reproducible, auditable lineage from objective to plan, contract, execution, result, review, and next plan.
+The plugin must preserve the user's objective and project canon as the highest project authority; maintain a Whole-plan HEAD that owns strategy, integration, and completion judgment; select the lightest safe execution lane; compile deterministic minimum-sufficient context when persistent handoff or consequential execution requires it; return evidence-linked execution results; and preserve a reproducible, auditable lineage for work whose risk, duration, authority effect, or coordination needs justify that lineage.
 
 Runtime failure, context pollution, or provider-session loss must not erase the whole intent or sever the evidence chain. The same canonical inputs, compiler version, and budget must reproduce the same Context Capsule and lineage identities.
 
@@ -30,14 +30,17 @@ HEAD Agent Core is not primarily a memory product, prompt bundle, graph database
 
 ```text
 User objective and project canon
-  -> WholePlanSnapshot A
-  -> Context Compiler
-  -> ExecutionContract + ContextCapsule
-  -> Executor B
-  -> ResultPacket
-  -> Fresh Review HEAD
-  -> ReviewDecision
-  -> accepted result or refined WholePlanSnapshot A(n+1)
+  ├─ Observe -> bounded read-only evidence -> HEAD
+  ├─ Session -> bounded reversible execution -> evidence-linked result -> HEAD
+  └─ Run / Authority
+       -> WholePlanSnapshot A
+       -> Context Compiler
+       -> ExecutionContract + ContextCapsule
+       -> Executor B
+       -> ResultPacket
+       -> Fresh Review HEAD
+       -> ReviewDecision
+       -> accepted result or refined WholePlanSnapshot A(n+1)
 ```
 
 HEAD owns the whole-outcome judgment. Executors may accumulate detailed investigation, code, failures, fixes, and verification, but they do not silently redefine the whole plan. Only the result, evidence, plan delta, impact radius, verification, and explicit unknowns return to HEAD by default.
@@ -59,14 +62,30 @@ The direction comes from the following inputs:
 
 The original HEAD runtime is a Node distribution and coordination system, not merely a prompt bundle. Cross-runtime support must therefore use a single provider-neutral core plus explicit platform, runtime, and workspace-host adapters. HEAD Session and Run identities remain distinct from Codex, OpenCode, or other provider session identifiers.
 
-## Fixed design decisions
+## Lessons adopted from the reference HEAD Core
+
+The reference runtime is an operational behavior oracle, not a package tree to copy. The provider-neutral plugin should adopt these proven behaviors:
+
+1. **One public composition path with recoverable phases.** Public initialization should compose host convergence, project initialization/registration, and onboarding start/resume while retaining each phase as a transaction and recovery boundary.
+2. **Exact project and caller binding.** One project ID maps to one canonical root, live control derives its project/caller/state authority from trusted host evidence, and requests cannot choose their own authority generation or operational state path.
+3. **Complete worker lifecycle ownership.** A real execution reserves state, launches one owned worker, captures machine-session evidence, waits, validates the handoff, delivers once, and cleans up only proven owned processes or workspace resources. Cleanup failure remains an explicit failed outcome.
+4. **Canon-based recovery.** Session/Run canon, checkpoints, and bounded current-result references recover work after compaction or provider-session loss; logs and summaries orient retrieval but never replace the agreement.
+5. **Durable scoped coordination.** Role messaging, when implemented, remains project-scoped, idempotent, authority-generation fenced, and durable across temporary delivery failure.
+6. **Immutable distribution with rollback.** Plugin/native releases should be content-identified and replaceable as units; a failed installation or activation restores the prior working reference rather than editing installed source in place.
+7. **Separate durable meaning from ephemeral operation.** Content-derived authorizations, consumption/release receipts, Results, and Reviews belong in project lineage. PID, token, socket, service, and short-lived owner-lock state belongs in a user-scoped operational state root outside project canon.
+
+The plugin must not inherit the reference runtime's OpenCode-only, Herdr-only, `.claude`-path, POSIX-service, shell-wrapper, tab/pane, or provider-session coupling as core identity. Herdr or another workspace manager may later implement `WorkspaceHostAdapter`; it remains optional and cannot define HEAD Session, Run, project, or semantic graph identity.
+
+## Core and subsystem design decisions
+
+These decisions are not one global ritual. Authority, canon/evidence separation, credential safety, path/process ownership, honest capability disclosure, and optional-adapter recovery are universal invariants. Execution-lineage rules apply to Run and Authority work; graph/canon/document rules apply when those surfaces are read or changed; compute rules apply to native operations; and remote-write rules apply only to external activation. Observe or Session work must not be escalated merely to satisfy an unrelated subsystem contract.
 
 1. **Authority before automation.** User-owned direction and canonical project state outrank summaries, generated context, model output, and graph projections.
 2. **Minimum sufficient context.** The compiler selects what this task needs and records why it was included or excluded. It does not maximize retrieval.
 3. **Evidence is not instruction.** Repository text and external content remain evidence unless explicitly promoted through an authorized knowledge process.
 4. **Logical Fresh HEAD.** Whole-plan review is reconstructed from immutable artifacts rather than depending on a long, polluted chat context.
 5. **Explicit execution boundary.** Every consequential executor run must have an accepted `ExecutionContract` and a bounded authority surface.
-6. **Structured return path.** Executors return a `ResultPacket`, not an unreviewed transcript or free-form success claim.
+6. **Structured return path proportional to the lane.** Session work returns bounded evidence and explicit Unknowns; Run and Authority executors return a full `ResultPacket`. Neither lane treats an unreviewed transcript or free-form success claim as proof.
 7. **Review controls progression.** HEAD records `accept`, `revise`, `expand`, `rollback`, or `escalate` as a `ReviewDecision` before the whole plan advances.
 8. **Content-derived lineage.** Plans, contracts, capsules, results, and reviews use verifiable content hashes and explicit parent relationships.
 9. **Graph storage is replaceable.** A World Model or GraphDB is a rebuildable materialized view over canon and events, never the unique authority.
@@ -91,6 +110,40 @@ The original HEAD runtime is a Node distribution and coordination system, not me
 28. **Native migration is evidence-gated and incremental.** `ComputeAdapter` boundaries are planned before heavy features, but an operation moves to Go only after its semantic contract, deterministic JavaScript reference behavior, conformance fixtures, and benchmark corpus exist. Rust remains a future backend option only when profiling shows a material bottleneck that the Go backend cannot satisfy economically.
 29. **Integrated implementation before exhaustive per-feature validation.** Build coherent provider-neutral vertical flows before expanding exhaustive tests for each small capability. During implementation, retain syntax checks and the minimum fail-closed contract, authority, credential, and process-safety checks needed to prevent invalid state. Concentrate broad behavioral, recovery, cross-runtime, and external-system validation in integrated E2E milestones after the connected implementation exists.
 30. **Remote GraphDB development writes are sandbox-confined.** External GraphDB activation and E2E writes use only the user-designated `sandbox` database. Credential values remain process-local, never become semantic identity or persisted project state, and reports disclose behavior without endpoints, usernames, passwords, or database-internal record identities.
+
+## Risk-proportional governance goal
+
+The system must preserve safety properties without forcing every task through the most expensive lineage path. HEAD selects an execution lane from observable risk rather than from tool availability:
+
+| Lane | Intended work | Required control and evidence |
+| --- | --- | --- |
+| `Observe` | read-only inspection, search, status, comparison, and diagnosis | bounded inputs/outputs, freshness and authority disclosure; no persisted plan, Capsule, or review artifact by default |
+| `Session` | direct or one-shot, local, reversible work with no product-canon or consequential external authority effect | exact project/caller fence, scoped allowed actions, workspace mode, resource limits, optional Capsule when context complexity justifies it, at-most-once execution lease for provider invocation, and an evidence-linked bounded result |
+| `Run` | durable, multi-step, delegated, cross-module, or materially consequential implementation | persisted WholePlanSnapshot, ContextCapsule, ExecutionContract, ResultPacket, Fresh HEAD projection, and ReviewDecision |
+| `Authority` | Product Canon promotion, architecture/policy choice, irreversible mutation, deployment/publication, credentials/access, material cost, or consequential external action | Run controls plus the explicit user-owned decision or approval required by the affected authority boundary |
+
+If classification is uncertain, HEAD may choose the safer lane but must record the concrete risk that justified escalation. It must not choose a heavier lane simply because its artifacts already exist.
+
+Runtime execution should converge on one versioned `ExecutionAuthorization` envelope with `scope.kind: session | run`:
+
+- the Session scope binds the project, HEAD Session, user-request digest, optional ContextCapsule, allowed actions, workspace mode, caller/process fences, and resource limits;
+- the Run scope additionally binds the active Run, WholePlanSnapshot, ExecutionContract, and required ContextCapsule;
+- both scopes use the same pre-start consumption, non-replayable at-most-once lease, event normalization, cancellation, descendant cleanup, and privacy boundary;
+- a Session result does not block later work behind Fresh HEAD review unless it discovers a material decision, canon change, irreversible effect, or whole-plan consequence that requires promotion to Run or Authority;
+- accepted Run inputs remain frozen and retain the existing drift and ReviewDecision gates.
+
+ContextCapsule persistence is mandatory for Run and Authority execution. It is optional for Observe and Session work unless the task is delegated, spans context loss, uses broad repository retrieval, or otherwise needs a reproducible handoff. Compiler unavailability may degrade a Session with disclosure; it cannot silently weaken an accepted Run.
+
+Canon review should accept a digest-bound scoped patch as well as a complete replacement document. The system must compute and present the complete resulting Product Model before approval, validate it against the exact base canon digest, and record the reviewed before/after identities. This keeps document edits as proposals without forcing the user to resubmit unrelated canon content.
+
+Completion criteria for this governance goal are:
+
+1. documentation and Skill routing apply universal rules plus only the relevant lane/subsystem checks;
+2. one actual provider supports bounded Session invocation without creating a WholePlan or blocking on ReviewDecision;
+3. the same provider supports a consequential Run invocation through the complete existing lineage;
+4. Session and Run share authorization, process ownership, event, lease, cancellation, cleanup, and Result evidence semantics where their risk boundaries overlap;
+5. ephemeral PID/token/socket/lock state is separated from durable project lineage before service-host or general runtime control activation;
+6. integrated tests prove lane selection, escalation, non-replay, cleanup, and that Session work cannot mutate Product Canon or perform Authority actions without promotion.
 
 ## Semantic contracts
 
@@ -495,11 +548,11 @@ Current v0.6 alpha progress, verified on 2026-08-19; milestone remains active:
 - runtime-protocol-evidence protocol `0.1.0` now invokes three fixed help profiles per runtime through direct exact children, normalizes Codex non-interactive/JSON/app-server and OpenCode run/JSON/ACP signals, and exposes only allowlisted signal names, digests, byte counts, and cleanup facts while rejecting raw paths, raw commands, raw output, project content, credentials, provider sessions, and PIDs;
 - the current Windows execution observes every required Codex and OpenCode non-interactive and machine-protocol signal while keeping `actualProviderSessionControlValidated: false`, `runtimeControlEnabled: false`, and `providerSessionCreated: false`;
 - runtime-project-binding protocol `0.1.0` binds version and protocol evidence to canonical HEAD project and Session identities, reduces the physical root to a digest, passes no project content, and explicitly records that actual provider-session binding is not validated;
-- runtime-invocation-authorization protocol `0.1.0` now derives an immutable non-executing authorization only from the exact active Run, verified ExecutionContract/WholePlan/ContextCapsule, explicit `runtime.invoke` plus workspace action, project/Session capability binding, project-root digest, and bounded resources; raw execution input is retained only ephemerally and represented in the artifact by digest and byte count;
-- runtime-event-envelope protocol `0.1.0` plus lifecycle-receipt and ResultPacket-draft protocols `0.2.0` reduce JSONL output to typed/digested evidence, hashed operational session references, lease/process-fence/cleanup facts, and a transcript-free draft that cannot finish the Run or bypass Fresh HEAD review;
-- a fixed no-descendant child proves Codex/OpenCode identity-neutral success, exact-child exit, input-digest observation, timeout and caller-cancellation termination, read-only action fencing, and cleanup without invoking either provider or enabling control;
-- an authorization-specific operational owner lock plus immutable pre-start consumption and post-cleanup release receipts enforce an honest at-most-once boundary; sequential and in-flight replay, receipt tamper, and workspace-authority widening fail closed, while completion, timeout, and caller cancellation retain non-replayable consumption evidence;
-- provider-session hydration, actual provider-session project binding, live caller/descendant fencing, provider event normalization, messaging, and every actual runtime control operation remain deferred until actual-provider lifecycle conformance is proved.
+- execution-authorization protocol `0.2.0` now provides one immutable envelope with `scope.kind: session | run`: Session binds an idle HEAD Session, user-request digest, optional ContextCapsule, local reversible action set, project/Session capability binding, project-root digest, and bounded resources without WholePlan or Fresh HEAD review; Run adds the exact active Run, verified ExecutionContract/WholePlan/required ContextCapsule, and contract-authorized workspace action;
+- runtime-event-envelope protocol `0.1.0` plus lifecycle-receipt and ResultPacket-draft protocols `0.3.0` carry the scope through typed/digested JSONL evidence, hashed operational session references, lease/process-fence/cleanup facts, and transcript-free drafts; Run results require Fresh HEAD review while Session results do not create that gate;
+- deterministic capability fixtures plus a fixed no-descendant execution child prove both Session and Run paths for Codex/OpenCode identities, Session-request digest drift rejection, exact-child exit, input-digest observation, timeout and caller-cancellation termination, scope-correct workspace action fencing, and cleanup without invoking either provider or enabling control;
+- an authorization-specific operational owner lock plus immutable pre-start consumption and post-cleanup release receipts enforce an honest shared at-most-once boundary; sequential and in-flight replay, receipt tamper, Run workspace-authority widening, and Session/Run state drift fail closed, while completion, timeout, and caller cancellation retain non-replayable consumption evidence;
+- the current conformance owner lock still resides below `.head/runtime`; external host-local PID/token/lock storage, provider-session hydration, actual provider-session project binding, live caller/descendant fencing, provider event normalization, messaging, and every actual runtime control operation remain deferred until actual-provider lifecycle conformance is proved.
 
 ## Roadmap
 
@@ -517,7 +570,11 @@ Add a provider-neutral `ComputeAdapter` before new heavy analysis paths, preserv
 
 ### v0.6 — Runtime adapters
 
-The contract foundation defines and tests `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references for Codex and OpenCode across Windows, macOS, Linux, and the native-process host. Privacy-preserving current-host discovery, bounded non-session version/help evidence, and canonical HEAD project/Session capability binding are active. The exact active Run and ExecutionContract can now produce a non-executing invocation authorization with bounded input/resource identity; an immutable pre-start consumption and post-cleanup release chain enforces at-most-once use, while provider-neutral event, lifecycle-receipt, and ResultPacket-draft schemas plus a no-descendant fixture prove exact-child success, timeout, caller-cancellation cleanup, and replay rejection for both runtime identities. Next, prove the same lease, fences, event normalization, cancellation/close, descendant cleanup, and operational provider-session reference against one actual provider before enabling general resume/stream/interrupt/close or messaging. Capability discovery never grants authorization, and provider sessions never replace HEAD Session or Run identities.
+The contract foundation defines and tests `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references for Codex and OpenCode across Windows, macOS, Linux, and the native-process host. Privacy-preserving current-host discovery, bounded non-session version/help evidence, and canonical HEAD project/Session capability binding are active. One `ExecutionAuthorization` envelope now expresses lightweight Session and full Run scopes; a common immutable pre-start consumption and post-cleanup release chain enforces at-most-once use, while provider-neutral event, lifecycle-receipt, and scope-correct result-draft schemas plus a no-descendant fixture prove request/input drift rejection, exact-child success, timeout, caller-cancellation cleanup, and replay rejection for both runtime identities. Next, externalize operational lock state and prove the same authorization, lease, fences, event normalization, cancellation/close, descendant cleanup, and operational provider-session reference against one actual provider before enabling general resume/stream/interrupt/close or messaging. Capability discovery never grants authorization, and provider sessions never replace HEAD Session or Run identities.
+
+### v0.6 exit goal — Risk-proportional actual-provider vertical
+
+Before adding general provider controls, apply the reference HEAD Core's complete launch/wait/result/delivery/cleanup behavior through provider-neutral adapters. First establish the common `ExecutionAuthorization` envelope and external operational-state boundary, then prove both a bounded Session invocation and a full Run invocation against one actual provider. Session mode must remain useful for reversible one-shot work without manufacturing WholePlan, persistent Capsule, or ReviewDecision artifacts; Run mode retains the complete auditable lineage. After the first provider passes live caller, descendant ownership, event normalization, timeout/cancellation, cleanup, and result-evidence conformance, add the second provider through the same core contract. Role messaging, daemon/service installation, provider resume, and Herdr integration remain later optional adapter work.
 
 ### v1.0 — Auditable provider-neutral HEAD runtime
 
@@ -525,43 +582,53 @@ Demonstrate reproducible lineage and recovery across supported runtimes, verify 
 
 ## Direction-check questions
 
-Before every material milestone, answer all of these:
+Every material change answers these six universal questions:
 
-1. Which part of the ultimate objective does this change advance?
-2. What is the authoritative source, and is any derived artifact being mistaken for canon?
-3. Does the change preserve user-owned material decisions?
-4. Is execution bounded by an explicit contract?
-5. Can the result return as evidence, difference, impact, verification, and Unknowns rather than raw context?
-6. Can a Fresh HEAD understand the current whole plan without the executor transcript?
-7. Are artifact identities and parent relationships reproducible and digest-verifiable?
-8. Does the design remain provider-neutral and avoid TUI scraping or hidden-session dependence?
-9. Is GraphDB optional and reconstructable?
-10. Are incomplete capabilities still described as deferred?
-11. Would the same core lineage and semantic identities be available in a project with no `.git` directory?
-12. Are generated Markdown, Obsidian, or Notion pages still projections, with inbound edits treated as reviewable candidates?
-13. Does the revision model accept multiple parents without pretending automatic merge is implemented?
-14. Does every graph node and edge carry typed provenance, freshness, producer, evidence, and authority metadata without volatile provider identity?
-15. Are inferred mappings still immutable candidates until an authorized ReviewDecision creates a separate reviewed relation?
-16. Is every graph expansion bounded by an explicit relation allowlist, freshness and confidence policy, depth, size, ordering, and recorded inclusion/exclusion rationale?
-17. Does every refresh create and validate a new immutable snapshot before advancing a current pointer, without rewriting prior artifacts?
-18. Can automatic refresh update observed facts without promoting semantic candidates, changing canon, or mutating an accepted Capsule or active Run?
-19. When a newer snapshot creates drift, does HEAD make an explicit continue, recompile, revise, or cancel decision with preserved lineage?
-20. Does onboarding keep inferred product meaning as a candidate until a recorded user review adopts it, while allowing a bounded batch decision instead of forcing one-by-one entry?
-21. Can the same onboarding flow work for existing code, a new-project brief, and a project with pre-existing canon without confusing their evidence sources?
-22. Are GraphDB credentials absent from project artifacts, and can onboarding finish locally when Git and GraphDB are unavailable?
-23. Does changing from the JavaScript reference adapter to the Go worker preserve canonical output and every semantic identity for the same inputs and protocol version?
-24. Is the Go worker limited to plugin-owned computation without rewriting user code, copying native artifacts into project state, or acquiring canon/review/promotion authority?
-25. Can the core disclose and recover through the JavaScript reference path when the Go binary is absent, incompatible, corrupt, unsupported, unable to start, or crashes, while failing closed after verified PID cleanup on timeout, cancellation, output-bound violation, or protocol/digest-invalid output?
-26. Are worker invocation, input/output, resource limits, PID ownership, cancellation, and binary integrity bounded and verifiable without shell interpretation of project-controlled data?
-27. Is every native migration justified by repeatable benchmark and profiling evidence while concurrent results remain canonically ordered and digest-reproducible?
-28. Does a runtime adapter use a supported machine interface rather than TUI scraping, hidden conversation recovery, or provider-session identity as core state?
-29. Does the runtime contract distinguish static contract coverage from actual platform execution and live runtime-control validation?
-30. Does runtime capability remain separate from authorization, with consequential control still requiring an accepted ExecutionContract and exact project/caller/child ownership?
-31. Do disabled or failed runtime operations preserve WholePlan, Capsule, Contract, ResultPacket, ReviewDecision, and cleanup evidence without mutating canon?
-32. Is work prioritizing a connected end-to-end provider-neutral capability over exhaustive micro-feature test expansion while still preserving mandatory authority, credential, identity, and process-safety invariants?
-33. Are external GraphDB development writes confined to the designated sandbox while credentials and backend record identities remain outside artifacts, logs, reports, and semantic identity?
+1. Which objective does the change advance, and is Observe, Session, Run, or Authority the lightest safe lane?
+2. Who owns the relevant decision, what is canon for this question, and is any evidence or projection being mistaken for authority?
+3. Are credentials, paths, process ownership, external effects, and irreversible actions bounded at the level required by the selected lane?
+4. Can the result return as direct evidence, difference, impact, verification, and explicit Unknowns rather than raw context or an unsupported success claim?
+5. Are incomplete capabilities and optional Git, GraphDB, native, document, host, or provider dependencies disclosed honestly with a safe recovery or fallback boundary?
+6. Does the change preserve provider-neutral HEAD project/Session identity and avoid unrelated procedural gates?
 
-If any answer is “no” or “unknown,” record the gap before proceeding.
+Then load only the relevant subsystem questions:
+
+### Run and Authority changes
+
+- Is the consequential execution bounded by an accepted ExecutionContract and reproducible ContextCapsule?
+- Can a Fresh HEAD understand the whole plan, ResultPacket, impact, and Unknowns without executor transcript or provider-session state?
+- Are accepted inputs frozen, artifact identities/parents digest-verifiable, and drift resolved by an explicit continue, recompile, revise, cancel, rollback, or escalate decision?
+- Do failure and cancellation preserve lineage and cleanup evidence without advancing the plan or canon?
+
+### Graph, canon, onboarding, refresh, and document changes
+
+- Is GraphDB optional and reconstructable, and do core semantic identities remain valid without Git?
+- Are inferred mappings and document edits immutable candidates until scoped review creates a separate reviewed relation or canon revision?
+- Does the revision model accept multiple parents without claiming automatic merge, and does every current node/edge carry the applicable provenance, freshness, evidence, producer, and authority metadata?
+- Is traversal bounded by relation/authority/freshness/confidence/depth/size policy, and are candidates excluded unless explicitly requested?
+- Does refresh validate a new immutable snapshot before pointer advancement without changing accepted execution inputs or promoting meaning automatically?
+- Can onboarding distinguish existing-code evidence, a new-project brief, and pre-existing canon while supporting bounded batch review?
+- Can a canon change be reviewed as an exact digest-bound patch with a complete resulting-model preview rather than forcing unrelated content resubmission?
+
+### Native compute changes
+
+- Does switching backend preserve canonical output and every semantic identity for the same accepted input and protocol version?
+- Is the worker plugin-owned, bounded, integrity-checked, shell-free, authority-free, and recoverable through the JavaScript reference path where fallback is safe?
+- Are timeout, cancellation, output/protocol failure, PID/descendant cleanup, canonical ordering, and benchmark justification proved for the migrated operation?
+
+### Runtime and workspace-host changes
+
+- Does the adapter use a supported machine interface rather than TUI scraping, hidden-session dependence, or provider-session identity as core state?
+- Does evidence distinguish static contract coverage, actual platform execution, provider-session attachment, and live runtime-control validation?
+- Does capability remain separate from authorization, with exact project/caller/process ownership and lane-appropriate permissions?
+- Do Session and Run share lifecycle safety while avoiding WholePlan/Review gates for reversible Session work?
+- Is ephemeral operational state outside project canon while durable authorization and result evidence remains recoverable?
+
+### Remote GraphDB development changes
+
+- Are writes confined to the designated sandbox after explicit approval, with credentials and backend record identities absent from semantic artifacts, logs, and reports?
+
+If an applicable answer is “no” or “unknown,” record the gap before proceeding. Unrelated subsystem questions are not blockers.
 
 ## Decision history
 
@@ -619,3 +686,4 @@ If any answer is “no” or “unknown,” record the gap before proceeding.
 - 2026-08-19: completed the bounded provider protocol and HEAD project/Session capability-binding slice. Three fixed help profiles per runtime now prove Codex non-interactive JSON/app-server and OpenCode non-interactive JSON/ACP surfaces through exact direct children; artifacts retain only allowlisted capability signals, digests, sizes, and cleanup facts. A separate content-derived binding connects those observations to canonical HEAD project and Session identities while hashing the physical root and passing no project content. Actual provider-session binding, ExecutionContract-bound invocation, caller/child fencing, structured event/ResultPacket handling, and all runtime controls remain disabled and deferred.
 - 2026-08-19: completed the ExecutionContract-bound runtime invocation authorization and lifecycle-schema conformance slice. An exact active Run with explicit runtime/workspace actions now produces an immutable non-executing authorization bound to the WholePlan, ContextCapsule, project/Session capability evidence, project-root digest, input digest/size, and resource limits. Provider-neutral JSONL event envelopes, lifecycle receipts, and transcript-free ResultPacket drafts are active; a fixed no-descendant child proves Codex/OpenCode success, timeout and caller-cancellation termination, exact-child cleanup, input observation, and write rejection without invoking either provider. Durable single-use execution leases, actual provider-session attachment, live caller/descendant fencing, actual provider event normalization, and every runtime control operation remain deferred.
 - 2026-08-19: completed the durable runtime execution lease slice with an honest at-most-once guarantee. An authorization-specific owner lock serializes a single caller, immutable consumption is recorded before child start, release is recorded only after exact owner-lock removal, and a consumed authorization remains non-replayable across success, timeout, cancellation, concurrent calls, or caller failure. Lifecycle receipts and ResultPacket drafts bind the lease chain; CLI and MCP inspect it without mutation. Actual Codex/OpenCode model invocation, live descendant ownership, provider event normalization, provider-session attachment, and general runtime controls remain deferred.
+- 2026-08-19: compared the reference HEAD Core's complete initialization, caller fencing, worker lifecycle, canon recovery, durable coordination, and rollback behavior with the plugin's richer provider-neutral authority/graph/lineage control plane. Adopted those operational behaviors as adapter-level targets without inheriting OpenCode, Herdr, `.claude`, POSIX service, shell, pane/tab, or provider-session coupling. Also replaced globally cumulative governance with progressive rule loading and risk-proportional Observe, Session, Run, and Authority lanes: reversible Session work must not manufacture WholePlan/Review artifacts, while consequential Run and Authority work retains the complete lineage, user-owned decision, and fail-closed safety boundaries.

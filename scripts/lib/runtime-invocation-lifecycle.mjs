@@ -16,13 +16,15 @@ import {
   withRuntimeExecutionLease,
 } from "./runtime-execution-lease.mjs";
 
-export const RUNTIME_INVOCATION_AUTHORIZATION_VERSION = "0.1.0";
+export const EXECUTION_AUTHORIZATION_VERSION = "0.2.0";
+export const RUNTIME_INVOCATION_AUTHORIZATION_VERSION = EXECUTION_AUTHORIZATION_VERSION;
 export const RUNTIME_EVENT_ENVELOPE_VERSION = "0.1.0";
-export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.2.0";
-export const RUNTIME_RESULT_DRAFT_VERSION = "0.2.0";
+export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.3.0";
+export const RUNTIME_RESULT_DRAFT_VERSION = "0.3.0";
 
 const RUNTIMES = Object.freeze(["codex", "opencode"]);
 const WORKSPACE_MODES = Object.freeze(["read-only", "workspace-write"]);
+const EXECUTION_SCOPE_KINDS = Object.freeze(["session", "run"]);
 const REQUIRED_INVOKE_ACTION = "runtime.invoke";
 const WORKSPACE_ACTION = Object.freeze({
   "read-only": "project.read",
@@ -157,7 +159,7 @@ function lineage(root, artifactId, kind) {
   return artifact;
 }
 
-function invocationInput({ plan, contract, capsule }) {
+function runInvocationInput({ plan, contract, capsule }) {
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: "RuntimeExecutionInput",
@@ -187,13 +189,55 @@ function invocationInput({ plan, contract, capsule }) {
   };
 }
 
+function sessionInvocationInput({ request, capsule, requiredActions }) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    kind: "RuntimeExecutionInput",
+    protocolVersion: RUNTIME_INVOCATION_AUTHORIZATION_VERSION,
+    sessionTask: {
+      request,
+      allowedActions: requiredActions,
+      forbiddenActions: ["canon.mutate", "external.write", "deploy", "publish", "irreversible.delete"],
+      localOnly: true,
+      reversibleOnly: true,
+    },
+    contextCapsule: capsule,
+    returnContract: {
+      kind: "SessionResultDraft",
+      requiredSections: ["outcome", "evidence", "verification", "unknowns"],
+      freshHeadReviewRequired: false,
+      transcriptIsNotResult: true,
+      evidenceInstructionAuthority: false,
+    },
+  };
+}
+
+function normalizeScopeInput(value = { kind: "run" }) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail("Execution authorization scope must be an object.", "INVALID_EXECUTION_AUTHORIZATION_SCOPE");
+  }
+  const kind = String(value.kind || "").trim().toLowerCase();
+  if (!EXECUTION_SCOPE_KINDS.includes(kind)) fail(`Unsupported execution scope: ${kind || "(empty)"}.`, "INVALID_EXECUTION_AUTHORIZATION_SCOPE");
+  const allowed = kind === "session" ? new Set(["kind", "request", "contextCapsuleId"]) : new Set(["kind"]);
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  if (unexpected.length) fail(`Execution authorization scope contains unsupported fields: ${unexpected.sort().join(", ")}.`, "INVALID_EXECUTION_AUTHORIZATION_SCOPE");
+  if (kind === "run") return { kind };
+  const request = requiredText(value.request, "Session execution request", "INVALID_EXECUTION_AUTHORIZATION_SCOPE");
+  const contextCapsuleId = value.contextCapsuleId == null ? null : requiredText(value.contextCapsuleId, "Session context capsule id", "INVALID_EXECUTION_AUTHORIZATION_SCOPE");
+  if (contextCapsuleId !== null && !/^capsule-[a-f0-9]{24}$/.test(contextCapsuleId)) {
+    fail("Session context capsule id is invalid.", "INVALID_EXECUTION_AUTHORIZATION_SCOPE");
+  }
+  return { kind, request, contextCapsuleId };
+}
+
 function authorizationFile(root, authorizationId) {
-  return path.join(root, ".head", "runtime", "invocation-authorizations", `${authorizationId}.json`);
+  return path.join(root, ".head", "runtime", "execution-authorizations", `${authorizationId}.json`);
 }
 
 export function buildRuntimeInvocationAuthorization({
   root = ".",
   runtime,
+  scope = { kind: "run" },
   workspaceMode = "read-only",
   protocolEvidence,
   projectBinding,
@@ -204,23 +248,54 @@ export function buildRuntimeInvocationAuthorization({
   if (inspected.status !== "ready") fail(`Project must be ready for runtime invocation authorization; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   const selectedRuntime = normalizeRuntime(runtime);
   const selectedWorkspaceMode = normalizeWorkspaceMode(workspaceMode);
+  const selectedScope = normalizeScopeInput(scope);
   if (!inspected.project.runtimes.includes(selectedRuntime)) fail("Runtime is not enabled for this HEAD project.", "RUNTIME_NOT_ENABLED_FOR_PROJECT");
-  if (!inspected.state.activeRunId || !inspected.state.activeExecutionContractId) {
-    fail("Runtime invocation authorization requires an active contract-bound Run.", "ACTIVE_CONTRACT_BOUND_RUN_REQUIRED");
-  }
   const projectRoot = inspected.project.projectRoot;
-  const run = runCanon(projectRoot, inspected.state.activeRunId);
-  const contract = lineage(projectRoot, inspected.state.activeExecutionContractId, "ExecutionContract");
-  const plan = lineage(projectRoot, contract.wholePlanId, "WholePlanSnapshot");
-  const capsule = readContextCapsule({ root: projectRoot, capsuleId: contract.capsuleId }).capsule;
-  if (run.executionContractId !== contract.executionContractId || run.wholePlanId !== plan.wholePlanId || run.capsuleId !== capsule.capsuleId) {
-    fail("Active Run, ExecutionContract, WholePlanSnapshot, and ContextCapsule do not compose.", "RUNTIME_INVOCATION_LINEAGE_CONFLICT");
-  }
-  const allowed = new Set(contract.allowedActions || []);
-  const forbidden = new Set(contract.forbiddenActions || []);
   const requiredActions = [REQUIRED_INVOKE_ACTION, WORKSPACE_ACTION[selectedWorkspaceMode]];
-  if (requiredActions.some((action) => !allowed.has(action)) || requiredActions.some((action) => forbidden.has(action))) {
-    fail(`ExecutionContract must allow ${requiredActions.join(" and ")} and must not forbid either action.`, "RUNTIME_INVOCATION_NOT_AUTHORIZED");
+  let executionScope;
+  let input;
+  if (selectedScope.kind === "run") {
+    if (!inspected.state.activeRunId || !inspected.state.activeExecutionContractId) {
+      fail("Run execution authorization requires an active contract-bound Run.", "ACTIVE_CONTRACT_BOUND_RUN_REQUIRED");
+    }
+    const run = runCanon(projectRoot, inspected.state.activeRunId);
+    const contract = lineage(projectRoot, inspected.state.activeExecutionContractId, "ExecutionContract");
+    const plan = lineage(projectRoot, contract.wholePlanId, "WholePlanSnapshot");
+    const capsule = readContextCapsule({ root: projectRoot, capsuleId: contract.capsuleId }).capsule;
+    if (run.executionContractId !== contract.executionContractId || run.wholePlanId !== plan.wholePlanId || run.capsuleId !== capsule.capsuleId) {
+      fail("Active Run, ExecutionContract, WholePlanSnapshot, and ContextCapsule do not compose.", "RUNTIME_INVOCATION_LINEAGE_CONFLICT");
+    }
+    const allowed = new Set(contract.allowedActions || []);
+    const forbidden = new Set(contract.forbiddenActions || []);
+    if (requiredActions.some((action) => !allowed.has(action)) || requiredActions.some((action) => forbidden.has(action))) {
+      fail(`ExecutionContract must allow ${requiredActions.join(" and ")} and must not forbid either action.`, "RUNTIME_INVOCATION_NOT_AUTHORIZED");
+    }
+    executionScope = {
+      kind: "run",
+      userRequestDigest: null,
+      userRequestBytes: null,
+      runId: run.runId,
+      wholePlanId: plan.wholePlanId,
+      executionContractId: contract.executionContractId,
+      contextCapsuleId: capsule.capsuleId,
+    };
+    input = runInvocationInput({ plan, contract, capsule });
+  } else {
+    if (inspected.state.mode !== "session" || inspected.state.activeRunId || inspected.state.activeExecutionContractId || inspected.state.pendingReview) {
+      fail("Session execution authorization requires an idle HEAD Session with no active Run or pending review.", "SESSION_EXECUTION_STATE_CONFLICT");
+    }
+    const capsule = selectedScope.contextCapsuleId === null
+      ? null : readContextCapsule({ root: projectRoot, capsuleId: selectedScope.contextCapsuleId }).capsule;
+    executionScope = {
+      kind: "session",
+      userRequestDigest: digest(selectedScope.request),
+      userRequestBytes: Buffer.byteLength(selectedScope.request),
+      runId: null,
+      wholePlanId: null,
+      executionContractId: null,
+      contextCapsuleId: capsule?.capsuleId || null,
+    };
+    input = sessionInvocationInput({ request: selectedScope.request, capsule, requiredActions });
   }
   const verifiedProtocol = verifyRuntimeProtocolEvidence(protocolEvidence);
   const verifiedBinding = verifyRuntimeProjectBinding(projectBinding);
@@ -237,19 +312,15 @@ export function buildRuntimeInvocationAuthorization({
     fail("Runtime capability evidence is not an exact verified binding for this project, Session, and runtime.", "RUNTIME_INVOCATION_CAPABILITY_BINDING_INVALID");
   }
   const normalizedLimits = normalizeLimits(limits);
-  const input = invocationInput({ plan, contract, capsule });
   const inputBytes = Buffer.byteLength(canonicalJson(input));
   if (inputBytes > normalizedLimits.maxInputBytes) fail("Runtime execution input exceeds the accepted input bound.", "RUNTIME_INVOCATION_INPUT_LIMIT");
   const payload = {
     schemaVersion: 1,
-    kind: "RuntimeInvocationAuthorization",
+    kind: "ExecutionAuthorization",
     protocolVersion: RUNTIME_INVOCATION_AUTHORIZATION_VERSION,
     projectId: inspected.project.projectId,
     headSessionId: inspected.state.sessionId,
-    runId: run.runId,
-    wholePlanId: plan.wholePlanId,
-    executionContractId: contract.executionContractId,
-    contextCapsuleId: capsule.capsuleId,
+    scope: executionScope,
     runtime: selectedRuntime,
     workspaceMode: selectedWorkspaceMode,
     requiredAllowedActions: requiredActions,
@@ -262,32 +333,34 @@ export function buildRuntimeInvocationAuthorization({
       bytes: inputBytes,
       transport: "bounded-stdin-required",
       retention: "ephemeral-only",
-      includesContextCapsule: true,
+      includesContextCapsule: executionScope.contextCapsuleId !== null,
       rawContentPersisted: false,
     },
     limits: normalizedLimits,
     authorizationBoundary: {
-      acceptedContractDerived: true,
-      exactActiveRunRequired: true,
+      acceptedContractDerived: executionScope.kind === "run",
+      exactActiveRunRequired: executionScope.kind === "run",
+      idleSessionRequired: executionScope.kind === "session",
+      contextCapsuleRequired: executionScope.kind === "run",
       projectFenceRequired: true,
       callerFenceRequiredAtExecution: true,
       exactChildOwnershipRequired: true,
       descendantTreeOwnershipRequiredForProviderControl: true,
       providerEventValidationRequired: true,
-      resultPacketDraftRequired: true,
+      freshHeadReviewRequired: executionScope.kind === "run",
       capabilityDoesNotGrantAuthorization: true,
       singleInvocationExecutionLeaseRequired: true,
       executionLeaseActivated: false,
       providerControlEnabled: false,
     },
-    authority: "execution-contract-bounded-single-invocation-authorization",
+    authority: "scope-bounded-single-invocation-authorization",
     instructionAuthority: false,
     promotionAuthority: false,
     mutatesCanon: false,
   };
   const authorization = verifyRuntimeInvocationAuthorization(identify(
     payload,
-    "runtime-invocation-authorization",
+    "execution-authorization",
     "authorizationId",
     "authorizationHash",
   ));
@@ -302,47 +375,59 @@ export function buildRuntimeInvocationAuthorization({
 
 export function verifyRuntimeInvocationAuthorization(document) {
   assertFields(document, [
-    "schemaVersion", "kind", "protocolVersion", "projectId", "headSessionId", "runId", "wholePlanId",
-    "executionContractId", "contextCapsuleId", "runtime", "workspaceMode", "requiredAllowedActions",
+    "schemaVersion", "kind", "protocolVersion", "projectId", "headSessionId", "scope", "runtime", "workspaceMode", "requiredAllowedActions",
     "projectRootDigest", "runtimeProjectBindingId", "runtimeProtocolEvidenceId", "runtimeProtocolObservationId",
     "executionInput", "limits", "authorizationBoundary", "authority", "instructionAuthority", "promotionAuthority",
     "mutatesCanon", "authorizationId", "authorizationHash",
   ], "Runtime invocation authorization");
+  assertFields(document.scope, [
+    "kind", "userRequestDigest", "userRequestBytes", "runId", "wholePlanId", "executionContractId", "contextCapsuleId",
+  ], "Execution authorization scope");
   assertFields(document.executionInput, [
     "digest", "bytes", "transport", "retention", "includesContextCapsule", "rawContentPersisted",
   ], "Runtime invocation execution input");
   assertFields(document.authorizationBoundary, [
-    "acceptedContractDerived", "exactActiveRunRequired", "projectFenceRequired", "callerFenceRequiredAtExecution",
+    "acceptedContractDerived", "exactActiveRunRequired", "idleSessionRequired", "contextCapsuleRequired", "projectFenceRequired", "callerFenceRequiredAtExecution",
     "exactChildOwnershipRequired", "descendantTreeOwnershipRequiredForProviderControl", "providerEventValidationRequired",
-    "resultPacketDraftRequired", "capabilityDoesNotGrantAuthorization", "singleInvocationExecutionLeaseRequired",
+    "freshHeadReviewRequired", "capabilityDoesNotGrantAuthorization", "singleInvocationExecutionLeaseRequired",
     "executionLeaseActivated", "providerControlEnabled",
   ], "Runtime invocation authorization boundary");
   const runtime = normalizeRuntime(document.runtime);
   const workspaceMode = normalizeWorkspaceMode(document.workspaceMode);
   const expectedActions = [REQUIRED_INVOKE_ACTION, WORKSPACE_ACTION[workspaceMode]];
+  const scopeKind = String(document.scope.kind || "").trim().toLowerCase();
+  if (!EXECUTION_SCOPE_KINDS.includes(scopeKind)) fail("Execution authorization scope is invalid.", "INVALID_RUNTIME_INVOCATION_AUTHORIZATION");
+  const runScope = scopeKind === "run";
   const expectedBoundary = {
-    acceptedContractDerived: true,
-    exactActiveRunRequired: true,
+    acceptedContractDerived: runScope,
+    exactActiveRunRequired: runScope,
+    idleSessionRequired: !runScope,
+    contextCapsuleRequired: runScope,
     projectFenceRequired: true,
     callerFenceRequiredAtExecution: true,
     exactChildOwnershipRequired: true,
     descendantTreeOwnershipRequiredForProviderControl: true,
     providerEventValidationRequired: true,
-    resultPacketDraftRequired: true,
+    freshHeadReviewRequired: runScope,
     capabilityDoesNotGrantAuthorization: true,
     singleInvocationExecutionLeaseRequired: true,
     executionLeaseActivated: false,
     providerControlEnabled: false,
   };
-  if (document.schemaVersion !== 1 || document.kind !== "RuntimeInvocationAuthorization"
+  if (document.schemaVersion !== 1 || document.kind !== "ExecutionAuthorization"
     || document.protocolVersion !== RUNTIME_INVOCATION_AUTHORIZATION_VERSION || document.runtime !== runtime
     || document.workspaceMode !== workspaceMode || canonicalJson(document.requiredAllowedActions) !== canonicalJson(expectedActions)
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
-    || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
-    || !/^whole-plan-[a-f0-9]{24}$/.test(document.wholePlanId || "")
-    || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
-    || !/^capsule-[a-f0-9]{24}$/.test(document.contextCapsuleId || "")
+    || (runScope && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.scope.runId || "")
+      || !/^whole-plan-[a-f0-9]{24}$/.test(document.scope.wholePlanId || "")
+      || !/^execution-contract-[a-f0-9]{24}$/.test(document.scope.executionContractId || "")
+      || !/^capsule-[a-f0-9]{24}$/.test(document.scope.contextCapsuleId || "")
+      || document.scope.userRequestDigest !== null || document.scope.userRequestBytes !== null))
+    || (!runScope && (!/^[a-f0-9]{64}$/.test(document.scope.userRequestDigest || "")
+      || !Number.isSafeInteger(document.scope.userRequestBytes) || document.scope.userRequestBytes < 1
+      || document.scope.runId !== null || document.scope.wholePlanId !== null || document.scope.executionContractId !== null
+      || document.scope.contextCapsuleId !== null && !/^capsule-[a-f0-9]{24}$/.test(document.scope.contextCapsuleId || "")))
     || !/^[a-f0-9]{64}$/.test(document.projectRootDigest || "")
     || !/^runtime-project-binding-[a-f0-9]{24}$/.test(document.runtimeProjectBindingId || "")
     || !/^runtime-protocol-evidence-[a-f0-9]{24}$/.test(document.runtimeProtocolEvidenceId || "")
@@ -351,15 +436,15 @@ export function verifyRuntimeInvocationAuthorization(document) {
     || !Number.isSafeInteger(document.executionInput.bytes) || document.executionInput.bytes < 1
     || document.executionInput.transport !== "bounded-stdin-required"
     || document.executionInput.retention !== "ephemeral-only"
-    || document.executionInput.includesContextCapsule !== true || document.executionInput.rawContentPersisted !== false
+    || document.executionInput.includesContextCapsule !== (document.scope.contextCapsuleId !== null) || document.executionInput.rawContentPersisted !== false
     || canonicalJson(document.limits) !== canonicalJson(normalizeLimits(document.limits))
     || canonicalJson(document.authorizationBoundary) !== canonicalJson(expectedBoundary)
-    || document.authority !== "execution-contract-bounded-single-invocation-authorization"
+    || document.authority !== "scope-bounded-single-invocation-authorization"
     || document.instructionAuthority !== false || document.promotionAuthority !== false || document.mutatesCanon !== false) {
     fail("Runtime invocation authorization is invalid.", "INVALID_RUNTIME_INVOCATION_AUTHORIZATION");
   }
   verifyIdentity(document, {
-    prefix: "runtime-invocation-authorization",
+    prefix: "execution-authorization",
     idKey: "authorizationId",
     hashKey: "authorizationHash",
     code: "RUNTIME_INVOCATION_AUTHORIZATION_DIGEST_MISMATCH",
@@ -368,7 +453,7 @@ export function verifyRuntimeInvocationAuthorization(document) {
 }
 
 export function readRuntimeInvocationAuthorization({ root = ".", authorizationId } = {}) {
-  if (!/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(authorizationId || "")) {
+  if (!/^execution-authorization-[a-f0-9]{24}$/.test(authorizationId || "")) {
     fail("Runtime invocation authorization id is invalid.", "INVALID_RUNTIME_INVOCATION_AUTHORIZATION_ID");
   }
   const inspected = inspectProject(root);
@@ -389,8 +474,7 @@ export function inspectRuntimeInvocationExecutionLease({ root = ".", authorizati
     authorizationId: authorization.authorizationId,
     projectId: authorization.projectId,
     headSessionId: authorization.headSessionId,
-    runId: authorization.runId,
-    executionContractId: authorization.executionContractId,
+    scope: authorization.scope,
     runtime: authorization.runtime,
     lease: inspectRuntimeExecutionLease({
       projectRoot: inspected.project.projectRoot,
@@ -479,7 +563,7 @@ export function verifyRuntimeEventEnvelope(document) {
   const allowedClasses = new Set(["error", "lifecycle", "assistant-output", "tool-observation", "usage", "unknown"]);
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeEventEnvelope"
     || document.protocolVersion !== RUNTIME_EVENT_ENVELOPE_VERSION
-    || !/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
+    || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || document.runtime !== normalizeRuntime(document.runtime)
     || !Number.isSafeInteger(document.sequence) || document.sequence < 0
     || typeof document.eventType !== "string" || !document.eventType || document.eventType.length > 128
@@ -511,8 +595,9 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
     authorizationId: authorization.authorizationId,
     projectId: authorization.projectId,
     headSessionId: authorization.headSessionId,
-    runId: authorization.runId,
-    executionContractId: authorization.executionContractId,
+    scopeKind: authorization.scope.kind,
+    runId: authorization.scope.runId,
+    executionContractId: authorization.scope.executionContractId,
     executionLeaseConsumptionId: consumption.consumptionId,
     runtime: authorization.runtime,
     status,
@@ -565,7 +650,7 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
 
 export function verifyRuntimeInvocationLifecycleReceipt(document) {
   assertFields(document, [
-    "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", "headSessionId", "runId",
+    "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", "headSessionId", "scopeKind", "runId",
     "executionContractId", "executionLeaseConsumptionId", "runtime", "status", "exitCode", "signal", "eventIds", "eventTypes",
     "unknownEventTypes", "providerSessionReferenceDigests", "eventCount", "stdoutBytes", "stderrBytes",
     "stdoutDigest", "stderrDigest", "inputDigestObserved", "processBoundary", "providerBoundary", "executionLeaseBoundary", "authority",
@@ -590,11 +675,13 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeInvocationLifecycleReceipt"
     || document.protocolVersion !== RUNTIME_LIFECYCLE_RECEIPT_VERSION || !statuses.has(document.status)
     || document.runtime !== normalizeRuntime(document.runtime)
-    || !/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
+    || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
-    || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
-    || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
+    || !EXECUTION_SCOPE_KINDS.includes(document.scopeKind)
+    || (document.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
+      || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")))
+    || (document.scopeKind === "session" && (document.runId !== null || document.executionContractId !== null))
     || !/^runtime-execution-consumption-[a-f0-9]{24}$/.test(document.executionLeaseConsumptionId || "")
     || !Number.isInteger(document.exitCode) && document.exitCode !== null
     || typeof document.signal !== "string" || document.signal.length > 32
@@ -682,6 +769,7 @@ function callerFence(root, authorizationId) {
 export async function runRuntimeLifecycleConformance({
   root = ".",
   authorization,
+  sessionRequest = "",
   mode = "success",
   signal = null,
   spawnImplementation = spawn,
@@ -690,17 +778,35 @@ export async function runRuntimeLifecycleConformance({
   const verified = verifyRuntimeInvocationAuthorization(authorization);
   if (!new Set(["success", "wait", "invalid-event", "output-limit"]).has(mode)) fail("Unsupported lifecycle conformance mode.", "INVALID_RUNTIME_CONFORMANCE_MODE");
   const inspected = inspectProject(root);
-  if (inspected.status !== "ready" || inspected.project.projectId !== verified.projectId
-    || inspected.state.sessionId !== verified.headSessionId || inspected.state.activeRunId !== verified.runId
-    || inspected.state.activeExecutionContractId !== verified.executionContractId) {
-    fail("Lifecycle conformance requires the authorization's exact active project, Session, Run, and ExecutionContract.", "RUNTIME_INVOCATION_FENCE_MISMATCH");
+  if (inspected.status !== "ready" || inspected.project.projectId !== verified.projectId || inspected.state.sessionId !== verified.headSessionId) {
+    fail("Lifecycle conformance requires the authorization's exact project and HEAD Session.", "RUNTIME_INVOCATION_FENCE_MISMATCH");
+  }
+  if (verified.scope.kind === "run" && (inspected.state.activeRunId !== verified.scope.runId
+    || inspected.state.activeExecutionContractId !== verified.scope.executionContractId)) {
+    fail("Run lifecycle conformance requires the authorization's exact active Run and ExecutionContract.", "RUNTIME_INVOCATION_FENCE_MISMATCH");
+  }
+  if (verified.scope.kind === "session" && (inspected.state.mode !== "session" || inspected.state.activeRunId
+    || inspected.state.activeExecutionContractId || inspected.state.pendingReview)) {
+    fail("Session lifecycle conformance requires the authorization's idle HEAD Session.", "RUNTIME_INVOCATION_FENCE_MISMATCH");
   }
   const projectRoot = inspected.project.projectRoot;
   if (digest(realRoot(projectRoot)) !== verified.projectRootDigest) fail("Runtime invocation project root changed after authorization.", "RUNTIME_INVOCATION_PROJECT_DRIFT");
-  const contract = lineage(projectRoot, verified.executionContractId, "ExecutionContract");
-  const plan = lineage(projectRoot, verified.wholePlanId, "WholePlanSnapshot");
-  const capsule = readContextCapsule({ root: projectRoot, capsuleId: verified.contextCapsuleId }).capsule;
-  const input = Buffer.from(canonicalJson(invocationInput({ plan, contract, capsule })), "utf8");
+  let executionInput;
+  if (verified.scope.kind === "run") {
+    const contract = lineage(projectRoot, verified.scope.executionContractId, "ExecutionContract");
+    const plan = lineage(projectRoot, verified.scope.wholePlanId, "WholePlanSnapshot");
+    const capsule = readContextCapsule({ root: projectRoot, capsuleId: verified.scope.contextCapsuleId }).capsule;
+    executionInput = runInvocationInput({ plan, contract, capsule });
+  } else {
+    const request = requiredText(sessionRequest, "Session execution request", "RUNTIME_INVOCATION_INPUT_DRIFT");
+    if (digest(request) !== verified.scope.userRequestDigest || Buffer.byteLength(request) !== verified.scope.userRequestBytes) {
+      fail("Session execution request changed after authorization.", "RUNTIME_INVOCATION_INPUT_DRIFT");
+    }
+    const capsule = verified.scope.contextCapsuleId === null
+      ? null : readContextCapsule({ root: projectRoot, capsuleId: verified.scope.contextCapsuleId }).capsule;
+    executionInput = sessionInvocationInput({ request, capsule, requiredActions: verified.requiredAllowedActions });
+  }
+  const input = Buffer.from(canonicalJson(executionInput), "utf8");
   if (input.length !== verified.executionInput.bytes || digest(input) !== verified.executionInput.digest) {
     fail("Runtime execution input changed after authorization.", "RUNTIME_INVOCATION_INPUT_DRIFT");
   }
@@ -856,12 +962,13 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
   const verifiedReceipt = verifyRuntimeInvocationLifecycleReceipt(receipt);
   const verifiedRelease = verifyRuntimeExecutionLeaseRelease(leaseRelease);
   if (verifiedReceipt.authorizationId !== verifiedAuthorization.authorizationId
-    || verifiedReceipt.executionContractId !== verifiedAuthorization.executionContractId
-    || verifiedReceipt.runId !== verifiedAuthorization.runId
+    || verifiedReceipt.scopeKind !== verifiedAuthorization.scope.kind
+    || verifiedReceipt.executionContractId !== verifiedAuthorization.scope.executionContractId
+    || verifiedReceipt.runId !== verifiedAuthorization.scope.runId
     || verifiedRelease.authorizationId !== verifiedAuthorization.authorizationId
     || verifiedRelease.consumptionId !== verifiedReceipt.executionLeaseConsumptionId
     || verifiedRelease.lifecycleReceiptId !== verifiedReceipt.receiptId) {
-    fail("Runtime receipt does not belong to the authorized Run.", "RUNTIME_RESULT_DRAFT_LINEAGE_CONFLICT");
+    fail("Runtime receipt does not belong to the authorized execution scope.", "RUNTIME_RESULT_DRAFT_LINEAGE_CONFLICT");
   }
   const successful = verifiedReceipt.status === "completed" && verifiedReceipt.exitCode === 0
     && verifiedReceipt.inputDigestObserved === verifiedAuthorization.executionInput.digest;
@@ -873,8 +980,9 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
     lifecycleReceiptId: verifiedReceipt.receiptId,
     executionLeaseConsumptionId: verifiedReceipt.executionLeaseConsumptionId,
     executionLeaseReleaseId: verifiedRelease.releaseId,
-    executionContractId: verifiedAuthorization.executionContractId,
-    runId: verifiedAuthorization.runId,
+    scopeKind: verifiedAuthorization.scope.kind,
+    executionContractId: verifiedAuthorization.scope.executionContractId,
+    runId: verifiedAuthorization.scope.runId,
     outcome: successful ? "Provider lifecycle conformance completed." : `Provider lifecycle conformance ended with ${verifiedReceipt.status}.`,
     evidence: [{
       kind: "RuntimeLifecycleEvidence",
@@ -898,7 +1006,7 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
     }],
     unknowns: verifiedReceipt.unknownEventTypes.map((type) => `Unrecognized provider event type: ${type}`),
     finalResultPacketPersisted: false,
-    freshHeadReviewRequired: true,
+    freshHeadReviewRequired: verifiedAuthorization.scope.kind === "run",
     rawTranscriptIncluded: false,
     authority: "draft-evidence-not-reviewed-result",
     instructionAuthority: false,
@@ -911,7 +1019,7 @@ export function buildRuntimeResultPacketDraft({ authorization, receipt, leaseRel
 export function verifyRuntimeResultPacketDraft(document) {
   assertFields(document, [
     "schemaVersion", "kind", "protocolVersion", "authorizationId", "lifecycleReceiptId", "executionLeaseConsumptionId",
-    "executionLeaseReleaseId", "executionContractId",
+    "executionLeaseReleaseId", "scopeKind", "executionContractId",
     "runId", "outcome", "evidence", "planDelta", "impactRadius", "verification", "unknowns",
     "finalResultPacketPersisted", "freshHeadReviewRequired", "rawTranscriptIncluded", "authority",
     "instructionAuthority", "promotionAuthority", "mutatesCanon", "draftId", "draftHash",
@@ -932,12 +1040,14 @@ export function verifyRuntimeResultPacketDraft(document) {
   const sortedUnique = (items) => Array.isArray(items) && canonicalJson(items) === canonicalJson([...new Set(items)].sort(compareText));
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeResultPacketDraft"
     || document.protocolVersion !== RUNTIME_RESULT_DRAFT_VERSION
-    || !/^runtime-invocation-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
+    || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^runtime-lifecycle-receipt-[a-f0-9]{24}$/.test(document.lifecycleReceiptId || "")
     || !/^runtime-execution-consumption-[a-f0-9]{24}$/.test(document.executionLeaseConsumptionId || "")
     || !/^runtime-execution-release-[a-f0-9]{24}$/.test(document.executionLeaseReleaseId || "")
-    || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
-    || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
+    || !EXECUTION_SCOPE_KINDS.includes(document.scopeKind)
+    || (document.scopeKind === "run" && (!/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
+      || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")))
+    || (document.scopeKind === "session" && (document.executionContractId !== null || document.runId !== null))
     || typeof document.outcome !== "string" || !document.outcome
     || evidence.kind !== "RuntimeLifecycleEvidence" || evidence.lifecycleReceiptId !== document.lifecycleReceiptId
     || evidence.executionLeaseConsumptionId !== document.executionLeaseConsumptionId
@@ -951,7 +1061,7 @@ export function verifyRuntimeResultPacketDraft(document) {
     || typeof document.planDelta !== "string"
     || !Array.isArray(document.impactRadius) || document.impactRadius.length !== 0
     || !Array.isArray(document.unknowns) || document.unknowns.some((item) => typeof item !== "string" || !item)
-    || document.finalResultPacketPersisted !== false || document.freshHeadReviewRequired !== true
+    || document.finalResultPacketPersisted !== false || document.freshHeadReviewRequired !== (document.scopeKind === "run")
     || document.rawTranscriptIncluded !== false || document.authority !== "draft-evidence-not-reviewed-result"
     || document.instructionAuthority !== false || document.promotionAuthority !== false || document.mutatesCanon !== false) {
     fail("Runtime ResultPacket draft is invalid.", "INVALID_RUNTIME_RESULT_PACKET_DRAFT");
