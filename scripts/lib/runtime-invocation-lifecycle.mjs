@@ -19,7 +19,7 @@ import {
 export const EXECUTION_AUTHORIZATION_VERSION = "0.2.0";
 export const RUNTIME_INVOCATION_AUTHORIZATION_VERSION = EXECUTION_AUTHORIZATION_VERSION;
 export const RUNTIME_EVENT_ENVELOPE_VERSION = "0.1.0";
-export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.4.0";
+export const RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.5.0";
 export const RUNTIME_RESULT_DRAFT_VERSION = "0.4.0";
 export const RUNTIME_STRUCTURED_RESULT_VERSION = "0.1.0";
 
@@ -678,7 +678,7 @@ export function verifyRuntimeEventEnvelope(document) {
 function lifecycleSummary({ authorization, events, status, exitCode, signal, stdoutBytes, stderrBytes, stdoutDigest, stderrDigest,
   callerFenceDigest, childFenceDigest, childStarted, childExitObserved, terminationRequested, projectFenceValidated,
   inputDigestObserved, noDescendantFixture, descendantTreeOwnershipValidated = false, consumption,
-  providerMode = "conformance-fixture", providerSessionCreated = false, structuredResult = null }) {
+  providerMode = "conformance-fixture", providerSessionCreated = false, structuredResult = null, supervision = null }) {
   const eventIds = events.map((item) => item.eventId);
   const eventTypes = [...new Set(events.map((item) => item.eventType))].sort(compareText);
   const unknownEventTypes = [...new Set(events.filter((item) => item.eventClass === "unknown").map((item) => item.eventType))].sort(compareText);
@@ -687,6 +687,25 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
   const actualProvider = providerMode === "actual-codex";
   if (!fixtureMode && !actualProvider) fail("Runtime provider mode is invalid.", "INVALID_RUNTIME_PROVIDER_MODE");
   const verifiedResult = structuredResult === null ? null : verifyRuntimeStructuredResult(structuredResult, { scopeKind: authorization.scope.kind });
+  const processSupervision = supervision === null ? {
+    supervisionMode: "no-descendant-fixture",
+    supervisionStrategy: "exact-child-only",
+    supervisorManifestDigest: "",
+    ownershipEstablished: childStarted && childExitObserved,
+    providerChildStarted: false,
+    providerChildExitObserved: false,
+    treeCleanupAttempted: false,
+    treeCleanupVerified: childStarted && childExitObserved,
+  } : {
+    supervisionMode: supervision.supervisionMode,
+    supervisionStrategy: supervision.supervisionStrategy,
+    supervisorManifestDigest: supervision.supervisorManifestDigest,
+    ownershipEstablished: supervision.ownershipEstablished,
+    providerChildStarted: supervision.providerChildStarted,
+    providerChildExitObserved: supervision.providerChildExitObserved,
+    treeCleanupAttempted: supervision.treeCleanupAttempted,
+    treeCleanupVerified: supervision.treeCleanupVerified,
+  };
   return {
     schemaVersion: 1,
     kind: "RuntimeInvocationLifecycleReceipt",
@@ -725,6 +744,7 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
       childPidPersisted: false,
       noDescendantFixture,
       descendantTreeOwnershipValidated,
+      ...processSupervision,
     },
     providerBoundary: {
       mode: providerMode,
@@ -772,7 +792,9 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
   assertFields(document.processBoundary, [
     "callerFenceDigest", "childFenceDigest", "exactChildStarted", "exactChildExitObserved", "terminationRequested",
     "projectFenceValidated", "shellInterpretation", "rawCommandPersisted", "rawOutputPersisted", "childPidPersisted",
-    "noDescendantFixture", "descendantTreeOwnershipValidated",
+    "noDescendantFixture", "descendantTreeOwnershipValidated", "supervisionMode", "supervisionStrategy",
+    "supervisorManifestDigest", "ownershipEstablished", "providerChildStarted", "providerChildExitObserved",
+    "treeCleanupAttempted", "treeCleanupVerified",
   ], "Runtime invocation process boundary");
   assertFields(document.providerBoundary, [
     "mode", "conformanceFixtureOnly", "actualProviderInvoked", "actualProviderSessionCreated",
@@ -789,6 +811,8 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
   const fixtureMode = document.providerBoundary.mode === "conformance-fixture"
     || document.providerBoundary.mode === "codex-protocol-fixture";
   const actualProvider = document.providerBoundary.mode === "actual-codex";
+  const nativeSupervision = document.processBoundary.supervisionMode === "native-process-tree";
+  const fixtureSupervision = document.processBoundary.supervisionMode === "no-descendant-fixture";
   const expectedProviderBoundary = {
     mode: document.providerBoundary.mode,
     conformanceFixtureOnly: fixtureMode,
@@ -828,15 +852,36 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     || document.processBoundary.rawCommandPersisted !== false || document.processBoundary.rawOutputPersisted !== false
     || document.processBoundary.childPidPersisted !== false || typeof document.processBoundary.noDescendantFixture !== "boolean"
     || typeof document.processBoundary.descendantTreeOwnershipValidated !== "boolean"
+    || !nativeSupervision && !fixtureSupervision
+    || !new Set(["exact-child-only", "windows-job-object", "posix-process-group"]).has(document.processBoundary.supervisionStrategy)
+    || typeof document.processBoundary.ownershipEstablished !== "boolean"
+    || typeof document.processBoundary.providerChildStarted !== "boolean"
+    || typeof document.processBoundary.providerChildExitObserved !== "boolean"
+    || typeof document.processBoundary.treeCleanupAttempted !== "boolean"
+    || typeof document.processBoundary.treeCleanupVerified !== "boolean"
     || document.processBoundary.descendantTreeOwnershipValidated
       && (!document.processBoundary.exactChildStarted || !document.processBoundary.exactChildExitObserved)
     || document.processBoundary.noDescendantFixture
       && document.processBoundary.descendantTreeOwnershipValidated !== document.processBoundary.exactChildStarted
+    || fixtureSupervision && (!document.processBoundary.noDescendantFixture
+      || document.processBoundary.supervisionStrategy !== "exact-child-only"
+      || document.processBoundary.supervisorManifestDigest !== ""
+      || document.processBoundary.providerChildStarted || document.processBoundary.providerChildExitObserved
+      || document.processBoundary.treeCleanupAttempted
+      || document.processBoundary.ownershipEstablished !== document.processBoundary.exactChildStarted
+      || document.processBoundary.treeCleanupVerified !== document.processBoundary.exactChildStarted)
+    || nativeSupervision && (document.processBoundary.noDescendantFixture
+      || !new Set(["windows-job-object", "posix-process-group"]).has(document.processBoundary.supervisionStrategy)
+      || !/^[a-f0-9]{64}$/.test(document.processBoundary.supervisorManifestDigest || "")
+      || !document.processBoundary.providerChildStarted
+      || document.processBoundary.descendantTreeOwnershipValidated !== (document.processBoundary.ownershipEstablished && document.processBoundary.treeCleanupVerified))
     || (completed && (document.exitCode !== 0 || document.processBoundary.terminationRequested !== false))
+    || (completed && nativeSupervision && !document.processBoundary.providerChildExitObserved)
     || (terminated && document.processBoundary.terminationRequested !== true)
     || (!fixtureMode && !actualProvider)
     || actualProvider && document.runtime !== "codex"
     || actualProvider && completed && (!document.providerBoundary.actualProviderSessionCreated || !document.providerBoundary.structuredResultObserved)
+    || actualProvider && completed && !document.processBoundary.descendantTreeOwnershipValidated
     || fixtureMode && document.providerBoundary.actualProviderInvoked
     || typeof document.providerBoundary.actualProviderSessionCreated !== "boolean"
     || typeof document.providerBoundary.structuredResultObserved !== "boolean"

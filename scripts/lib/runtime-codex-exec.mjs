@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { resolveReadOnlyRuntimeExecutableTarget } from "./runtime-machine-discovery.mjs";
 import { verifyRuntimeProjectBinding, verifyRuntimeProtocolEvidence } from "./runtime-protocol-evidence.mjs";
 import {
@@ -21,8 +22,13 @@ import {
   verifyRuntimeExecutionLeaseOwnership,
   withRuntimeExecutionLease,
 } from "./runtime-execution-lease.mjs";
+import {
+  resolveVerifiedProcessSupervisor,
+  spawnSupervisedProcess,
+} from "./runtime-process-supervisor.mjs";
 
 export const CODEX_EXEC_PROVIDER_VERSION = "0.1.0";
+const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const fail = (message, code = "CODEX_EXEC_PROVIDER_ERROR") => {
   const error = new Error(message);
@@ -112,8 +118,9 @@ function createOperationalSchemaFile(operationalStateRoot, authorization) {
     }
   }
   const file = path.join(directory, "result.schema.json");
+  const controlFile = path.join(directory, "supervisor-control.jsonl");
   fs.writeFileSync(file, prettyJson(CODEX_EXEC_RESULT_SCHEMA), { encoding: "utf8", flag: "wx" });
-  return { directory, file };
+  return { directory, file, controlFile };
 }
 
 function removeOperationalSchemaFile(operationalStateRoot, authorization, state) {
@@ -124,9 +131,12 @@ function removeOperationalSchemaFile(operationalStateRoot, authorization, state)
     fail("Refusing unsafe Codex operational cleanup.", "UNSAFE_CODEX_OPERATIONAL_STATE");
   }
   const entries = fs.readdirSync(resolved).sort(compareText);
-  if (entries.length !== 1 || entries[0] !== "result.schema.json") {
+  const expectedEntries = fs.existsSync(state.controlFile)
+    ? ["result.schema.json", "supervisor-control.jsonl"] : ["result.schema.json"];
+  if (canonicalJson(entries) !== canonicalJson(expectedEntries)) {
     fail("Codex operational invocation directory contains unexpected files.", "UNSAFE_CODEX_OPERATIONAL_STATE");
   }
+  if (fs.existsSync(state.controlFile)) fs.unlinkSync(state.controlFile);
   fs.unlinkSync(state.file);
   fs.rmdirSync(resolved);
   for (const parent of [
@@ -224,14 +234,14 @@ function verifyCurrentCodexTarget({ authorization, protocolEvidence, projectBind
   return { target, observation };
 }
 
-function terminateExactChild(child, state, reason) {
+function terminateExactTree(supervised, state, reason) {
   if (!state.childStarted || state.childExitObserved || state.terminationRequested) return;
   state.terminationRequested = true;
   if (reason === "timeout") state.timedOut = true;
   if (reason === "cancel") state.cancelled = true;
   if (reason === "output-limit") state.outputLimited = true;
   if (reason === "invalid-event") state.invalidEvent = true;
-  child.kill("SIGTERM");
+  supervised.terminate(false);
 }
 
 async function runCodexChild({
@@ -248,6 +258,8 @@ async function runCodexChild({
   onProcessEvent,
   providerMode,
   sensitiveRoots,
+  supervisorSelection,
+  supervisorControlFile,
 }) {
   const state = {
     childStarted: false,
@@ -259,6 +271,7 @@ async function runCodexChild({
     invalidEvent: false,
   };
   let child;
+  let supervised;
   let timer;
   let forceTimer;
   let abortHandler;
@@ -282,13 +295,26 @@ async function runCodexChild({
       reject(error);
     };
     try {
-      child = spawnImplementation(executablePath, args, {
+      supervised = spawnSupervisedProcess({
+        selection: supervisorSelection,
+        executablePath,
+        args,
         cwd: projectRoot,
-        env: providerEnvironment(environment),
-        shell: false,
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
+        providerEnvironment: providerEnvironment(environment),
+        input,
+        controlFile: supervisorControlFile,
+        terminationGraceMs: authorization.limits.terminationGraceMs,
+        spawnImplementation,
+        onControlEvent: (event) => {
+          if (event.type === "provider.started") {
+            inputDigestObserved = digest(input);
+            onProcessEvent({ type: "spawn", pid: event.providerPid, parentPid: child?.pid || process.pid, command: "codex exec", cwd: projectRoot, ports: "none" });
+          } else if (event.type === "provider.exited") {
+            onProcessEvent({ type: "exit", pid: event.providerPid, parentPid: child?.pid || process.pid, exitCode: event.exitCode, signal: "none" });
+          }
+        },
       });
+      child = supervised.child;
     } catch (error) {
       rejectOnce(Object.assign(new Error(`Codex exec could not start: ${error.message}`), { code: "CODEX_EXEC_SPAWN_FAILED" }));
       return;
@@ -296,10 +322,10 @@ async function runCodexChild({
     let childFenceDigest = digest(`${callerFenceDigest}\nnot-started\n${ownershipNonce}`);
     const terminate = (reason) => {
       const before = state.terminationRequested;
-      terminateExactChild(child, state, reason);
+      terminateExactTree(supervised, state, reason);
       if (!before && state.terminationRequested) {
         forceTimer = setTimeout(() => {
-          if (!state.childExitObserved) child.kill("SIGKILL");
+          if (!state.childExitObserved) supervised.terminate(true);
         }, authorization.limits.terminationGraceMs);
         forceTimer.unref();
       }
@@ -332,10 +358,7 @@ async function runCodexChild({
     child.once("spawn", () => {
       state.childStarted = true;
       childFenceDigest = digest(`${callerFenceDigest}\n${child.pid}\n${ownershipNonce}`);
-      onProcessEvent({ type: "spawn", pid: child.pid, parentPid: process.pid, command: "codex exec", cwd: projectRoot, ports: "none" });
-      child.stdin.end(input, () => {
-        if (!inputWriteFailed) inputDigestObserved = digest(input);
-      });
+      onProcessEvent({ type: "spawn", pid: child.pid, parentPid: process.pid, command: "head-agent process-supervisor", cwd: path.dirname(supervisorSelection.binaryPath), ports: "none" });
     });
     child.once("error", (error) => {
       rejectOnce(Object.assign(new Error(`Codex exec child failed: ${error.message}`), { code: "CODEX_EXEC_SPAWN_FAILED" }));
@@ -359,7 +382,7 @@ async function runCodexChild({
       stderr = Buffer.concat([stderr, chunk]);
       if (stderr.length > authorization.limits.maxStderrBytes) terminate("output-limit");
     });
-    child.once("exit", (code, childSignal) => {
+    child.once("close", (code, childSignal) => {
       if (settled) return;
       settled = true;
       state.childExitObserved = true;
@@ -368,12 +391,20 @@ async function runCodexChild({
       clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
       if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
+      const supervision = supervised.finalize({
+        exactSupervisorExitObserved: state.childExitObserved,
+        terminationRequested: state.terminationRequested,
+      });
+      if (!supervision.providerChildExitObserved && supervision.providerPid) {
+        onProcessEvent({ type: "exit", pid: supervision.providerPid, parentPid: child.pid, exitCode: null, signal: state.terminationRequested ? "terminated-tree" : "unknown" });
+      }
       const sessionCreated = events.some((item) => item.providerSessionReferenceDigests.length > 0);
       const turnCompleted = events.some((item) => item.eventType === "turn.completed");
       const providerOutputComplete = providerResult !== null && sessionCreated && turnCompleted
-        && inputDigestObserved === authorization.executionInput.digest;
+        && inputDigestObserved === authorization.executionInput.digest && supervision.requestWritten;
       const status = state.cancelled ? "cancelled" : state.timedOut ? "timed-out" : state.outputLimited ? "output-limited"
-        : state.invalidEvent ? "invalid-event" : code === 0 && providerOutputComplete ? "completed" : "failed";
+        : state.invalidEvent || supervision.controlInvalid ? "invalid-event"
+          : code === 0 && providerOutputComplete && supervision.ownershipEstablished && supervision.treeCleanupVerified ? "completed" : "failed";
       const receiptDocument = buildRuntimeInvocationLifecycleReceipt({
         authorization,
         events: events.sort((left, right) => compareText(left.eventId, right.eventId)),
@@ -391,8 +422,10 @@ async function runCodexChild({
         terminationRequested: state.terminationRequested,
         projectFenceValidated: true,
         inputDigestObserved,
-        noDescendantFixture: providerMode !== "actual-codex",
-        descendantTreeOwnershipValidated: providerMode !== "actual-codex" && state.childStarted && state.childExitObserved,
+        noDescendantFixture: false,
+        descendantTreeOwnershipValidated: supervision.ownershipEstablished && supervision.treeCleanupVerified
+          && state.childStarted && state.childExitObserved,
+        supervision,
         consumption,
         providerMode,
         providerSessionCreated: sessionCreated,
@@ -478,6 +511,8 @@ export async function executeCodexRuntimeInvocation({
   fileSystem = fs,
   spawnImplementation = spawn,
   targetResolver = resolveReadOnlyRuntimeExecutableTarget,
+  supervisorSelection = null,
+  providerArguments = null,
   onProcessEvent = () => {},
   evidenceMode = "actual-provider",
   persist = true,
@@ -494,6 +529,11 @@ export async function executeCodexRuntimeInvocation({
     environment,
     fileSystem,
   });
+  if (evidenceMode === "actual-provider" && providerArguments !== null) {
+    fail("Actual Codex execution arguments cannot be replaced.", "CODEX_EXEC_ARGUMENT_OVERRIDE_REJECTED");
+  }
+  const selectedSupervisor = supervisorSelection || resolveVerifiedProcessSupervisor({ pluginRoot });
+  const selectedArguments = providerArguments === null ? null : providerArguments;
   const callerFenceDigest = buildRuntimeInvocationCallerFence(prepared.projectRoot, verified.authorizationId);
   const providerMode = evidenceMode === "actual-provider" ? "actual-codex" : "codex-protocol-fixture";
   const leased = await withRuntimeExecutionLease({
@@ -513,7 +553,9 @@ export async function executeCodexRuntimeInvocation({
       schemaState = createOperationalSchemaFile(operationalStateRoot, verified);
       return await runCodexChild({
         executablePath: target.executablePath,
-        args: codexArguments({ projectRoot: prepared.projectRoot, schemaFile: schemaState.file, workspaceMode: verified.workspaceMode }),
+        args: providerArguments === null
+          ? codexArguments({ projectRoot: prepared.projectRoot, schemaFile: schemaState.file, workspaceMode: verified.workspaceMode })
+          : selectedArguments,
         projectRoot: prepared.projectRoot,
         environment,
         authorization: verified,
@@ -525,6 +567,8 @@ export async function executeCodexRuntimeInvocation({
         onProcessEvent,
         providerMode,
         sensitiveRoots: [prepared.projectRoot, operationalStateRoot],
+        supervisorSelection: selectedSupervisor,
+        supervisorControlFile: schemaState.controlFile,
       });
     } finally {
       removeOperationalSchemaFile(operationalStateRoot, verified, schemaState);

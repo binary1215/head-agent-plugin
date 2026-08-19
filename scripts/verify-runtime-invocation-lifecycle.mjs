@@ -34,6 +34,7 @@ import {
   executeCodexRuntimeInvocation,
   readCodexRuntimeInvocationResult,
 } from "./lib/runtime-codex-exec.mjs";
+import { resolveVerifiedProcessSupervisor } from "./lib/runtime-process-supervisor.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureNonce = `${process.pid}-${Date.now()}`;
@@ -112,10 +113,6 @@ process.stdin.on('end', () => {
   write({ type: 'turn.completed', usage: { input_tokens: input.length, output_tokens: 1 } });
 });
 `;
-
-function codexExecProtocolFixtureSpawn(_command, _args, options) {
-  return spawn(process.execPath, ["-e", CODEX_EXEC_PROTOCOL_FIXTURE], options);
-}
 
 async function main() {
   const resolvedRoot = path.resolve(temporaryRoot);
@@ -258,14 +255,17 @@ async function main() {
       persist: true,
     }).authorization;
     const codexObservation = protocolEvidence.observations.find((item) => item.runtime === "codex");
+    const supervisorFixtureRoot = path.resolve(process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
+    const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: supervisorFixtureRoot });
     const codexProtocolExecution = await executeCodexRuntimeInvocation({
       root: resolvedRoot,
       authorization: codexProtocolAuthorization,
       sessionRequest: codexProtocolRequest,
       protocolEvidence,
       projectBinding,
-      spawnImplementation: codexExecProtocolFixtureSpawn,
       targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+      supervisorSelection,
+      providerArguments: ["-e", CODEX_EXEC_PROTOCOL_FIXTURE],
       evidenceMode: "protocol-fixture",
       onProcessEvent: recordProcess,
       persist: true,
@@ -273,6 +273,9 @@ async function main() {
     assert(codexProtocolExecution.receipt.status === "completed", "Codex exec protocol fixture did not complete.");
     assert(codexProtocolExecution.actualProviderInvoked === false, "Codex protocol fixture was represented as an actual provider invocation.");
     assert(codexProtocolExecution.receipt.providerBoundary.structuredResultObserved === true, "Codex structured result was not observed.");
+    assert(codexProtocolExecution.receipt.processBoundary.supervisionMode === "native-process-tree"
+      && codexProtocolExecution.receipt.processBoundary.descendantTreeOwnershipValidated === true,
+    "Codex protocol fixture did not pass native descendant-tree supervision.");
     assert(codexProtocolExecution.draft.providerResult?.outcome === "Codex protocol fixture completed.", "Codex structured result was not carried into the draft.");
     assert(codexProtocolExecution.draft.freshHeadReviewRequired === false, "Codex Session protocol fixture incorrectly required Fresh HEAD review.");
     const recordedCodexProtocolExecution = readCodexRuntimeInvocationResult({
@@ -551,6 +554,7 @@ async function main() {
       sessionFreshHeadReviewRequired: false,
       codexExecProtocolFixtureValidated: true,
       codexStructuredResultRecorded: true,
+      codexDescendantTreeSupervisionValidated: true,
       operationalStateExternalized: true,
       legacyProjectLockRejected,
       rawTranscriptPersisted: false,

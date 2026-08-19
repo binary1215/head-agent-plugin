@@ -321,7 +321,7 @@ export async function inspectRuntimeAdapters(root = ".") {
     protocolEvidence,
     projectBinding,
     runtimeControlEnabled: false,
-    nextGate: "actual-provider-caller-descendant-fencing-event-normalization-cancellation-close-and-provider-session-lifecycle-conformance",
+    nextGate: "bounded-live-codex-session-run-event-normalization-cancellation-result-and-fresh-head-conformance",
   };
 }
 
@@ -365,6 +365,10 @@ export function coreContract() {
     "codex-exec-one-shot-composition",
     "codex-exec-protocol-fixture",
     "durable-runtime-invocation-record",
+    "native-runtime-process-supervisor",
+    "runtime-descendant-tree-supervision",
+    "windows-job-object-tree-ownership",
+    "posix-process-group-tree-ownership",
   ];
   contract.deferredCapabilities = [
     ...contract.deferredCapabilities,
@@ -372,6 +376,6 @@ export function coreContract() {
     "runtime-descendant-tree-supervision",
     "canonical-runtime-draft-result-packet-conversion",
     "opencode-one-shot-execution",
-  ];
+  ].filter((capability) => capability !== "runtime-descendant-tree-supervision");
   return contract;
 }

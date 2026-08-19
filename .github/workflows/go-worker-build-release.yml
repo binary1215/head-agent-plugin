@@ -1,4 +1,4 @@
-name: Go Worker Build and Release
+name: Go Worker and Supervisor Build and Release
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
     paths:
       - "native/head-agent-worker/**"
       - "scripts/generate-go-worker-manifest.mjs"
+      - "scripts/generate-process-supervisor-manifest.mjs"
       - "scripts/lib/compute-adapter.mjs"
       - "scripts/lib/go-worker-adapter.mjs"
       - "scripts/lib/repository-scan.mjs"
@@ -29,9 +30,12 @@ on:
       - "scripts/lib/runtime-protocol-evidence.mjs"
       - "scripts/lib/runtime-invocation-lifecycle.mjs"
       - "scripts/lib/runtime-execution-lease.mjs"
+      - "scripts/lib/runtime-process-supervisor.mjs"
+      - "scripts/lib/runtime-codex-exec.mjs"
       - "scripts/benchmark-prepared-traversal.mjs"
       - "scripts/verify-runtime-adapters.mjs"
       - "scripts/verify-runtime-invocation-lifecycle.mjs"
+      - "scripts/verify-process-supervisor.mjs"
       - "scripts/head.mjs"
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
@@ -45,6 +49,7 @@ on:
     paths:
       - "native/head-agent-worker/**"
       - "scripts/generate-go-worker-manifest.mjs"
+      - "scripts/generate-process-supervisor-manifest.mjs"
       - "scripts/lib/compute-adapter.mjs"
       - "scripts/lib/go-worker-adapter.mjs"
       - "scripts/lib/repository-scan.mjs"
@@ -65,9 +70,12 @@ on:
       - "scripts/lib/runtime-protocol-evidence.mjs"
       - "scripts/lib/runtime-invocation-lifecycle.mjs"
       - "scripts/lib/runtime-execution-lease.mjs"
+      - "scripts/lib/runtime-process-supervisor.mjs"
+      - "scripts/lib/runtime-codex-exec.mjs"
       - "scripts/benchmark-prepared-traversal.mjs"
       - "scripts/verify-runtime-adapters.mjs"
       - "scripts/verify-runtime-invocation-lifecycle.mjs"
+      - "scripts/verify-process-supervisor.mjs"
       - "scripts/head.mjs"
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
@@ -92,6 +100,7 @@ concurrency:
 env:
   GO_WORKER_ROOT: native/head-agent-worker
   GO_WORKER_COMMAND: ./cmd/head-agent-worker
+  GO_SUPERVISOR_COMMAND: ./cmd/head-agent-supervisor
 
 jobs:
   prepare:
@@ -111,7 +120,7 @@ jobs:
         id: detect
         shell: bash
         run: |
-          if [[ -f "${GO_WORKER_ROOT}/go.mod" && -d "${GO_WORKER_ROOT}/cmd/head-agent-worker" ]]; then
+          if [[ -f "${GO_WORKER_ROOT}/go.mod" && -d "${GO_WORKER_ROOT}/cmd/head-agent-worker" && -d "${GO_WORKER_ROOT}/cmd/head-agent-supervisor" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -146,7 +155,7 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   test:
-    name: Test Go worker
+    name: Test Go worker and supervisor
     needs: prepare
     if: ${{ needs.prepare.outputs.enabled == 'true' }}
     runs-on: ubuntu-latest
@@ -198,14 +207,29 @@ jobs:
             -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }} -X main.commit=${GITHUB_SHA}" \
             -o "${binary_root}/head-agent-worker" \
             ./cmd/head-agent-worker
+          CGO_ENABLED=0 go build \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }} -X main.commit=${GITHUB_SHA}" \
+            -o "${binary_root}/head-agent-supervisor" \
+            ./cmd/head-agent-supervisor
           chmod 0755 "${binary_root}/head-agent-worker"
+          chmod 0755 "${binary_root}/head-agent-supervisor"
           node ../../scripts/generate-go-worker-manifest.mjs \
             --platform linux \
             --arch x64 \
             --binary "${binary_root}/head-agent-worker" \
             --output "${binary_root}/WORKER-MANIFEST.json" \
             --operations "worker.health.v1,worker.lifecycle.v1,repository.scan.v1"
+          node ../../scripts/generate-process-supervisor-manifest.mjs \
+            --platform linux \
+            --arch x64 \
+            --binary "${binary_root}/head-agent-supervisor" \
+            --output "${binary_root}/SUPERVISOR-MANIFEST.json"
           node ../../scripts/verify-go-worker.mjs --plugin-root "${NATIVE_TEST_ROOT}"
+          node ../../scripts/verify-process-supervisor.mjs --plugin-root "${NATIVE_TEST_ROOT}"
+          HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${NATIVE_TEST_ROOT}" \
+            node ../../scripts/verify-runtime-invocation-lifecycle.mjs
 
   build:
     name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
@@ -225,6 +249,7 @@ jobs:
             runtime_dir: linux-x64
             package: head-agent-worker-linux-amd64
             executable: head-agent-worker
+            supervisor_executable: head-agent-supervisor
           - goos: linux
             goarch: arm64
             runtime_platform: linux
@@ -232,6 +257,7 @@ jobs:
             runtime_dir: linux-arm64
             package: head-agent-worker-linux-arm64
             executable: head-agent-worker
+            supervisor_executable: head-agent-supervisor
           - goos: darwin
             goarch: amd64
             runtime_platform: darwin
@@ -239,6 +265,7 @@ jobs:
             runtime_dir: darwin-x64
             package: head-agent-worker-darwin-amd64
             executable: head-agent-worker
+            supervisor_executable: head-agent-supervisor
           - goos: darwin
             goarch: arm64
             runtime_platform: darwin
@@ -246,6 +273,7 @@ jobs:
             runtime_dir: darwin-arm64
             package: head-agent-worker-darwin-arm64
             executable: head-agent-worker
+            supervisor_executable: head-agent-supervisor
           - goos: windows
             goarch: amd64
             runtime_platform: win32
@@ -253,6 +281,7 @@ jobs:
             runtime_dir: windows-x64
             package: head-agent-worker-windows-amd64
             executable: head-agent-worker.exe
+            supervisor_executable: head-agent-supervisor.exe
 
     steps:
       - name: Checkout source
@@ -267,7 +296,7 @@ jobs:
           cache-dependency-path: native/head-agent-worker/go.mod
           check-latest: false
 
-      - name: Build and package worker
+      - name: Build and package worker and supervisor
         shell: bash
         working-directory: native/head-agent-worker
         env:
@@ -276,6 +305,7 @@ jobs:
           TARGET_GOARCH: ${{ matrix.goarch }}
           PACKAGE_NAME: ${{ matrix.package }}
           EXECUTABLE_NAME: ${{ matrix.executable }}
+          SUPERVISOR_EXECUTABLE_NAME: ${{ matrix.supervisor_executable }}
           RUNTIME_PLATFORM: ${{ matrix.runtime_platform }}
           RUNTIME_ARCH: ${{ matrix.runtime_arch }}
           RUNTIME_DIRECTORY: ${{ matrix.runtime_dir }}
@@ -292,8 +322,17 @@ jobs:
               -o "${package_root}/${EXECUTABLE_NAME}" \
               "${GO_WORKER_COMMAND}"
 
+          CGO_ENABLED=0 GOOS="${TARGET_GOOS}" GOARCH="${TARGET_GOARCH}" \
+            go build \
+              -trimpath \
+              -buildvcs=false \
+              -ldflags="-s -w -X main.version=${BUILD_VERSION} -X main.commit=${GITHUB_SHA}" \
+              -o "${package_root}/${SUPERVISOR_EXECUTABLE_NAME}" \
+              "${GO_SUPERVISOR_COMMAND}"
+
           if [[ "${TARGET_GOOS}" != "windows" ]]; then
             chmod 0755 "${package_root}/${EXECUTABLE_NAME}"
+            chmod 0755 "${package_root}/${SUPERVISOR_EXECUTABLE_NAME}"
           fi
 
           printf '{\n  "version": "%s",\n  "commit": "%s",\n  "goos": "%s",\n  "goarch": "%s",\n  "cgoEnabled": false\n}\n' \
@@ -305,6 +344,12 @@ jobs:
             --arch "${RUNTIME_ARCH}" \
             --binary "${package_root}/${EXECUTABLE_NAME}" \
             --output "${package_root}/WORKER-MANIFEST.json"
+
+          node ../../scripts/generate-process-supervisor-manifest.mjs \
+            --platform "${RUNTIME_PLATFORM}" \
+            --arch "${RUNTIME_ARCH}" \
+            --binary "${package_root}/${SUPERVISOR_EXECUTABLE_NAME}" \
+            --output "${package_root}/SUPERVISOR-MANIFEST.json"
 
           if [[ "${TARGET_GOOS}" == "windows" ]]; then
             (cd "$(dirname "${package_root}")" && zip -9 -r "${output_root}/${PACKAGE_NAME}.zip" "${RUNTIME_DIRECTORY}")
@@ -349,12 +394,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: HEAD Agent Go Worker ${{ needs.prepare.outputs.release_tag }}
           body: |
-            Provider-neutral HEAD Agent Core native compute-worker packages.
+            Provider-neutral HEAD Agent Core native compute-worker and process-supervisor packages.
 
             Source commit: `${{ github.sha }}`
 
             These binaries accelerate the plugin compute plane. They do not replace Product Canon,
-            ReviewDecision authority, the JavaScript control plane, or the local fallback path.
+            ReviewDecision authority, or the JavaScript control plane. The separate supervisor binary
+            provides OS-enforced descendant-tree ownership for bounded provider execution.
           prerelease: ${{ contains(needs.prepare.outputs.release_tag, '-') }}
           fail_on_unmatched_files: true
           files: |
