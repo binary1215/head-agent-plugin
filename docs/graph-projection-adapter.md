@@ -80,9 +80,13 @@ The reference comparison intentionally favors correctness over acceleration. `Pr
 Onboarding persists only the ArcadeDB endpoint, database, and environment-style username/password reference names. Selection alone is pending configuration and does not activate remote I/O. With both referenced environment variables available, activation is explicit:
 
 ```powershell
+node scripts/head.mjs world-graph-remote-database-status C:\path\to\project
+node scripts/head.mjs world-graph-remote-database-initialize C:\path\to\project
 node scripts/head.mjs world-graph-remote-activate C:\path\to\project
 node scripts/head.mjs world-graph-remote-status C:\path\to\project
 ```
+
+Database status is read-only and reports a content-derived compatibility audit without endpoint, database name, credential value, or record identity. Initialization creates a missing selected database. Existing unrelated types do not block activation and are never a reset reason. A whole-database reset is eligible only when the audit proves that one of the five `HeadAgentGraph*` reserved type names has an incompatible kind or property type, and the operator supplies both `--reset-incompatible true` and an exact `--confirm-database` match. Reset invalidates only mutable local remote-activation pointers; immutable prior receipts and the complete local graph mirror remain as audit and recovery evidence.
 
 Activation creates the `HeadAgentGraphSnapshot` and `HeadAgentGraphPointer` document schema, writes and re-reads the current immutable GraphSnapshot, and first proves baseline snapshot-query equivalence against the local reference adapter. It then materializes the snapshot into `HeadAgentGraphNode` vertices and `HeadAgentGraphEdge` edges and writes `HeadAgentGraphTopology` only after the complete node and edge sets can be re-read exactly. A second conformance pass runs the named bounded fixtures through server expansion. Only after both passes succeed are the topology receipt and final content-addressed activation receipt advanced. A failed upgrade therefore cannot activate an unverified traversal mode. The receipts bind the current storage-selection, graph, conformance, node-set, and edge-set identities and explicitly record that credential values and server record identities are not persisted or semantic.
 
@@ -125,8 +129,9 @@ After activation, the default adapter mirrors every successful remote snapshot a
 - `verifyGraphProjectionAdapterConformance`: content-derived report naming both authority-bounded adapters and proving adapter-neutral semantics over one GraphSnapshot and one-to-64 named bounded query fixtures;
 - `world-graph-status`: read and verify projection state;
 - `world-graph-remote-activate` and `world-graph-remote-status`: explicit activation and read-only remote status;
+- `world-graph-remote-database-status` and `world-graph-remote-database-initialize`: read-only compatibility audit and explicit exact-target provisioning/reset boundary;
 - `head_graph_projection_status`: read-only MCP equivalent;
-- `head_graphdb_projection_status`: read-only MCP remote activation/status equivalent;
+- `head_graphdb_projection_status` and `head_graphdb_database_status`: read-only MCP activation and compatibility status equivalents;
 - `world-temporal`, MCP temporal traversal, and Context Compiler temporal expansion use the adapter boundary while preserving result identity.
 - the separate [`DocumentProjectionAdapter`](document-projection-adapter.md) consumes the verified GraphSnapshot for deterministic Markdown without changing graph identity.
 
@@ -140,4 +145,4 @@ After activation, the default adapter mirrors every successful remote snapshot a
 - topology schema migrations and operational observability;
 - Obsidian/Notion document adapters.
 
-Automated tests use an in-memory transport and do not require or mutate a user GraphDB. The activation command is the sole explicit remote mutation surface.
+Automated tests use an in-memory transport and do not require or mutate a user GraphDB. Database initialization and graph activation are the only explicit remote mutation surfaces; neither accepts credential values as arguments.

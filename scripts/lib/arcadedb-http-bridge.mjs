@@ -28,7 +28,7 @@ const password = process.env[passwordReference];
 if (!username || !password) fail("ArcadeDB credential references are unavailable in the process environment.", "ARCADEDB_CREDENTIALS_UNAVAILABLE", 2);
 
 const operation = requiredText(input.operation, "ArcadeDB operation");
-if (!new Set(["query", "command", "ready"]).has(operation)) {
+if (!new Set(["query", "command", "ready", "exists", "create-database", "drop-database"]).has(operation)) {
   fail("ArcadeDB bridge operation is unsupported.", "ARCADEDB_BRIDGE_INVALID_INPUT");
 }
 const timeoutMs = Number(input.timeoutMs ?? 15000);
@@ -38,20 +38,27 @@ if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) {
 
 const path = operation === "ready"
   ? "/api/v1/ready"
-  : `/api/v1/${operation}/${encodeURIComponent(database)}`;
+  : operation === "exists"
+    ? `/api/v1/exists/${encodeURIComponent(database)}`
+    : operation === "create-database" || operation === "drop-database"
+      ? "/api/v1/server"
+      : `/api/v1/${operation}/${encodeURIComponent(database)}`;
 const headers = {
   Accept: "application/json",
   Authorization: `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`,
 };
-const request = { method: operation === "ready" ? "GET" : "POST", headers, signal: AbortSignal.timeout(timeoutMs) };
-if (operation !== "ready") {
+const readOnlyGet = operation === "ready" || operation === "exists";
+const request = { method: readOnlyGet ? "GET" : "POST", headers, signal: AbortSignal.timeout(timeoutMs) };
+if (!readOnlyGet) {
   headers["Content-Type"] = "application/json";
-  request.body = JSON.stringify({
-    language: requiredText(input.language, "ArcadeDB language"),
-    command: requiredText(input.command, "ArcadeDB command"),
-    params: input.params && typeof input.params === "object" && !Array.isArray(input.params) ? input.params : {},
-    ...(operation === "command" ? { autoCommit: true } : {}),
-  });
+  request.body = operation === "create-database" || operation === "drop-database"
+    ? JSON.stringify({ command: `${operation === "create-database" ? "create" : "drop"} database ${database}` })
+    : JSON.stringify({
+      language: requiredText(input.language, "ArcadeDB language"),
+      command: requiredText(input.command, "ArcadeDB command"),
+      params: input.params && typeof input.params === "object" && !Array.isArray(input.params) ? input.params : {},
+      ...(operation === "command" ? { autoCommit: true } : {}),
+    });
 }
 
 let response;

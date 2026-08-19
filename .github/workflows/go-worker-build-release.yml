@@ -25,6 +25,8 @@ on:
       - "scripts/lib/world-model.mjs"
       - "scripts/lib/graph-projection-adapter.mjs"
       - "scripts/lib/graphdb-projection-activation.mjs"
+      - "scripts/lib/arcadedb-database-lifecycle.mjs"
+      - "scripts/lib/arcadedb-http-bridge.mjs"
       - "scripts/lib/prepared-traversal-benchmark.mjs"
       - "scripts/lib/runtime-adapter.mjs"
       - "scripts/lib/runtime-machine-discovery.mjs"
@@ -43,6 +45,7 @@ on:
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
       - "scripts/verify-onboarding.mjs"
+      - "scripts/verify-arcadedb-database-lifecycle.mjs"
       - "benchmarks/repository-scan-v1/**"
       - "benchmarks/prepared-traversal-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
@@ -68,6 +71,8 @@ on:
       - "scripts/lib/world-model.mjs"
       - "scripts/lib/graph-projection-adapter.mjs"
       - "scripts/lib/graphdb-projection-activation.mjs"
+      - "scripts/lib/arcadedb-database-lifecycle.mjs"
+      - "scripts/lib/arcadedb-http-bridge.mjs"
       - "scripts/lib/prepared-traversal-benchmark.mjs"
       - "scripts/lib/runtime-adapter.mjs"
       - "scripts/lib/runtime-machine-discovery.mjs"
@@ -86,6 +91,7 @@ on:
       - "scripts/mcp-server.mjs"
       - "scripts/verify-go-worker.mjs"
       - "scripts/verify-onboarding.mjs"
+      - "scripts/verify-arcadedb-database-lifecycle.mjs"
       - "benchmarks/repository-scan-v1/**"
       - "benchmarks/prepared-traversal-v1/**"
       - ".github/workflows/go-worker-build-release.yml"
@@ -192,6 +198,9 @@ jobs:
 
       - name: Verify onboarding authority and recovery contract
         run: node scripts/verify-onboarding.mjs
+
+      - name: Verify ArcadeDB database lifecycle boundary
+        run: node scripts/verify-arcadedb-database-lifecycle.mjs
 
       - name: Verify prepared traversal cost identity and no-full-read boundary
         run: node scripts/benchmark-prepared-traversal.mjs --iterations 3

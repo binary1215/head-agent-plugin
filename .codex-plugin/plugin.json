@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.44",
+  "version": "0.3.0-alpha.45",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -61,6 +61,8 @@
       "Replaceable GraphProjectionAdapter Contract",
       "Local JSON and In-memory Graph Projection",
       "Conformance-gated ArcadeDB Graph Projection",
+      "Privacy-safe ArcadeDB Database Compatibility Audit",
+      "Exact-target Missing Database Provision and Incompatible Reset",
       "Snapshot-scoped ArcadeDB Vertex and Edge Topology",
       "Conformance-gated ArcadeDB Bounded Server Expansion",
       "Provider-neutral Prepared Traversal Verification",
@@ -106,6 +108,7 @@
       "Inspect a bounded derived projection of the user-owned Product Model without changing canon.",
       "Inspect content-addressed File, Symbol, and Test revisions through a bounded temporal graph query.",
       "Inspect the current graph projection adapter and verify it remains a rebuildable non-authoritative materialized view.",
+      "Audit the selected ArcadeDB database for HEAD-reserved schema compatibility before explicit initialization or activation.",
       "Generate or inspect deterministic Markdown knowledge projections without treating documents as canon.",
       "Capture edited generated Markdown as review-required DocumentChangeCandidates without changing Product Canon.",
       "Review a DocumentChangeCandidateSet with an explicit complete Product Model, then apply it through a digest-verifiable Canon, GraphSnapshot, and Markdown receipt.",

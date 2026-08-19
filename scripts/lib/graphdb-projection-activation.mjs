@@ -10,6 +10,7 @@ import {
   persistArcadeDbGraphTopologyActivation,
   verifyGraphProjectionAdapterConformance,
 } from "./graph-projection-adapter.mjs";
+import { inspectArcadeDbDatabaseCompatibility } from "./arcadedb-database-lifecycle.mjs";
 import { inspectWorldGraphProjection, inspectWorldModel } from "./world-model.mjs";
 
 const fail = (message, code = "ARCADEDB_ACTIVATION_ERROR") => {
@@ -45,6 +46,13 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
   const configured = inspectArcadeDbGraphProjectionActivation({ projectRoot: world.snapshot.projectRoot });
   if (!configured.storageSelection || configured.storageSelection.mode !== "graphdb") {
     fail("Onboarding must select GraphDB before remote projection activation.", "ARCADEDB_SELECTION_REQUIRED");
+  }
+  const databaseAudit = inspectArcadeDbDatabaseCompatibility({ root: world.snapshot.projectRoot, transport });
+  if (!databaseAudit.databaseExists) {
+    fail("The selected ArcadeDB database is missing; initialize it explicitly before activation.", "ARCADEDB_DATABASE_INITIALIZATION_REQUIRED");
+  }
+  if (!databaseAudit.canActivateWithoutReset) {
+    fail("The selected ArcadeDB database has an incompatible reserved schema.", "ARCADEDB_DATABASE_INCOMPATIBLE");
   }
   const graph = world.snapshot.temporalProvenanceGraph;
   const remoteAdapter = new ArcadeDbGraphProjectionAdapter({ storageSelection: configured.storageSelection, transport });
@@ -96,6 +104,8 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     pointer: persisted.pointer,
     conformanceReport,
     topology: persistedTopology.activation,
+    databaseAuditId: databaseAudit.auditId,
+    databaseAuditHash: databaseAudit.auditHash,
     traversalMode: conformanceReport.candidateAdapter.traversalMode,
     credentialsPersisted: false,
     authority: "rebuildable-derived-projection-not-project-canon",

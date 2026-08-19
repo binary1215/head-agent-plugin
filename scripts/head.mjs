@@ -17,6 +17,7 @@ import { inspectRefreshTriggers, processRefreshTriggerBatch, readRefreshTriggerD
 import { inspectPostRefreshProjectionPolicy, setPostRefreshProjectionPolicy } from "./lib/post-refresh-projection.mjs";
 import { applyDocumentChangeReview, inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision, reviewDocumentChanges } from "./lib/document-change-review.mjs";
 import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
+import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from "./lib/arcadedb-database-lifecycle.mjs";
 import {
   buildRuntimeInvocationAuthorization,
   inspectRuntimeInvocationExecutionLease,
@@ -85,6 +86,8 @@ export function usage() {
       "head world-refresh-trigger-status <project>",
       "head world-refresh-trigger-read <project> --delivery <refresh-trigger-delivery-id>",
       "head world-graph-status <project>",
+      "head world-graph-remote-database-status <project>",
+      "head world-graph-remote-database-initialize <project> [--reset-incompatible true --confirm-database <exact-name>]",
       "head world-graph-remote-activate <project>",
       "head world-graph-remote-status <project>",
       "head world-docs-build <project>",
@@ -234,6 +237,12 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "world-refresh-trigger-status") return inspectRefreshTriggers({ root });
   if (command === "world-refresh-trigger-read") return readRefreshTriggerDelivery({ root, triggerDeliveryId: options.delivery });
   if (command === "world-graph-status") return inspectWorldGraphProjection({ root });
+  if (command === "world-graph-remote-database-status") return inspectArcadeDbDatabaseCompatibility({ root });
+  if (command === "world-graph-remote-database-initialize") return initializeArcadeDbDatabase({
+    root,
+    resetIncompatible: options["reset-incompatible"] === "true",
+    confirmDatabase: options["confirm-database"] || "",
+  });
   if (command === "world-graph-remote-activate") return activateArcadeDbGraphProjection({ root });
   if (command === "world-graph-remote-status") return inspectArcadeDbGraphProjectionStatus({ root });
   if (command === "world-docs-build") return materializeWorldMarkdownProjection({ root });

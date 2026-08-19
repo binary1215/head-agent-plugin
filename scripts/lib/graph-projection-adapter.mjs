@@ -18,6 +18,13 @@ const ARCADEDB_POINTER_TYPE = "HeadAgentGraphPointer";
 const ARCADEDB_NODE_TYPE = "HeadAgentGraphNode";
 const ARCADEDB_EDGE_TYPE = "HeadAgentGraphEdge";
 const ARCADEDB_TOPOLOGY_TYPE = "HeadAgentGraphTopology";
+export const ARCADEDB_GRAPH_RESERVED_SCHEMA = Object.freeze([
+  Object.freeze({ name: ARCADEDB_SNAPSHOT_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", graphSnapshotHash: "STRING", sourceSnapshotId: "STRING", documentJson: "STRING" }) }),
+  Object.freeze({ name: ARCADEDB_POINTER_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", pointerJson: "STRING" }) }),
+  Object.freeze({ name: ARCADEDB_NODE_TYPE, type: "vertex", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", graphSnapshotHash: "STRING", sourceSnapshotId: "STRING", nodeId: "STRING", nodeKind: "STRING", nodeJson: "STRING" }) }),
+  Object.freeze({ name: ARCADEDB_EDGE_TYPE, type: "edge", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", graphSnapshotHash: "STRING", sourceSnapshotId: "STRING", edgeId: "STRING", edgeType: "STRING", edgeJson: "STRING" }) }),
+  Object.freeze({ name: ARCADEDB_TOPOLOGY_TYPE, type: "document", properties: Object.freeze({ projectId: "STRING", graphSnapshotId: "STRING", topologyId: "STRING", topologyJson: "STRING" }) }),
+]);
 const ARCADEDB_ACTIVATION_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "activations");
 const ARCADEDB_CONFORMANCE_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "conformance");
 const ARCADEDB_ACTIVATION_POINTER = path.join(".head", "graph-projection", "arcadedb", "current.json");
@@ -365,6 +372,35 @@ export class ArcadeDbHttpTransport {
       fail(`ArcadeDB request was rejected${status ? ` with HTTP ${status}` : ""}.`, code);
     }
     return response;
+  }
+
+  ready() {
+    this.invoke("ready");
+    return true;
+  }
+
+  databaseExists() {
+    const response = this.invoke("exists");
+    const value = response?.body?.result ?? response?.body?.exists;
+    if (typeof value !== "boolean") fail("ArcadeDB database-existence response is invalid.", "ARCADEDB_INVALID_RESPONSE");
+    return value;
+  }
+
+  createDatabase() {
+    this.invoke("create-database");
+    return true;
+  }
+
+  dropDatabase() {
+    this.invoke("drop-database");
+    return true;
+  }
+
+  readSchemaTypes() {
+    const response = this.invoke("query", {
+      command: "SELECT name, type, properties, indexes FROM schema:types ORDER BY name",
+    });
+    return responseRecords(response);
   }
 
   ensureSchema() {
