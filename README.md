@@ -599,6 +599,16 @@ be written into project artifacts, graph identities, generated documents, or
 execution receipts. Remote activation must pass local/remote conformance before
 it becomes current.
 
+From a Codex or OpenCode conversation, the bundled onboarding Skill first calls
+`head_graphdb_database_status`, then asks for explicit confirmation before
+`head_graphdb_database_initialize` and a separate remote-write confirmation
+before `head_graphdb_projection_activate`. These typed operations accept no
+credential values. If the configured environment-variable references are not
+available to the plugin process, inject them outside the conversation and
+restart the host; a local fallback is reported but never presented as remote
+success. The CLI commands documented in [Onboarding](docs/onboarding.md) remain
+the equivalent automation and recovery path.
+
 The experimental write path is incremental and resumable: content-derived
 node/edge batches are re-read before immutable checkpoints are accepted,
 snapshot-only identity changes use compact rebase records, the complete graph

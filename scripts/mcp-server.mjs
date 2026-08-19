@@ -15,8 +15,8 @@ import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
 import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
 import { inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision } from "./lib/document-change-review.mjs";
-import { inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
-import { inspectArcadeDbDatabaseCompatibility } from "./lib/arcadedb-database-lifecycle.mjs";
+import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
+import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from "./lib/arcadedb-database-lifecycle.mjs";
 import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import fs from "node:fs";
@@ -377,7 +377,8 @@ export const tools = [
       properties: { project_root: { type: "string", minLength: 1 } },
       required: ["project_root"],
       additionalProperties: false
-    }
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "head_graphdb_database_status",
@@ -387,7 +388,38 @@ export const tools = [
       properties: { project_root: { type: "string", minLength: 1 } },
       required: ["project_root"],
       additionalProperties: false
-    }
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "head_graphdb_database_initialize",
+    description: "After explicit user confirmation, reuse a compatible selected ArcadeDB database or create a missing one. Reset is allowed only for a proven incompatible HEAD-reserved schema and an exact selected-database confirmation. Credential values are never accepted as tool input.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        confirm_initialize: { type: "boolean", const: true },
+        reset_incompatible: { type: "boolean", default: false },
+        confirm_database: { type: "string", minLength: 1 },
+      },
+      required: ["project_root", "confirm_initialize"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: "head_graphdb_projection_activate",
+    description: "After explicit user confirmation, materialize and verify the current rebuildable GraphSnapshot in the selected compatible ArcadeDB database, then advance its pointer only after complete conformance. Credential values are resolved only from stored environment reference names.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        confirm_remote_write: { type: "boolean", const: true },
+      },
+      required: ["project_root", "confirm_remote_write"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "head_markdown_projection_status",
@@ -605,7 +637,37 @@ function compactMarkdownBuild(result) {
   };
 }
 
-export async function dispatch(request) {
+function requireMcpConfirmation(value, message, code) {
+  if (value === true) return;
+  const error = new Error(message);
+  error.code = code;
+  throw error;
+}
+
+function initializeGraphDbFromMcp(args, transport) {
+  requireMcpConfirmation(
+    args.confirm_initialize,
+    "ArcadeDB database initialization requires explicit user confirmation.",
+    "ARCADEDB_DATABASE_INITIALIZE_CONFIRMATION_REQUIRED",
+  );
+  return initializeArcadeDbDatabase({
+    root: args.project_root,
+    resetIncompatible: args.reset_incompatible === true,
+    confirmDatabase: args.confirm_database || "",
+    transport,
+  });
+}
+
+function activateGraphDbFromMcp(args, transport) {
+  requireMcpConfirmation(
+    args.confirm_remote_write,
+    "ArcadeDB graph projection activation requires explicit user confirmation.",
+    "ARCADEDB_PROJECTION_ACTIVATION_CONFIRMATION_REQUIRED",
+  );
+  return activateArcadeDbGraphProjection({ root: args.project_root, transport });
+}
+
+export async function dispatch(request, { graphDbTransport = null } = {}) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
       return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: packageVersion } });
@@ -679,9 +741,13 @@ export async function dispatch(request) {
                   : name === "head_graph_projection_status"
                     ? inspectWorldGraphProjection({ root: args.project_root })
                 : name === "head_graphdb_projection_status"
-                  ? inspectArcadeDbGraphProjectionStatus({ root: args.project_root })
+                  ? inspectArcadeDbGraphProjectionStatus({ root: args.project_root, transport: graphDbTransport })
                 : name === "head_graphdb_database_status"
-                  ? inspectArcadeDbDatabaseCompatibility({ root: args.project_root })
+                  ? inspectArcadeDbDatabaseCompatibility({ root: args.project_root, transport: graphDbTransport })
+                : name === "head_graphdb_database_initialize"
+                  ? initializeGraphDbFromMcp(args, graphDbTransport)
+                : name === "head_graphdb_projection_activate"
+                  ? activateGraphDbFromMcp(args, graphDbTransport)
                 : name === "head_markdown_projection_status"
                     ? inspectWorldMarkdownProjection({ root: args.project_root })
                   : name === "head_post_refresh_projection_status"

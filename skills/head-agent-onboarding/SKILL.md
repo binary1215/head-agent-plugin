@@ -28,6 +28,34 @@ for the normal path.
 Installation or initialization must not contact GraphDB. The optional remote
 projection has separate compatibility and activation operations.
 
+## Activate optional GraphDB projection
+
+Use this path only when onboarding already selected GraphDB and the user asks to
+verify or activate it. Never accept a username, password, or token as MCP input
+or copy a value from conversation, goal text, repository files, or generated
+documents.
+
+1. Call `head_graphdb_database_status`. If the process reports unavailable
+   credential references, name only the configured environment-variable
+   references and ask the user to inject them outside the conversation and
+   restart the host. Do not reinterpret local fallback as remote success.
+2. Present the privacy-safe compatibility status. Before any database mutation,
+   obtain explicit confirmation and call `head_graphdb_database_initialize` with
+   `confirm_initialize: true`.
+3. If and only if the audit proves an incompatible HEAD-reserved schema, explain
+   the conflicts and obtain a separate exact selected-database confirmation
+   before setting `reset_incompatible: true` and `confirm_database`. Never reset
+   because unrelated schema exists.
+4. Obtain explicit confirmation for projection writes, then call
+   `head_graphdb_projection_activate` with `confirm_remote_write: true`.
+5. Call `head_graphdb_projection_status`, `head_graph_projection_status`, and a
+   bounded graph query. Report verified remote state, disclosed fallback, and
+   Unknowns without endpoint, database, credential, or record-ID values.
+
+Database initialization and graph activation are separate transactions. A
+failed or interrupted remote operation must leave the embedded/local graph as
+the complete recovery authority and must not change Product Canon.
+
 ## Review product candidates
 
 Present the compact candidate batch in bounded groups with candidate ID, kind,

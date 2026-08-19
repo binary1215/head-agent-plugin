@@ -36,7 +36,13 @@ try {
     "head_project_initialize_or_resume",
     "head_onboarding_review",
     "head_markdown_projection_build",
+    "head_graphdb_database_initialize",
+    "head_graphdb_projection_activate",
   ]) assert(names.has(name), `Missing conversational MCP tool: ${name}`);
+  const graphDbActivateTool = listed.result.tools.find((entry) => entry.name === "head_graphdb_projection_activate");
+  assert.deepEqual(graphDbActivateTool.inputSchema.required, ["project_root", "confirm_remote_write"]);
+  assert.equal(graphDbActivateTool.inputSchema.additionalProperties, false);
+  assert.equal(Object.keys(graphDbActivateTool.inputSchema.properties).some((key) => /password|username|credential|token/i.test(key)), false);
 
   const before = await tool("head_onboarding_guide", { project_root: projectRoot });
   assert.equal(before.status, "not_initialized");
@@ -101,6 +107,8 @@ try {
     sessionIdentityPreserved: true,
     explicitReviewRequired: true,
     worldGraphContextDocumentsReady: true,
+    optionalGraphDbConversationOperationsDiscoverable: true,
+    graphDbCredentialValuesAcceptedByTools: false,
     graphDbRequired: false,
     gitRequired: false,
     credentialValuesPersisted: false,
