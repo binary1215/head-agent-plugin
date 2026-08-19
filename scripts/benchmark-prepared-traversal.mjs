@@ -222,6 +222,26 @@ function fixtureExpectation({ graph, request, result, costEvidence }) {
   };
 }
 
+function verifyPreparedReadShape(transportSummary, iterations) {
+  const calls = (operation) => transportSummary.operations[operation]?.calls || 0;
+  const pointerReadCalls = calls("readPointer");
+  const topologyManifestReadCalls = calls("readTopologyManifest");
+  const traversalQueryCalls = calls("queryTopology");
+  if (pointerReadCalls !== iterations || topologyManifestReadCalls !== iterations || traversalQueryCalls !== iterations) {
+    fail("Prepared traversal must perform exactly one pointer, manifest, and bounded traversal read per query.", "PREPARED_TRAVERSAL_DUPLICATE_READ");
+  }
+  return {
+    queryCount: iterations,
+    previousPointerReadBaselineCalls: iterations * 2,
+    pointerReadCalls,
+    savedPointerReadCalls: iterations,
+    pointerReadReductionBasisPoints: 5000,
+    topologyManifestReadCalls,
+    traversalQueryCalls,
+    semanticIdentityEffect: "none",
+  };
+}
+
 async function runFixture(iterations, queryText) {
   const graph = fixtureGraph();
   const query = queryFor(graph, queryText);
@@ -267,6 +287,7 @@ async function runFixture(iterations, queryText) {
     || transportSummary.operations.readTopology?.calls) {
     fail("Prepared fixture benchmark performed a forbidden full read or write.", "BENCHMARK_BOUNDARY_VIOLATION");
   }
+  const readShape = verifyPreparedReadShape(transportSummary, iterations);
   return {
     mode: "arcadedb-transport-contract-fixture",
     graph,
@@ -275,6 +296,7 @@ async function runFixture(iterations, queryText) {
     costEvidence,
     elapsedMs,
     transportSummary,
+    readShape,
     liveEnvironmentValidated: false,
   };
 }
@@ -313,6 +335,7 @@ async function runLive(projectRoot, iterations, queryText) {
     || transportSummary.operations.readTopology?.calls) {
     fail("Live benchmark performed a forbidden full read or write.", "LIVE_BENCHMARK_BOUNDARY_VIOLATION");
   }
+  const readShape = verifyPreparedReadShape(transportSummary, iterations);
   return {
     mode: "arcadedb-live-read-only",
     graph,
@@ -321,6 +344,7 @@ async function runLive(projectRoot, iterations, queryText) {
     costEvidence,
     elapsedMs,
     transportSummary,
+    readShape,
     liveEnvironmentValidated: true,
   };
 }
@@ -352,6 +376,7 @@ try {
       medianElapsedMs: median(elapsed),
       maxElapsedMs: elapsed.at(-1),
       transport: execution.transportSummary,
+      pointerReadOptimization: execution.readShape,
       timingSemantic: false,
     },
     safety: {

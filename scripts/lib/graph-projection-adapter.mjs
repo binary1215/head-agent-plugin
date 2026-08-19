@@ -63,6 +63,8 @@ const ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS = 8192;
 const ARCADEDB_SNAPSHOT_CHUNK_BYTES = 8 * 1024;
 const PREPARED_TRAVERSAL_ORDERING = "record-depth-then-semantic-id-ascending";
 const BRIDGE_FILE = fileURLToPath(new URL("./arcadedb-http-bridge.mjs", import.meta.url));
+const PREPARED_POINTER_READ_TOKEN = Symbol("head-agent-prepared-pointer-read-token");
+const preparedPointerReads = new WeakMap();
 
 const REQUIRED_METHODS = [
   "describe",
@@ -86,6 +88,20 @@ function assertFields(value, fields, label, code) {
   const unexpected = Object.keys(value).filter((field) => !expected.has(field));
   const missing = fields.filter((field) => !(field in value));
   if (unexpected.length || missing.length) fail(`${label} fields are invalid.`, code);
+}
+
+function bindPreparedPointerRead(adapter, entry) {
+  if (entry == null) return null;
+  const token = Object.freeze({});
+  preparedPointerReads.set(token, { adapter, entry: clone(entry) });
+  return { ...entry, [PREPARED_POINTER_READ_TOKEN]: token };
+}
+
+function consumePreparedPointerRead(adapter, token) {
+  if (!token || typeof token !== "object") return null;
+  const bound = preparedPointerReads.get(token);
+  preparedPointerReads.delete(token);
+  return bound?.adapter === adapter ? clone(bound.entry) : null;
 }
 
 function canonical(value) {
@@ -1287,8 +1303,7 @@ export function verifyPreparedTraversalRequest(document, { graph = null, result 
   return document;
 }
 
-function buildPreparedTraversalVerification(request, verificationMode) {
-  const prepared = verifyPreparedTraversalRequest(request);
+function buildPreparedTraversalVerificationFromVerified(prepared, verificationMode) {
   if (typeof verificationMode !== "string" || !/^[a-z0-9-]+$/.test(verificationMode)) {
     fail("Prepared traversal verification mode is invalid.", "INVALID_PREPARED_TRAVERSAL_VERIFICATION");
   }
@@ -1318,6 +1333,10 @@ function buildPreparedTraversalVerification(request, verificationMode) {
     verificationId: `prepared-traversal-verification-${verificationHash.slice(0, 24)}`,
     verificationHash,
   });
+}
+
+function buildPreparedTraversalVerification(request, verificationMode) {
+  return buildPreparedTraversalVerificationFromVerified(verifyPreparedTraversalRequest(request), verificationMode);
 }
 
 export function verifyPreparedTraversalVerification(document, expectedRequest = null) {
@@ -1352,7 +1371,7 @@ export function verifyPreparedTraversalVerification(document, expectedRequest = 
   }
   if (expectedRequest) {
     const request = verifyPreparedTraversalRequest(expectedRequest);
-    const expected = buildPreparedTraversalVerification(request, document.verificationMode);
+    const expected = buildPreparedTraversalVerificationFromVerified(request, document.verificationMode);
     if (graphProjectionCanonicalJson(document) !== graphProjectionCanonicalJson(expected)) {
       fail("Prepared traversal verification does not match its request.", "PREPARED_TRAVERSAL_VERIFICATION_MISMATCH");
     }
@@ -1360,8 +1379,7 @@ export function verifyPreparedTraversalVerification(document, expectedRequest = 
   return document;
 }
 
-function verifyArcadeDbServerTraversalResponse({ request, response, maxRecords }) {
-  const prepared = verifyPreparedTraversalRequest(request);
+function verifyArcadeDbServerTraversalResponseAgainstPrepared({ prepared, response, maxRecords }) {
   const query = prepared.traversalQuery;
   assertFields(response, [
     "protocolVersion", "graphSnapshotId", "anchorIds", "maxDepth", "maxRecords", "truncated", "records",
@@ -1418,6 +1436,14 @@ function verifyArcadeDbServerTraversalResponse({ request, response, maxRecords }
     fail("ArcadeDB server traversal did not return the complete bounded graph radius.", "ARCADEDB_SERVER_TRAVERSAL_COVERAGE_MISMATCH");
   }
   return true;
+}
+
+function verifyArcadeDbServerTraversalResponse({ request, response, maxRecords }) {
+  return verifyArcadeDbServerTraversalResponseAgainstPrepared({
+    prepared: verifyPreparedTraversalRequest(request),
+    response,
+    maxRecords,
+  });
 }
 
 export class ArcadeDbGraphProjectionAdapter {
@@ -1498,6 +1524,10 @@ export class ArcadeDbGraphProjectionAdapter {
     if (this.stagedPointer) return { location: `${this.locationBase}/staged-current`, document: clone(this.stagedPointer) };
     const value = this.transport.readPointer(this.projectId);
     return value == null ? null : { location: `${this.locationBase}/current`, document: parseRemoteJson(value, "ArcadeDB graph projection pointer") };
+  }
+
+  readPointerForPreparedQuery() {
+    return bindPreparedPointerRead(this, this.readPointer());
   }
 
   readSnapshot(id) {
@@ -1672,7 +1702,7 @@ export class ArcadeDbGraphProjectionAdapter {
     return reference;
   }
 
-  queryPrepared(request) {
+  queryPrepared(request, { pointerReadToken = null } = {}) {
     if (!this.preparedTraversalRequired) {
       fail("ArcadeDB prepared traversal is not active for this adapter.", "PREPARED_TRAVERSAL_NOT_ACTIVE");
     }
@@ -1683,7 +1713,7 @@ export class ArcadeDbGraphProjectionAdapter {
     if (prepared.expansion.recordCount > ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS) {
       fail("ArcadeDB prepared traversal expansion exceeds the record budget.", "ARCADEDB_SERVER_TRAVERSAL_RECORD_LIMIT");
     }
-    const pointerEntry = this.readPointer();
+    const pointerEntry = consumePreparedPointerRead(this, pointerReadToken) || this.readPointer();
     if (!pointerEntry) fail("ArcadeDB graph projection pointer is missing.", "GRAPH_PROJECTION_SNAPSHOT_MISSING");
     verifyGraphProjectionPointer(pointerEntry.document, prepared);
     const transport = assertArcadeDbPreparedTraversalTransport(this.transport);
@@ -1704,9 +1734,9 @@ export class ArcadeDbGraphProjectionAdapter {
         maxDepth: prepared.traversalQuery.maxDepth,
         maxRecords,
       });
-      verifyArcadeDbServerTraversalResponse({ request: prepared, response, maxRecords });
+      verifyArcadeDbServerTraversalResponseAgainstPrepared({ prepared, response, maxRecords });
     }
-    return buildPreparedTraversalVerification(prepared, "arcadedb-manifest-bounded-expansion");
+    return buildPreparedTraversalVerificationFromVerified(prepared, "arcadedb-manifest-bounded-expansion");
   }
 }
 
@@ -1766,6 +1796,17 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
 
   readPointer() {
     const entry = this.callRemote(() => this.remote.readPointer(), () => this.local.readPointer());
+    if (!this.fallbackUsed && entry) this.remoteObserved = true;
+    return entry;
+  }
+
+  readPointerForPreparedQuery() {
+    const entry = this.callRemote(
+      () => typeof this.remote.readPointerForPreparedQuery === "function"
+        ? this.remote.readPointerForPreparedQuery()
+        : this.remote.readPointer(),
+      () => this.local.readPointer(),
+    );
     if (!this.fallbackUsed && entry) this.remoteObserved = true;
     return entry;
   }
@@ -1849,10 +1890,10 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
     return result;
   }
 
-  queryPrepared(request) {
+  queryPrepared(request, context = {}) {
     const verification = this.callRemote(
-      () => this.remote.queryPrepared(request),
-      () => this.local.queryPrepared(request),
+      () => this.remote.queryPrepared(request, context),
+      () => this.local.queryPrepared(request, context),
     );
     if (!this.fallbackUsed) this.remoteObserved = true;
     return verification;
@@ -2543,7 +2584,9 @@ export function inspectGraphProjection({ projectRoot, graph, adapter = null } = 
 function inspectPreparedGraphProjection({ projectRoot, graph, adapter }) {
   verifyTemporalProvenanceGraph(graph);
   const selected = createGraphProjectionAdapter({ projectRoot, adapter });
-  const pointerEntry = selected.readPointer();
+  const pointerEntry = typeof selected.readPointerForPreparedQuery === "function"
+    ? selected.readPointerForPreparedQuery()
+    : selected.readPointer();
   if (!pointerEntry) return {
     status: "not-materialized",
     graphSnapshotId: graph.graphSnapshotId,
@@ -2566,6 +2609,7 @@ function inspectPreparedGraphProjection({ projectRoot, graph, adapter }) {
     status: "current",
     graphSnapshotId: graph.graphSnapshotId,
     pointer,
+    pointerReadToken: pointerEntry[PREPARED_POINTER_READ_TOKEN] || null,
     pointerLocation: pointerEntry.location,
     snapshotVerification: "query-scoped-prepared",
     fallbackAvailable: true,
@@ -2594,7 +2638,9 @@ export function queryGraphProjection({ projectRoot, graph, adapter = null, query
   }
   if (prepared) {
     const request = buildPreparedTraversalRequest({ graph, result: expected });
-    const verification = verifyPreparedTraversalVerification(selected.queryPrepared(clone(request)), request);
+    const verification = verifyPreparedTraversalVerification(selected.queryPrepared(clone(request), {
+      pointerReadToken: inspected.pointerReadToken,
+    }), request);
     const selectedDiagnostics = typeof selected.diagnostics === "function" ? selected.diagnostics() : {};
     return {
       result: expected,

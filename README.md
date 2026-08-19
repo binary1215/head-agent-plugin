@@ -577,6 +577,12 @@ compare-and-swap advances the remote pointer only after staged conformance and
 local recovery verification. Re-running an unchanged graph produces a
 zero-batch sync receipt.
 
+Prepared traversal performs one verified pointer read, one topology-manifest
+read, and one bounded traversal request per query. A non-serializable one-shot
+binding reuses only the pointer read made by the same adapter in the same
+synchronous query path; direct calls, missing bindings, and reuse fall back to
+normal remote pointer verification.
+
 See [Graph projection adapter](docs/graph-projection-adapter.md) for the current
 activation, recovery, and failure boundaries.
 
