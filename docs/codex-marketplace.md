@@ -32,6 +32,11 @@ strictly verified tree and prevents Git from rewriting LF/CRLF bytes on a
 different operating system, so the distribution manifest remains portable
 rather than validating only on the Linux publisher.
 
+The source branch separately enforces `text=auto eol=lf`. This makes a fresh
+Windows, macOS, or Linux source checkout feed the same text bytes into direct
+installation and marketplace assembly; the generated branch then freezes those
+already normalized bytes with `* -text`.
+
 ## Installation
 
 ```powershell
