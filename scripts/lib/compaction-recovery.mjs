@@ -4,8 +4,9 @@ import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
+import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
-export const COMPACTION_RECOVERY_VERSION = "0.1.0";
+export const COMPACTION_RECOVERY_VERSION = "0.2.0";
 
 const OPEN_STATES = new Set(["prepared", "provider_compacted", "verified"]);
 const TERMINAL_STATES = new Set(["continued", "superseded", "aborted"]);
@@ -165,6 +166,7 @@ function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, curr
     protocol: { name: "head-agent-core-session-run-recovery", version: COMPACTION_RECOVERY_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
+    authorityBoundary: artifactAuthorityBoundary("SessionRunCheckpoint"),
     purpose: requiredText(purpose, "Checkpoint purpose"),
     approvedDecisions: stringList(approvedDecisions, "Approved decisions"),
     currentPosition: requiredText(currentPosition, "Current position"),
@@ -205,6 +207,11 @@ export function readRecoveryCheckpoint({ root = ".", checkpointId } = {}) {
     || !checkpoint.currentPosition || !checkpoint.nextExpectedResult) {
     fail("Recovery checkpoint is incomplete or belongs to another Project/Session.", "INVALID_RECOVERY_CHECKPOINT");
   }
+  const checkpointVersion = checkpoint.protocol?.version;
+  if (checkpoint.protocol?.name !== "head-agent-core-session-run-recovery" || !new Set(["0.1.0", COMPACTION_RECOVERY_VERSION]).has(checkpointVersion)) {
+    fail("Recovery checkpoint protocol is invalid.", "INVALID_RECOVERY_CHECKPOINT");
+  }
+  if (checkpointVersion === COMPACTION_RECOVERY_VERSION) verifyArtifactAuthorityBoundary("SessionRunCheckpoint", checkpoint.authorityBoundary);
   verifyContentIdentity(checkpoint, { idField: "checkpointId", hashField: "checkpointDigest", prefix: "checkpoint", label: "Recovery checkpoint" });
   return { status: "verified", file, checkpoint };
 }

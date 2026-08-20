@@ -2,11 +2,11 @@
 
 Status: active direction authority
 
-Current milestone: v0.8 risk-proportional Product Operating Loop and universal plugin surface
+Current milestone: formal authority-plane semantics and original-author Graph/record boundary re-audit
 
 Previous completed slice: the offline-wake provider-client round trip and its direct author source audit established the portable host-export boundary, but the author withheld the three final superiority verdicts pending already-running exact attachment/replacement, bounded one-shot interrupt/close, and a worker question that waits for a non-authoritative HEAD reply.
 
-Immediate next slice: return the pushed source and passing actual Codex/OpenCode evidence to the original author for direct final audit. The implementation and opt-in E2E start Codex HEAD first and attach the current endpoint while it boundedly waits; OpenCode then starts under a distinct process proof, sends an authority question, and boundedly waits for HEAD's immutable reply. The host claims and acknowledges the current endpoint without spawning a provider, and the prior replaced endpoint receives zero requests. Reply wait remains independent of delivery acknowledgment and creates no `ReviewDecision`. Separate real Codex/OpenCode clients prove token-fenced one-shot `interrupt` and `close` plus native tree cleanup; provider-session resume, stream, service hosting, and broader process-host control remain deferred. Raw process proofs, binding/control tokens, provider-session identities, prompts, and transcripts remain outside persisted state; `.head`, Product Canon, compaction canon, and execution authority are unchanged. No Herdr executable, socket, command, pane, or TUI behavior enters this plugin; equivalent coordination remains a provider-neutral host contract. Final completion still requires direct author source/test inspection, no blocking correction, and explicit `philosophical superiority: yes`, `overall completeness superiority: yes`, and `overall superiority: yes`.
+Immediate next slice: implement and return the original author's philosophical and Graph/record corrections for direct source audit. Formalize five semantic planes—Normative Authority, Canonical Recovery/Lineage Record, Evidence Record, Derived Relation/View, and Operational Effect—while keeping Distribution and Host as architectural planes outside the meaning lattice. Prove ResultPacket is evidence rather than recovery Canon, SessionRunCheckpoint remains sufficient after evidence deletion, GraphSnapshot and GraphDB are derived indexes rather than Product semantic Canon, projection writes cannot mutate Canon bytes, and an application receipt appears only in a later child graph rather than the snapshot it names. Preserve the already-passing Codex/OpenCode attachment, replacement, reply-wait, interrupt, and close evidence and the final three-verdict requirement.
 
 Last reviewed: 2026-08-21
 
@@ -86,6 +86,12 @@ User objective and project canon
 ```
 
 HEAD owns the whole-outcome judgment. Executors may accumulate detailed investigation, code, failures, fixes, and verification, but they do not silently redefine the whole plan. Only the result, evidence, plan delta, impact radius, verification, and explicit unknowns return to HEAD by default.
+
+## Authority-plane and Graph/record invariant
+
+The active executable boundary is defined in [`authority-plane-contract.md`](authority-plane-contract.md). Product Canon and explicit ReviewDecisions own normative meaning; Project, Session, Run, WholePlan, Capsule, ExecutionContract, and checkpoint own recovery lineage; ResultPackets and Worker Reports are evidence; GraphSnapshot, GraphDB, traversal, Markdown, and continuity views are derived; PID, proof, token, endpoint, inbox, delivery, and provider-session state are operational. Distribution and Host are architectural planes that carry these contracts without acquiring meaning or recovery authority.
+
+Authority never amplifies through a relation or storage backend. A GraphSnapshot binds the ProductModel it projects but remains a rebuildable Core retrieval index, never the Product semantic Canon. Projection writes are byte-fenced from Product Canon. A ResultPacket may disappear after a checkpoint without changing checkpoint recovery direction. A receipt cannot be included in the GraphSnapshot it names; only a causally later child may project it. These constraints are tested behavior, not documentation convention.
 
 “Fresh HEAD” means a new logical review context hydrated from immutable project artifacts. It does not require resuming a hidden provider conversation or scraping a TUI session.
 
@@ -884,6 +890,7 @@ If an applicable answer is “no” or “unknown,” record the gap before proc
 
 ## Decision history
 
+- 2026-08-21: the original author compared the proposed five-plane model with the original Core and Product Graph sources and returned `original philosophy alignment: partial` and `graph-record boundary alignment: partial`. The accepted alignment is Whole-plan HEAD, user/Canon authority, candidate non-authority, checkpoint-first compaction, and provider/Git/GraphDB independence. The blocking philosophical gap was conflating Product semantic Canon with Core Graph retrieval and leaving ResultPacket/checkpoint and receipt causality implicit. The correction formalizes P1 normative, P2 recovery/lineage, P3 evidence, P4 derived relation/view, and P5 operational effect while keeping Distribution/Host outside the meaning lattice; embeds and verifies those boundaries in current lineage, checkpoint, GraphSnapshot, document-review/revision/receipt artifacts; byte-fences graph materialization from Product Canon; proves checkpoint recovery after ResultPacket deletion; and enforces receipt exclusion from its named snapshot plus inclusion only in a later child. This entry records implementation and local evidence, not author acceptance; direct pushed-source re-audit remains required.
 - 2026-08-20: made communication with the original HEAD Agent author agent an active iterative design-review mechanism rather than a final-approval ceremony. At each material comparative boundary, the author is asked to propose invariants and failure cases before implementation when feasible, then to inspect the exact commit and reproducible evidence afterward; blocking corrections repeat the loop. Author feedback and mail remain advisory evidence rather than project authority, and summary-only or conditional verdicts cannot satisfy the final direct-source superiority audit.
 - 2026-08-18: selected authority-preserving Execution Lineage as the product direction.
 - 2026-08-18: placed Execution Lineage Contract before Repository World Model and GraphDB work.

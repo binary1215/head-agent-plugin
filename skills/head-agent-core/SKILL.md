@@ -13,7 +13,7 @@ Before planning a material change, starting implementation, or declaring a miles
 
 ## Operating contract
 
-1. Read `references/authority-and-roles.md` before choosing an execution mode.
+1. Read `references/authority-and-roles.md` and `../../docs/authority-plane-contract.md` before choosing an execution mode or consuming a graph, record, receipt, or operational effect.
 2. Keep the whole outcome, authoritative inputs, observed state, fixed decisions, consumers, and evidence connected in HEAD context.
 3. Use Session mode for direct work and one-shot bounded results. Use a Run only after a non-trivial execution contract is accepted.
 4. Keep user-owned decisions with the user. Tool or runtime capability never grants publication, deployment, payment, policy, architecture, or other consequential authority.
@@ -81,7 +81,7 @@ promotion, or Canon authority and is not Herdr integration.
 
 Read `../../docs/execution-lineage.md` before creating or operating a Run.
 
-The lineage boundary is `WholePlanSnapshot`, `ExecutionContract`, `ResultPacket`, `ReviewDecision`, and `LineageLink`. A Run starts only from a verified Execution Contract, finishes through a Result Packet, and blocks the next Run until HEAD records a ReviewDecision. Build the deterministic Fresh HEAD review projection before deciding; it includes the whole plan, contract, result, and Capsule reference while explicitly excluding executor transcript and provider session state. The ReviewDecision must carry that projection's exact `reviewContextId`.
+The lineage boundary is `WholePlanSnapshot`, `ExecutionContract`, `ResultPacket`, `ReviewDecision`, and `LineageLink`. WholePlanSnapshot and ExecutionContract are P2 recovery/lineage records, ResultPacket is P3 evidence, and ReviewDecision is a P1 normative record. A Run starts only from a verified Execution Contract, finishes through a Result Packet, and blocks the next Run until HEAD records a ReviewDecision. Build the deterministic Fresh HEAD review projection before deciding; it includes the whole plan, contract, result, and Capsule reference while explicitly excluding executor transcript and provider session state. The ReviewDecision must carry that projection's exact `reviewContextId`.
 
 An `accept` decision permits another contract against the current plan. `revise` or `expand` requires `lineage-next-plan` to create a new generation linked to the ReviewDecision before another Run. `rollback` or `escalate` requires user-owned direction. ResultPacket knowledge proposals and HEAD recommendations have no authority effect until a separate authorized promotion process exists. Automatic provider runtime hydration, authorized knowledge promotion, runtime resumption, and non-compute worker control remain deferred.
 
@@ -89,7 +89,7 @@ An `accept` decision permits another contract against the current plan. `revise`
 
 Read `../../docs/compaction-recovery.md` before intentionally compacting a recovery-sensitive Session or active Run. Compaction is lossy; never use a provider summary, transcript, provider-session identity, ContextCapsule, or `HEADContinuitySnapshot` to rewrite `purpose`, approved decisions, current position, or the next expected result.
 
-Observe and ordinary Session work do not create compaction artifacts by default. At a natural idle boundary, use `head_compact_prepare` for an active Run or an explicitly recovery-sensitive Session, perform provider compaction outside Core, then call `head_compact_verify` with trusted real-user-turn evidence. Only call `head_compact_continue` after verification. A newer real user turn supersedes the continuation, and a consumed token is never replayed. Open reviews remain open; compaction is not a ReviewDecision and cannot change Product Canon, candidates, external systems, or recovery authority.
+Observe and ordinary Session work do not create compaction artifacts by default. At a natural idle boundary, use `head_compact_prepare` for an active Run or an explicitly recovery-sensitive Session, perform provider compaction outside Core, then call `head_compact_verify` with trusted real-user-turn evidence. Only call `head_compact_continue` after verification. A newer real user turn supersedes the continuation, and a consumed token is never replayed. Open reviews remain open; compaction is not a ReviewDecision and cannot change Product Canon, candidates, external systems, or recovery authority. A ResultPacket or Worker Report remains P3 evidence; after checkpoint creation it is not required to recover the exact P2 checkpoint direction.
 
 ## Role coordination
 

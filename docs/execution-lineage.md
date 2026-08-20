@@ -17,6 +17,13 @@ A Run cannot start from a free-form goal. It requires a persisted and digest-ver
 
 A Run cannot finish with only a success string. Completion creates a `ResultPacket` containing evidence and verification. The project enters Review mode and blocks the next Run until HEAD records a `ReviewDecision`.
 
+The active lineage protocol is `0.4.0`. Each current lineage artifact embeds its
+verified [`AuthorityPlaneContract`](authority-plane-contract.md) boundary:
+WholePlanSnapshot and ExecutionContract are P2 recovery/lineage records,
+ResultPacket is P3 evidence with false recovery, Canon-mutation, and review
+authority, and ReviewDecision is a P1 normative record. A ResultPacket can support
+a decision but cannot create one or become the only recovery source.
+
 The current implementation builds a deterministic Fresh HEAD review projection and can run an authorized Codex or OpenCode one-shot invocation through the common supervised runtime path. A fail-closed application bridge converts only a completed, verified, transcript-free Run draft into the canonical `ResultPacket` and Fresh HEAD projection. Provider-session resume or hydration is not required for meaning or recovery, and no runtime result manufactures a `ReviewDecision`; the calling HEAD must consume the verified projection and provide that decision.
 
 ## Explicit mutation commands
@@ -173,3 +180,4 @@ The read-only MCP tool `head_lineage_artifact` exposes the same digest verificat
 - rollback/escalate without explicit user direction: the next Run is rejected;
 - knowledge proposal or recommendation: remains authority-free and does not mutate canon;
 - provider conversation loss: verified project artifacts remain sufficient to reconstruct the logical state.
+- ResultPacket deletion after a later SessionRunCheckpoint: the exact checkpoint `nextExpectedResult` remains readable without consulting the deleted evidence.

@@ -19,7 +19,7 @@ Git commits, branches, tags, GraphDB record IDs, provider session IDs, document-
 
 ## Logical entities and immutable revisions
 
-Temporal provenance protocol `0.8.0` materializes:
+Temporal provenance protocol `0.9.0` materializes a P4 rebuildable relation and retrieval index under the [`AuthorityPlaneContract`](authority-plane-contract.md):
 
 - stable product logical entities: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`;
 - immutable product states: the corresponding `*Revision` kinds;

@@ -3,8 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
+import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
-export const EXECUTION_LINEAGE_VERSION = "0.3.0";
+export const EXECUTION_LINEAGE_VERSION = "0.4.0";
 export const FRESH_HEAD_REVIEW_VERSION = "0.1.0";
 
 const DEFINITIONS = Object.freeze({
@@ -147,6 +148,7 @@ function buildArtifact({ project, kind, body, parents = [] }) {
     kind,
     protocol: { name: "head-agent-core-execution-lineage", version: EXECUTION_LINEAGE_VERSION },
     projectId: project.projectId,
+    authorityBoundary: artifactAuthorityBoundary(kind),
     ...body,
     lineage: parents.map((item) => ({ kind: "LineageLink", relation: item.relation, targetId: item.targetId })),
   };
@@ -179,6 +181,11 @@ export function readLineageArtifact({ root = ".", artifactId } = {}) {
   if (artifact.kind !== definition.kind || artifact.projectId !== project.projectId) {
     fail("Lineage artifact identity does not match this project.", "LINEAGE_IDENTITY_MISMATCH");
   }
+  const lineageVersion = artifact.protocol?.version;
+  if (artifact.protocol?.name !== "head-agent-core-execution-lineage" || !new Set(["0.3.0", EXECUTION_LINEAGE_VERSION]).has(lineageVersion)) {
+    fail("Lineage artifact protocol is invalid.", "INVALID_LINEAGE_ARTIFACT");
+  }
+  if (lineageVersion === EXECUTION_LINEAGE_VERSION) verifyArtifactAuthorityBoundary(artifact.kind, artifact.authorityBoundary);
   const recordedHash = artifact.artifactHash;
   const payload = { ...artifact };
   delete payload[definition.idField];
@@ -361,6 +368,9 @@ export function createResultPacket({ root = ".", executionContractId, outcome, e
       verification: normalizedVerification,
       unknowns: stringList(unknowns, "Result unknowns"),
       knowledgeProposals: candidateKnowledge(knowledgeProposals),
+      recoveryAuthority: false,
+      canonMutationAuthority: false,
+      reviewDecisionCreated: false,
     },
     parents: [{ relation: "result-of", targetId: contractId }],
   });

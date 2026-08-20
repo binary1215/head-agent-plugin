@@ -6,12 +6,13 @@ import test from "node:test";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
-import { startRun } from "../scripts/lib/run-lineage.mjs";
+import { finishRun, startRun } from "../scripts/lib/run-lineage.mjs";
 import {
   abortCompaction,
   continueCompaction,
   inspectCompaction,
   prepareCompaction,
+  readRecoveryCheckpoint,
   verifyCompaction,
 } from "../scripts/lib/compaction-recovery.mjs";
 import { dispatch, tools as mcpTools } from "../scripts/mcp-server.mjs";
@@ -197,6 +198,41 @@ test("an active Run checkpoint pins verified plan, contract, and capsule identit
     providerCompacted: true,
   });
   assert.equal(verified.checkpoint.runPointer.runId, inspectProject(root).state.activeRunId);
+  abortCompaction({ root, epochId: prepared.epoch.epochId, reason: "fixture cleanup" });
+});
+
+test("checkpoint recovery remains sufficient after ResultPacket evidence is deleted", (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const capsule = compileContext({ root, task: "Prove checkpoint-only recovery", budget: 2000, persist: true }).capsule;
+  const plan = createWholePlanSnapshot({
+    root,
+    objective: "Keep the next expected result recoverable without ResultPacket evidence",
+    plan: [{ id: "checkpoint", outcome: "Self-contained recovery record" }],
+  }).artifact;
+  const contract = createExecutionContract({
+    root,
+    wholePlanId: plan.wholePlanId,
+    capsuleId: capsule.capsuleId,
+    scope: "Produce evidence and checkpoint the next direction",
+    acceptanceCriteria: ["Checkpoint remains readable after evidence deletion"],
+  }).artifact;
+  startRun({ root, executionContractId: contract.executionContractId });
+  const finished = finishRun({
+    root,
+    outcome: "Evidence recorded before checkpoint",
+    evidence: [{ uri: "test/compaction-recovery.test.mjs", digest: "checkpoint-deletion-proof" }],
+    verification: [{ check: "result packet created", status: "passed" }],
+  });
+  const nextExpectedResult = "Continue from the exact checkpoint direction without consulting the deleted ResultPacket";
+  const prepared = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 21, nextExpectedResult }) });
+  assert.equal(prepared.checkpoint.authorityBoundary.planeId, "P2");
+  const resultFile = path.join(root, ".head", "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
+  fs.unlinkSync(resultFile);
+  const recovered = readRecoveryCheckpoint({ root, checkpointId: prepared.checkpoint.checkpointId }).checkpoint;
+  assert.equal(recovered.nextExpectedResult, nextExpectedResult);
+  assert.equal(recovered.authorityBoundary.recoveryAuthority, true);
+  assert.equal(fs.existsSync(resultFile), false);
   abortCompaction({ root, epochId: prepared.epoch.epochId, reason: "fixture cleanup" });
 });
 

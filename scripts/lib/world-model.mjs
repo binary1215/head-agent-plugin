@@ -10,7 +10,8 @@ import {
   verifyGitDecisionHistory,
 } from "./git-history.mjs";
 import { buildSemanticGraph, querySemanticGraph, SEMANTIC_GRAPH_VERSION, verifySemanticGraph } from "./semantic-graph.mjs";
-import { normalizeProductModelDocument, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
+import { normalizeProductModelDocument, PRODUCT_MODEL_RELATIVE_PATH, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
+import { assertProjectionDidNotMutateCanon } from "./authority-plane-contract.mjs";
 import { loadOnboardingGraphProjection, ONBOARDING_GRAPH_PROJECTION_VERSION } from "./onboarding-projection.mjs";
 import { FEATURE_MAPPING_VERSION, loadFeatureMappingProjection } from "./feature-mapping-projection.mjs";
 import {
@@ -66,7 +67,7 @@ import {
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
-export const WORLD_MODEL_VERSION = "0.11.0";
+export const WORLD_MODEL_VERSION = "0.12.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
@@ -87,6 +88,42 @@ function canonical(value) {
 
 function canonicalJson(value) {
   return JSON.stringify(canonical(value));
+}
+
+function restoreCanonBytes(file, beforeBytes) {
+  if (beforeBytes === null) {
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+    return;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(temporary, beforeBytes, { flag: "wx" });
+    fs.renameSync(temporary, file);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+}
+
+function materializeGraphProjectionWithCanonFence({ projectRoot, graph, adapter }) {
+  const canonFile = path.resolve(projectRoot, ...PRODUCT_MODEL_RELATIVE_PATH.split("/"));
+  const beforeBytes = fs.existsSync(canonFile) ? fs.readFileSync(canonFile) : null;
+  let result;
+  let operationError = null;
+  try {
+    result = materializeGraphProjection({ projectRoot, graph, adapter });
+  } catch (error) {
+    operationError = error;
+  }
+  const afterBytes = fs.existsSync(canonFile) ? fs.readFileSync(canonFile) : null;
+  try {
+    assertProjectionDidNotMutateCanon({ beforeBytes, afterBytes });
+  } catch (error) {
+    restoreCanonBytes(canonFile, beforeBytes);
+    throw error;
+  }
+  if (operationError) throw operationError;
+  return result;
 }
 
 function readyProject(root) {
@@ -229,7 +266,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
     }
   }
   if (snapshot.temporalProvenanceGraph) verifyTemporalProvenanceGraph(snapshot.temporalProvenanceGraph);
-  if (snapshot.protocol?.version === WORLD_MODEL_VERSION) {
+  if (new Set(["0.11.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
     const projection = snapshot.onboardingProjection;
     const graphProjection = snapshot.temporalProvenanceGraph?.onboardingProjection;
     if (!projection || projection.authority !== "derived-projection-manifest-not-project-canon"
@@ -866,7 +903,7 @@ async function buildWorldModelLocked({
     snapshotEntry = adapter.writeSnapshot(worldModelId, snapshot);
   }
   verifiedSnapshot(snapshotEntry.document, worldModelId);
-  const graphProjection = materializeGraphProjection({
+  const graphProjection = materializeGraphProjectionWithCanonFence({
     projectRoot: project.projectRoot,
     graph: temporalProvenanceGraph,
     adapter: graphProjectionAdapter,

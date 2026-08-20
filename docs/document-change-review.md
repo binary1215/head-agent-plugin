@@ -4,6 +4,13 @@ Status: active alpha contract
 
 Protocol version: `0.1.0`
 
+Application receipts are P3 evidence under the
+[`AuthorityPlaneContract`](authority-plane-contract.md). The applied Product Canon
+child GraphSnapshot is built before its receipt exists, so that named snapshot
+must exclude the receipt. Only a later audit child may include it; Core verifies
+the changed graph identity, parent SourceSnapshot, same-snapshot exclusion, and
+child inclusion and rejects causal self-reference.
+
 ## Purpose
 
 Generated Markdown is a deterministic human-facing projection of a verified `GraphSnapshot`. An edited page is therefore evidence of a proposed product change, not a new source of authority. This contract supplies the missing explicit transition:

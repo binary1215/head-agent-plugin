@@ -2,6 +2,14 @@
 
 Compaction is a lossy provider operation. Recovery authority remains the canonical Session/Run checkpoint; provider transcripts, compaction summaries, provider-session identities, and `HEADContinuitySnapshot` are orientation or derived views only.
 
+Protocol `0.2.0` embeds the P2 recovery/lineage boundary from
+[`authority-plane-contract.md`](authority-plane-contract.md). A ResultPacket or
+Worker Report is P3 evidence, not a prerequisite for reading the checkpoint's
+purpose, approved decisions, current position, or exact next expected result.
+Deleting ResultPacket evidence after checkpoint creation is covered by an
+executable recovery test; it cannot turn a summary, graph, inbox, or provider
+session into recovery authority.
+
 ## State transition
 
 ```text

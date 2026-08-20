@@ -6,7 +6,9 @@ import { verifyDocumentChangeProjectionInput } from "./document-change-projectio
 import { verifyProductOperatingProjectionInput } from "./product-operating-loop.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.8.0";
+import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
+
+export const TEMPORAL_PROVENANCE_VERSION = "0.9.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -1857,6 +1859,7 @@ export function buildTemporalProvenanceGraph({
     kind: "GraphSnapshot",
     protocol: { name: "head-agent-core-temporal-provenance", version: TEMPORAL_PROVENANCE_VERSION },
     authority: "derived-evidence-only",
+    authorityBoundary: artifactAuthorityBoundary("GraphSnapshot"),
     rebuildable: true,
     uniqueAuthority: false,
     projectId,
@@ -2108,13 +2111,15 @@ export function verifyTemporalProvenanceGraph(graph) {
   const legacyV05 = graphVersion === "0.5.0";
   const legacyV06 = graphVersion === "0.6.0";
   const legacyV07 = graphVersion === "0.7.0";
+  const legacyV08 = graphVersion === "0.8.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
+    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
     fail("Temporal provenance graph cannot claim canonical or unique authority.", "INVALID_TEMPORAL_GRAPH_AUTHORITY");
   }
+  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) verifyArtifactAuthorityBoundary("GraphSnapshot", graph.authorityBoundary);
   if (!/^product-model-[a-f0-9]{24}$/.test(graph.productModelId || "") || !/^[a-f0-9]{64}$/.test(graph.productModelHash || "")) {
     fail("Temporal graph product model identity is invalid.", "INVALID_TEMPORAL_PRODUCT_MODEL");
   }
@@ -2648,7 +2653,7 @@ export function verifyTemporalProvenanceGraph(graph) {
       fail(`Git commit observation is not referenced by VCS evidence: ${commit.nodeId}`, "VCS_EVIDENCE_TEMPORAL_RELATION_MISSING");
     }
   }
-  const documentDescriptor = (legacyV07 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
+  const documentDescriptor = (legacyV07 || legacyV08 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
   if (!documentDescriptor || !["not-provided", "projected"].includes(documentDescriptor.status)) {
     fail("Temporal graph document-change projection descriptor is invalid.", "INVALID_DOCUMENT_CHANGE_TEMPORAL_PROJECTION");
   }
@@ -2701,7 +2706,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     || !/^graph-snapshot-[a-f0-9]{24}$/.test(reference.graphSnapshotId || "") || !/^source-snapshot-[a-f0-9]{24}$/.test(reference.referencedSourceSnapshotId || "")) {
     fail(`DocumentProjectionReference is invalid: ${reference.nodeId}`, "INVALID_DOCUMENT_CHANGE_TEMPORAL_NODE");
   }
-  const productOperatingDescriptor = graphVersion === TEMPORAL_PROVENANCE_VERSION ? graph.productOperatingProjection : productOperatingProjectionDescriptor(null);
+  const productOperatingDescriptor = (legacyV08 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.productOperatingProjection : productOperatingProjectionDescriptor(null);
   if (!productOperatingDescriptor || !["not-provided", "projected"].includes(productOperatingDescriptor.status)) fail("Product operating projection descriptor is invalid.", "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
   for (const field of ["signalIds", "hypothesisIds", "initiativeCandidateIds", "reviewDecisionIds", "reviewedInitiativeIds", "featureCandidateIds", "outcomeObservationIds"]) {
     if (!Array.isArray(productOperatingDescriptor[field]) || canonicalJson(productOperatingDescriptor[field]) !== canonicalJson([...new Set(productOperatingDescriptor[field])].sort())) fail(`Product operating descriptor ${field} is invalid.`, "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
@@ -2845,7 +2850,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     vcsEvidenceCount: vcsEvidenceNodes.length,
     gitCommitObservationCount: gitCommitNodes.length,
   });
-  if (legacyV07 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV07 || legacyV08 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     documentChangeCandidateSetCount: documentCandidateSets.length,
     documentChangeCandidateCount: documentCandidates.length,
     documentChangeReviewDecisionCount: documentReviews.length,
@@ -2853,7 +2858,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     documentChangeApplicationCount: documentApplications.length,
     documentProjectionReferenceCount: documentReferences.length,
   });
-  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV08 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     productSignalCount: operatingSignals.length,
     productHypothesisCount: operatingHypotheses.length,
     productInitiativeCandidateCount: operatingInitiativeCandidates.length,

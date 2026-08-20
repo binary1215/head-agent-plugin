@@ -24,6 +24,12 @@ import {
   inspectWorldModel,
 } from "./world-model.mjs";
 import { createWorldModelStoreAdapter } from "./world-model-store.mjs";
+import {
+  artifactAuthorityBoundary,
+  assertNoAuthorityAmplification,
+  assertReceiptProjectedOnlyInChild,
+  verifyArtifactAuthorityBoundary,
+} from "./authority-plane-contract.mjs";
 
 export const DOCUMENT_CHANGE_REVIEW_VERSION = "0.1.0";
 export const DOCUMENT_CHANGE_REVIEW_DIRECTORY = ".head/document-changes/review-decisions";
@@ -171,6 +177,7 @@ function buildProductModelRevision({ projectId, model }) {
     kind: "ProductModelRevision",
     protocol: { name: "head-agent-core-document-change-product-revision", version: DOCUMENT_CHANGE_REVIEW_VERSION },
     projectId,
+    authorityBoundary: artifactAuthorityBoundary("ProductModelRevision"),
     productModelId: model.productModelId,
     productModelHash: model.productModelHash,
     document: modelDocument(model),
@@ -193,6 +200,7 @@ export function verifyDocumentChangeProductModelRevision(document, projectId = "
     || document.instructionAuthority !== true || document.promotionAuthority !== true) {
     fail("Document-change ProductModelRevision is invalid.", "INVALID_DOCUMENT_CHANGE_PRODUCT_REVISION");
   }
+  if (document.authorityBoundary) verifyArtifactAuthorityBoundary("ProductModelRevision", document.authorityBoundary);
   const normalized = normalizeProductModelDocument(document.document);
   if (normalized.productModelId !== document.productModelId || normalized.productModelHash !== document.productModelHash) {
     fail("Document-change ProductModelRevision does not match its Product Model.", "DOCUMENT_CHANGE_PRODUCT_REVISION_MISMATCH");
@@ -212,6 +220,7 @@ function buildReviewDecision({ candidateSet, disposition, acceptedCandidateIds, 
     protocol: { name: "head-agent-core-document-change-review", version: DOCUMENT_CHANGE_REVIEW_VERSION },
     decisionScope: "document-to-product-canon",
     projectId: candidateSet.projectId,
+    authorityBoundary: artifactAuthorityBoundary("ReviewDecision"),
     candidateSetId: candidateSet.candidateSetId,
     candidateSetHash: candidateSet.candidateSetHash,
     documentProjectionId: candidateSet.documentProjectionId,
@@ -262,6 +271,7 @@ export function verifyDocumentChangeReviewDecision(document, candidateSet = null
     || !HASH_PATTERN.test(document.reviewedProductModelHash || "")) {
     fail("Document-change ReviewDecision is invalid.", "INVALID_DOCUMENT_CHANGE_REVIEW");
   }
+  if (document.authorityBoundary) verifyArtifactAuthorityBoundary("ReviewDecision", document.authorityBoundary);
   const payload = { ...document };
   delete payload.reviewDecisionId;
   delete payload.reviewDecisionHash;
@@ -331,6 +341,7 @@ function buildApplicationReceipt({ review, candidateSet, beforeWorld, afterWorld
     canonMutation: canonChanged ? "exact-user-reviewed-product-model" : "none",
     activeRunMutation: "none",
     authority: "application-evidence-not-independent-authority",
+    authorityBoundary: artifactAuthorityBoundary("DocumentCanonApplicationReceipt"),
     instructionAuthority: false,
     promotionAuthority: false,
   };
@@ -352,6 +363,7 @@ export function verifyDocumentChangeApplicationReceipt(document, review = null, 
     || document.instructionAuthority !== false || document.promotionAuthority !== false) {
     fail("Document-change application receipt is invalid.", "INVALID_DOCUMENT_CHANGE_APPLICATION");
   }
+  if (document.authorityBoundary) verifyArtifactAuthorityBoundary("DocumentCanonApplicationReceipt", document.authorityBoundary);
   for (const identity of [document.previousProductModelId, document.resultingProductModelId]) if (!PRODUCT_MODEL_ID_PATTERN.test(identity || "")) {
     fail("Document-change application Product Model identity is invalid.", "INVALID_DOCUMENT_CHANGE_APPLICATION");
   }
@@ -521,6 +533,12 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
   try {
     let afterWorld = beforeWorld;
     if (review.promotionAuthority) {
+      assertNoAuthorityAmplification({
+        sourceKind: "CandidateSet",
+        targetKind: "ProductCanon",
+        reviewDecision: review,
+        effect: "apply-exact-user-reviewed-product-model",
+      });
       const revision = reviewed.resultingProductModelRevision;
       atomicWrite(canonFile, json(revision.document));
       canonWritten = true;
@@ -580,6 +598,15 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
       graphProjectionAdapter: selectedGraph,
       computeAdapter,
       writerLease,
+    });
+    assertReceiptProjectedOnlyInChild({
+      receiptId: receipt.applicationReceiptId,
+      namedGraphSnapshotId: receipt.after.graphSnapshotId,
+      namedGraphReceiptIds: afterWorld.temporalProvenanceGraph.documentChangeProjection.applicationReceiptIds,
+      namedSourceSnapshotId: afterWorld.temporalProvenanceGraph.sourceSnapshotId,
+      childGraphSnapshotId: audit.snapshot.temporalProvenanceGraph.graphSnapshotId,
+      childParentSourceSnapshotIds: audit.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds,
+      childGraphReceiptIds: audit.snapshot.temporalProvenanceGraph.documentChangeProjection.applicationReceiptIds,
     });
     const auditProjection = materializeMarkdownProjection({ projectRoot, graph: audit.snapshot.temporalProvenanceGraph, adapter: selectedDocuments });
     const verifiedWorld = inspectWorldModel({ root: projectRoot, storeAdapter: selectedStore });
