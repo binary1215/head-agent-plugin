@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.66",
+  "version": "0.3.0-alpha.67",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -47,6 +47,9 @@
       "Execution-bound Outcome Observations",
       "Derived Product Operating Graph",
       "Non-persisted HEAD Continuity Snapshot",
+      "Canonical Session and Run Compaction Recovery",
+      "At-most-once Compaction Continuation",
+      "Newer User Turn Compaction Supersession",
       "Optional ChangeSet VCS Evidence",
       "MATERIALIZED_AS and REFERENCES Relations",
       "Context Continuity",
@@ -139,6 +142,7 @@
       "Propose a Product Initiative from inline reasoning and defer Feature resolution until explicit review without changing Product Canon.",
       "Review a Product Initiative explicitly, then bind OutcomeObservation evidence to an accepted ChangeSet without judging Feature success.",
       "Inspect the on-demand HEAD continuity snapshot as a derived exact-reference view, never as recovery canon.",
+      "Prepare, verify, and continue an intentional lossy provider compaction from a canonical Session or Run checkpoint without treating the provider summary as authority.",
       "Inspect external runtime observations without granting runtime control authority.",
       "Inspect the Codex/OpenCode runtime adapter contract, read-only discovery, bounded version and protocol capability evidence, and HEAD project/Session binding without creating, resuming, streaming, interrupting, or closing a provider session.",
       "Prepare an ExecutionContract-bound runtime invocation authorization without starting a provider, then inspect its digest-verifiable project, Session, Run, input, and resource boundaries.",

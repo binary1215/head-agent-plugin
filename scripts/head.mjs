@@ -29,6 +29,7 @@ import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/rep
 import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
+import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
@@ -126,6 +127,11 @@ export function usage({ all = false } = {}) {
       "head world-history <project> [--query <text>] [--limit <1-500>]",
       "head world-runtime <project> [--query <text>] [--runtime <name>] [--state <state>] [--kind <kind>] [--limit <1-500>]",
       "head checkpoint <project> --summary <text> [--next <text>]",
+      "head compact-prepare <project> --input <recovery.json>",
+      "head compact-verify <project> --input <verification.json>",
+      "head compact-continue <project> --input <continuation.json>",
+      "head compact-status <project>",
+      "head compact-abort <project> --input <abort.json>",
       "head lineage-plan <project> --input <whole-plan.json>",
       "head lineage-next-plan <project> --input <next-whole-plan.json>",
       "head lineage-contract <project> --input <execution-contract.json>",
@@ -351,6 +357,11 @@ export function runCommand(argv = process.argv.slice(2)) {
     limit: options.limit == null ? 50 : Number(options.limit),
   });
   if (command === "checkpoint") return createCheckpoint({ root, summary: options.summary, next: options.next });
+  if (command === "compact-prepare") return prepareCompaction({ ...inputJson(options, "Compaction prepare"), root });
+  if (command === "compact-verify") return verifyCompaction({ ...inputJson(options, "Compaction verification"), root });
+  if (command === "compact-continue") return continueCompaction({ ...inputJson(options, "Compaction continuation"), root });
+  if (command === "compact-status") return inspectCompaction({ root });
+  if (command === "compact-abort") return abortCompaction({ ...inputJson(options, "Compaction abort"), root });
   if (command === "lineage-plan") return createWholePlanSnapshot({ ...inputJson(options, "Whole plan"), root, persist: true });
   if (command === "lineage-next-plan") return createNextWholePlanSnapshot({ ...inputJson(options, "Next whole plan"), root, persist: true });
   if (command === "lineage-contract") return createExecutionContract({ ...inputJson(options, "Execution Contract"), root, persist: true });

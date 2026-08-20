@@ -459,6 +459,11 @@ export function coreContract() {
     "execution-bound-outcome-observations",
     "derived-product-operating-graph",
     "non-persisted-head-continuity-snapshot",
+    "canonical-session-run-compaction-checkpoint",
+    "provider-neutral-compaction-epoch",
+    "at-most-once-compaction-continuation",
+    "newer-user-turn-compaction-supersession",
+    "derived-compaction-recovery-receipt",
   ];
   contract.deferredCapabilities = [
     ...contract.deferredCapabilities,

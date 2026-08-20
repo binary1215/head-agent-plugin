@@ -21,6 +21,7 @@ import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorizat
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
+import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -594,6 +595,33 @@ export const tools = [
     }, required: ["project_root"], additionalProperties: false },
   },
   {
+    name: "head_compact_prepare",
+    description: "Create the canonical Session/Run recovery checkpoint and one bounded compaction epoch. This does not invoke a provider or treat a provider summary as recovery authority.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, runtime: { type: "string", enum: ["manual", "codex", "opencode"], default: "manual" }, user_turn_id_at_prepare: { type: "integer", minimum: 0 }, purpose: { type: "string", minLength: 1 }, approved_decisions: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, current_position: { type: "string", minLength: 1 }, next_expected_result: { type: "string", minLength: 1 }, open_review_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+    }, required: ["project_root", "user_turn_id_at_prepare", "purpose", "approved_decisions", "current_position", "next_expected_result"], additionalProperties: false },
+  },
+  {
+    name: "head_compact_verify",
+    description: "Verify provider compaction against the exact canonical checkpoint. Provider transcripts, summaries, session identities, and HEADContinuitySnapshot are rejected as recovery sources.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, epoch_id: { type: "string", pattern: "^compaction-epoch-[a-f0-9-]{36}$" }, checkpoint_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, current_user_turn_id: { type: "integer", minimum: 0 }, provider_compacted: { type: "boolean" }, recovery_source: { type: "string", enum: ["canonical-checkpoint"] } }, required: ["project_root", "epoch_id", "checkpoint_digest", "current_user_turn_id", "provider_compacted"], additionalProperties: false },
+  },
+  {
+    name: "head_compact_continue",
+    description: "Consume a verified compaction continuation token at most once and return the checkpoint-bound continuation instruction. A newer real user turn supersedes it.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, epoch_id: { type: "string", pattern: "^compaction-epoch-[a-f0-9-]{36}$" }, continuation_token: { type: "string", minLength: 32 }, current_user_turn_id: { type: "integer", minimum: 0 } }, required: ["project_root", "epoch_id", "continuation_token", "current_user_turn_id"], additionalProperties: false },
+  },
+  {
+    name: "head_compact_status",
+    description: "Read the current compaction epoch and digest-verified Session/Run checkpoint without disclosing the continuation token.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+  },
+  {
+    name: "head_compact_abort",
+    description: "Abort one open compaction epoch without changing its canonical Session/Run checkpoint or Product Canon.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, epoch_id: { type: "string", pattern: "^compaction-epoch-[a-f0-9-]{36}$" }, reason: { type: "string", minLength: 1 } }, required: ["project_root", "epoch_id", "reason"], additionalProperties: false },
+  },
+  {
     name: "head_product_note",
     description: "Prepare a non-persisted epistemically typed product-learning note. It receives no content identity and does not rebuild the World Model.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, statement: { type: "string", minLength: 1 }, epistemic_class: { type: "string", enum: ["observed-fact", "hypothesis", "inferred-meaning"] }, source: { type: "string" }, rationale: { type: "string" }, evidence_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, referenced_by_another_run: { type: "boolean", default: false }, needs_rebuttal: { type: "boolean", default: false }, affects_product_state: { type: "boolean", default: false }, handoff: { type: "boolean", default: false } }, required: ["project_root", "statement", "epistemic_class"], additionalProperties: false },
@@ -875,6 +903,16 @@ export async function dispatch(request, { graphDbTransport = null } = {}) {
                           })
                           : name === "head_operating_lane_recommend"
                             ? recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
+                          : name === "head_compact_prepare"
+                            ? prepareCompaction({ root: args.project_root, runtime: args.runtime || "manual", userTurnIdAtPrepare: args.user_turn_id_at_prepare, purpose: args.purpose, approvedDecisions: args.approved_decisions, currentPosition: args.current_position, nextExpectedResult: args.next_expected_result, openReviewIds: args.open_review_ids || [] })
+                          : name === "head_compact_verify"
+                            ? verifyCompaction({ root: args.project_root, epochId: args.epoch_id, checkpointDigest: args.checkpoint_digest, currentUserTurnId: args.current_user_turn_id, providerCompacted: args.provider_compacted, recoverySource: args.recovery_source || "canonical-checkpoint" })
+                          : name === "head_compact_continue"
+                            ? continueCompaction({ root: args.project_root, epochId: args.epoch_id, continuationToken: args.continuation_token, currentUserTurnId: args.current_user_turn_id })
+                          : name === "head_compact_status"
+                            ? inspectCompaction({ root: args.project_root })
+                          : name === "head_compact_abort"
+                            ? abortCompaction({ root: args.project_root, epochId: args.epoch_id, reason: args.reason })
                           : name === "head_product_note"
                             ? prepareProductLearningNote({ root: args.project_root, statement: args.statement, epistemicClass: args.epistemic_class, source: args.source || "", rationale: args.rationale || "", evidenceIds: args.evidence_ids || [], referencedByAnotherRun: args.referenced_by_another_run ?? false, needsRebuttal: args.needs_rebuttal ?? false, affectsProductState: args.affects_product_state ?? false, handoff: args.handoff ?? false })
                           : name === "head_product_signal_record"
