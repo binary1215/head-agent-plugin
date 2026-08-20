@@ -649,10 +649,10 @@ export class ArcadeDbHttpTransport {
         const edgeJson = batch.operation === "rebase"
           ? `convert.toJson(map.merge(convert.fromJsonMap($source${suffix}[0].edgeJson), {edgeId: :edgeId${suffix}, sourceSnapshotId: :sourceSnapshotId}))`
           : `$source${suffix}[0].edgeJson`;
-        commands.push(`IF ($existing${suffix}.size() = 0 AND $source${suffix}.size() = 1) { CREATE EDGE ${ARCADEDB_EDGE_TYPE} FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :fromNodeId${suffix}) TO (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :toNodeId${suffix}) IF NOT EXISTS SET projectId = :projectId, graphSnapshotId = :targetGraphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, edgeId = :edgeId${suffix}, edgeType = $source${suffix}[0].edgeType, edgeJson = ${edgeJson}; } ELSE { IF ($existing${suffix}.size() = 0) { ROLLBACK; RETURN false; } }`);
+          commands.push(`IF ($existing${suffix}.size() = 0 AND $source${suffix}.size() = 1) { CREATE EDGE ${ARCADEDB_EDGE_TYPE} FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :fromNodeId${suffix}) TO (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :toNodeId${suffix}) SET projectId = :projectId, graphSnapshotId = :targetGraphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, edgeId = :edgeId${suffix}, edgeType = $source${suffix}[0].edgeType, edgeJson = ${edgeJson}; } ELSE { IF ($existing${suffix}.size() = 0) { ROLLBACK; RETURN false; } }`);
       } else {
         Object.assign(params, { [`edgeType${suffix}`]: record.type, [`edgeJson${suffix}`]: graphProjectionCanonicalJson(record) });
-        commands.push(`IF ($existing${suffix}.size() = 0) { CREATE EDGE ${ARCADEDB_EDGE_TYPE} FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :fromNodeId${suffix}) TO (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :toNodeId${suffix}) IF NOT EXISTS SET projectId = :projectId, graphSnapshotId = :targetGraphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, edgeId = :edgeId${suffix}, edgeType = :edgeType${suffix}, edgeJson = :edgeJson${suffix}; }`);
+        commands.push(`IF ($existing${suffix}.size() = 0) { CREATE EDGE ${ARCADEDB_EDGE_TYPE} FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :fromNodeId${suffix}) TO (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :targetGraphSnapshotId AND nodeId = :toNodeId${suffix}) SET projectId = :projectId, graphSnapshotId = :targetGraphSnapshotId, graphSnapshotHash = :graphSnapshotHash, sourceSnapshotId = :sourceSnapshotId, edgeId = :edgeId${suffix}, edgeType = :edgeType${suffix}, edgeJson = :edgeJson${suffix}; }`);
       }
     }
     commands.push("COMMIT RETRY 3", "RETURN true");
@@ -835,19 +835,29 @@ export class ArcadeDbHttpTransport {
   }
 
   writePointerCompareAndSwap(projectId, expectedPointerJson, pointerJson) {
-    const commands = [
-      "BEGIN ISOLATION REPEATABLE_READ",
-      `LOCK TYPE ${ARCADEDB_POINTER_TYPE}`,
-      `LET current = SELECT pointerJson FROM ${ARCADEDB_POINTER_TYPE} WHERE projectId = :projectId LIMIT 1`,
-      `IF ($current.size() = 0) { IF (:expectedPointerJson IS NULL) { INSERT INTO ${ARCADEDB_POINTER_TYPE} SET projectId = :projectId, pointerJson = :pointerJson; } ELSE { ROLLBACK; RETURN false; } } ELSE { IF ($current[0].pointerJson = :expectedPointerJson) { UPDATE ${ARCADEDB_POINTER_TYPE} SET pointerJson = :pointerJson WHERE projectId = :projectId AND pointerJson = :expectedPointerJson; } ELSE { ROLLBACK; RETURN false; } }`,
-      "COMMIT RETRY 3",
-      "RETURN true",
-    ];
-    this.invoke("command", {
-      language: "sqlscript",
-      command: commands.join(";\n"),
-      params: { projectId, expectedPointerJson, pointerJson },
-    });
+    if (expectedPointerJson == null) {
+      try {
+        this.invoke("command", {
+          command: `INSERT INTO ${ARCADEDB_POINTER_TYPE} SET projectId = :projectId, pointerJson = :pointerJson`,
+          params: { projectId, pointerJson },
+        });
+      } catch (error) {
+        const currentPointerJson = this.readPointer(projectId);
+        if (currentPointerJson === pointerJson) return true;
+        if (currentPointerJson != null) return false;
+        throw error;
+      }
+      return this.readPointer(projectId) === pointerJson;
+    }
+    try {
+      this.invoke("command", {
+        command: `UPDATE ${ARCADEDB_POINTER_TYPE} SET pointerJson = :pointerJson WHERE projectId = :projectId AND pointerJson = :expectedPointerJson`,
+        params: { projectId, expectedPointerJson, pointerJson },
+      });
+    } catch (error) {
+      if (this.readPointer(projectId) === pointerJson) return true;
+      throw error;
+    }
     return this.readPointer(projectId) === pointerJson;
   }
 

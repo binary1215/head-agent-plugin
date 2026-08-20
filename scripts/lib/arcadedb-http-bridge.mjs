@@ -94,4 +94,4 @@ if (responseText) {
   catch { body = { message: responseText.slice(0, 1000) }; }
 }
 fs.writeSync(1, JSON.stringify({ ok: response.ok, status: response.status, body }));
-process.exit(response.ok ? 0 : 3);
+process.exitCode = response.ok ? 0 : 3;

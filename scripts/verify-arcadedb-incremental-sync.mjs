@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import {
   ArcadeDbGraphProjectionAdapter,
+  ArcadeDbHttpTransport,
   buildGraphProjectionPointer,
 } from "./lib/graph-projection-adapter.mjs";
-import { buildArcadeDbIncrementalSyncReceipt } from "./lib/arcadedb-incremental-sync.mjs";
+import { buildArcadeDbIncrementalSyncManifest, buildArcadeDbIncrementalSyncReceipt } from "./lib/arcadedb-incremental-sync.mjs";
 import { buildStorageSelection } from "./lib/onboarding-contract.mjs";
 import { buildTemporalProvenanceGraph } from "./lib/temporal-provenance.mjs";
 
@@ -204,9 +206,64 @@ const externalPointer = buildGraphProjectionPointer(baseGraph);
 conflictTransport.pointers.set(projectId, JSON.stringify(externalPointer));
 assert.throws(() => conflict.writePointer(externalPointer), { code: "ARCADEDB_INCREMENTAL_SYNC_POINTER_CONFLICT" });
 
+class HttpCommandContractTransport extends ArcadeDbHttpTransport {
+  constructor() {
+    super({ storageSelection });
+    this.pointerJson = null;
+    this.commands = [];
+  }
+
+  invoke(operation, input = {}) {
+    this.commands.push({ operation, ...input });
+    if (operation === "query") return {
+      ok: true,
+      status: 200,
+      body: { result: this.pointerJson == null ? [] : [{ pointerJson: this.pointerJson }] },
+    };
+    if (input.command?.startsWith("INSERT INTO HeadAgentGraphPointer")) {
+      if (this.pointerJson != null) throw Object.assign(new Error("duplicate pointer"), { code: "ARCADEDB_REQUEST_REJECTED" });
+      this.pointerJson = input.params.pointerJson;
+    }
+    if (input.command?.startsWith("UPDATE HeadAgentGraphPointer")
+      && this.pointerJson === input.params.expectedPointerJson) {
+      this.pointerJson = input.params.pointerJson;
+    }
+    return { ok: true, status: 200, body: { result: [] } };
+  }
+}
+
+const httpContract = new HttpCommandContractTransport();
+const firstPointerJson = JSON.stringify(buildGraphProjectionPointer(baseGraph));
+const secondPointerJson = JSON.stringify(buildGraphProjectionPointer(targetGraph));
+assert.equal(httpContract.writePointerCompareAndSwap(projectId, null, firstPointerJson), true);
+assert.equal(httpContract.writePointerCompareAndSwap(projectId, firstPointerJson, secondPointerJson), true);
+assert.equal(httpContract.writePointerCompareAndSwap(projectId, firstPointerJson, firstPointerJson), false);
+const pointerMutationCommands = httpContract.commands.filter((call) => call.operation === "command");
+assert.match(pointerMutationCommands[0].command, /^INSERT INTO HeadAgentGraphPointer/);
+assert.match(pointerMutationCommands[1].command, /^UPDATE HeadAgentGraphPointer/);
+assert.equal(pointerMutationCommands.some((call) => call.language === "sqlscript" || call.command.includes("LET current")), false);
+
+const initialManifest = buildArcadeDbIncrementalSyncManifest({ targetGraph: baseGraph });
+const parallelPairs = new Map();
+for (const edge of baseGraph.edges) {
+  const key = `${edge.from}:${edge.to}`;
+  parallelPairs.set(key, (parallelPairs.get(key) || 0) + 1);
+}
+assert.equal([...parallelPairs.values()].some((count) => count > 1), true);
+const edgeBatch = initialManifest.batches.find((batch) => batch.recordKind === "edge" && batch.operation === "create");
+assert.ok(edgeBatch);
+httpContract.applySyncBatch(projectId, initialManifest, edgeBatch);
+const edgeCommand = httpContract.commands.at(-1);
+assert.equal(edgeCommand.operation, "command");
+assert.equal(edgeCommand.command.includes("IF NOT EXISTS"), false);
+
+const bridgeSource = fs.readFileSync(new URL("./lib/arcadedb-http-bridge.mjs", import.meta.url), "utf8");
+assert.equal(bridgeSource.includes("process.exit(response.ok ? 0 : 3)"), false);
+assert.equal(bridgeSource.includes("process.exitCode = response.ok ? 0 : 3"), true);
+
 process.stdout.write(`${JSON.stringify({
   status: "arcadedb_incremental_sync_verified",
-  scenarios: ["initial-upload", "no-change", "semantic-rebase-delta", "checkpoint-resume", "pointer-conflict", "receipt"],
+  scenarios: ["initial-upload", "no-change", "semantic-rebase-delta", "checkpoint-resume", "pointer-conflict", "receipt", "http-cas-contract", "parallel-edge-command-contract", "bridge-graceful-exit-contract"],
   initialBatchCount: initialState.manifest.batchCount,
   deltaBatchCount: deltaState.manifest.batchCount,
   rebasedNodeCount: deltaState.manifest.nodeDelta.rebased.count,

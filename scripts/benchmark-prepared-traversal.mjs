@@ -167,9 +167,14 @@ class ReadOnlyObservedArcadeDbTransport extends ObservationLedger {
   denyWrite() { this.writeAttemptCount += 1; fail("Live benchmark transport is read-only.", "LIVE_BENCHMARK_WRITE_FORBIDDEN"); }
   ensureSchema() { return this.denyWrite(); }
   ensureTopologySchema() { return this.denyWrite(); }
+  ensureSyncSchema() { return this.denyWrite(); }
   writePointer() { return this.denyWrite(); }
   writeSnapshot() { return this.denyWrite(); }
   writeTopology() { return this.denyWrite(); }
+  writeSyncManifest() { return this.denyWrite(); }
+  writeSyncCheckpoint() { return this.denyWrite(); }
+  applySyncBatch() { return this.denyWrite(); }
+  writePointerCompareAndSwap() { return this.denyWrite(); }
   call(name, args) {
     const started = performance.now();
     return this.observe(name, started, this.delegate[name](...args));
@@ -180,6 +185,9 @@ class ReadOnlyObservedArcadeDbTransport extends ObservationLedger {
   readTopology(...args) { return this.call("readTopology", args); }
   readTopologyManifest(...args) { return this.call("readTopologyManifest", args); }
   queryTopology(...args) { return this.call("queryTopology", args); }
+  readSyncManifest(...args) { return this.call("readSyncManifest", args); }
+  readSyncCheckpoints(...args) { return this.call("readSyncCheckpoints", args); }
+  readSyncBatchRecords(...args) { return this.call("readSyncBatchRecords", args); }
 }
 
 function fixtureGraph() {
