@@ -1,0 +1,250 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+import { coreContract, initializeProject } from "../scripts/lib/head-core.mjs";
+import {
+  attachCoordinationWorkspaceHost,
+  createCoordinationWorkspaceHostDeliveryAdapter,
+  detachCoordinationWorkspaceHost,
+  inspectRoleCoordination,
+  issueCoordinationRoleBinding,
+  openCoordinationGeneration,
+  readCoordinationInbox,
+  sendCoordinationMessage,
+} from "../scripts/lib/role-coordination.mjs";
+import { buildRuntimeAdapterComposition, validateWorkspaceHostAdapter } from "../scripts/lib/runtime-adapter.mjs";
+import { VerifiedWorkspaceHostAdapter, WORKSPACE_HOST_COORDINATION_VERSION } from "../scripts/lib/workspace-host-coordination.mjs";
+
+const pluginRoot = path.resolve(import.meta.dirname, "..");
+const client = path.join(import.meta.dirname, "fixtures", "workspace-host-client.mjs");
+
+function fixture() {
+  const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  fs.mkdirSync(parent, { recursive: true });
+  const base = fs.mkdtempSync(path.join(parent, "head-workspace-host-"));
+  const root = path.join(base, "project");
+  const operationalRoot = path.join(base, "operational");
+  fs.mkdirSync(root);
+  initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  return { base, root, operationalRoot, environment: { ...process.env, HEAD_AGENT_OPERATIONAL_STATE_ROOT: operationalRoot } };
+}
+
+function treeBytes(root) {
+  const entries = [];
+  const walk = (directory) => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const file = path.join(directory, name);
+      const relative = path.relative(root, file).replaceAll("\\", "/");
+      const stat = fs.lstatSync(file);
+      if (stat.isDirectory()) walk(file);
+      else entries.push([relative, fs.readFileSync(file).toString("base64")]);
+    }
+  };
+  walk(root);
+  return entries;
+}
+
+function snapshot(fx, endpoints) {
+  return {
+    schemaVersion: 1,
+    kind: "WorkspaceHostSnapshot",
+    protocol: { name: "head-agent-core-workspace-host-snapshot", version: WORKSPACE_HOST_COORDINATION_VERSION },
+    hostKind: "fixture-host",
+    transport: "fixture-memory",
+    hostInstanceId: "fixture-host-instance",
+    snapshotSequence: `snapshot-${endpoints.map((endpoint) => endpoint.terminalId).join("-")}`,
+    endpoints: endpoints.map((endpoint) => ({ cwd: fx.root, ...endpoint })),
+  };
+}
+
+function driver(fx, state = {}) {
+  state.endpoints ||= [
+    { workspaceId: "workspace-head", tabId: "tab-head", endpointId: "endpoint-head", terminalId: "terminal-head", runtime: "codex" },
+    { workspaceId: "workspace-developer", tabId: "tab-developer", endpointId: "endpoint-developer", terminalId: "terminal-developer", runtime: "opencode" },
+  ];
+  state.deliveries ||= [];
+  return {
+    state,
+    describe() {
+      return {
+        schemaVersion: 1,
+        kind: "WorkspaceHostDriverDescriptor",
+        protocol: { name: "head-agent-core-workspace-host-driver", version: WORKSPACE_HOST_COORDINATION_VERSION },
+        hostKind: "fixture-host",
+        transport: "fixture-memory",
+        providerNeutral: true,
+        tuiScraping: false,
+        providerSessionIdentityPersisted: false,
+      };
+    },
+    snapshot() { return snapshot(fx, state.endpoints); },
+    send({ endpoint, messageId, text }) {
+      state.deliveries.push({ endpoint: { ...endpoint }, messageId, text });
+      if (state.afterSend) state.afterSend();
+      if (state.throwAfterSend) throw new Error("ambiguous fixture send");
+      return {
+        status: "delivered",
+        messageId,
+        hostInstanceId: "fixture-host-instance",
+        workspaceId: endpoint.workspaceId,
+        tabId: endpoint.tabId,
+        endpointId: endpoint.endpointId,
+        terminalId: endpoint.terminalId,
+      };
+    },
+  };
+}
+
+const caller = (role) => ({ workspaceId: `workspace-${role}`, tabId: `tab-${role}`, endpointId: `endpoint-${role}` });
+
+test("active WorkspaceHostAdapter delivers only after durable acceptance and exact target proof", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.base, { recursive: true, force: true }));
+  const projectBefore = treeBytes(path.join(fx.root, ".head"));
+  openCoordinationGeneration({ root: fx.root, environment: fx.environment });
+  const developer = issueCoordinationRoleBinding({ root: fx.root, role: "developer", environment: fx.environment });
+  const head = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+  const hostDriver = driver(fx);
+  const adapter = new VerifiedWorkspaceHostAdapter({ driver: hostDriver });
+  validateWorkspaceHostAdapter(adapter);
+  const composition = buildRuntimeAdapterComposition({ workspaceHostAdapter: adapter });
+  assert.equal(composition.activationBoundary.workspaceHostMessagingEnabled, true);
+  assert.equal(composition.activationBoundary.runtimeControlEnabled, false);
+  assert.equal(composition.workspaceHostProbe.status, "active");
+  assert.ok(coreContract().activeCapabilities.includes("verified-workspace-host-adapter"));
+  assert.ok(coreContract().deferredCapabilities.includes("host-specific-workspace-adapter-and-live-e2e"));
+
+  assert.equal(attachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, workspaceHostAdapter: adapter, caller: caller("developer") }).status, "attached");
+  assert.equal(attachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: head.bindingToken, workspaceHostAdapter: adapter, caller: caller("head") }).status, "attached");
+  assert.deepEqual(inspectRoleCoordination({ root: fx.root, environment: fx.environment }).attachedRoles, ["developer", "head"]);
+
+  const accepted = sendCoordinationMessage({
+    root: fx.root,
+    environment: fx.environment,
+    bindingToken: developer.bindingToken,
+    toRole: "head",
+    content: "Review the evidence; this message grants no authority.",
+    idempotencyKey: "live-delivery",
+    deliveryAdapter: createCoordinationWorkspaceHostDeliveryAdapter({ root: fx.root, environment: fx.environment, workspaceHostAdapter: adapter }),
+  });
+  assert.equal(accepted.status, "accepted");
+  assert.equal(accepted.delivery.status, "delivered");
+  assert.match(accepted.delivery.targetAttachmentId, /^workspace-attachment-[a-f0-9]{32}$/);
+  assert.equal(hostDriver.state.deliveries.length, 1);
+  assert.match(hostDriver.state.deliveries[0].text, /^\[HEAD coordination evidence only; from developer; msg:/);
+  assert.equal(readCoordinationInbox({ root: fx.root, environment: fx.environment, bindingToken: head.bindingToken }).messages[0].messageId, accepted.message.messageId);
+  assert.deepEqual(treeBytes(path.join(fx.root, ".head")), projectBefore);
+  const deliveryReceiptFile = path.join(
+    fx.operationalRoot, "role-coordination", "v1", accepted.message.projectId, accepted.message.headSessionId,
+    "generation-state", accepted.message.authorityGeneration, "deliveries", `${accepted.message.messageId}.json`,
+  );
+  const operational = fs.readFileSync(deliveryReceiptFile, "utf8");
+  assert.equal(operational.includes("providerSession"), false);
+  const tamperedReceipt = JSON.parse(operational);
+  tamperedReceipt.targetAttachmentId = "workspace-attachment-00000000000000000000000000000000";
+  fs.writeFileSync(deliveryReceiptFile, `${JSON.stringify(tamperedReceipt, null, 2)}\n`);
+  assert.throws(() => sendCoordinationMessage({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, toRole: "head", content: "Review the evidence; this message grants no authority.", idempotencyKey: "live-delivery" }), { code: "INVALID_COORDINATION_DELIVERY_RECEIPT" });
+});
+
+test("stale, replaced, detached, and post-send-changed targets never become delivered", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.base, { recursive: true, force: true }));
+  const opened = openCoordinationGeneration({ root: fx.root, environment: fx.environment });
+  const developer = issueCoordinationRoleBinding({ root: fx.root, role: "developer", environment: fx.environment });
+  const head = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+  const state = {};
+  const hostDriver = driver(fx, state);
+  const adapter = new VerifiedWorkspaceHostAdapter({ driver: hostDriver });
+  attachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: head.bindingToken, workspaceHostAdapter: adapter, caller: caller("head") });
+
+  state.endpoints[0].terminalId = "terminal-head-replaced";
+  const stale = sendCoordinationMessage({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, toRole: "head", content: "stale", idempotencyKey: "stale", deliveryAdapter: createCoordinationWorkspaceHostDeliveryAdapter({ root: fx.root, environment: fx.environment, workspaceHostAdapter: adapter }) });
+  assert.equal(stale.delivery.status, "unavailable");
+  assert.equal(state.deliveries.length, 0);
+
+  state.endpoints[0].terminalId = "terminal-head";
+  state.afterSend = () => { state.endpoints[0].terminalId = "terminal-head-after-send"; };
+  const changed = sendCoordinationMessage({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, toRole: "head", content: "changed", idempotencyKey: "changed", deliveryAdapter: createCoordinationWorkspaceHostDeliveryAdapter({ root: fx.root, environment: fx.environment, workspaceHostAdapter: adapter }) });
+  assert.equal(changed.delivery.status, "ambiguous");
+  assert.equal(state.deliveries.length, 1);
+  state.afterSend = null;
+  state.endpoints[0].terminalId = "terminal-head";
+
+  state.endpoints.push({ workspaceId: "workspace-head-2", tabId: "tab-head-2", endpointId: "endpoint-head-2", terminalId: "terminal-head-2", runtime: "codex" });
+  state.afterSend = () => attachCoordinationWorkspaceHost({
+    root: fx.root,
+    environment: fx.environment,
+    bindingToken: head.bindingToken,
+    workspaceHostAdapter: adapter,
+    caller: { workspaceId: "workspace-head-2", tabId: "tab-head-2", endpointId: "endpoint-head-2" },
+  });
+  const targetChanged = sendCoordinationMessage({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, toRole: "head", content: "target changed", idempotencyKey: "target-changed", deliveryAdapter: createCoordinationWorkspaceHostDeliveryAdapter({ root: fx.root, environment: fx.environment, workspaceHostAdapter: adapter }) });
+  assert.equal(targetChanged.delivery.status, "ambiguous");
+  state.afterSend = null;
+
+  const replacement = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+  assert.deepEqual(inspectRoleCoordination({ root: fx.root, environment: fx.environment }).attachedRoles, []);
+  const replaced = sendCoordinationMessage({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, toRole: "head", content: "replaced", idempotencyKey: "replaced", deliveryAdapter: createCoordinationWorkspaceHostDeliveryAdapter({ root: fx.root, environment: fx.environment, workspaceHostAdapter: adapter }) });
+  assert.equal(replaced.delivery.status, "unavailable");
+  const head2 = state.endpoints.at(-1);
+  head2.cwd = fx.base;
+  assert.throws(() => attachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: replacement.bindingToken, workspaceHostAdapter: adapter, caller: { workspaceId: head2.workspaceId, tabId: head2.tabId, endpointId: head2.endpointId } }), { code: "WORKSPACE_HOST_PROJECT_MISMATCH" });
+  head2.cwd = fx.root;
+  attachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: replacement.bindingToken, workspaceHostAdapter: adapter, caller: caller("head") });
+  assert.equal(detachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: replacement.bindingToken, workspaceHostAdapter: adapter }).status, "detached");
+  const detached = sendCoordinationMessage({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, toRole: "head", content: "detached", idempotencyKey: "detached", deliveryAdapter: createCoordinationWorkspaceHostDeliveryAdapter({ root: fx.root, environment: fx.environment, workspaceHostAdapter: adapter }) });
+  assert.equal(detached.delivery.status, "unavailable");
+
+  const targetRoot = path.join(fx.operationalRoot, "role-coordination", "v1", opened.generation.projectId, opened.generation.headSessionId, "generation-state", opened.generation.authorityGeneration, "targets");
+  const records = fs.readdirSync(path.join(targetRoot, "by-id")).map((name) => JSON.parse(fs.readFileSync(path.join(targetRoot, "by-id", name), "utf8"))).filter((record) => record.role === "head").sort((left, right) => left.targetSequence - right.targetSequence);
+  const first = records[0];
+  fs.writeFileSync(path.join(targetRoot, "roles", "head.json"), `${JSON.stringify({ schemaVersion: 1, projectId: first.projectId, headSessionId: first.headSessionId, authorityGeneration: first.authorityGeneration, role: first.role, targetId: first.targetId, targetHash: first.targetHash, targetSequence: first.targetSequence, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+  assert.throws(() => inspectRoleCoordination({ root: fx.root, environment: fx.environment }), { code: "COORDINATION_TARGET_ROLLBACK" });
+});
+
+test("two fresh MCP processes share exact host-local targets without provider session identity", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.base, { recursive: true, force: true }));
+  openCoordinationGeneration({ root: fx.root, environment: fx.environment });
+  const developer = issueCoordinationRoleBinding({ root: fx.root, role: "developer", environment: fx.environment });
+  const head = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+  const snapshotFile = path.join(fx.base, "snapshot.json");
+  const deliveryFile = path.join(fx.base, "deliveries.jsonl");
+  const requestFile = path.join(fx.base, "request.json");
+  fs.writeFileSync(snapshotFile, `${JSON.stringify({ ...snapshot(fx, driver(fx).state.endpoints), transport: "fixture-file" }, null, 2)}\n`);
+  fs.writeFileSync(deliveryFile, "");
+  const invoke = ({ token, role, request }) => {
+    fs.writeFileSync(requestFile, `${JSON.stringify(request, null, 2)}\n`);
+    const result = spawnSync(process.execPath, [client, requestFile, snapshotFile, deliveryFile], {
+      cwd: pluginRoot,
+      encoding: "utf8",
+      env: {
+        ...fx.environment,
+        HEAD_AGENT_COORDINATION_BINDING_TOKEN: token,
+        HEAD_AGENT_HOST_WORKSPACE_ID: `workspace-${role}`,
+        HEAD_AGENT_HOST_TAB_ID: `tab-${role}`,
+        HEAD_AGENT_HOST_ENDPOINT_ID: `endpoint-${role}`,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const headAttached = invoke({ token: head.bindingToken, role: "head", request: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
+  assert.deepEqual(headAttached.result.structuredContent.messages, []);
+  const listed = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 10, method: "tools/list", params: {} } });
+  const roleTools = listed.result.tools.filter((tool) => tool.name.startsWith("head_coordination_"));
+  assert.equal(roleTools.length, 3);
+  for (const tool of roleTools) {
+    const properties = Object.keys(tool.inputSchema.properties || {});
+    assert.deepEqual(properties.filter((field) => ["caller", "workspace_id", "tab_id", "endpoint_id", "terminal_id", "attachment_id"].includes(field)), []);
+  }
+  const sent = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "head_coordination_send_message", arguments: { project_root: fx.root, to_role: "head", content: "fresh process delivery", idempotency_key: "fresh-host-process" } } } });
+  assert.equal(sent.result.structuredContent.delivery.status, "delivered");
+  const inbox = invoke({ token: head.bindingToken, role: "head", request: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
+  assert.equal(inbox.result.structuredContent.messages[0].content, "fresh process delivery");
+  const allState = fs.readFileSync(deliveryFile, "utf8") + fs.readFileSync(snapshotFile, "utf8");
+  assert.equal(allState.includes("providerSession"), false);
+});

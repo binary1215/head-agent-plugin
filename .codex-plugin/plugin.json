@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.68",
+  "version": "0.3.0-alpha.69",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -108,6 +108,7 @@
       "Generation-fenced Durable Role Messaging",
       "Idempotent Send Read and Immutable Reply",
       "Optional Post-acceptance WorkspaceHost Delivery",
+      "Exact Endpoint WorkspaceHost Attachment and Delivery",
       "Privacy-preserving Codex and OpenCode CLI Discovery",
       "Bounded Non-session Runtime Version Evidence",
       "Provider-specific Protocol Capability Evidence",
@@ -148,6 +149,7 @@
       "Inspect the on-demand HEAD continuity snapshot as a derived exact-reference view, never as recovery canon.",
       "Prepare, verify, and continue an intentional lossy provider compaction from a canonical Session or Run checkpoint without treating the provider summary as authority.",
       "Exchange durable role messages through a trusted host binding without allowing messages to replace ExecutionContracts, ReviewDecisions, or Product Canon.",
+      "Attach a trusted host-injected caller to an exact live role endpoint and require fresh target, acknowledgment, and post-send evidence before reporting delivery.",
       "Inspect external runtime observations without granting runtime control authority.",
       "Inspect the Codex/OpenCode runtime adapter contract, read-only discovery, bounded version and protocol capability evidence, and HEAD project/Session binding without creating, resuming, streaming, interrupting, or closing a provider session.",
       "Prepare an ExecutionContract-bound runtime invocation authorization without starting a provider, then inspect its digest-verifiable project, Session, Run, input, and resource boundaries.",

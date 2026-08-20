@@ -10,6 +10,7 @@ import {
   buildRuntimeAdapterComposition,
   buildRuntimeAdapterContractMatrix,
   validateAgentRuntimeAdapter,
+  validateWorkspaceHostAdapter,
   verifyRuntimeAdapterComposition,
   verifyRuntimeAdapterContractMatrix,
 } from "./lib/runtime-adapter.mjs";
@@ -39,6 +40,7 @@ import {
   verifyRuntimeProjectBinding,
   verifyRuntimeProtocolEvidence,
 } from "./lib/runtime-protocol-evidence.mjs";
+import { VerifiedWorkspaceHostAdapter, WORKSPACE_HOST_COORDINATION_VERSION } from "./lib/workspace-host-coordination.mjs";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const hasOwnKeyDeep = (value, key) => {
@@ -85,6 +87,18 @@ try {
   for (const method of ["attach", "send", "receive", "detach"]) {
     assert.throws(() => hostAdapter[method](), { code: "RUNTIME_ADAPTER_CONTROL_NOT_ENABLED" });
   }
+  const activeHostAdapter = new VerifiedWorkspaceHostAdapter({
+    driver: {
+      describe: () => ({ schemaVersion: 1, kind: "WorkspaceHostDriverDescriptor", protocol: { name: "head-agent-core-workspace-host-driver", version: WORKSPACE_HOST_COORDINATION_VERSION }, hostKind: "fixture-host", transport: "fixture-memory", providerNeutral: true, tuiScraping: false, providerSessionIdentityPersisted: false }),
+      snapshot: () => ({ schemaVersion: 1, kind: "WorkspaceHostSnapshot", protocol: { name: "head-agent-core-workspace-host-snapshot", version: WORKSPACE_HOST_COORDINATION_VERSION }, hostKind: "fixture-host", transport: "fixture-memory", hostInstanceId: "fixture-host", snapshotSequence: "fixture-snapshot", endpoints: [] }),
+      send: () => { throw new Error("not invoked by contract verification"); },
+    },
+  });
+  validateWorkspaceHostAdapter(activeHostAdapter);
+  const activeHostComposition = buildRuntimeAdapterComposition({ workspaceHostAdapter: activeHostAdapter });
+  assert.equal(activeHostComposition.activationBoundary.workspaceHostMessagingEnabled, true);
+  assert.equal(activeHostComposition.activationBoundary.runtimeControlEnabled, false);
+  assert.equal(activeHostComposition.workspaceHostProbe.status, "active");
 
   class EscalatingRuntimeAdapter extends ProjectionOnlyAgentRuntimeAdapter {
     describe() { return { ...super.describe(), controlOperationsEnabled: true, controlAuthority: true }; }

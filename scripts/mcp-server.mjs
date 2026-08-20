@@ -22,7 +22,7 @@ import { readRuntimeInvocationResult } from "./lib/runtime-run-result-applicatio
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
-import { COORDINATION_BINDING_ENV, readCoordinationInbox, replyCoordinationMessage, sendCoordinationMessage } from "./lib/role-coordination.mjs";
+import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, readCoordinationInbox, replyCoordinationMessage, sendCoordinationMessage } from "./lib/role-coordination.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -799,7 +799,21 @@ function activateGraphDbFromMcp(args, transport) {
   return activateArcadeDbGraphProjection({ root: args.project_root, transport });
 }
 
-export async function dispatch(request, { graphDbTransport = null } = {}) {
+function coordinationHostCall({ root, bindingToken, coordinationWorkspaceHost }) {
+  if (!coordinationWorkspaceHost) return null;
+  attachCoordinationWorkspaceHost({
+    root,
+    bindingToken,
+    workspaceHostAdapter: coordinationWorkspaceHost.adapter,
+    caller: coordinationWorkspaceHost.caller,
+  });
+  return createCoordinationWorkspaceHostDeliveryAdapter({
+    root,
+    workspaceHostAdapter: coordinationWorkspaceHost.adapter,
+  });
+}
+
+export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null } = {}) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
       return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: packageVersion } });
@@ -933,11 +947,11 @@ export async function dispatch(request, { graphDbTransport = null } = {}) {
                           : name === "head_operating_lane_recommend"
                             ? recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
                           : name === "head_coordination_send_message"
-                            ? sendCoordinationMessage({ root: args.project_root, bindingToken: mcpCoordinationBindingToken(), toRole: args.to_role, content: args.content, evidenceIds: args.evidence_ids || [], idempotencyKey: args.idempotency_key, lane: args.lane || "session" })
+                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); return sendCoordinationMessage({ root: args.project_root, bindingToken, toRole: args.to_role, content: args.content, evidenceIds: args.evidence_ids || [], idempotencyKey: args.idempotency_key, lane: args.lane || "session", deliveryAdapter: coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }) }); })()
                           : name === "head_coordination_read_inbox"
-                            ? readCoordinationInbox({ root: args.project_root, bindingToken: mcpCoordinationBindingToken(), unreadOnly: args.unread_only ?? true })
+                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return readCoordinationInbox({ root: args.project_root, bindingToken, unreadOnly: args.unread_only ?? true }); })()
                           : name === "head_coordination_reply_message"
-                            ? replyCoordinationMessage({ root: args.project_root, bindingToken: mcpCoordinationBindingToken(), inReplyTo: args.in_reply_to, content: args.content })
+                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return replyCoordinationMessage({ root: args.project_root, bindingToken, inReplyTo: args.in_reply_to, content: args.content }); })()
                           : name === "head_compact_prepare"
                             ? prepareCompaction({ root: args.project_root, runtime: args.runtime || "manual", userTurnIdAtPrepare: args.user_turn_id_at_prepare, purpose: args.purpose, approvedDecisions: args.approved_decisions, currentPosition: args.current_position, nextExpectedResult: args.next_expected_result, openReviewIds: args.open_review_ids || [] })
                           : name === "head_compact_verify"
@@ -971,12 +985,12 @@ export async function dispatch(request, { graphDbTransport = null } = {}) {
   }
 }
 
-export function serveMcp() {
+export function serveMcp({ coordinationWorkspaceHost = null } = {}) {
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   input.on("line", async (line) => {
     if (!line.trim()) return;
     let response;
-    try { response = await dispatch(JSON.parse(line)); }
+    try { response = await dispatch(JSON.parse(line), { coordinationWorkspaceHost }); }
     catch (error) { response = failure(null, `Parse error: ${error.message}`); }
     if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
   });

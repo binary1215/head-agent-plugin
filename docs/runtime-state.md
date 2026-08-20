@@ -85,5 +85,5 @@ descendant ownership are active through the separate Runtime Adapter contracts;
 they do not widen this import adapter into a control plane.
 
 Provider-session hydration or restoration, durable resume/attachment,
-stream/interrupt/close, messaging, and subscription remain deferred optional
+stream/interrupt/close, provider-session messaging, and subscription remain deferred optional
 Runtime Adapter capabilities.

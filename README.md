@@ -144,6 +144,13 @@ read-inbox, and reply; role and token are not message arguments. Inboxes,
 idempotency, read markers, immutable replies, and delivery receipts live in the
 external operational root and never mutate `.head` or Product Canon. Messages
 have no instruction, decision, review, execution, promotion, or Canon authority.
+When a dedicated MCP endpoint is started by a trusted workspace host, an active
+`VerifiedWorkspaceHostAdapter` binds its process-injected caller to one fresh,
+unique endpoint and revalidates the exact target before and after delivery. The
+plugin accepts only the provider-neutral `WorkspaceHostDriver` snapshot/send
+contract; host-specific executable, socket, CLI, pane, and TUI knowledge belongs
+in a separately owned optional adapter. Deterministic two-process Codex/OpenCode
+host fixtures pass; actual host-specific integration and live E2E remain open.
 See [Role coordination](docs/role-coordination.md).
 
 ## Architecture at a glance
@@ -336,7 +343,8 @@ Status terms in this README have exact meanings:
 | OpenCode one-shot Session and Run execution | **Available** |
 | Artifact-only Codex-to-OpenCode provider replacement recovery | **Available** |
 | Host-bound durable role messaging Core/CLI/MCP | **Available** |
-| Actual multi-role Codex/OpenCode/Herdr live delivery | **Planned** |
+| Exact-endpoint two-process WorkspaceHost delivery | **Available** |
+| Host-specific WorkspaceHost adapters and live delivery | **Planned** |
 | Verified Git-backed Codex marketplace distribution | **Available** |
 | OpenAI universal plugin directory publication | **Planned** |
 | `install.ps1` and `install.sh` | **Available** |
@@ -344,7 +352,7 @@ Status terms in this README have exact meanings:
 | `head-agent --version` and project `head-agent doctor` | **Available** |
 | Automatic verified native binary installation | **Available** |
 | Recoverable upgrade, verified rollback, and safe removal | **Available** |
-| Provider resume and durable attachment | **Deferred** |
+| Provider-session resume and durable attachment | **Deferred** |
 | Obsidian and Notion projection adapters | **Deferred** |
 
 ## Installation

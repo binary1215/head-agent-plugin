@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { validateWorkspaceHostAdapter } from "./runtime-adapter.mjs";
 import { resolveRuntimeOperationalStateRoot } from "./runtime-execution-lease.mjs";
 
 export const ROLE_COORDINATION_VERSION = "0.1.0";
@@ -11,7 +12,9 @@ const ROLE = /^[a-z][a-z0-9-]{0,63}$/u;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GENERATION_ID = /^coord-generation-[A-Fa-f0-9-]{36}$/u;
 const BINDING_ID = /^coord-binding-[A-Fa-f0-9-]{36}$/u;
+const TARGET_ID = /^coord-target-[A-Fa-f0-9-]{36}$/u;
 const MESSAGE_ID = /^coord-message-[a-f0-9]{32}$/u;
+const ATTACHMENT_ID = /^workspace-attachment-[a-f0-9]{32}$/u;
 const LANES = new Set(["observe", "session", "run", "authority"]);
 
 const fail = (message, code = "ROLE_COORDINATION_ERROR") => {
@@ -157,6 +160,9 @@ const requestFile = (stateRoot, generationId, role, key) => path.join(stateRoot,
 const readFile = (stateRoot, generationId, role, messageId) => path.join(stateRoot, "generation-state", generationId, "reads", role, `${messageId}.json`);
 const replyFile = (stateRoot, generationId, role, messageId) => path.join(stateRoot, "generation-state", generationId, "replies", role, `${messageId}.json`);
 const deliveryFile = (stateRoot, generationId, messageId) => path.join(stateRoot, "generation-state", generationId, "deliveries", `${messageId}.json`);
+const targetFile = (stateRoot, generationId, targetId) => path.join(stateRoot, "generation-state", generationId, "targets", "by-id", `${targetId}.json`);
+const targetDirectory = (stateRoot, generationId) => path.join(stateRoot, "generation-state", generationId, "targets", "by-id");
+const roleTargetPointerFile = (stateRoot, generationId, role) => path.join(stateRoot, "generation-state", generationId, "targets", "roles", `${role}.json`);
 
 function verifyProjectRole(inspected, value) {
   const role = String(value || "").trim().toLowerCase();
@@ -258,6 +264,135 @@ function latestRoleBinding(ctx, generation, role) {
     }
   });
   return bindings.at(-1) || null;
+}
+
+function readTarget(ctx, generation, targetId, { optional = false } = {}) {
+  if (!TARGET_ID.test(targetId || "")) fail("Coordination target identity is invalid.", "INVALID_COORDINATION_TARGET");
+  const target = read(ctx.operationalRoot, targetFile(ctx.stateRoot, generation.authorityGeneration, targetId), "Coordination workspace target", { optional });
+  if (!target) return null;
+  const payload = { ...target };
+  delete payload.targetHash;
+  if (target.kind !== "CoordinationWorkspaceTarget" || target.targetId !== targetId
+    || target.projectId !== generation.projectId || target.headSessionId !== generation.headSessionId
+    || target.authorityGeneration !== generation.authorityGeneration || !ROLE.test(target.role || "")
+    || !BINDING_ID.test(target.bindingId || "") || !Number.isSafeInteger(target.targetSequence)
+    || target.targetSequence < 1 || typeof target.active !== "boolean"
+    || target.targetHash !== digest(canonicalJson(payload)) || target.providerSessionIdentityPersisted !== false
+    || target.instructionAuthority !== false || target.promotionAuthority !== false
+    || target.controlAuthority !== false || target.canonMutationAuthority !== false
+    || target.active && (!target.attachment || typeof target.attachment !== "object")
+    || !target.active && target.attachment !== null) {
+    fail("Coordination workspace target failed verification.", "INVALID_COORDINATION_TARGET");
+  }
+  if (target.active) verifyWorkspaceAttachment(target.attachment, {
+    projectId: target.projectId,
+    headSessionId: target.headSessionId,
+    authorityGeneration: target.authorityGeneration,
+    role: target.role,
+    bindingId: target.bindingId,
+  });
+  return target;
+}
+
+function verifyWorkspaceAttachment(attachment, boundary) {
+  if (!attachment || attachment.kind !== "WorkspaceHostAttachmentEvidence"
+    || !ATTACHMENT_ID.test(attachment.attachmentId || "") || !/^[a-f0-9]{64}$/u.test(attachment.attachmentHash || "")
+    || attachment.projectId !== boundary.projectId || attachment.headSessionId !== boundary.headSessionId
+    || attachment.authorityGeneration !== boundary.authorityGeneration || attachment.role !== boundary.role
+    || attachment.bindingId !== boundary.bindingId || attachment.providerSessionIdentityPersisted !== false
+    || attachment.instructionAuthority !== false || attachment.promotionAuthority !== false
+    || attachment.controlAuthority !== false || attachment.mutatesCanon !== false) {
+    fail("WorkspaceHost attachment failed the coordination boundary.", "INVALID_COORDINATION_WORKSPACE_ATTACHMENT");
+  }
+  const payload = { ...attachment };
+  delete payload.attachmentId;
+  delete payload.attachmentHash;
+  const expectedHash = digest(canonicalJson(payload));
+  if (attachment.attachmentHash !== expectedHash
+    || attachment.attachmentId !== `workspace-attachment-${expectedHash.slice(0, 32)}`) {
+    fail("WorkspaceHost attachment digest verification failed.", "INVALID_COORDINATION_WORKSPACE_ATTACHMENT");
+  }
+  return attachment;
+}
+
+function latestRoleTarget(ctx, generation, role) {
+  const directory = targetDirectory(ctx.stateRoot, generation.authorityGeneration);
+  let names = [];
+  try { names = fs.readdirSync(directory).filter((name) => name.endsWith(".json")).sort(); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const targets = names.map((name) => readTarget(ctx, generation, name.slice(0, -5))).filter((target) => target.role === role)
+    .sort((left, right) => left.targetSequence - right.targetSequence);
+  targets.forEach((target, index) => {
+    const previous = targets[index - 1] || null;
+    if (target.targetSequence !== index + 1 || target.previousTargetId !== (previous?.targetId || null)
+      || target.previousTargetHash !== (previous?.targetHash || null)) {
+      fail("Coordination workspace target chain is incomplete or divergent.", "INVALID_COORDINATION_TARGET_CHAIN");
+    }
+  });
+  return targets.at(-1) || null;
+}
+
+function currentRoleTarget(ctx, generation, role, { required = false } = {}) {
+  const pointer = read(ctx.operationalRoot, roleTargetPointerFile(ctx.stateRoot, generation.authorityGeneration, role), "Current coordination workspace target", { optional: !required });
+  if (!pointer) {
+    if (latestRoleTarget(ctx, generation, role)) {
+      fail("Coordination workspace target pointer is missing.", "COORDINATION_TARGET_POINTER_MISSING");
+    }
+    return null;
+  }
+  const target = readTarget(ctx, generation, pointer.targetId);
+  if (pointer.projectId !== generation.projectId || pointer.headSessionId !== generation.headSessionId
+    || pointer.authorityGeneration !== generation.authorityGeneration || pointer.role !== role
+    || pointer.targetHash !== target.targetHash || pointer.targetSequence !== target.targetSequence) {
+    fail("Coordination workspace target pointer failed verification.", "INVALID_COORDINATION_TARGET_POINTER");
+  }
+  const latest = latestRoleTarget(ctx, generation, role);
+  if (!latest || latest.targetId !== target.targetId || latest.targetSequence !== target.targetSequence) {
+    fail("Coordination workspace target pointer was rolled back.", "COORDINATION_TARGET_ROLLBACK");
+  }
+  return target;
+}
+
+function writeRoleTarget(ctx, generation, binding, { active, attachment = null }) {
+  const previous = currentRoleTarget(ctx, generation, binding.role);
+  const targetId = `coord-target-${crypto.randomUUID()}`;
+  const payload = {
+    schemaVersion: SCHEMA_VERSION,
+    kind: "CoordinationWorkspaceTarget",
+    protocol: { name: "head-agent-core-role-coordination", version: ROLE_COORDINATION_VERSION },
+    targetId,
+    projectId: generation.projectId,
+    headSessionId: generation.headSessionId,
+    authorityGeneration: generation.authorityGeneration,
+    role: binding.role,
+    bindingId: binding.bindingId,
+    targetSequence: (previous?.targetSequence || 0) + 1,
+    previousTargetId: previous?.targetId || null,
+    previousTargetHash: previous?.targetHash || null,
+    active,
+    attachment,
+    recordedAt: now(),
+    authority: "host-local-delivery-target-only",
+    providerSessionIdentityPersisted: false,
+    instructionAuthority: false,
+    promotionAuthority: false,
+    controlAuthority: false,
+    canonMutationAuthority: false,
+  };
+  const target = { ...payload, targetHash: digest(canonicalJson(payload)) };
+  writeExclusive(ctx.operationalRoot, targetFile(ctx.stateRoot, generation.authorityGeneration, targetId), target);
+  replace(ctx.operationalRoot, roleTargetPointerFile(ctx.stateRoot, generation.authorityGeneration, binding.role), {
+    schemaVersion: SCHEMA_VERSION,
+    projectId: generation.projectId,
+    headSessionId: generation.headSessionId,
+    authorityGeneration: generation.authorityGeneration,
+    role: binding.role,
+    targetId,
+    targetHash: target.targetHash,
+    targetSequence: target.targetSequence,
+    updatedAt: now(),
+  });
+  return target;
 }
 
 export function openCoordinationGeneration({ root = ".", environment = process.env, rotate = false } = {}) {
@@ -385,6 +520,107 @@ function authenticate({ root, environment, bindingToken, action }) {
   return { ...ctx, generation, binding };
 }
 
+function activeWorkspaceHostAdapter(adapter) {
+  validateWorkspaceHostAdapter(adapter);
+  const descriptor = adapter.describe();
+  if (descriptor.adapterKind !== "verified-role-coordination" || descriptor.controlOperationsEnabled !== true
+    || descriptor.instructionAuthority !== false || descriptor.promotionAuthority !== false
+    || descriptor.controlAuthority !== false || descriptor.mutatesCanon !== false) {
+    fail("An active authority-free WorkspaceHostAdapter is required.", "INVALID_COORDINATION_WORKSPACE_HOST_ADAPTER");
+  }
+  return adapter;
+}
+
+function workspaceBoundary(ctx, binding = ctx.binding) {
+  return {
+    projectId: ctx.inspected.project.projectId,
+    headSessionId: ctx.inspected.state.sessionId,
+    authorityGeneration: ctx.generation.authorityGeneration,
+    role: binding.role,
+    bindingId: binding.bindingId,
+    projectRoot: ctx.inspected.project.projectRoot,
+  };
+}
+
+export function attachCoordinationWorkspaceHost({
+  root = ".", environment = process.env, bindingToken, workspaceHostAdapter, caller,
+} = {}) {
+  const ctx = authenticate({ root, environment, bindingToken, action: "a live workspace-host endpoint is attached" });
+  const adapter = activeWorkspaceHostAdapter(workspaceHostAdapter);
+  const boundary = workspaceBoundary(ctx);
+  const attachment = verifyWorkspaceAttachment(adapter.attach({ caller, boundary }), boundary);
+  const current = currentRoleTarget(ctx, ctx.generation, ctx.binding.role);
+  if (current?.active && current.bindingId === ctx.binding.bindingId
+    && current.attachment.attachmentId === attachment.attachmentId
+    && current.attachment.attachmentHash === attachment.attachmentHash) {
+    return { status: "existing", role: ctx.binding.role, targetId: current.targetId, attachmentId: attachment.attachmentId };
+  }
+  const target = writeRoleTarget(ctx, ctx.generation, ctx.binding, { active: true, attachment });
+  return { status: "attached", role: ctx.binding.role, targetId: target.targetId, attachmentId: attachment.attachmentId };
+}
+
+export function detachCoordinationWorkspaceHost({
+  root = ".", environment = process.env, bindingToken, workspaceHostAdapter,
+} = {}) {
+  const ctx = authenticate({ root, environment, bindingToken, action: "a live workspace-host endpoint is detached" });
+  const adapter = activeWorkspaceHostAdapter(workspaceHostAdapter);
+  const current = currentRoleTarget(ctx, ctx.generation, ctx.binding.role);
+  if (!current?.active || current.bindingId !== ctx.binding.bindingId) {
+    return { status: "already_detached", role: ctx.binding.role };
+  }
+  const boundary = workspaceBoundary(ctx);
+  const result = adapter.detach({ attachment: current.attachment, boundary });
+  if (!result || result.status !== "detached" || result.attachmentId !== current.attachment.attachmentId
+    || result.targetBindingId !== ctx.binding.bindingId) {
+    fail("WorkspaceHost detach evidence is invalid.", "INVALID_COORDINATION_WORKSPACE_HOST_DETACH");
+  }
+  const target = writeRoleTarget(ctx, ctx.generation, ctx.binding, { active: false, attachment: null });
+  return { status: "detached", role: ctx.binding.role, targetId: target.targetId, endpointWasLive: result.endpointWasLive === true };
+}
+
+export function createCoordinationWorkspaceHostDeliveryAdapter({
+  root = ".", environment = process.env, workspaceHostAdapter,
+} = {}) {
+  const adapter = activeWorkspaceHostAdapter(workspaceHostAdapter);
+  return Object.freeze({
+    deliver({ message } = {}) {
+      const base = context({ root, environment, create: false, action: "a durable role message is delivered to a live workspace host" });
+      const generation = currentGeneration(base);
+      const ctx = { ...base, generation };
+      const verifiedMessage = verifyMessage(ctx, message, { recipient: message?.toRole || "" });
+      const role = verifyProjectRole(ctx.inspected, verifiedMessage.toRole);
+      const target = currentRoleTarget(ctx, generation, role);
+      if (!target?.active) return { status: "unavailable", targetBindingId: null, targetAttachmentId: null };
+      const pointer = read(ctx.operationalRoot, roleBindingPointerFile(ctx.stateRoot, generation.authorityGeneration, role), "Current recipient role binding", { optional: true });
+      if (!pointer) return { status: "unavailable", targetBindingId: null, targetAttachmentId: target.attachment.attachmentId };
+      const binding = readBinding(ctx, generation, pointer.bindingId);
+      const latest = latestRoleBinding(ctx, generation, role);
+      if (!latest || latest.bindingId !== binding.bindingId || pointer.bindingHash !== binding.bindingHash
+        || pointer.bindingSequence !== binding.bindingSequence || target.bindingId !== binding.bindingId) {
+        return { status: "unavailable", targetBindingId: binding.bindingId, targetAttachmentId: target.attachment.attachmentId };
+      }
+      const immediatelyBefore = currentRoleTarget(ctx, generation, role);
+      if (!immediatelyBefore?.active || immediatelyBefore.targetId !== target.targetId || immediatelyBefore.targetHash !== target.targetHash) {
+        return { status: "unavailable", targetBindingId: binding.bindingId, targetAttachmentId: target.attachment.attachmentId };
+      }
+      const boundary = workspaceBoundary({ ...ctx, binding }, binding);
+      const result = adapter.send({ attachment: target.attachment, boundary, message: verifiedMessage });
+      if (result && typeof result.then === "function") {
+        fail("WorkspaceHost delivery must be synchronous in this protocol version.", "ASYNC_COORDINATION_WORKSPACE_HOST_UNSUPPORTED");
+      }
+      const after = currentRoleTarget(ctx, generation, role);
+      if (!after?.active || after.targetId !== target.targetId || after.targetHash !== target.targetHash) {
+        return { status: "ambiguous", targetBindingId: binding.bindingId, targetAttachmentId: target.attachment.attachmentId };
+      }
+      if (!result || result.targetBindingId !== binding.bindingId
+        || !["delivered", "unavailable", "ambiguous"].includes(result.status)) {
+        return { status: "ambiguous", targetBindingId: binding.bindingId, targetAttachmentId: target.attachment.attachmentId };
+      }
+      return { status: result.status, targetBindingId: binding.bindingId, targetAttachmentId: target.attachment.attachmentId };
+    },
+  });
+}
+
 function verifyMessage(ctx, message, { recipient = "" } = {}) {
   if (!message || message.kind !== "CoordinationMessage" || !MESSAGE_ID.test(message.messageId || "")
     || message.projectId !== ctx.inspected.project.projectId || message.headSessionId !== ctx.inspected.state.sessionId
@@ -439,9 +675,10 @@ function replyForSender(ctx, messageId) {
 function deliveryReceipt(ctx, message, deliveryAdapter) {
   const file = deliveryFile(ctx.stateRoot, ctx.generation.authorityGeneration, message.messageId);
   const prior = read(ctx.operationalRoot, file, "Coordination delivery receipt", { optional: true });
-  if (prior) return prior;
+  if (prior) return verifyDeliveryReceipt(message, prior);
   let status = "not_configured";
   let targetBindingId = null;
+  let targetAttachmentId = null;
   if (deliveryAdapter) {
     if (typeof deliveryAdapter.deliver !== "function") fail("Coordination delivery adapter is invalid.", "INVALID_COORDINATION_DELIVERY_ADAPTER");
     try {
@@ -449,11 +686,12 @@ function deliveryReceipt(ctx, message, deliveryAdapter) {
       if (result && typeof result.then === "function") fail("Coordination delivery adapters must complete synchronously in this slice.", "ASYNC_COORDINATION_DELIVERY_UNSUPPORTED");
       status = result?.status === "delivered" ? "delivered" : result?.status === "unavailable" ? "unavailable" : "ambiguous";
       targetBindingId = typeof result?.targetBindingId === "string" ? result.targetBindingId : null;
+      targetAttachmentId = typeof result?.targetAttachmentId === "string" ? result.targetAttachmentId : null;
     } catch {
       status = "ambiguous";
     }
   }
-  const receipt = {
+  const receiptPayload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "CoordinationDeliveryReceipt",
     protocol: { name: "head-agent-core-role-coordination", version: ROLE_COORDINATION_VERSION },
@@ -463,6 +701,7 @@ function deliveryReceipt(ctx, message, deliveryAdapter) {
     messageId: message.messageId,
     status,
     targetBindingId,
+    targetAttachmentId,
     completedAt: now(),
     retryPolicy: status === "ambiguous" ? "no-automatic-retry" : "explicit-host-retry-only",
     durableInboxAccepted: true,
@@ -471,10 +710,34 @@ function deliveryReceipt(ctx, message, deliveryAdapter) {
     promotionAuthority: false,
     canonMutationAuthority: false,
   };
+  const receipt = { ...receiptPayload, deliveryHash: digest(canonicalJson(receiptPayload)) };
   try { writeExclusive(ctx.operationalRoot, file, receipt); }
   catch (error) {
     if (error.code !== "EEXIST") throw error;
-    return read(ctx.operationalRoot, file, "Coordination delivery receipt");
+    return verifyDeliveryReceipt(message, read(ctx.operationalRoot, file, "Coordination delivery receipt"));
+  }
+  return verifyDeliveryReceipt(message, receipt);
+}
+
+function verifyDeliveryReceipt(message, receipt) {
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+    fail("Coordination delivery receipt failed boundary verification.", "INVALID_COORDINATION_DELIVERY_RECEIPT");
+  }
+  const payload = { ...receipt };
+  delete payload.deliveryHash;
+  const legacyWithoutAttachment = receipt.deliveryHash === undefined && receipt.targetAttachmentId === undefined;
+  if (receipt.kind !== "CoordinationDeliveryReceipt"
+    || receipt.projectId !== message.projectId || receipt.headSessionId !== message.headSessionId
+    || receipt.authorityGeneration !== message.authorityGeneration || receipt.messageId !== message.messageId
+    || !["not_configured", "delivered", "unavailable", "ambiguous"].includes(receipt.status)
+    || receipt.targetBindingId !== null && !BINDING_ID.test(receipt.targetBindingId || "")
+    || receipt.targetAttachmentId != null && !ATTACHMENT_ID.test(receipt.targetAttachmentId || "")
+    || receipt.durableInboxAccepted !== true || receipt.instructionAuthority !== false
+    || receipt.decisionAuthority !== false || receipt.promotionAuthority !== false
+    || receipt.canonMutationAuthority !== false
+    || !legacyWithoutAttachment && receipt.deliveryHash !== digest(canonicalJson(payload))
+    || receipt.retryPolicy !== (receipt.status === "ambiguous" ? "no-automatic-retry" : "explicit-host-retry-only")) {
+    fail("Coordination delivery receipt failed boundary verification.", "INVALID_COORDINATION_DELIVERY_RECEIPT");
   }
   return receipt;
 }
@@ -671,6 +934,12 @@ export function inspectRoleCoordination({ root = ".", environment = process.env 
   try {
     boundRoles = fs.readdirSync(rolesDirectory).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5)).sort();
   } catch (error) { if (error.code !== "ENOENT") throw error; }
+  const attachedRoles = boundRoles.filter((role) => {
+    const target = currentRoleTarget(ctx, generation, role);
+    if (!target?.active) return false;
+    const pointer = read(ctx.operationalRoot, roleBindingPointerFile(ctx.stateRoot, generation.authorityGeneration, role), "Current role binding");
+    return target.bindingId === pointer.bindingId;
+  });
   return {
     status: "active",
     projectId: generation.projectId,
@@ -678,10 +947,12 @@ export function inspectRoleCoordination({ root = ".", environment = process.env 
     authorityGeneration: generation.authorityGeneration,
     previousAuthorityGeneration: generation.previousAuthorityGeneration,
     boundRoles,
+    attachedRoles,
     stateLocation: "host-local-operational-root",
     projectCanonMutated: false,
     publicRoleTools: ["send", "read-inbox", "reply"],
     adminOnlyOperations: ["open-generation", "rotate-generation", "issue-role-binding"],
+    hostCompositionOperations: ["attach-exact-endpoint", "detach-exact-endpoint"],
     delivery: "optional-effect-after-durable-inbox-acceptance",
     instructionAuthority: false,
     decisionAuthority: false,

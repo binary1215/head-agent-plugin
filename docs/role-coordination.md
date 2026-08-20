@@ -33,6 +33,15 @@ Replacing a role binding invalidates its previous token. Rotating the generation
 invalidates every prior binding and hides prior-generation inboxes from the new
 authority boundary without deleting their host-local records.
 
+A trusted workspace host may additionally attach the current binding to one
+fresh, unique live endpoint. Attach and detach are host-composition operations,
+not public role tools. Attachment evidence is bound to the exact Project, HEAD
+Session, generation, role, current binding, host instance, workspace, tab,
+endpoint, terminal, canonical project-contained CWD, and runtime. Target records
+form their own append-only hash/sequence/previous chain. Replacing a binding,
+rotating a generation, detaching, losing an endpoint, or rolling back a target
+pointer makes delivery unavailable or fails closed; none reactivates old state.
+
 ## State and persistence
 
 All message bodies, role bindings, inboxes, read markers, replies, idempotency
@@ -51,6 +60,7 @@ state root used by runtime execution leases:
       reads/
       replies/
       deliveries/
+      targets/
 ```
 
 The coordination plane writes nothing into `.head`, Product Canon, execution
@@ -112,16 +122,41 @@ the original delivery receipt without invoking the adapter again. A future live
 host may offer an explicit, target-fenced redelivery operation as an
 administrator/adapter effect; it is not part of the three public role tools.
 
+The active provider-neutral adapter accepts caller identity only from the host
+composition. The standard dedicated stdio process can receive that identity at
+process start; a shared host may inject the equivalent caller object directly
+into MCP dispatch. Tool arguments never accept it. Attach and every send use a
+fresh driver snapshot. Delivery rereads the target pointer immediately before
+the effect and again afterward. `delivered` requires an exact message/endpoint
+acknowledgment plus an unchanged post-send endpoint; absence before the effect is
+`unavailable`, while an exception, partial send, changed endpoint, changed target,
+or unverifiable acknowledgment is `ambiguous`.
+
+The plugin deliberately stops at a provider-neutral `WorkspaceHostDriver`
+snapshot/send contract. It contains no host-specific executable, socket, command,
+pane, or TUI translation. A separately owned optional adapter may translate a
+supported host machine interface into normalized endpoint snapshots and exact
+send acknowledgments, but cannot weaken unique endpoint, project-CWD, binding,
+target, or post-send fences. Raw endpoint coordinates remain host-local
+operational state, provider session identity is not persisted, and only the
+attachment identity enters the delivery receipt.
+
 ## Current claim boundary
 
 The Core, CLI, and role-bound MCP contract are implemented and tested for local
 durability, role derivation, Project/Session/generation fences, binding
 replacement, generation rotation, cross-project rejection, idempotency conflict,
 read markers, immutable reply, delivery ambiguity, token non-persistence, and
-zero project-canon mutation.
+zero project-canon mutation. The active WorkspaceHost boundary additionally has
+deterministic two-fresh-process Codex/OpenCode endpoint evidence for attach,
+delivery, stale/replaced/detached targets, target-chain rollback, target TOCTOU,
+post-send topology change, partial-send ambiguity, exact acknowledgment,
+project-CWD fencing, and provider-session absence.
 
-Actual Herdr pane delivery, a Codex/OpenCode multi-endpoint host composition,
-service installation, and general provider start/resume/stream/interrupt/close
-remain unimplemented. Until equivalent live multi-role E2E evidence exists, this
-slice narrows but does not by itself replace the original HEAD Core's live
-OpenCode/Herdr coordination advantage.
+Host-specific adapter implementation, actual live-host E2E, shared-host service
+installation, and general provider start/resume/stream/interrupt/close remain
+unimplemented. The missing host-specific behavior must be reached through the
+generic contract or a separately owned optional adapter, not by adding Herdr
+knowledge to this plugin. Until live-host evidence and original-author direct
+source audit pass, this slice narrows but does not claim complete replacement of
+the original HEAD Core's live coordination advantage.

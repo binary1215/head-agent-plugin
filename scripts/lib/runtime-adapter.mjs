@@ -143,15 +143,35 @@ function hostDescriptor() {
   };
 }
 
+export function verifiedWorkspaceHostDescriptor() {
+  return {
+    contractVersion: RUNTIME_ADAPTER_CONTRACT_VERSION,
+    adapterKind: "verified-role-coordination",
+    workspaceHost: "injected-exact-endpoint",
+    transport: "driver-owned",
+    supportedOperations: [...WORKSPACE_HOST_CONTROL_OPERATIONS],
+    disabledOperations: [],
+    processOwnership: "external-host-owned",
+    callerFencing: "fresh-snapshot-exact-endpoint",
+    capabilityAuthority: "host-operational-delivery-only",
+    controlOperationsEnabled: true,
+    instructionAuthority: false,
+    promotionAuthority: false,
+    controlAuthority: false,
+    mutatesCanon: false,
+  };
+}
+
 function probeFromDescriptor(kind, descriptor) {
+  const activeWorkspaceHost = kind === "WorkspaceHostProbe" && descriptor.adapterKind === "verified-role-coordination";
   const payload = {
     schemaVersion: 1,
     kind,
     protocol: { name: "head-agent-core-runtime-adapter-probe", version: RUNTIME_ADAPTER_CONTRACT_VERSION },
     descriptor,
-    status: "contract-only",
-    availability: "not-activated",
-    authorityEffect: "none",
+    status: activeWorkspaceHost ? "active" : "contract-only",
+    availability: activeWorkspaceHost ? "configured" : "not-activated",
+    authorityEffect: activeWorkspaceHost ? "host-operational-delivery-only" : "none",
   };
   const prefix = kind === "AgentRuntimeProbe" ? "agent-runtime-probe"
     : kind === "PlatformProbe" ? "platform-probe" : "workspace-host-probe";
@@ -192,7 +212,8 @@ function validateHostDescriptor(descriptor) {
     "processOwnership", "callerFencing", "capabilityAuthority", "controlOperationsEnabled", "instructionAuthority",
     "promotionAuthority", "controlAuthority", "mutatesCanon",
   ], "WorkspaceHostAdapter descriptor");
-  if (canonicalJson(descriptor) !== canonicalJson(hostDescriptor())) {
+  const expected = descriptor.adapterKind === "verified-role-coordination" ? verifiedWorkspaceHostDescriptor() : hostDescriptor();
+  if (canonicalJson(descriptor) !== canonicalJson(expected)) {
     fail("WorkspaceHostAdapter descriptor violates the contract-only authority boundary.", "INVALID_WORKSPACE_HOST_ADAPTER");
   }
   return descriptor;
@@ -202,11 +223,13 @@ function validateProbe(document, { kind, descriptorValidator, prefix }) {
   assertFields(document, ["schemaVersion", "kind", "protocol", "descriptor", "status", "availability", "authorityEffect", "probeId", "probeHash"], kind);
   assertFields(document.protocol, ["name", "version"], `${kind} protocol`);
   descriptorValidator(document.descriptor);
+  const activeWorkspaceHost = kind === "WorkspaceHostProbe" && document.descriptor.adapterKind === "verified-role-coordination";
   if (document.schemaVersion !== 1 || document.kind !== kind
     || document.protocol.name !== "head-agent-core-runtime-adapter-probe"
     || document.protocol.version !== RUNTIME_ADAPTER_CONTRACT_VERSION
-    || document.status !== "contract-only" || document.availability !== "not-activated"
-    || document.authorityEffect !== "none"
+    || document.status !== (activeWorkspaceHost ? "active" : "contract-only")
+    || document.availability !== (activeWorkspaceHost ? "configured" : "not-activated")
+    || document.authorityEffect !== (activeWorkspaceHost ? "host-operational-delivery-only" : "none")
     || !new RegExp(`^${prefix}-[a-f0-9]{24}$`).test(document.probeId || "")
     || !/^[a-f0-9]{64}$/.test(document.probeHash || "")) {
     fail(`${kind} is invalid.`, "INVALID_RUNTIME_ADAPTER_PROBE");
@@ -225,6 +248,11 @@ export function validatePlatformProbe(document) {
 
 export function validateWorkspaceHostProbe(document) {
   return validateProbe(document, { kind: "WorkspaceHostProbe", descriptorValidator: validateHostDescriptor, prefix: "workspace-host-probe" });
+}
+
+export function buildWorkspaceHostProbe(descriptor = hostDescriptor()) {
+  validateHostDescriptor(descriptor);
+  return validateWorkspaceHostProbe(probeFromDescriptor("WorkspaceHostProbe", descriptor));
 }
 
 export function validateAgentRuntimeAdapter(adapter) {
@@ -290,6 +318,21 @@ export class ContractOnlyWorkspaceHostAdapter {
   detach() { return disabledOperation("WorkspaceHostAdapter", "detach"); }
 }
 
+function activationBoundaryFor(workspaceHostProbe) {
+  const workspaceHostMessagingEnabled = workspaceHostProbe.descriptor.adapterKind === "verified-role-coordination";
+  return {
+    phase: workspaceHostMessagingEnabled ? "host-messaging-active" : "contract-only",
+    machineInterfacesVerified: false,
+    runtimeControlEnabled: false,
+    workspaceHostMessagingEnabled,
+    capabilityDoesNotGrantAuthorization: true,
+    executionContractRequired: true,
+    headSessionIdentityIndependent: true,
+    providerSessionReferencesOperationalOnly: true,
+    tuiScrapingAllowed: false,
+  };
+}
+
 function normalizedRuntimes(values) {
   const input = values === undefined || values === null ? RUNTIME_ADAPTER_RUNTIMES : values;
   if (!Array.isArray(input) || !input.length) {
@@ -322,24 +365,16 @@ export function buildRuntimeAdapterComposition({
   if (canonicalJson(agentProbes.map((probe) => probe.descriptor.runtime)) !== canonicalJson(selectedRuntimes)) {
     fail("Runtime adapter composition does not match the selected runtime set.", "INVALID_RUNTIME_ADAPTER_COMPOSITION");
   }
+  const workspaceHostProbe = selectedHost.probe();
   const payload = {
     schemaVersion: 1,
     kind: "RuntimeAdapterComposition",
     protocol: { name: "head-agent-core-runtime-adapter-composition", version: RUNTIME_ADAPTER_CONTRACT_VERSION },
     selectedRuntimes,
     platformProbe: selectedPlatform.probe(),
-    workspaceHostProbe: selectedHost.probe(),
+    workspaceHostProbe,
     agentRuntimeProbes: agentProbes,
-    activationBoundary: {
-      phase: "contract-only",
-      machineInterfacesVerified: false,
-      runtimeControlEnabled: false,
-      capabilityDoesNotGrantAuthorization: true,
-      executionContractRequired: true,
-      headSessionIdentityIndependent: true,
-      providerSessionReferencesOperationalOnly: true,
-      tuiScrapingAllowed: false,
-    },
+    activationBoundary: activationBoundaryFor(workspaceHostProbe),
     authority: "operational-capability-contract-only",
     instructionAuthority: false,
     promotionAuthority: false,
@@ -357,7 +392,7 @@ export function verifyRuntimeAdapterComposition(document) {
   ], "Runtime adapter composition");
   assertFields(document.protocol, ["name", "version"], "Runtime adapter composition protocol");
   assertFields(document.activationBoundary, [
-    "phase", "machineInterfacesVerified", "runtimeControlEnabled", "capabilityDoesNotGrantAuthorization",
+    "phase", "machineInterfacesVerified", "runtimeControlEnabled", "workspaceHostMessagingEnabled", "capabilityDoesNotGrantAuthorization",
     "executionContractRequired", "headSessionIdentityIndependent", "providerSessionReferencesOperationalOnly",
     "tuiScrapingAllowed",
   ], "Runtime adapter activation boundary");
@@ -372,16 +407,7 @@ export function verifyRuntimeAdapterComposition(document) {
     || document.schemaVersion !== 1 || document.kind !== "RuntimeAdapterComposition"
     || document.protocol.name !== "head-agent-core-runtime-adapter-composition"
     || document.protocol.version !== RUNTIME_ADAPTER_CONTRACT_VERSION
-    || canonicalJson(document.activationBoundary) !== canonicalJson({
-      phase: "contract-only",
-      machineInterfacesVerified: false,
-      runtimeControlEnabled: false,
-      capabilityDoesNotGrantAuthorization: true,
-      executionContractRequired: true,
-      headSessionIdentityIndependent: true,
-      providerSessionReferencesOperationalOnly: true,
-      tuiScrapingAllowed: false,
-    })
+    || canonicalJson(document.activationBoundary) !== canonicalJson(activationBoundaryFor(document.workspaceHostProbe))
     || document.authority !== "operational-capability-contract-only"
     || document.instructionAuthority !== false || document.promotionAuthority !== false
     || document.controlAuthority !== false || document.mutatesCanon !== false
