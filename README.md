@@ -24,6 +24,9 @@ connected across Codex, OpenCode, and future runtimes.**
 > Inspired by [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core)
 > and independently reworked as a provider-neutral plugin. This is not an
 > official upstream release or a drop-in replacement.
+> The adopted principles, structural differences, verified advantages, and
+> remaining gaps are recorded in the
+> [original HEAD Core comparison](docs/original-head-core-comparison.md).
 
 ## What is HEAD Agent Core?
 
@@ -108,7 +111,7 @@ public plugin directory is a separate publisher-owned review step.
 
 ## Product learning without authority drift
 
-The implemented Product Operating Loop records one connected, reviewable path:
+The Product Operating Loop keeps one connected, reviewable path without forcing every thought into storage. Everyday observations, hypotheses, and inferred meanings start as non-persisted epistemic notes with no content identity or graph rebuild. They become immutable artifacts only when a handoff, audit, product-state, or cross-Run boundary needs recovery:
 
 ```text
 Signal (observed fact)
@@ -123,7 +126,9 @@ Signal (observed fact)
 
 This is deliberately not one promotion chain. Signals and outcomes are evidence, hypotheses are hypotheses, Feature proposals remain candidates, and a reviewed Initiative is still separate from Product Canon. An OutcomeObservation must bind to an accepted `ResultPacket`/execution `ReviewDecision` through a `ChangeSet`; it does not mark a Feature successful. The resulting Product Graph is a rebuildable local projection and may later be materialized to GraphDB without making the database an orchestrator or authority.
 
-`head head-continuity <project>` returns an on-demand exact-reference view over current Session, Run, lineage, product, and graph identities. It is not persisted and cannot replace Session/Run checkpoints or continuous whole-outcome HEAD judgment. See [Product Operating Loop](docs/product-operating-loop.md).
+An Initiative may be proposed directly from explicit inline reasoning. Feature resolution can wait until the user accepts it, so the default path creates no `ProductFeatureCandidate` before review. `head operating-lane-recommend` selects the lightest safe advisory lane: Observe for read/reason work, Session for one bounded reversible result, Run for dependent or recovery-sensitive work, and Authority only for Product Canon, Initiative decisions, external writes, credentials, or recovery-canon changes. The recommendation has no authority effect; the selected Core operation still enforces the real boundary.
+
+`head head-continuity <project>` returns an on-demand exact-reference view over current Session, Run, lineage, product, and graph identities. Repeated same-process status/continuity reads may reuse a disclosed snapshot/content-identity cache; writes invalidate it and `--fresh` forces full verification. The view is not persisted and cannot replace Session/Run checkpoints or continuous whole-outcome HEAD judgment. See [Product Operating Loop](docs/product-operating-loop.md).
 
 ## Architecture at a glance
 

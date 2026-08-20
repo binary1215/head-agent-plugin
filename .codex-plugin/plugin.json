@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.64",
+  "version": "0.3.0-alpha.65",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -40,6 +40,9 @@
       "Multiple-parent ChangeSet DAG",
       "Review-gated IMPACTS Relations",
       "Epistemically Typed Product Operating Loop",
+      "Non-persisted Product Learning Notes",
+      "Risk-proportional Observe Session Run and Authority Routing",
+      "Write-invalidated Verified Snapshot Read Cache",
       "Human-reviewed Product Initiatives",
       "Execution-bound Outcome Observations",
       "Derived Product Operating Graph",
@@ -131,7 +134,9 @@
       "Infer Feature-to-code mapping candidates, then require explicit review before creating IMPLEMENTS or VERIFIED_BY relationships.",
       "Record an accepted execution as a Git-independent ChangeSet, then review inferred Feature or Capability impact before creating IMPACTS relationships.",
       "Attach explicitly selected Git commits as optional evidence without changing the provider-neutral ChangeSet identity.",
-      "Record an observed Product Signal, form an explicit Hypothesis, and propose a Product Initiative without changing Product Canon.",
+      "Label product learning as a non-persisted observed fact, hypothesis, or inferred meaning, and persist it only when a handoff, audit, product-state, or cross-Run boundary requires recovery.",
+      "Recommend the lightest safe Observe, Session, Run, or Authority lane without creating authority or project artifacts.",
+      "Propose a Product Initiative from inline reasoning and defer Feature resolution until explicit review without changing Product Canon.",
       "Review a Product Initiative explicitly, then bind OutcomeObservation evidence to an accepted ChangeSet without judging Feature success.",
       "Inspect the on-demand HEAD continuity snapshot as a derived exact-reference view, never as recovery canon.",
       "Inspect external runtime observations without granting runtime control authority.",

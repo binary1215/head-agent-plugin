@@ -12,11 +12,13 @@ import {
   buildHeadContinuitySnapshot,
   inspectProductOperatingLoop,
   observeProductOutcome,
+  prepareProductLearningNote,
   proposeProductInitiative,
   recordProductHypothesis,
   recordProductSignal,
   reviewProductInitiative,
 } from "../scripts/lib/product-operating-loop.mjs";
+import { recommendOperatingLane } from "../scripts/lib/operating-lane.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
 import { buildWorldModel, inspectWorldModel, queryWorldTemporalGraph } from "../scripts/lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
@@ -119,4 +121,98 @@ test("connects the minimal Product Operating Loop while keeping Product Canon an
   const mcp = await dispatchMcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_continuity_snapshot", arguments: { project_root: root } } });
   assert.equal(mcp.result.structuredContent.snapshot.snapshotId, continuity.snapshot.snapshotId);
   assert.equal(inspectProductOperatingLoop({ root }).projection.outcomeObservations.length, 1);
+});
+
+test("keeps everyday learning ephemeral, defers Feature resolution to review, and caches only verified reads", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const productCanonFile = path.join(root, ".head", "context", "product-model.json");
+  const canonBefore = fs.readFileSync(productCanonFile, "utf8");
+  await buildWorldModel({ root, persist: true });
+  const worldPointerFile = path.join(root, ".head", "world-model", "current.json");
+  const pointerBefore = fs.readFileSync(worldPointerFile, "utf8");
+
+  const note = prepareProductLearningNote({ root, statement: "A universal default should avoid persistence ritual.", epistemicClass: "hypothesis", rationale: "Same-Session reasoning does not cross an authority or recovery boundary." });
+  assert.equal(note.status, "ephemeral");
+  assert.equal(note.note.persisted, false);
+  assert.equal(note.note.contentIdentityAssigned, false);
+  assert.equal(note.persistence.recommended, false);
+  assert.equal(fs.readFileSync(worldPointerFile, "utf8"), pointerBefore);
+  assert.equal(fs.existsSync(path.join(root, ".head", "product-operations")), false);
+
+  const handoffNote = prepareProductLearningNote({ root, statement: "Another Run must rebut this observation.", epistemicClass: "observed-fact", referencedByAnotherRun: true, needsRebuttal: true });
+  assert.deepEqual(handoffNote.persistence.reasons, ["rebuttal-or-audit-needed", "referenced-by-another-run"]);
+
+  assert.equal(recommendOperatingLane({ root }).lane, "observe");
+  const sessionLane = recommendOperatingLane({ root, intent: "execute", providerInvocation: true, workspaceEffect: "reversible" });
+  assert.equal(sessionLane.lane, "session");
+  assert.equal(sessionLane.minimumContracts.includes("WholePlanSnapshot"), false);
+  const runLane = recommendOperatingLane({ root, intent: "execute", dependencyCount: 2, failureBranches: true });
+  assert.equal(runLane.lane, "run");
+  assert.equal(runLane.minimumContracts.includes("FreshHeadReview"), true);
+  const authorityLane = recommendOperatingLane({ root, externalWrite: true });
+  assert.equal(authorityLane.lane, "authority");
+  assert.equal(authorityLane.minimumContracts.includes("explicit-user-decision-at-affected-boundary"), true);
+
+  const proposed = await proposeProductInitiative({
+    root,
+    title: "Relax everyday product learning",
+    description: "Persist only at a real handoff, audit, product-state, or review boundary.",
+    reasoning: "Observed and hypothetical notes can stay ephemeral until the user reviews an inferred Initiative.",
+  });
+  assert.deepEqual(proposed.initiativeCandidate.hypothesisIds, []);
+  assert.equal(proposed.initiativeCandidate.featureResolution, null);
+  assert.equal(proposed.featureCandidate, null);
+  const candidateFile = path.join(root, ".head", "product-operations", "initiative-candidates", `${proposed.initiativeCandidate.initiativeCandidateId}.json`);
+  const candidateBytes = fs.readFileSync(candidateFile, "utf8");
+  assert.equal(fs.existsSync(path.join(root, ".head", "product-operations", "feature-candidates")), false);
+
+  await assert.rejects(
+    reviewProductInitiative({ root, initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId, disposition: "accept", rationale: "Resolution is intentionally missing." }),
+    (error) => error.code === "PRODUCT_INITIATIVE_REVIEW_FEATURE_RESOLUTION_REQUIRED",
+  );
+  assert.equal(inspectProductOperatingLoop({ root, fresh: true }).projection.initiativeReviews.length, 0);
+
+  const denied = await dispatchMcp({ jsonrpc: "2.0", id: 20, method: "tools/call", params: { name: "head_product_initiative_review", arguments: { project_root: root, initiative_candidate_id: proposed.initiativeCandidate.initiativeCandidateId, disposition: "accept", rationale: "The user must own this decision.", confirm_user_review: false, feature_resolution: { kind: "candidate", feature: { key: "relaxed-product-learning", name: "Relaxed product learning", capability_keys: ["continuity"] } } } } });
+  assert.match(denied.error.message, /explicit user confirmation/);
+  const accepted = await dispatchMcp({ jsonrpc: "2.0", id: 21, method: "tools/call", params: { name: "head_product_initiative_review", arguments: { project_root: root, initiative_candidate_id: proposed.initiativeCandidate.initiativeCandidateId, disposition: "accept", rationale: "The reviewed Initiative preserves authority while removing ordinary persistence ritual.", confirm_user_review: true, feature_resolution: { kind: "candidate", feature: { key: "relaxed-product-learning", name: "Relaxed product learning", capability_keys: ["continuity"] } } } } });
+  const reviewed = accepted.result.structuredContent;
+  assert.equal(reviewed.status, "initiative_accepted");
+  assert.equal(fs.readFileSync(candidateFile, "utf8"), candidateBytes);
+  assert.equal(reviewed.reviewedInitiative.reasoning, proposed.initiativeCandidate.reasoning);
+  assert.equal(reviewed.reviewedInitiative.featureResolution.featureCandidateId, reviewed.featureCandidate.featureCandidateId);
+  assert.equal(fs.readFileSync(productCanonFile, "utf8"), canonBefore);
+
+  const firstStatus = inspectProductOperatingLoop({ root, fresh: true });
+  const cachedStatus = inspectProductOperatingLoop({ root });
+  assert.equal(firstStatus.readVerification.mode, "fresh-full-verification");
+  assert.equal(cachedStatus.readVerification.mode, "cached-verified-snapshot");
+  assert.equal(cachedStatus.projection.projectionInputId, firstStatus.projection.projectionInputId);
+  const firstContinuity = await buildHeadContinuitySnapshot({ root, fresh: true });
+  const cachedContinuity = await buildHeadContinuitySnapshot({ root });
+  assert.equal(firstContinuity.readVerification.productOperating.mode, "fresh-full-verification");
+  assert.equal(cachedContinuity.readVerification.productOperating.mode, "cached-verified-snapshot");
+  assert.equal(cachedContinuity.readVerification.worldModel.mode, "cached-verified-snapshot");
+  assert.equal(cachedContinuity.snapshot.snapshotId, firstContinuity.snapshot.snapshotId);
+  assert.equal(cachedContinuity.snapshot.persisted, false);
+  assert.equal(cachedContinuity.snapshot.recoveryAuthority, false);
+
+  await recordProductSignal({ root, statement: "A write must invalidate the verified read cache." });
+  assert.equal(inspectProductOperatingLoop({ root }).readVerification.mode, "fresh-full-verification");
+
+  const noteInput = path.join(root, "note.json");
+  fs.writeFileSync(noteInput, JSON.stringify({ statement: "CLI notes are ephemeral.", epistemicClass: "observed-fact" }));
+  assert.equal(runCommand(["product-note", root, "--input", noteInput]).note.persisted, false);
+  const laneInput = path.join(root, "lane.json");
+  fs.writeFileSync(laneInput, JSON.stringify({ intent: "execute", workspaceEffect: "reversible" }));
+  assert.equal(runCommand(["operating-lane-recommend", root, "--input", laneInput]).lane, "session");
+  const noteMcp = await dispatchMcp({ jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "head_product_note", arguments: { project_root: root, statement: "MCP notes are ephemeral.", epistemic_class: "hypothesis" } } });
+  assert.equal(noteMcp.result.structuredContent.note.persisted, false);
+  const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.equal(graph.nodes.some((node) => node.statement === "CLI notes are ephemeral." || node.statement === "MCP notes are ephemeral."), false);
+
+  const tamperedCandidate = JSON.parse(candidateBytes);
+  tamperedCandidate.title = "Tampered cached candidate";
+  fs.writeFileSync(candidateFile, `${JSON.stringify(tamperedCandidate, null, 2)}\n`);
+  assert.throws(() => inspectProductOperatingLoop({ root }), (error) => error.code === "PRODUCT_OPERATING_DIGEST_MISMATCH");
 });

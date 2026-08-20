@@ -6,7 +6,7 @@ import { readChangeSet } from "./change-set.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { readProductModelCanon } from "./product-model.mjs";
 
-export const PRODUCT_OPERATING_LOOP_VERSION = "0.1.0";
+export const PRODUCT_OPERATING_LOOP_VERSION = "0.2.0";
 export const PRODUCT_SIGNAL_DIRECTORY = ".head/product-operations/signals";
 export const PRODUCT_HYPOTHESIS_DIRECTORY = ".head/product-operations/hypotheses";
 export const PRODUCT_INITIATIVE_CANDIDATE_DIRECTORY = ".head/product-operations/initiative-candidates";
@@ -26,6 +26,9 @@ const DIRECTORIES = Object.freeze({
 });
 
 const LIMITS = Object.freeze({ maxArtifacts: 512, maxArtifactBytes: 1024 * 1024, maxTotalBytes: 32 * 1024 * 1024 });
+const LEGACY_PROTOCOL_VERSIONS = new Set(["0.1.0"]);
+const projectionReadCache = new Map();
+const worldSummaryReadCache = new Map();
 const fail = (message, code = "PRODUCT_OPERATING_LOOP_ERROR") => { const error = new Error(message); error.code = code; throw error; };
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
@@ -37,6 +40,18 @@ function canonical(value) {
 
 export function productOperatingCanonicalJson(value) { return JSON.stringify(canonical(value)); }
 export function productOperatingDigest(value) { return crypto.createHash("sha256").update(value).digest("hex"); }
+
+function supportedProtocolVersion(value) {
+  return value === PRODUCT_OPERATING_LOOP_VERSION || LEGACY_PROTOCOL_VERSIONS.has(value);
+}
+
+function cacheRoot(root) { return path.resolve(root); }
+
+export function invalidateProductOperatingReadCache(root = ".") {
+  const key = cacheRoot(root);
+  projectionReadCache.delete(key);
+  worldSummaryReadCache.delete(key);
+}
 
 function requiredText(value, label) {
   if (typeof value !== "string" || !value.trim()) fail(`${label} is required.`, "INVALID_PRODUCT_OPERATING_INPUT");
@@ -64,6 +79,54 @@ function readyProject(root, action) {
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail(`Project must be ready for ${action}; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   return inspected;
+}
+
+export function prepareProductLearningNote({
+  root = ".",
+  statement,
+  epistemicClass,
+  source = "",
+  rationale = "",
+  evidenceIds = [],
+  referencedByAnotherRun = false,
+  needsRebuttal = false,
+  affectsProductState = false,
+  handoff = false,
+} = {}) {
+  const inspected = readyProject(root, "a non-persisted product learning note is prepared");
+  if (!["observed-fact", "hypothesis", "inferred-meaning"].includes(epistemicClass)) fail("Product learning note epistemicClass must be observed-fact, hypothesis, or inferred-meaning.", "INVALID_PRODUCT_LEARNING_NOTE");
+  for (const [label, value] of Object.entries({ referencedByAnotherRun, needsRebuttal, affectsProductState, handoff })) {
+    if (typeof value !== "boolean") fail(`Product learning note ${label} must be a boolean.`, "INVALID_PRODUCT_LEARNING_NOTE");
+  }
+  const persistenceReasons = [
+    referencedByAnotherRun && "referenced-by-another-run",
+    needsRebuttal && "rebuttal-or-audit-needed",
+    affectsProductState && "affects-product-state",
+    handoff && "handoff-or-context-loss",
+  ].filter(Boolean).sort();
+  return {
+    status: "ephemeral",
+    note: {
+      kind: "ProductLearningNote",
+      projectId: inspected.project.projectId,
+      sessionId: inspected.state.sessionId,
+      statement: requiredText(statement, "Product learning note statement"),
+      epistemicClass,
+      source: optionalText(source, "Product learning note source"),
+      rationale: optionalText(rationale, "Product learning note rationale"),
+      evidenceIds: sortedIds(evidenceIds, "Product learning note evidenceIds"),
+      authority: epistemicClass === "observed-fact" ? "non-authoritative-observation" : epistemicClass === "hypothesis" ? "non-authoritative-hypothesis" : "non-authoritative-inferred-meaning",
+      persisted: false,
+      contentIdentityAssigned: false,
+      instructionAuthority: false,
+      promotionAuthority: false,
+    },
+    persistence: {
+      recommended: persistenceReasons.length > 0,
+      reasons: persistenceReasons,
+      rule: "persist-only-at-handoff-audit-product-state-or-cross-run-boundaries",
+    },
+  };
 }
 
 function safeDirectory(projectRoot, relative) {
@@ -94,6 +157,7 @@ function persistImmutable(projectRoot, relative, id, document) {
     return { status: "existing", file };
   }
   atomicWrite(file, json(document));
+  invalidateProductOperatingReadCache(projectRoot);
   return { status: "recorded", file };
 }
 
@@ -112,7 +176,7 @@ function verifyIdentity(document, prefix, idField, hashField, label) {
 
 function commonValid(document, kind, projectId, epistemicClass, authority) {
   return document.schemaVersion === SCHEMA_VERSION && document.kind === kind
-    && document.protocol?.name === "head-agent-core-product-operating-loop" && document.protocol?.version === PRODUCT_OPERATING_LOOP_VERSION
+    && document.protocol?.name === "head-agent-core-product-operating-loop" && supportedProtocolVersion(document.protocol?.version)
     && (!projectId || document.projectId === projectId) && document.epistemicClass === epistemicClass
     && document.authority === authority && document.instructionAuthority === false && document.promotionAuthority === false;
 }
@@ -152,15 +216,17 @@ export function verifyProductFeatureCandidate(document, projectId = "") {
 export function verifyProductInitiativeCandidate(document, projectId = "") {
   verifyIdentity(document, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash", "ProductInitiativeCandidate");
   if (!commonValid(document, "ProductInitiativeCandidate", projectId, "inferred-meaning", "candidate-not-approved-decision")
-    || !document.title || !document.hypothesisIds?.length) fail("ProductInitiativeCandidate fields are invalid.", "INVALID_PRODUCT_INITIATIVE_CANDIDATE");
-  sortedIds(document.hypothesisIds, "Initiative hypothesisIds"); verifyFeatureResolution(document.featureResolution);
+    || !document.title || !Array.isArray(document.hypothesisIds)
+    || (!document.hypothesisIds.length && !(typeof document.reasoning === "string" && document.reasoning))) fail("ProductInitiativeCandidate fields are invalid.", "INVALID_PRODUCT_INITIATIVE_CANDIDATE");
+  sortedIds(document.hypothesisIds, "Initiative hypothesisIds");
+  if (document.featureResolution != null) verifyFeatureResolution(document.featureResolution);
   return document;
 }
 
 export function verifyProductInitiativeReviewDecision(document, projectId = "") {
   verifyIdentity(document, "product-initiative-review", "reviewDecisionId", "reviewDecisionHash", "Product Initiative ReviewDecision");
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ReviewDecision" || document.protocol?.name !== "head-agent-core-product-initiative-review"
-    || document.protocol?.version !== PRODUCT_OPERATING_LOOP_VERSION || (!projectId || document.projectId === projectId) === false
+    || !supportedProtocolVersion(document.protocol?.version) || (!projectId || document.projectId === projectId) === false
     || document.decisionScope !== "product-initiative" || !["accept", "reject"].includes(document.disposition) || !document.rationale
     || document.authority !== "explicit-user-product-initiative-review" || document.instructionAuthority !== true
     || document.promotionAuthority !== (document.disposition === "accept")) fail("Product Initiative ReviewDecision fields are invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
@@ -170,7 +236,7 @@ export function verifyProductInitiativeReviewDecision(document, projectId = "") 
 export function verifyReviewedProductInitiative(document, projectId = "") {
   verifyIdentity(document, "reviewed-product-initiative", "initiativeId", "initiativeHash", "ReviewedProductInitiative");
   if (!commonValid(document, "ReviewedProductInitiative", projectId, "approved-decision", "reviewed-product-initiative-not-product-canon")
-    || !document.initiativeCandidateId || !document.reviewDecisionId || !document.title) fail("ReviewedProductInitiative fields are invalid.", "INVALID_REVIEWED_PRODUCT_INITIATIVE");
+    || !document.initiativeCandidateId || !document.reviewDecisionId || !document.title || !Array.isArray(document.hypothesisIds)) fail("ReviewedProductInitiative fields are invalid.", "INVALID_REVIEWED_PRODUCT_INITIATIVE");
   verifyFeatureResolution(document.featureResolution);
   return document;
 }
@@ -200,7 +266,7 @@ function readArtifacts(projectRoot, relative, limit = LIMITS.maxArtifacts) {
 export function verifyProductOperatingProjectionInput(projection) {
   if (!projection || projection.kind !== "ProductOperatingProjectionInput"
     || projection.protocol?.name !== "head-agent-core-product-operating-projection"
-    || projection.protocol?.version !== PRODUCT_OPERATING_LOOP_VERSION
+    || !supportedProtocolVersion(projection.protocol?.version)
     || typeof projection.projectId !== "string" || !projection.projectId
     || projection.authority !== "derived-product-graph-input-not-product-or-execution-canon"
     || projection.instructionAuthority !== false || projection.promotionAuthority !== false) {
@@ -234,10 +300,12 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
   for (const hypothesis of arrays.hypotheses) if (hypothesis.signalIds.some((id) => !signals.has(id))) fail("ProductHypothesis references an unknown ProductSignal.", "UNKNOWN_PRODUCT_SIGNAL");
   for (const initiative of arrays.initiativeCandidates) {
     if (initiative.hypothesisIds.some((id) => !hypotheses.has(id))) fail("ProductInitiativeCandidate references an unknown ProductHypothesis.", "UNKNOWN_PRODUCT_HYPOTHESIS");
-    if (initiative.featureResolution.kind === "candidate") {
+    if (initiative.featureResolution?.kind === "candidate") {
       const featureCandidate = featureCandidates.get(initiative.featureResolution.featureCandidateId);
       if (!featureCandidate) fail("ProductInitiativeCandidate references an unknown ProductFeatureCandidate.", "UNKNOWN_PRODUCT_FEATURE_CANDIDATE");
-      const expectedSeed = productOperatingDigest(productOperatingCanonicalJson({ projectId: initiative.projectId, title: initiative.title, description: initiative.description, hypothesisIds: initiative.hypothesisIds }));
+      const seedInput = { projectId: initiative.projectId, title: initiative.title, description: initiative.description, hypothesisIds: initiative.hypothesisIds };
+      if (initiative.protocol?.version !== "0.1.0") seedInput.reasoning = initiative.reasoning || "";
+      const expectedSeed = productOperatingDigest(productOperatingCanonicalJson(seedInput));
       if (featureCandidate.initiativeCandidateSeed !== expectedSeed) fail("ProductFeatureCandidate seed does not match its ProductInitiativeCandidate.", "PRODUCT_FEATURE_CANDIDATE_SEED_MISMATCH");
     }
   }
@@ -251,9 +319,20 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
     const review = reviews.get(reviewed.reviewDecisionId);
     if (!review || review.disposition !== "accept" || review.initiativeCandidateId !== reviewed.initiativeCandidateId) fail("ReviewedProductInitiative lacks its accepting ReviewDecision.", "INVALID_REVIEWED_PRODUCT_INITIATIVE_LINEAGE");
     const candidate = initiatives.get(reviewed.initiativeCandidateId);
-    const reviewedMeaning = { title: reviewed.title, description: reviewed.description, hypothesisIds: reviewed.hypothesisIds, featureResolution: reviewed.featureResolution };
-    const candidateMeaning = { title: candidate?.title, description: candidate?.description, hypothesisIds: candidate?.hypothesisIds, featureResolution: candidate?.featureResolution };
-    if (!candidate || productOperatingCanonicalJson(reviewedMeaning) !== productOperatingCanonicalJson(candidateMeaning)) fail("ReviewedProductInitiative rewrites its immutable candidate.", "REVIEWED_PRODUCT_INITIATIVE_CANDIDATE_MISMATCH");
+    const reviewedMeaning = { title: reviewed.title, description: reviewed.description, reasoning: reviewed.reasoning || "", hypothesisIds: reviewed.hypothesisIds };
+    const candidateMeaning = { title: candidate?.title, description: candidate?.description, reasoning: candidate?.reasoning || "", hypothesisIds: candidate?.hypothesisIds };
+    if (!candidate || productOperatingCanonicalJson(reviewedMeaning) !== productOperatingCanonicalJson(candidateMeaning)
+      || (candidate.featureResolution != null && productOperatingCanonicalJson(reviewed.featureResolution) !== productOperatingCanonicalJson(candidate.featureResolution))) {
+      fail("ReviewedProductInitiative rewrites its immutable candidate.", "REVIEWED_PRODUCT_INITIATIVE_CANDIDATE_MISMATCH");
+    }
+    if (reviewed.featureResolution.kind === "candidate") {
+      const featureCandidate = featureCandidates.get(reviewed.featureResolution.featureCandidateId);
+      if (!featureCandidate) fail("ReviewedProductInitiative references an unknown ProductFeatureCandidate.", "UNKNOWN_PRODUCT_FEATURE_CANDIDATE");
+      const seedInput = { projectId: candidate.projectId, title: candidate.title, description: candidate.description, hypothesisIds: candidate.hypothesisIds };
+      if (candidate.protocol?.version !== "0.1.0") seedInput.reasoning = candidate.reasoning || "";
+      const expectedSeed = productOperatingDigest(productOperatingCanonicalJson(seedInput));
+      if (featureCandidate.initiativeCandidateSeed !== expectedSeed) fail("Reviewed ProductFeatureCandidate seed does not match its ProductInitiativeCandidate.", "PRODUCT_FEATURE_CANDIDATE_SEED_MISMATCH");
+    }
   }
   for (const outcome of arrays.outcomeObservations) {
     const changeSet = changes.get(outcome.changeSetId);
@@ -270,6 +349,64 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
   };
   const projectionInputHash = productOperatingDigest(productOperatingCanonicalJson(payload));
   return verifyProductOperatingProjectionInput({ ...payload, projectionInputId: `product-operating-projection-${projectionInputHash.slice(0, 24)}`, projectionInputHash });
+}
+
+function statToken(file) {
+  const stat = fs.statSync(file, { bigint: true });
+  return `${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}
+
+function productOperatingReadFingerprint(projectRoot) {
+  const entries = [];
+  for (const [kind, relative] of Object.entries(DIRECTORIES)) {
+    const directory = safeDirectory(projectRoot, relative);
+    if (!fs.existsSync(directory)) { entries.push(`${kind}:absent`); continue; }
+    const files = fs.readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => entry.name).sort();
+    entries.push(`${kind}:${files.map((name) => `${name}:${statToken(path.join(directory, name))}`).join("|")}`);
+  }
+  return productOperatingDigest(entries.join("\n"));
+}
+
+function readProductOperatingProjection(inspected, { fresh = false } = {}) {
+  const key = cacheRoot(inspected.project.projectRoot);
+  const fingerprint = productOperatingReadFingerprint(inspected.project.projectRoot);
+  const cached = projectionReadCache.get(key);
+  if (!fresh && cached?.projectId === inspected.project.projectId && cached.fingerprint === fingerprint) {
+    return { projection: cached.projection, verification: { mode: "cached-verified-snapshot", cacheKey: `${cached.projection.projectionInputId}:${fingerprint}`, writeInvalidates: true } };
+  }
+  const projection = loadProductOperatingProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  projectionReadCache.set(key, { projectId: inspected.project.projectId, fingerprint, projection });
+  return { projection, verification: { mode: "fresh-full-verification", cacheKey: `${projection.projectionInputId}:${fingerprint}`, writeInvalidates: true } };
+}
+
+async function readWorldSummary(inspected, { fresh = false } = {}) {
+  const key = cacheRoot(inspected.project.projectRoot);
+  const pointerFile = path.join(inspected.project.projectRoot, ".head", "world-model", "current.json");
+  if (!fs.existsSync(pointerFile)) {
+    worldSummaryReadCache.delete(key);
+    return { summary: null, verification: { mode: "not-built", cacheKey: null, writeInvalidates: true } };
+  }
+  const pointerRaw = fs.readFileSync(pointerFile, "utf8");
+  let pointer;
+  try { pointer = JSON.parse(pointerRaw); } catch { fail("World Model pointer is invalid JSON.", "INVALID_WORLD_MODEL_POINTER"); }
+  const cached = worldSummaryReadCache.get(key);
+  if (!fresh && cached?.pointerRaw === pointerRaw) {
+    return { summary: cached.summary, verification: { mode: "cached-verified-snapshot", cacheKey: `${cached.summary.worldModelId}:${cached.summary.worldModelHash}`, writeInvalidates: true } };
+  }
+  const { readWorldModel } = await import("./world-model.mjs");
+  const world = readWorldModel({ root: inspected.project.projectRoot }).snapshot;
+  if (pointer.worldModelId !== world.worldModelId || pointer.worldModelHash !== world.worldModelHash) fail("World Model pointer changed during continuity read.", "WORLD_MODEL_POINTER_MISMATCH");
+  const summary = {
+    worldModelId: world.worldModelId,
+    worldModelHash: world.worldModelHash,
+    graphSnapshotId: world.temporalProvenanceGraph?.graphSnapshotId || null,
+    graphSnapshotHash: world.temporalProvenanceGraph?.graphSnapshotHash || null,
+    sourceSnapshotId: world.temporalProvenanceGraph?.sourceSnapshotId || null,
+  };
+  worldSummaryReadCache.set(key, { pointerRaw, summary });
+  return { summary, verification: { mode: "fresh-full-verification", cacheKey: `${summary.worldModelId}:${summary.worldModelHash}`, writeInvalidates: true } };
 }
 
 function findById(projectRoot, relative, id, prefix, validator, projectId) {
@@ -322,22 +459,23 @@ function resolveFeature(projectRoot, projectId, featureResolution, initiativeCan
   return { resolution: { kind: "candidate", pendingFeature: normalized }, featureCandidatePayload: payload };
 }
 
-export async function proposeProductInitiative({ root = ".", title, description = "", hypothesisIds = [], featureResolution } = {}) {
+export async function proposeProductInitiative({ root = ".", title, description = "", reasoning = "", hypothesisIds = [], featureResolution = null } = {}) {
   const inspected = readyProject(root, "a ProductInitiativeCandidate is proposed");
   const ids = sortedIds(hypothesisIds, "ProductInitiativeCandidate hypothesisIds");
-  if (!ids.length) fail("ProductInitiativeCandidate requires at least one ProductHypothesis.", "PRODUCT_INITIATIVE_HYPOTHESIS_REQUIRED");
   for (const id of ids) findById(inspected.project.projectRoot, PRODUCT_HYPOTHESIS_DIRECTORY, id, "product-hypothesis", verifyProductHypothesis, inspected.project.projectId);
   const normalizedTitle = requiredText(title, "ProductInitiativeCandidate title");
   const normalizedDescription = optionalText(description, "ProductInitiativeCandidate description");
-  const seed = productOperatingDigest(productOperatingCanonicalJson({ projectId: inspected.project.projectId, title: normalizedTitle, description: normalizedDescription, hypothesisIds: ids }));
-  const resolved = resolveFeature(inspected.project.projectRoot, inspected.project.projectId, featureResolution, seed);
+  const normalizedReasoning = optionalText(reasoning, "ProductInitiativeCandidate reasoning");
+  if (!ids.length && !normalizedReasoning) fail("ProductInitiativeCandidate requires ProductHypothesis identities or explicit inline reasoning.", "PRODUCT_INITIATIVE_REASONING_REQUIRED");
+  const seed = productOperatingDigest(productOperatingCanonicalJson({ projectId: inspected.project.projectId, title: normalizedTitle, description: normalizedDescription, hypothesisIds: ids, reasoning: normalizedReasoning }));
+  const resolved = featureResolution == null ? { resolution: null, featureCandidatePayload: null } : resolveFeature(inspected.project.projectRoot, inspected.project.projectId, featureResolution, seed);
   let featureCandidate = null;
   let resolution = resolved.resolution;
   if (resolved.featureCandidatePayload) {
     featureCandidate = verifyProductFeatureCandidate(artifact(resolved.featureCandidatePayload, "product-feature-candidate", "featureCandidateId", "featureCandidateHash"), inspected.project.projectId);
     resolution = { kind: "candidate", featureCandidateId: featureCandidate.featureCandidateId };
   }
-  const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductInitiativeCandidate", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, title: normalizedTitle, description: normalizedDescription, hypothesisIds: ids, featureResolution: resolution, epistemicClass: "inferred-meaning", authority: "candidate-not-approved-decision", instructionAuthority: false, promotionAuthority: false };
+  const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductInitiativeCandidate", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, title: normalizedTitle, description: normalizedDescription, reasoning: normalizedReasoning, hypothesisIds: ids, featureResolution: resolution, epistemicClass: "inferred-meaning", authority: "candidate-not-approved-decision", instructionAuthority: false, promotionAuthority: false };
   const initiativeCandidate = verifyProductInitiativeCandidate(artifact(payload, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash"), inspected.project.projectId);
   if (featureCandidate) {
     persistImmutable(inspected.project.projectRoot, PRODUCT_FEATURE_CANDIDATE_DIRECTORY, featureCandidate.featureCandidateId, featureCandidate);
@@ -346,22 +484,37 @@ export async function proposeProductInitiative({ root = ".", title, description 
   return { ...persisted, initiativeCandidate, featureCandidate, productGraph: await projectProductOperatingGraph(inspected) };
 }
 
-export async function reviewProductInitiative({ root = ".", initiativeCandidateId, disposition, rationale } = {}) {
+export async function reviewProductInitiative({ root = ".", initiativeCandidateId, disposition, rationale, featureResolution = null } = {}) {
   const inspected = readyProject(root, "a Product Initiative is reviewed");
   const candidate = findById(inspected.project.projectRoot, PRODUCT_INITIATIVE_CANDIDATE_DIRECTORY, initiativeCandidateId, "product-initiative-candidate", verifyProductInitiativeCandidate, inspected.project.projectId).artifact;
   const current = loadProductOperatingProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
   if (current.initiativeReviews.some((review) => review.initiativeCandidateId === initiativeCandidateId)) fail("Product Initiative candidate already has a ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
   if (!["accept", "reject"].includes(disposition)) fail("Product Initiative review disposition must be accept or reject.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
+  if (disposition === "reject" && featureResolution != null) fail("A rejected Product Initiative cannot resolve a Feature.", "REJECTED_PRODUCT_INITIATIVE_FEATURE_RESOLUTION");
+  if (candidate.featureResolution != null && featureResolution != null) fail("Review cannot replace the candidate's frozen Feature resolution.", "PRODUCT_INITIATIVE_FEATURE_RESOLUTION_ALREADY_FROZEN");
+  let reviewedFeatureResolution = candidate.featureResolution;
+  let featureCandidate = null;
+  if (disposition === "accept" && reviewedFeatureResolution == null) {
+    if (featureResolution == null) fail("Accepted Product Initiative review requires existing Feature, Feature candidate, or honest gap resolution.", "PRODUCT_INITIATIVE_REVIEW_FEATURE_RESOLUTION_REQUIRED");
+    const seed = productOperatingDigest(productOperatingCanonicalJson({ projectId: candidate.projectId, title: candidate.title, description: candidate.description, hypothesisIds: candidate.hypothesisIds, reasoning: candidate.reasoning || "" }));
+    const resolved = resolveFeature(inspected.project.projectRoot, inspected.project.projectId, featureResolution, seed);
+    reviewedFeatureResolution = resolved.resolution;
+    if (resolved.featureCandidatePayload) {
+      featureCandidate = verifyProductFeatureCandidate(artifact(resolved.featureCandidatePayload, "product-feature-candidate", "featureCandidateId", "featureCandidateHash"), inspected.project.projectId);
+      reviewedFeatureResolution = { kind: "candidate", featureCandidateId: featureCandidate.featureCandidateId };
+    }
+  }
   const payload = { schemaVersion: SCHEMA_VERSION, kind: "ReviewDecision", protocol: { name: "head-agent-core-product-initiative-review", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, decisionScope: "product-initiative", initiativeCandidateId, disposition, rationale: requiredText(rationale, "Product Initiative review rationale"), authority: "explicit-user-product-initiative-review", instructionAuthority: true, promotionAuthority: disposition === "accept" };
   const reviewDecision = verifyProductInitiativeReviewDecision(artifact(payload, "product-initiative-review", "reviewDecisionId", "reviewDecisionHash"), inspected.project.projectId);
   persistImmutable(inspected.project.projectRoot, PRODUCT_INITIATIVE_REVIEW_DIRECTORY, reviewDecision.reviewDecisionId, reviewDecision);
   let reviewedInitiative = null;
   if (disposition === "accept") {
-    const approved = { schemaVersion: SCHEMA_VERSION, kind: "ReviewedProductInitiative", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, initiativeCandidateId, reviewDecisionId: reviewDecision.reviewDecisionId, title: candidate.title, description: candidate.description, hypothesisIds: candidate.hypothesisIds, featureResolution: candidate.featureResolution, epistemicClass: "approved-decision", authority: "reviewed-product-initiative-not-product-canon", instructionAuthority: false, promotionAuthority: false };
+    if (featureCandidate) persistImmutable(inspected.project.projectRoot, PRODUCT_FEATURE_CANDIDATE_DIRECTORY, featureCandidate.featureCandidateId, featureCandidate);
+    const approved = { schemaVersion: SCHEMA_VERSION, kind: "ReviewedProductInitiative", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, initiativeCandidateId, reviewDecisionId: reviewDecision.reviewDecisionId, title: candidate.title, description: candidate.description, reasoning: candidate.reasoning || "", hypothesisIds: candidate.hypothesisIds, featureResolution: reviewedFeatureResolution, epistemicClass: "approved-decision", authority: "reviewed-product-initiative-not-product-canon", instructionAuthority: false, promotionAuthority: false };
     reviewedInitiative = verifyReviewedProductInitiative(artifact(approved, "reviewed-product-initiative", "initiativeId", "initiativeHash"), inspected.project.projectId);
     persistImmutable(inspected.project.projectRoot, REVIEWED_PRODUCT_INITIATIVE_DIRECTORY, reviewedInitiative.initiativeId, reviewedInitiative);
   }
-  return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", reviewDecision, reviewedInitiative, productCanonMutated: false, productGraph: await projectProductOperatingGraph(inspected) };
+  return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", reviewDecision, reviewedInitiative, featureCandidate, productCanonMutated: false, productGraph: await projectProductOperatingGraph(inspected) };
 }
 
 export async function observeProductOutcome({ root = ".", changeSetId, statement, epistemicClass = "observed-fact", evidenceIds = [], initiativeId = "" } = {}) {
@@ -378,27 +531,22 @@ export async function observeProductOutcome({ root = ".", changeSetId, statement
   return { ...persisted, outcomeObservation, featureStatusMutated: false, successJudgmentRecorded: false, productGraph: await projectProductOperatingGraph(inspected) };
 }
 
-export function inspectProductOperatingLoop({ root = "." } = {}) {
+export function inspectProductOperatingLoop({ root = ".", fresh = false } = {}) {
   const inspected = readyProject(root, "Product Operating Loop inspection");
-  const projection = loadProductOperatingProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
-  return { status: projection.signals.length ? "active" : "not_started", projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, projection, authority: { observations: "evidence-only", hypotheses: "non-authoritative", initiativeCandidates: "candidate", reviewedInitiatives: "explicit-user-reviewed-but-not-product-canon", featureCandidates: "candidate-until-separate-product-canon-review", outcomes: "evidence-only", graph: "derived-projection" } };
+  const read = readProductOperatingProjection(inspected, { fresh });
+  const projection = read.projection;
+  const artifactCount = Object.keys(DIRECTORIES).reduce((count, key) => count + projection[key].length, 0);
+  return { status: artifactCount ? "active" : "not_started", projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, projection, readVerification: read.verification, defaultPath: "ephemeral-note-then-persist-only-at-handoff-audit-product-state-or-cross-run-boundaries", authority: { observations: "evidence-only", hypotheses: "non-authoritative", initiativeCandidates: "candidate", reviewedInitiatives: "explicit-user-reviewed-but-not-product-canon", featureCandidates: "candidate-until-separate-product-canon-review", outcomes: "evidence-only", graph: "derived-projection" } };
 }
 
-export async function buildHeadContinuitySnapshot({ root = "." } = {}) {
+export async function buildHeadContinuitySnapshot({ root = ".", fresh = false } = {}) {
   const inspected = readyProject(root, "HEAD continuity is read");
-  const projection = loadProductOperatingProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
-  let worldModel = null;
+  const productRead = readProductOperatingProjection(inspected, { fresh });
+  const projection = productRead.projection;
+  let worldRead;
   try {
-    const { readWorldModel } = await import("./world-model.mjs");
-    const world = readWorldModel({ root: inspected.project.projectRoot }).snapshot;
-    worldModel = {
-      worldModelId: world.worldModelId,
-      worldModelHash: world.worldModelHash,
-      graphSnapshotId: world.temporalProvenanceGraph?.graphSnapshotId || null,
-      graphSnapshotHash: world.temporalProvenanceGraph?.graphSnapshotHash || null,
-      sourceSnapshotId: world.temporalProvenanceGraph?.sourceSnapshotId || null,
-    };
-  } catch { worldModel = null; }
+    worldRead = await readWorldSummary(inspected, { fresh });
+  } catch { worldRead = { summary: null, verification: { mode: "unavailable", cacheKey: null, writeInvalidates: true } }; }
   const snapshot = {
     schemaVersion: SCHEMA_VERSION, kind: "HEADContinuitySnapshot", protocol: { name: "head-agent-core-head-continuity", version: PRODUCT_OPERATING_LOOP_VERSION },
     projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, sessionMode: inspected.state.mode,
@@ -406,7 +554,7 @@ export async function buildHeadContinuitySnapshot({ root = "." } = {}) {
     activeExecutionContractId: inspected.state.activeExecutionContractId || null, lastResultPacketId: inspected.state.lastResultPacketId || null,
     lastReviewDecisionId: inspected.state.lastReviewDecisionId || null, latestCheckpointId: inspected.state.latestCheckpoint || null,
     productModelId: readProductModelCanon({ projectRoot: inspected.project.projectRoot }).model.productModelId,
-    worldModel,
+    worldModel: worldRead.summary,
     productOperatingProjectionId: projection.projectionInputId,
     productSignalIds: projection.signals.map((item) => item.signalId),
     productHypothesisIds: projection.hypotheses.map((item) => item.hypothesisId),
@@ -416,5 +564,5 @@ export async function buildHeadContinuitySnapshot({ root = "." } = {}) {
     recoveryCanon: ".head/sessions/current.json and Session/Run checkpoints", objectiveRewrite: false,
   };
   const snapshotHash = productOperatingDigest(productOperatingCanonicalJson(snapshot));
-  return { status: "derived", snapshot: { ...snapshot, snapshotId: `head-continuity-${snapshotHash.slice(0, 24)}`, snapshotHash } };
+  return { status: "derived", snapshot: { ...snapshot, snapshotId: `head-continuity-${snapshotHash.slice(0, 24)}`, snapshotHash }, readVerification: { productOperating: productRead.verification, worldModel: worldRead.verification } };
 }

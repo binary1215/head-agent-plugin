@@ -19,7 +19,8 @@ import { activateArcadeDbGraphProjection, inspectArcadeDbCredentialPreflight, in
 import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from "./lib/arcadedb-database-lifecycle.mjs";
 import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
-import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
+import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
+import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -585,6 +586,19 @@ export const tools = [
     }
   },
   {
+    name: "head_operating_lane_recommend",
+    description: "Recommend the lightest safe Observe, Session, Run, or Authority lane without creating authority or project artifacts.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, intent: { type: "string", enum: ["observe", "execute"], default: "observe" }, workspace_effect: { type: "string", enum: ["none", "reversible", "consequential"], default: "none" }, dependency_count: { type: "integer", minimum: 0, maximum: 32, default: 0 },
+      provider_invocation: { type: "boolean", default: false }, handoff: { type: "boolean", default: false }, context_replacement: { type: "boolean", default: false }, independent_review: { type: "boolean", default: false }, failure_branches: { type: "boolean", default: false }, human_decision_during_execution: { type: "boolean", default: false }, irreversible: { type: "boolean", default: false }, external_write: { type: "boolean", default: false }, uses_credentials: { type: "boolean", default: false }, product_canon_mutation: { type: "boolean", default: false }, product_initiative_decision: { type: "boolean", default: false }, recovery_checkpoint_replacement: { type: "boolean", default: false },
+    }, required: ["project_root"], additionalProperties: false },
+  },
+  {
+    name: "head_product_note",
+    description: "Prepare a non-persisted epistemically typed product-learning note. It receives no content identity and does not rebuild the World Model.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, statement: { type: "string", minLength: 1 }, epistemic_class: { type: "string", enum: ["observed-fact", "hypothesis", "inferred-meaning"] }, source: { type: "string" }, rationale: { type: "string" }, evidence_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, referenced_by_another_run: { type: "boolean", default: false }, needs_rebuttal: { type: "boolean", default: false }, affects_product_state: { type: "boolean", default: false }, handoff: { type: "boolean", default: false } }, required: ["project_root", "statement", "epistemic_class"], additionalProperties: false },
+  },
+  {
     name: "head_product_signal_record",
     description: "Record an immutable observed-fact ProductSignal and rebuild the derived Product Graph without changing Product Canon.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, statement: { type: "string", minLength: 1 }, observed_at: { type: "string", format: "date-time" }, source: { type: "string" }, evidence_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } } }, required: ["project_root", "statement"], additionalProperties: false },
@@ -596,17 +610,21 @@ export const tools = [
   },
   {
     name: "head_product_initiative_propose",
-    description: "Propose a Product Initiative from hypotheses with an explicit existing Feature, Feature candidate, or honest gap. It does not approve the initiative or mutate Product Canon.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, title: { type: "string", minLength: 1 }, description: { type: "string" }, hypothesis_ids: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: "^product-hypothesis-[a-f0-9]{24}$" } }, feature_resolution: { oneOf: [
+    description: "Propose a Product Initiative from persisted hypotheses or inline reasoning. Feature resolution may be deferred to explicit review; proposal never approves the initiative or mutates Product Canon.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, title: { type: "string", minLength: 1 }, description: { type: "string" }, reasoning: { type: "string" }, hypothesis_ids: { type: "array", uniqueItems: true, items: { type: "string", pattern: "^product-hypothesis-[a-f0-9]{24}$" } }, feature_resolution: { oneOf: [
       { type: "object", properties: { kind: { const: "existing-feature" }, feature_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }, required: ["kind", "feature_key"], additionalProperties: false },
       { type: "object", properties: { kind: { const: "candidate" }, feature: { type: "object", properties: { key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }, name: { type: "string", minLength: 1 }, description: { type: "string" }, capability_keys: { type: "array", uniqueItems: true, items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } } }, required: ["key", "name"], additionalProperties: false } }, required: ["kind", "feature"], additionalProperties: false },
       { type: "object", properties: { kind: { const: "gap" }, reason: { type: "string", minLength: 1 } }, required: ["kind", "reason"], additionalProperties: false },
-    ] } }, required: ["project_root", "title", "hypothesis_ids", "feature_resolution"], additionalProperties: false },
+    ] } }, required: ["project_root", "title"], additionalProperties: false },
   },
   {
     name: "head_product_initiative_review",
-    description: "Record the user's explicit accept/reject ReviewDecision for one Product Initiative candidate. Acceptance creates a separate reviewed Initiative and never mutates Product Canon.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, initiative_candidate_id: { type: "string", pattern: "^product-initiative-candidate-[a-f0-9]{24}$" }, disposition: { type: "string", enum: ["accept", "reject"] }, rationale: { type: "string", minLength: 1 }, confirm_user_review: { type: "boolean" } }, required: ["project_root", "initiative_candidate_id", "disposition", "rationale", "confirm_user_review"], additionalProperties: false },
+    description: "Record the user's explicit accept/reject ReviewDecision for one Product Initiative candidate. Acceptance resolves any deferred Feature mapping, creates a separate reviewed Initiative, and never mutates Product Canon.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, initiative_candidate_id: { type: "string", pattern: "^product-initiative-candidate-[a-f0-9]{24}$" }, disposition: { type: "string", enum: ["accept", "reject"] }, rationale: { type: "string", minLength: 1 }, confirm_user_review: { type: "boolean" }, feature_resolution: { oneOf: [
+      { type: "object", properties: { kind: { const: "existing-feature" }, feature_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }, required: ["kind", "feature_key"], additionalProperties: false },
+      { type: "object", properties: { kind: { const: "candidate" }, feature: { type: "object", properties: { key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }, name: { type: "string", minLength: 1 }, description: { type: "string" }, capability_keys: { type: "array", uniqueItems: true, items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } } }, required: ["key", "name"], additionalProperties: false } }, required: ["kind", "feature"], additionalProperties: false },
+      { type: "object", properties: { kind: { const: "gap" }, reason: { type: "string", minLength: 1 } }, required: ["kind", "reason"], additionalProperties: false },
+    ] } }, required: ["project_root", "initiative_candidate_id", "disposition", "rationale", "confirm_user_review"], additionalProperties: false },
   },
   {
     name: "head_product_outcome_observe",
@@ -615,13 +633,13 @@ export const tools = [
   },
   {
     name: "head_product_operating_status",
-    description: "Read the verified Product Operating Loop artifacts and their explicit authority classes.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    description: "Read Product Operating Loop artifacts and authority classes, reusing a disclosed write-invalidated verified-snapshot cache unless fresh verification is requested.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, fresh: { type: "boolean", default: false } }, required: ["project_root"], additionalProperties: false },
   },
   {
     name: "head_continuity_snapshot",
-    description: "Build an on-demand non-persisted derived reference view over exact Session, Run, lineage, product, and graph identities. It is not recovery canon or HEAD judgment authority.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    description: "Build an on-demand non-persisted derived reference view over exact Session, Run, lineage, product, and graph identities, with optional forced fresh verification. It is not recovery canon or HEAD judgment authority.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, fresh: { type: "boolean", default: false } }, required: ["project_root"], additionalProperties: false },
   },
 ];
 
@@ -855,20 +873,24 @@ export async function dispatch(request, { graphDbTransport = null } = {}) {
                             kind: args.kind || "",
                             limit: args.limit ?? 50,
                           })
+                          : name === "head_operating_lane_recommend"
+                            ? recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
+                          : name === "head_product_note"
+                            ? prepareProductLearningNote({ root: args.project_root, statement: args.statement, epistemicClass: args.epistemic_class, source: args.source || "", rationale: args.rationale || "", evidenceIds: args.evidence_ids || [], referencedByAnotherRun: args.referenced_by_another_run ?? false, needsRebuttal: args.needs_rebuttal ?? false, affectsProductState: args.affects_product_state ?? false, handoff: args.handoff ?? false })
                           : name === "head_product_signal_record"
                             ? recordProductSignal({ root: args.project_root, statement: args.statement, observedAt: args.observed_at, source: args.source || "", evidenceIds: args.evidence_ids || [] })
                           : name === "head_product_hypothesis_record"
                             ? recordProductHypothesis({ root: args.project_root, statement: args.statement, rationale: args.rationale || "", signalIds: args.signal_ids })
                           : name === "head_product_initiative_propose"
-                            ? proposeProductInitiative({ root: args.project_root, title: args.title, description: args.description || "", hypothesisIds: args.hypothesis_ids, featureResolution: productFeatureResolutionFromMcp(args.feature_resolution) })
+                            ? proposeProductInitiative({ root: args.project_root, title: args.title, description: args.description || "", reasoning: args.reasoning || "", hypothesisIds: args.hypothesis_ids || [], featureResolution: args.feature_resolution == null ? null : productFeatureResolutionFromMcp(args.feature_resolution) })
                           : name === "head_product_initiative_review"
-                            ? (requireMcpConfirmation(args.confirm_user_review, "Product Initiative review requires explicit user confirmation.", "PRODUCT_INITIATIVE_REVIEW_CONFIRMATION_REQUIRED"), reviewProductInitiative({ root: args.project_root, initiativeCandidateId: args.initiative_candidate_id, disposition: args.disposition, rationale: args.rationale }))
+                            ? (requireMcpConfirmation(args.confirm_user_review, "Product Initiative review requires explicit user confirmation.", "PRODUCT_INITIATIVE_REVIEW_CONFIRMATION_REQUIRED"), reviewProductInitiative({ root: args.project_root, initiativeCandidateId: args.initiative_candidate_id, disposition: args.disposition, rationale: args.rationale, featureResolution: args.feature_resolution == null ? null : productFeatureResolutionFromMcp(args.feature_resolution) }))
                           : name === "head_product_outcome_observe"
                             ? observeProductOutcome({ root: args.project_root, changeSetId: args.change_set_id, initiativeId: args.initiative_id || "", statement: args.statement, epistemicClass: args.epistemic_class || "observed-fact", evidenceIds: args.evidence_ids || [] })
                           : name === "head_product_operating_status"
-                            ? inspectProductOperatingLoop({ root: args.project_root })
+                            ? inspectProductOperatingLoop({ root: args.project_root, fresh: args.fresh ?? false })
                           : name === "head_continuity_snapshot"
-                            ? buildHeadContinuitySnapshot({ root: args.project_root })
+                            ? buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());
     return success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
   } catch (error) {

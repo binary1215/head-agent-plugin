@@ -1391,6 +1391,7 @@ function appendProductOperatingProjection({ projectId, productModelId, sourceSna
     sourceAuthority: feature.authority, ...meta([feature.featureCandidateId], "derived", "product-feature-candidate"),
   });
   const targetFor = (resolution) => {
+    if (resolution == null) return null;
     if (resolution.kind === "existing-feature") {
       const target = featureByKey.get(resolution.featureKey);
       if (target && resolution.productModelId === productModelId) return target.nodeId;
@@ -1405,7 +1406,7 @@ function appendProductOperatingProjection({ projectId, productModelId, sourceSna
     return null;
   };
   for (const initiative of projection.initiativeCandidates) {
-    pushNode({ nodeId: initiative.initiativeCandidateId, kind: "ProductInitiativeCandidate", projectId, initiativeCandidateHash: initiative.initiativeCandidateHash, title: initiative.title, description: initiative.description, hypothesisIds: initiative.hypothesisIds, featureResolution: initiative.featureResolution, epistemicClass: initiative.epistemicClass, sourceAuthority: initiative.authority, ...meta([initiative.initiativeCandidateId, ...initiative.hypothesisIds], "derived", "product-initiative-candidate") });
+    pushNode({ nodeId: initiative.initiativeCandidateId, kind: "ProductInitiativeCandidate", projectId, initiativeCandidateHash: initiative.initiativeCandidateHash, title: initiative.title, description: initiative.description, reasoning: initiative.reasoning || "", hypothesisIds: initiative.hypothesisIds, featureResolution: initiative.featureResolution, epistemicClass: initiative.epistemicClass, sourceAuthority: initiative.authority, ...meta([initiative.initiativeCandidateId, ...initiative.hypothesisIds], "derived", "product-initiative-candidate") });
     for (const hypothesisId of initiative.hypothesisIds) add("PROPOSES_FROM", initiative.initiativeCandidateId, hypothesisId, [initiative.initiativeCandidateId, hypothesisId], "derived", "product-initiative-candidate");
     const targetId = targetFor(initiative.featureResolution); if (targetId) add("PROPOSES_TO", initiative.initiativeCandidateId, targetId, [initiative.initiativeCandidateId, targetId], "derived", "product-initiative-candidate");
   }
@@ -1415,7 +1416,7 @@ function appendProductOperatingProjection({ projectId, productModelId, sourceSna
     add(review.disposition === "accept" ? "ACCEPTED_BY" : "REJECTED_BY", review.initiativeCandidateId, review.reviewDecisionId, [review.initiativeCandidateId, review.reviewDecisionId], "reviewed", "explicit-user-product-initiative-review");
   }
   for (const initiative of projection.reviewedInitiatives) {
-    pushNode({ nodeId: initiative.initiativeId, kind: "ReviewedProductInitiative", projectId, initiativeHash: initiative.initiativeHash, initiativeCandidateId: initiative.initiativeCandidateId, reviewDecisionId: initiative.reviewDecisionId, title: initiative.title, description: initiative.description, featureResolution: initiative.featureResolution, epistemicClass: initiative.epistemicClass, sourceAuthority: initiative.authority, ...meta([initiative.initiativeId, initiative.initiativeCandidateId, initiative.reviewDecisionId], "reviewed", "reviewed-product-initiative") });
+    pushNode({ nodeId: initiative.initiativeId, kind: "ReviewedProductInitiative", projectId, initiativeHash: initiative.initiativeHash, initiativeCandidateId: initiative.initiativeCandidateId, reviewDecisionId: initiative.reviewDecisionId, title: initiative.title, description: initiative.description, reasoning: initiative.reasoning || "", featureResolution: initiative.featureResolution, epistemicClass: initiative.epistemicClass, sourceAuthority: initiative.authority, ...meta([initiative.initiativeId, initiative.initiativeCandidateId, initiative.reviewDecisionId], "reviewed", "reviewed-product-initiative") });
     add("PROMOTED_FROM", initiative.initiativeId, initiative.initiativeCandidateId, [initiative.initiativeId, initiative.initiativeCandidateId], "reviewed", "reviewed-product-initiative");
     add("PRODUCES", initiative.reviewDecisionId, initiative.initiativeId, [initiative.initiativeId, initiative.reviewDecisionId], "reviewed", "reviewed-product-initiative");
     const targetId = targetFor(initiative.featureResolution); if (targetId) add("PROPOSES_TO", initiative.initiativeId, targetId, [initiative.initiativeId, targetId], "reviewed", "reviewed-product-initiative");
