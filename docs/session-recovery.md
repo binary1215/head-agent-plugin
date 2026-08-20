@@ -26,8 +26,9 @@ alone closes the original dispatch/wait lifecycle.
 |---|---|---|
 | `WholePlanSnapshot`, `ExecutionContract`, `ContextCapsule`, `Run`, `SessionRunCheckpoint` | P2 | recoverable project execution lineage and exact next direction |
 | `ReviewDecision` | P1 | Fresh HEAD's explicit normative judgment |
-| `ResultPacket`, `RunResultIntegrationRequest`, `RunResultIntegrationReceipt` | P3 | result and integration evidence only |
+| `BoundedWorkerDispatch`, `ResultPacket`, `RunResultIntegrationRequest`, `RunResultIntegrationReceipt` | P3 | worker ownership, result, and integration evidence only |
 | `SessionRestoreProjection` | P4 | non-persisted, reproducible consumer view |
+| `ContinuationOutcome`, `BoundedWorkerWaitOutcome`, execution lease/process | P5 | optional live attachment and operational progress only |
 
 The planes are not a persistence ranking. A P3 ResultPacket can be absent after
 checkpoint creation without changing P2 direction. A P1 ReviewDecision can
@@ -71,7 +72,8 @@ P2 format. The old direct time-based API is retired and cannot advance
 The connected flow is:
 
 ```text
-bounded worker/provider execution
+BoundedWorkerDispatch (P3)
+  -> at-most-once lease / supervised provider / bounded wait (P5)
   -> ResultPacket (P3)
   -> deterministic Fresh HEAD review projection
   -> explicit accept ReviewDecision (P1)
@@ -79,6 +81,26 @@ bounded worker/provider execution
   -> SessionRunCheckpoint (P2)
   -> RunResultIntegrationReceipt (P3)
 ```
+
+`worker-dispatch` binds one registered non-HEAD role to the exact current Run
+`ExecutionAuthorization`. The same role may retry idempotently; a competing role
+conflicts, and the authorization can be consumed only once. `worker-wait` returns
+a non-persisted operational outcome. It cannot mutate the WholePlan, supply
+recovery direction, or create a ReviewDecision. `worker-apply` accepts only a
+completed actual-provider result with verified native supervision and creates
+only the ResultPacket plus Fresh HEAD review context. Explicit review and the
+integration transaction below remain separate.
+
+## P2-first optional live continuation
+
+`session-continue` always calls artifact restore before consulting a provider or
+workspace host. A trusted host-injected adapter may then fresh-verify the exact
+current HEAD attachment. Its `ContinuationOutcome` is P5 and non-persisted. It
+records either `attached` or a disclosed `fresh-logical-head` fallback, keeps the
+same checkpoint and restore projection, and never reads provider summary or
+transcript. Provider session identifiers are neither canonical nor persisted.
+Attach failure therefore changes conversation convenience, not HF-008 semantic
+recovery.
 
 `run-integrate-checkpoint` requires the exact reviewed Run and ReviewDecision.
 Core re-verifies the Run, ResultPacket, WholePlan, ExecutionContract,
@@ -112,14 +134,20 @@ does not change the checkpoint or restore projection's next direction.
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
 head session-restore <project> [--checkpoint <checkpoint-id>]
+head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
+head worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
+head worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
+head worker-execute <project> --authorization <authorization-id> --role <non-head-role>
+head worker-apply <project> --authorization <authorization-id>
 head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```
 
-Typed MCP exposes the same Core behavior as `head_session_restore`,
-`head_run_integrate_checkpoint`, and `head_run_integration`. The restore tool is
-read-only. Integration is idempotent but state-writing and does not grant review,
-Canon, publication, or external-action authority.
+Typed MCP exposes continuation, dispatch/status/wait/apply, restore, and explicit
+integration. Restore, status, and wait are read-only. Continuation may refresh
+only the injected host-local P5 attachment; dispatch and application are
+idempotent project-state writes. None grants review, Canon, publication, or
+external-action authority.
 
 Fresh-process tests run restore with distinct Codex and OpenCode provider-session
 environment values and require the same projection identity with neither value

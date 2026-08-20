@@ -116,8 +116,8 @@ has stronger portable semantics than the original runtime composition:
   than making those deeper contracts universal overhead.
 
 The original still has capabilities this plugin deliberately has not claimed:
-durable provider-session attachment, resume/stream/interrupt/close, and an
-established installed-Herdr operating path. The plugin now has provider-neutral
+general provider-session resume/stream and an established installed-Herdr
+operating path. The plugin now has provider-neutral
 host-bound durable project-role messaging, append-only exact endpoint targets,
 fresh-snapshot/ack/post-snapshot delivery fencing, deterministic two-fresh-process
 Codex/OpenCode generic-host evidence, and a production host-export bridge whose
@@ -125,20 +125,21 @@ separate live consumer acknowledges create-only requests. The external host bind
 each exported endpoint uniquely to the current coordination binding plus one
 per-process proof, so snapshot membership or copied coordinates cannot self-claim
 another role's live caller identity. It does not bundle a
-Herdr-specific adapter and does not yet have actual Codex/OpenCode provider-client
-wake/tool consumption. Automatic DAG
+Herdr-specific adapter. Actual already-running Codex/OpenCode tool consumption,
+P2-first optional exact HEAD attachment, bounded worker dispatch/own/wait/result/
+review/integration, and exact-owned one-shot interrupt/close are verified on
+Windows through the portable host/runtime contracts. Automatic DAG
 merge/conflict resolution, Obsidian/Notion publication, and OpenAI universal
 plugin-directory publication also remain incomplete. These are extension gaps,
 not reasons to weaken authority separation, but they bound any superiority
 claim.
 
-The original author directly audited commit `309947b` and reported that the
-production process-proof/current-binding path resolves the previously reported
-live-caller blocker with no remaining blocking correction in that slice. The same
-review requires the fixture driver to remain test-only, production to have no
-proof-free fallback, and actual Codex/OpenCode wake plus send/read/reply E2E before
-any complete live-replacement claim. This is a source-audited blocker closure, not
-one of the three unconditional final superiority verdicts.
+The original author directly audited the earlier caller-fencing and recovery
+slices and reported no blocking correction. The later actual provider-client and
+hostless recovery evidence closed those prior scenario gaps. The current
+portable continuation and independently ownable worker slice still requires one
+new direct audit of the exact pushed source before the three unconditional final
+superiority verdicts may be claimed.
 
 ## Claim boundary for author review
 

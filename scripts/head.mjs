@@ -32,6 +32,14 @@ import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
+import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
+import {
+  applyBoundedWorkerDispatchResult,
+  createBoundedWorkerDispatch,
+  executeBoundedWorkerDispatch,
+  readBoundedWorkerDispatch,
+  waitForBoundedWorkerDispatch,
+} from "./lib/bounded-worker-dispatch.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
@@ -68,6 +76,11 @@ export function usage({ all = false } = {}) {
       "head runtime-invocation-execute <project> --authorization <execution-authorization-id> [--input <execution.json>]",
       "head runtime-invocation-result <project> --authorization <execution-authorization-id>",
       "head runtime-invocation-apply-run-result <project> --authorization <execution-authorization-id>",
+      "head worker-dispatch <project> --authorization <execution-authorization-id> --role <developer|coder|reviewer>",
+      "head worker-read <project> --authorization <execution-authorization-id>",
+      "head worker-wait <project> --authorization <execution-authorization-id> [--wait-timeout-ms <0..600000>]",
+      "head worker-execute <project> --authorization <execution-authorization-id> --role <developer|coder|reviewer>",
+      "head worker-apply <project> --authorization <execution-authorization-id>",
       "head onboarding-start <project> [--input <onboarding.json>]",
       "head onboarding-status <project>",
       "head onboarding-review <project> --input <review.json>",
@@ -130,6 +143,7 @@ export function usage({ all = false } = {}) {
       "head world-runtime <project> [--query <text>] [--runtime <name>] [--state <state>] [--kind <kind>] [--limit <1-500>]",
       "head checkpoint <project> --summary <text> [--next <text>]",
       "head session-restore <project> [--checkpoint <session-run-checkpoint-id>]",
+      "head session-continue <project> --runtime <codex|opencode> [--checkpoint <session-run-checkpoint-id>] [--binding-env <environment-name>]",
       "head compact-prepare <project> --input <recovery.json>",
       "head compact-verify <project> --input <verification.json>",
       "head compact-continue <project> --input <continuation.json>",
@@ -188,10 +202,11 @@ function optionalInputJson(options, label) {
   return options.input ? inputJson(options, label) : {};
 }
 
-function coordinationBindingToken(options) {
+function coordinationBindingToken(options, { required = true } = {}) {
   const name = String(options["binding-env"] || COORDINATION_BINDING_ENV).trim();
   if (!/^[A-Z][A-Z0-9_]{2,127}$/u.test(name)) throw new Error("Coordination binding environment name is invalid.");
   const token = String(process.env[name] || "").trim();
+  if (!token && !required) return null;
   if (!token) {
     const error = new Error(`Coordination binding token is unavailable through environment reference ${name}.`);
     error.code = "COORDINATION_BINDING_REQUIRED";
@@ -249,6 +264,25 @@ export function runCommand(argv = process.argv.slice(2)) {
   }
   if (command === "runtime-invocation-result") return readRuntimeInvocationResult({ root, authorizationId: options.authorization });
   if (command === "runtime-invocation-apply-run-result") return applyRuntimeRunResult({ root, authorizationId: options.authorization });
+  if (command === "worker-dispatch") return createBoundedWorkerDispatch({ root, authorizationId: options.authorization, role: options.role });
+  if (command === "worker-read") return readBoundedWorkerDispatch({ root, authorizationId: options.authorization });
+  if (command === "worker-wait") return waitForBoundedWorkerDispatch({
+    root,
+    authorizationId: options.authorization,
+    timeoutMs: options["wait-timeout-ms"] == null ? 0 : Number(options["wait-timeout-ms"]),
+  });
+  if (command === "worker-execute") {
+    return inspectRuntimeAdapters(root).then((runtimeStatus) => executeBoundedWorkerDispatch({
+      root,
+      authorizationId: options.authorization,
+      role: options.role,
+      execution: {
+        protocolEvidence: runtimeStatus.protocolEvidence,
+        projectBinding: runtimeStatus.projectBinding,
+      },
+    }));
+  }
+  if (command === "worker-apply") return applyBoundedWorkerDispatchResult({ root, authorizationId: options.authorization });
   if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
   if (command === "onboarding-status") return inspectOnboarding({ root });
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });
@@ -390,6 +424,14 @@ export function runCommand(argv = process.argv.slice(2)) {
     openReviewIds: [],
   });
   if (command === "session-restore") return restoreSessionFromArtifacts({ root, checkpointId: options.checkpoint || null });
+  if (command === "session-continue") {
+    return continueSessionFromArtifacts({
+      root,
+      checkpointId: options.checkpoint || null,
+      runtime: options.runtime,
+      bindingToken: coordinationBindingToken(options, { required: false }),
+    });
+  }
   if (command === "compact-prepare") return prepareCompaction({ ...inputJson(options, "Compaction prepare"), root });
   if (command === "compact-verify") return verifyCompaction({ ...inputJson(options, "Compaction verification"), root });
   if (command === "compact-continue") return continueCompaction({ ...inputJson(options, "Compaction continuation"), root });

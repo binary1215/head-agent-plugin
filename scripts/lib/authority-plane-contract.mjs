@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.3.0";
+export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.4.0";
 
 const fail = (message, code = "AUTHORITY_PLANE_ERROR") => {
   const error = new Error(message);
@@ -83,6 +83,7 @@ const ARTIFACT_PLANES = Object.freeze({
   DocumentCanonApplicationReceipt: "P3",
   RunResultIntegrationRequest: "P3",
   RunResultIntegrationReceipt: "P3",
+  BoundedWorkerDispatch: "P3",
 
   GraphSnapshot: "P4",
   GraphDBProjection: "P4",
@@ -100,6 +101,8 @@ const ARTIFACT_PLANES = Object.freeze({
   CoordinationInbox: "P5",
   DeliveryReceipt: "P5",
   ProviderSessionReference: "P5",
+  ContinuationOutcome: "P5",
+  BoundedWorkerWaitOutcome: "P5",
 });
 
 const ARTIFACT_PLANES_V01 = Object.freeze({
@@ -168,7 +171,7 @@ export function artifactAuthorityBoundary(kind) {
 
 export function verifyArtifactAuthorityBoundary(kind, boundary) {
   const contractVersion = boundary?.contractVersion;
-  if (!new Set(["0.1.0", "0.2.0", AUTHORITY_PLANE_CONTRACT_VERSION]).has(contractVersion)) {
+  if (!new Set(["0.1.0", "0.2.0", "0.3.0", AUTHORITY_PLANE_CONTRACT_VERSION]).has(contractVersion)) {
     fail(`${kind} authority-plane contract version is invalid.`, "INVALID_ARTIFACT_AUTHORITY_BOUNDARY");
   }
   const expected = boundaryPayload(kind, contractVersion);

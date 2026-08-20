@@ -304,7 +304,12 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
 
   assert.equal(runCommand(["help"]).commands.some((command) => command.includes("session-restore")), false);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("session-restore")), true);
+  assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("session-continue")), true);
+  assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("worker-dispatch")), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_session_restore"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_session_continue"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_dispatch"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wait"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_run_integrate_checkpoint"), true);
 
   const integrated = await dispatch({
@@ -335,6 +340,17 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
   assert.equal(restored.result.structuredContent.status, "session_restored_from_artifacts");
   assert.equal(restored.result.structuredContent.projection.providerBoundary.resumeEnabled, false);
   assert.equal(restored.result.structuredContent.projection.consumerInstruction.nextExpectedResult, input.nextExpectedResult);
+
+  const continued = await dispatch({
+    jsonrpc: "2.0",
+    id: 703,
+    method: "tools/call",
+    params: { name: "head_session_continue", arguments: { project_root: root, runtime: "codex" } },
+  });
+  assert.equal(continued.result.structuredContent.status, "session_continued_with_fresh_logical_head");
+  assert.equal(continued.result.structuredContent.continuationOutcome.p2RestoredBeforeAttachment, true);
+  assert.equal(continued.result.structuredContent.continuationOutcome.p2DirectionChanged, false);
+  assert.equal(continued.result.structuredContent.continuationOutcome.providerSessionIdentityPersisted, false);
 });
 
 test("hostless resident HEAD recovery verifier closes crash, concurrency, provider-loss, and inbox-authority counterexamples", () => {

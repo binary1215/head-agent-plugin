@@ -609,6 +609,71 @@ export function detachCoordinationWorkspaceHost({
   return { status: "detached", role: ctx.binding.role, targetId: target.targetId, endpointWasLive: result.endpointWasLive === true };
 }
 
+export function readCoordinationWorkspaceAttachment({
+  root = ".", environment = process.env, bindingToken, workspaceHostAdapter = null,
+} = {}) {
+  const ctx = authenticate({ root, environment, bindingToken, action: "the current live workspace-host attachment is read" });
+  const current = currentRoleTarget(ctx, ctx.generation, ctx.binding.role);
+  if (!current?.active || current.bindingId !== ctx.binding.bindingId) {
+    return {
+      status: "unavailable",
+      role: ctx.binding.role,
+      runtime: null,
+      targetId: null,
+      attachmentId: null,
+      liveVerified: false,
+      providerSessionIdentityPersisted: false,
+      instructionAuthority: false,
+      reviewAuthority: false,
+    };
+  }
+  const attachment = verifyWorkspaceAttachment(current.attachment, workspaceBoundary(ctx));
+  if (workspaceHostAdapter === null) {
+    return {
+      status: "recorded-only",
+      role: ctx.binding.role,
+      runtime: attachment.runtime,
+      targetId: current.targetId,
+      attachmentId: attachment.attachmentId,
+      liveVerified: false,
+      providerSessionIdentityPersisted: false,
+      instructionAuthority: false,
+      reviewAuthority: false,
+    };
+  }
+  const adapter = activeWorkspaceHostAdapter(workspaceHostAdapter);
+  const received = adapter.receive({ attachment, boundary: workspaceBoundary(ctx) });
+  if (!received || !new Set(["attached", "unavailable"]).has(received.status)
+    || received.attachmentId !== attachment.attachmentId
+    || received.targetBindingId !== ctx.binding.bindingId) {
+    fail("WorkspaceHost attachment freshness evidence is invalid.", "INVALID_COORDINATION_WORKSPACE_HOST_RECEIVE");
+  }
+  if (received.status !== "attached") {
+    return {
+      status: "unavailable",
+      role: ctx.binding.role,
+      runtime: attachment.runtime,
+      targetId: current.targetId,
+      attachmentId: attachment.attachmentId,
+      liveVerified: false,
+      providerSessionIdentityPersisted: false,
+      instructionAuthority: false,
+      reviewAuthority: false,
+    };
+  }
+  return {
+    status: "attached",
+    role: ctx.binding.role,
+    runtime: attachment.runtime,
+    targetId: current.targetId,
+    attachmentId: attachment.attachmentId,
+    liveVerified: true,
+    providerSessionIdentityPersisted: false,
+    instructionAuthority: false,
+    reviewAuthority: false,
+  };
+}
+
 export function createCoordinationWorkspaceHostDeliveryAdapter({
   root = ".", environment = process.env, workspaceHostAdapter,
 } = {}) {

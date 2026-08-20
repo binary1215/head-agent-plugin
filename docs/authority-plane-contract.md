@@ -4,10 +4,10 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this contract.
 
 Status: active, executable contract
 
-Protocol version: `0.2.0`
+Protocol version: `0.4.0`
 
-Digest-valid `0.1.0` embedded boundaries remain readable for upgrade continuity;
-new builders emit `0.2.0`. The only legacy classification retained by the reader
+Digest-valid `0.1.0`, `0.2.0`, and `0.3.0` embedded boundaries remain readable for upgrade continuity;
+new builders emit `0.4.0`. The only legacy classification retained by the reader
 is the former generic Feature/Policy naming, never used to promote a new artifact.
 
 ## Why this boundary exists
@@ -22,9 +22,9 @@ become an additional source of product meaning or recovery direction.
 |---|---|---|---|
 | P1 Normative Authority | approved product meaning, policy, and explicit decisions | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision | existence in a graph, message, result, or host cannot create approval |
 | P2 Canonical Recovery/Lineage Record | provider-independent recovery of Project, Session, Run, plan, context, contract, and next direction | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | evidence deletion or provider summary cannot rewrite checkpoint fields |
-| P3 Evidence Record | reviewable results, observations, candidates, claims, and audit receipts | ResultPacket, WorkerReport, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
+| P3 Evidence Record | reviewable results, observations, candidates, claims, ownership records, and audit receipts | ResultPacket, WorkerReport, BoundedWorkerDispatch, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
 | P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
-| P5 Operational Effect | host-local process and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, provider-session reference | successful delivery or process control cannot authorize execution, review, promotion, or recovery |
+| P5 Operational Effect | host-local process, continuation, wait, and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, provider-session reference | successful continuation, waiting, delivery, or process control cannot authorize execution, review, promotion, or recovery |
 
 `scripts/lib/authority-plane-contract.mjs` emits one content-derived
 `AuthorityPlaneContract`, assigns the implemented artifacts above to exact planes,
@@ -98,6 +98,19 @@ and is not required to restore the resulting self-contained P2 checkpoint. The
 resulting receipt remains P3, while artifact-only Session
 restore is a non-persisted P4 projection of the exact P2 checkpoint and current
 verified lineage.
+
+Optional live continuation follows the same boundary. Core restores the exact P2
+checkpoint first, then a P5 WorkspaceHost adapter may fresh-verify one already-
+running endpoint. The non-persisted `ContinuationOutcome` reports `attached` or a
+disclosed fresh logical HEAD fallback; it cannot change the SessionRestoreProjection,
+persist provider identity, or claim recovery authority.
+
+Independently ownable worker execution records one P3 `BoundedWorkerDispatch` over
+the exact Run `ExecutionAuthorization`. P5 lease/process/wait state enforces
+at-most-once use and reports progress, but neither dispatch nor wait can alter the
+WholePlan or create a ReviewDecision. Only the resulting P3 ResultPacket reaches
+Fresh HEAD; explicit P1 review and the existing reviewed-result integration are
+still required before a new P2 checkpoint is written.
 
 The executable recovery test creates a ResultPacket, prepares a checkpoint,
 deletes the ResultPacket file, and verifies that the checkpoint still reproduces

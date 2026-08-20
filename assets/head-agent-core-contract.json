@@ -45,8 +45,8 @@
     "platforms": ["darwin", "linux", "win32"],
     "workspaceHosts": ["native-process", "host-export"],
     "identity": "Static descriptor, discovery, bounded version/help observation, project/Session binding, invocation authorization, immutable lease consumption/release, event envelope, lifecycle receipt, and ResultPacket draft identities are content-derived; provider sessions, raw commands/output, project paths, prompts, transcripts, credentials, live process IDs, and physical adapter identity are excluded.",
-    "authority": "Capability and coordination replies never grant authorization. Runtime invocation remains bound to Session or exact Run/ExecutionContract authority, while bounded interrupt/close applies only to one exact owned one-shot provider tree.",
-    "status": "Codex/OpenCode discovery, live Session/Run invocation, fresh-process replacement, already-running exact-endpoint coordination, bounded non-authoritative reply wait, and token-fenced one-shot interrupt/close are active. Provider-session resume/stream, broader host control, and host-specific TUI integration remain disabled."
+    "authority": "Capability, continuation outcomes, dispatch wait cursors, and coordination replies never grant authorization. Runtime invocation remains bound to Session or exact Run/ExecutionContract authority, while bounded interrupt/close applies only to one exact owned one-shot provider tree.",
+    "status": "Codex/OpenCode discovery, live Session/Run invocation, fresh-process replacement, P2-first optional exact HEAD attachment, independently owned bounded-worker dispatch/review/integration, already-running exact-endpoint coordination, bounded non-authoritative reply wait, and token-fenced one-shot interrupt/close are active. General provider-session resume/stream, broader host control, and host-specific TUI integration remain disabled."
   },
   "worldModel": {
     "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
@@ -158,6 +158,10 @@
     "privacy-reduced runtime event envelopes and lifecycle receipts",
     "transcript-free RuntimeResultPacketDraft",
     "native-supervised Codex/OpenCode Session and Run lifecycle conformance",
+    "P2-first provider-neutral Session continuation with optional exact live HEAD attachment",
+    "disclosed fresh logical HEAD fallback without provider-session identity",
+    "P3 bounded-worker dispatch ownership with P5 operational wait",
+    "at-most-once worker authorization consumption and Fresh HEAD result review",
     "provider-neutral durable role coordination with bounded reply wait",
     "already-running exact-endpoint replacement and no-spawn-on-claim evidence",
     "token-fenced exact-owned one-shot interrupt and close",

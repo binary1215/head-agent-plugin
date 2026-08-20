@@ -140,7 +140,13 @@ Intentional context compaction uses an explicit advanced recovery flow. `compact
 Provider loss does not require provider-session resume. `session-restore` rebuilds
 the same deterministic consumer input from the current content-addressed
 Session/Run checkpoint and verified plan/contract/Capsule artifacts. A bounded
-worker result remains P3 evidence until Fresh HEAD records an explicit accept
+`session-continue` performs that P2 restore first and may then fresh-verify one
+already-running HEAD endpoint through an optional WorkspaceHost adapter. If the
+attachment is absent or stale, it returns a disclosed fresh logical HEAD instead
+of importing a provider transcript or session identity. A bounded worker is
+owned through one P3 dispatch bound to the exact Run authorization; its P5
+lease/wait cursor cannot change WholePlan or create review. The worker result
+remains P3 evidence until Fresh HEAD records an explicit accept
 ReviewDecision; only then can `run-integrate-checkpoint` bind that reviewed result
 once to a P2 recovery checkpoint whose next direction is supplied explicitly by
 HEAD/user input. See [Session restore and reviewed-result integration](docs/session-recovery.md).
@@ -371,6 +377,8 @@ Status terms in this README have exact meanings:
 | OpenCode project projection | **Available** |
 | OpenCode one-shot Session and Run execution | **Available** |
 | Artifact-only Codex-to-OpenCode provider replacement recovery | **Available** |
+| P2-first continuation with optional exact live HEAD attachment | **Available** |
+| Bounded worker dispatch/own/wait/ResultPacket/review/integration | **Available** |
 | Host-bound durable role messaging Core/CLI/MCP | **Available** |
 | Exact-endpoint two-process WorkspaceHost delivery | **Available** |
 | Production host-export filesystem bridge | **Available** |
@@ -383,7 +391,7 @@ Status terms in this README have exact meanings:
 | `head-agent --version` and project `head-agent doctor` | **Available** |
 | Automatic verified native binary installation | **Available** |
 | Recoverable upgrade, verified rollback, and safe removal | **Available** |
-| Provider-session resume and durable attachment | **Deferred** |
+| General provider-session resume and streaming | **Deferred** |
 | Obsidian and Notion projection adapters | **Deferred** |
 
 ## Installation

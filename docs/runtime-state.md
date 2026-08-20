@@ -84,6 +84,8 @@ Session and Run execution, caller fencing, at-most-once leases, and native
 descendant ownership are active through the separate Runtime Adapter contracts;
 they do not widen this import adapter into a control plane.
 
-Provider-session hydration or restoration, durable resume/attachment,
-stream/interrupt/close, provider-session messaging, and subscription remain deferred optional
-Runtime Adapter capabilities.
+Provider-session hydration or hidden-session restoration, general resume/stream,
+provider-session messaging, and subscription remain deferred optional Runtime
+Adapter capabilities. P2-first optional exact HEAD attachment and exact-owned
+one-shot interrupt/close belong to the separate active host/runtime boundaries,
+not this observation adapter.

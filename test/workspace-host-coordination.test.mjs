@@ -16,6 +16,8 @@ import {
   readCoordinationInbox,
   sendCoordinationMessage,
 } from "../scripts/lib/role-coordination.mjs";
+import { createRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
+import { continueSessionFromArtifacts } from "../scripts/lib/runtime-session-continuation.mjs";
 import { buildRuntimeAdapterComposition, validateWorkspaceHostAdapter } from "../scripts/lib/runtime-adapter.mjs";
 import { VerifiedWorkspaceHostAdapter, WORKSPACE_HOST_COORDINATION_VERSION } from "../scripts/lib/workspace-host-coordination.mjs";
 import {
@@ -166,6 +168,68 @@ test("actual provider-client coordination verifier requires explicit opt-in", ()
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /LIVE_PROVIDER_COORDINATION_OPT_IN_REQUIRED/u);
+});
+
+test("P2-first continuation fresh-verifies an optional P5 attachment and falls back without changing direction", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.base, { recursive: true, force: true }));
+  const checkpoint = createRecoveryCheckpoint({
+    root: fx.root,
+    purpose: "Resume the exact HEAD direction before optional provider attachment",
+    approvedDecisions: ["Provider conversation state is never recovery canon"],
+    currentPosition: "The canonical checkpoint is ready for a fresh logical HEAD",
+    nextExpectedResult: "Continue only the exact checkpointed provider-neutral direction",
+  }).checkpoint;
+  openCoordinationGeneration({ root: fx.root, environment: fx.environment });
+  const head = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+  const state = {};
+  const adapter = new VerifiedWorkspaceHostAdapter({ driver: driver(fx, state) });
+  attachCoordinationWorkspaceHost({
+    root: fx.root,
+    environment: fx.environment,
+    bindingToken: head.bindingToken,
+    workspaceHostAdapter: adapter,
+    caller: caller("head"),
+  });
+  const projectBefore = treeBytes(path.join(fx.root, ".head"));
+  const attached = continueSessionFromArtifacts({
+    root: fx.root,
+    runtime: "codex",
+    environment: { ...fx.environment, CODEX_THREAD_ID: "must-never-persist" },
+    bindingToken: head.bindingToken,
+    workspaceHostAdapter: adapter,
+  });
+  assert.equal(attached.continuationOutcome.status, "attached");
+  assert.equal(attached.continuationOutcome.authorityBoundary.planeId, "P5");
+  assert.equal(attached.continuationOutcome.checkpointId, checkpoint.checkpointId);
+  assert.equal(attached.continuationOutcome.sessionRestoreId, attached.restore.projection.sessionRestoreId);
+  assert.equal(attached.continuationOutcome.p2DirectionChanged, false);
+  assert.equal(attached.restore.projection.consumerInstruction.nextExpectedResult, checkpoint.nextExpectedResult);
+  assert.deepEqual(treeBytes(path.join(fx.root, ".head")), projectBefore);
+
+  const recordedOnly = continueSessionFromArtifacts({
+    root: fx.root,
+    runtime: "codex",
+    environment: fx.environment,
+    bindingToken: head.bindingToken,
+  });
+  assert.equal(recordedOnly.continuationOutcome.status, "fresh-logical-head");
+  assert.equal(recordedOnly.continuationOutcome.disclosure, "provider-attachment-unavailable");
+  assert.equal(recordedOnly.continuationOutcome.sessionRestoreId, attached.continuationOutcome.sessionRestoreId);
+
+  state.endpoints[0].terminalId = "terminal-head-stale";
+  const stale = continueSessionFromArtifacts({
+    root: fx.root,
+    runtime: "codex",
+    environment: fx.environment,
+    bindingToken: head.bindingToken,
+    workspaceHostAdapter: adapter,
+  });
+  assert.equal(stale.continuationOutcome.status, "fresh-logical-head");
+  assert.equal(stale.continuationOutcome.disclosure, "provider-attachment-unavailable");
+  assert.equal(stale.continuationOutcome.sessionRestoreId, attached.continuationOutcome.sessionRestoreId);
+  assert.equal(treeContainsBytes(fx.root, "must-never-persist"), false);
+  assert.equal(treeContainsBytes(fx.root, "ContinuationOutcome"), false);
 });
 
 test("active WorkspaceHostAdapter delivers only after durable acceptance and exact target proof", (t) => {

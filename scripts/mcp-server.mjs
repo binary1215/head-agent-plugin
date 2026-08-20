@@ -24,6 +24,13 @@ import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
+import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
+import {
+  applyBoundedWorkerDispatchResult,
+  createBoundedWorkerDispatch,
+  readBoundedWorkerDispatch,
+  waitForBoundedWorkerDispatch,
+} from "./lib/bounded-worker-dispatch.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -321,6 +328,79 @@ export const tools = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_session_continue",
+    description: "Restore the canonical P2 SessionRunCheckpoint first, then optionally verify the exact current live HEAD attachment through the host-injected P5 adapter. Failure falls back to a disclosed fresh logical HEAD and never imports provider session identity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        runtime: { type: "string", enum: ["codex", "opencode"] },
+        checkpoint_id: { type: "string", pattern: "^checkpoint-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "runtime"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_dispatch",
+    description: "Create or verify one P3 non-HEAD worker ownership record bound to an exact current Run ExecutionAuthorization. This cannot change WholePlan, recovery direction, or review state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
+        role: { type: "string", enum: ["developer", "coder", "reviewer"] },
+      },
+      required: ["project_root", "authorization_id", "role"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_status",
+    description: "Read and verify one P3 bounded worker dispatch without consuming its authorization.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "authorization_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_wait",
+    description: "Boundedly observe one worker's operational P5 lease/result state. The returned cursor is non-persisted and cannot create a ReviewDecision or recovery direction.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
+        wait_timeout_ms: { type: "integer", minimum: 0, maximum: 600000, default: 0 },
+      },
+      required: ["project_root", "authorization_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_apply_result",
+    description: "Map one completed, actual-provider, native-supervised bounded-worker draft into the canonical ResultPacket and Fresh HEAD review context. This does not create a ReviewDecision or integrate checkpoint direction.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "authorization_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_run_integrate_checkpoint",
@@ -877,6 +957,20 @@ function coordinationHostCall({ root, bindingToken, coordinationWorkspaceHost })
   });
 }
 
+function continueSessionFromMcp(args, coordinationWorkspaceHost) {
+  const bindingToken = String(process.env[COORDINATION_BINDING_ENV] || "").trim() || null;
+  if (bindingToken && coordinationWorkspaceHost) {
+    coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost });
+  }
+  return continueSessionFromArtifacts({
+    root: args.project_root,
+    checkpointId: args.checkpoint_id || null,
+    runtime: args.runtime,
+    bindingToken,
+    workspaceHostAdapter: bindingToken && coordinationWorkspaceHost ? coordinationWorkspaceHost.adapter : null,
+  });
+}
+
 export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null } = {}) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
@@ -940,6 +1034,16 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                 ? getPendingReviewContext({ root: args.project_root })
                 : name === "head_session_restore"
                   ? restoreSessionFromArtifacts({ root: args.project_root, checkpointId: args.checkpoint_id || null })
+                  : name === "head_session_continue"
+                    ? continueSessionFromMcp(args, coordinationWorkspaceHost)
+                  : name === "head_bounded_worker_dispatch"
+                    ? createBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id, role: args.role })
+                  : name === "head_bounded_worker_status"
+                    ? readBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id })
+                  : name === "head_bounded_worker_wait"
+                    ? await waitForBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id, timeoutMs: args.wait_timeout_ms ?? 0 })
+                  : name === "head_bounded_worker_apply_result"
+                    ? applyBoundedWorkerDispatchResult({ root: args.project_root, authorizationId: args.authorization_id })
                   : name === "head_run_integrate_checkpoint"
                     ? integrateReviewedRunCheckpoint({
                         root: args.project_root,

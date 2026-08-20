@@ -79,11 +79,17 @@ Provider-session resume, general `start`/`stream`, broader process-host control,
 and TUI scraping remain disabled. This exception grants no execution, review,
 promotion, or Canon authority and is not Herdr integration.
 
+For provider loss, restore P2 first. `head_session_continue`/`session-continue`
+may then verify an exact current HEAD attachment through the host adapter; treat
+its P5 outcome as optional conversation continuity. On unavailable attachment,
+continue as the disclosed fresh logical HEAD from the unchanged P2 projection.
+Never persist or infer a provider session identity, transcript, or summary.
+
 Read `../../docs/execution-lineage.md` before creating or operating a Run.
 
 The lineage boundary is `WholePlanSnapshot`, `ExecutionContract`, `ResultPacket`, `ReviewDecision`, and `LineageLink`. WholePlanSnapshot and ExecutionContract are P2 recovery/lineage records, ResultPacket is P3 evidence, and ReviewDecision is a P1 normative record. A Run starts only from a verified Execution Contract, finishes through a Result Packet, and blocks the next Run until HEAD records a ReviewDecision. Build the deterministic Fresh HEAD review projection before deciding; it includes the whole plan, contract, result, and Capsule reference while explicitly excluding executor transcript and provider session state. The ReviewDecision must carry that projection's exact `reviewContextId`.
 
-An `accept` decision permits another contract against the current plan. `revise` or `expand` requires `lineage-next-plan` to create a new generation linked to the ReviewDecision before another Run. `rollback` or `escalate` requires user-owned direction. ResultPacket knowledge proposals and HEAD recommendations have no authority effect until a separate authorized promotion process exists. Automatic provider runtime hydration, authorized knowledge promotion, runtime resumption, and non-compute worker control remain deferred.
+An `accept` decision permits another contract against the current plan. `revise` or `expand` requires `lineage-next-plan` to create a new generation linked to the ReviewDecision before another Run. `rollback` or `escalate` requires user-owned direction. ResultPacket knowledge proposals and HEAD recommendations have no authority effect until a separate authorized promotion process exists. Automatic provider runtime hydration, authorized knowledge promotion, and general provider resume/stream remain deferred.
 
 ## Artifact Session restore and result integration
 
@@ -110,6 +116,14 @@ worker dispatch, and HF-010 is completed-worker integration. Artifact-only
 restore is the provider-neutral semantic HF-008 outcome without provider resume;
 the reviewed-result checkpoint transaction is an HF-010 integration equivalent
 and must not be presented as HF-009 dispatch.
+
+For HF-009, create one `head_bounded_worker_dispatch`/`worker-dispatch` bound to
+the exact Run authorization and a registered non-HEAD role. Execute it only
+through `worker-execute`; use bounded P5 wait/status surfaces for progress. A
+retry by the same owner is idempotent, a competing owner or second authorization
+consumption must fail, and wait/reply cannot create review. `worker-apply` may
+create the ResultPacket and Fresh HEAD context only; explicit review and the
+HF-010 integration step remain mandatory.
 
 ## Compaction recovery
 
@@ -278,8 +292,8 @@ and token-fenced one-shot interrupt/close; resume and stream remain disabled.
 NeoPick source scoping, bounded Context compilation, live topology activation,
 and prepared traversal conform, but its 23 inferred candidates remain unreviewed;
 use the exact proposal in `../../docs/neopick-onboarding-review-proposal.md` and
-never `accept-all`. Provider-session attachment/resume/stream, broader process-
-host control, provider runtime hydration, service installation, and other
+never `accept-all`. General provider resume/stream, broader process-host control,
+provider runtime hydration, service installation, and other
 explicitly deferred capabilities remain unavailable. Do not represent them as
 working.
 

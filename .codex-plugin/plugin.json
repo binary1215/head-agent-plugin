@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.78",
+  "version": "0.3.0-alpha.79",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -49,6 +49,11 @@
       "Non-persisted HEAD Continuity Snapshot",
       "Canonical Session and Run Compaction Recovery",
       "Artifact-only Provider-independent Session Restore",
+      "P2-first Optional Live HEAD Continuation",
+      "Disclosed Fresh Logical HEAD Fallback",
+      "P3 Bounded Worker Dispatch Ownership",
+      "P5 Bounded Worker Wait",
+      "At-most-once Worker Authorization Consumption",
       "Accepted Run Result Integration Checkpoint",
       "Hostless Resident HEAD Recovery Verification",
       "One-shot Run Result Integration Receipt",
@@ -159,6 +164,9 @@
       "Inspect the on-demand HEAD continuity snapshot as a derived exact-reference view, never as recovery canon.",
       "Prepare, verify, and continue an intentional lossy provider compaction from a canonical Session or Run checkpoint without treating the provider summary as authority.",
       "Restore the exact current Session consumer input from verified artifacts without resuming a provider session.",
+      "Restore P2 first, then optionally verify one exact live HEAD attachment; fall back to a disclosed fresh logical HEAD without persisting provider session identity.",
+      "Dispatch one registered non-HEAD worker against an exact Run authorization, observe only P5 progress, and reject competing ownership or duplicate consumption.",
+      "Apply a completed actual-provider worker result only into ResultPacket plus Fresh HEAD review context before separate accept and checkpoint integration.",
       "After an accepted Fresh HEAD review, bind one reviewed Run result to one explicit recovery checkpoint without letting worker evidence author the next direction.",
       "Exchange durable role messages through a trusted host binding without allowing messages to replace ExecutionContracts, ReviewDecisions, or Product Canon.",
       "Attach a trusted host-injected caller to an exact live role endpoint and require fresh target, acknowledgment, and post-send evidence before reporting delivery.",

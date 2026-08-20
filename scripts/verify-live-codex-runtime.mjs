@@ -13,8 +13,15 @@ import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "./lib/
 import { buildRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { RUNTIME_OPERATIONAL_STATE_ENV } from "./lib/runtime-execution-lease.mjs";
 import { executeRuntimeInvocation } from "./lib/runtime-one-shot-exec.mjs";
-import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
+import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { resolveVerifiedProcessSupervisor } from "./lib/runtime-process-supervisor.mjs";
+import {
+  applyBoundedWorkerDispatchResult,
+  createBoundedWorkerDispatch,
+  executeBoundedWorkerDispatch,
+  waitForBoundedWorkerDispatch,
+} from "./lib/bounded-worker-dispatch.mjs";
+import { integrateReviewedRunCheckpoint } from "./lib/session-recovery.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const nonce = `${process.pid}-${Date.now()}`;
@@ -247,15 +254,28 @@ async function main() {
       },
       persist: true,
     }).authorization;
-    const runExecution = await executeRuntimeInvocation({
+    const dispatched = createBoundedWorkerDispatch({
       root: projectRoot,
-      authorization: runAuthorization,
-      protocolEvidence: runEvidence.protocolEvidence,
-      projectBinding: runEvidence.projectBinding,
-      supervisorSelection,
-      onProcessEvent: recordProcess,
-      persist: true,
+      authorizationId: runAuthorization.authorizationId,
+      role: "coder",
     });
+    const beforeExecution = await waitForBoundedWorkerDispatch({
+      root: projectRoot,
+      authorizationId: runAuthorization.authorizationId,
+    });
+    assert(beforeExecution.waitOutcome.status === "pending", "Bounded worker wait did not expose the pre-execution pending state.");
+    const boundedExecution = await executeBoundedWorkerDispatch({
+      root: projectRoot,
+      authorizationId: runAuthorization.authorizationId,
+      role: "coder",
+      execution: {
+        protocolEvidence: runEvidence.protocolEvidence,
+        projectBinding: runEvidence.projectBinding,
+        supervisorSelection,
+        onProcessEvent: recordProcess,
+      },
+    });
+    const runExecution = boundedExecution.result;
     assert(runExecution.receipt.status === "completed" && runExecution.actualProviderInvoked === true,
       `Live ${providerName} Run did not complete as an actual provider invocation: ${JSON.stringify(safeExecutionFailureSummary(runExecution))}`);
     assert(runExecution.descendantTreeOwnershipValidated === true, `Live ${providerName} Run did not prove descendant-tree ownership.`);
@@ -263,7 +283,34 @@ async function main() {
     assert(fs.readFileSync(path.join(projectRoot, "run-output.txt"), "utf8") === "HEAD live Run verified\n", `Live ${providerName} Run did not create the exact accepted output.`);
     assert(digest(fs.readFileSync(fixtureFile)) === fixtureDigest, `Live ${providerName} Run changed the protected fixture marker.`);
 
-    const applied = applyRuntimeRunResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
+    const afterExecution = await waitForBoundedWorkerDispatch({
+      root: projectRoot,
+      authorizationId: runAuthorization.authorizationId,
+    });
+    assert(afterExecution.waitOutcome.status === "completed", "Bounded worker wait did not expose the completed ResultPacket draft.");
+    let duplicateWorkerConsumptionRejected = false;
+    try {
+      await executeBoundedWorkerDispatch({
+        root: projectRoot,
+        authorizationId: runAuthorization.authorizationId,
+        role: "coder",
+        execution: {
+          protocolEvidence: runEvidence.protocolEvidence,
+          projectBinding: runEvidence.projectBinding,
+          supervisorSelection,
+          onProcessEvent: recordProcess,
+        },
+      });
+    } catch (error) {
+      duplicateWorkerConsumptionRejected = error?.code === "RUNTIME_INVOCATION_AUTHORIZATION_ALREADY_CONSUMED";
+    }
+    assert(duplicateWorkerConsumptionRejected, "A second bounded worker consumed the same Run authorization.");
+
+    const boundedApplication = applyBoundedWorkerDispatchResult({
+      root: projectRoot,
+      authorizationId: runAuthorization.authorizationId,
+    });
+    const applied = boundedApplication.applied;
     assert(applied.status === "runtime_run_result_applied", "Live Codex Run draft was not applied to canonical Execution Lineage.");
     assert(applied.freshHeadReview?.resultPacket?.resultPacketId === applied.resultPacket.resultPacketId, "Fresh HEAD did not receive the canonical ResultPacket.");
     const pending = getPendingReviewContext({ root: projectRoot });
@@ -274,6 +321,16 @@ async function main() {
       disposition: "accept",
       rationale: `The isolated live ${providerName} E2E produced the exact file, verified native lifecycle evidence, and preserved Product Canon.`,
       nextActions: ["Retain this provider behind the same provider-neutral lifecycle and authority contract."],
+    });
+    const integrated = integrateReviewedRunCheckpoint({
+      root: projectRoot,
+      runId: run.runId,
+      reviewDecisionId: reviewed.reviewDecision.reviewDecisionId,
+      purpose: `Preserve the accepted live ${providerName} bounded-worker result as the next provider-neutral HEAD direction.`,
+      approvedDecisions: ["Accept the exact isolated live bounded-worker output and preserve its provider-neutral lineage."],
+      currentPosition: `The actual ${providerName} bounded worker completed, a Fresh HEAD accepted its ResultPacket, and canonical recovery is ready.`,
+      nextExpectedResult: "Resume from this checkpoint without replaying the consumed worker authorization.",
+      openReviewIds: [],
     });
     const recorded = readRuntimeInvocationResult({ root: projectRoot, authorizationId: runAuthorization.authorizationId });
     const completed = inspectProject(projectRoot);
@@ -298,6 +355,12 @@ async function main() {
         applicationId: applied.application.applicationId,
         freshHeadReviewId: applied.application.reviewContextId,
         reviewDecisionId: reviewed.reviewDecision.reviewDecisionId,
+        dispatchId: dispatched.dispatch.dispatchId,
+        pendingWaitOutcomeId: beforeExecution.waitOutcome.waitOutcomeId,
+        completedWaitOutcomeId: afterExecution.waitOutcome.waitOutcomeId,
+        duplicateWorkerConsumptionRejected,
+        integrationCheckpointId: integrated.checkpoint.checkpointId,
+        integrationReceiptId: integrated.integrationReceipt.integrationReceiptId,
         actualProviderInvoked: true,
         descendantTreeOwnershipValidated: true,
         exactWorkspaceMutationVerified: true,

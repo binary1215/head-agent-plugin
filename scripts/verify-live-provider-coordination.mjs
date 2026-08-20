@@ -25,6 +25,8 @@ import {
   publishWorkspaceHostExportSnapshot,
   workspaceHostExportProcessProofHash,
 } from "./lib/workspace-host-export-driver.mjs";
+import { createRecoveryCheckpoint } from "./lib/compaction-recovery.mjs";
+import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const nonce = `${process.pid}-${Date.now()}`;
@@ -492,6 +494,32 @@ async function waitForRolesAttached(environment, roles, clients, timeoutMs = 60_
     "LIVE_PROVIDER_COORDINATION_ATTACHMENT_TIMEOUT", { roles });
 }
 
+async function waitForLiveContinuation({ environment, bindingToken, workspaceHostAdapter, runtime, checkpointId, client, timeoutMs = 60_000 }) {
+  const deadline = Date.now() + timeoutMs;
+  let latest = null;
+  while (Date.now() <= deadline) {
+    latest = continueSessionFromArtifacts({
+      root: projectRoot,
+      checkpointId,
+      runtime,
+      environment,
+      bindingToken,
+      workspaceHostAdapter,
+    });
+    if (latest.continuationOutcome.status === "attached") return latest;
+    if (client.child.exitCode !== null || client.child.signalCode !== null) {
+      fail("The provider exited before its exact current attachment replaced the stale target.",
+        "LIVE_PROVIDER_CONTINUATION_ATTACHMENT_MISSING", providerSummary(await client.completed));
+    }
+    await sleep(50);
+  }
+  fail("Timed out waiting for the exact current provider attachment after P2 restore.",
+    "LIVE_PROVIDER_CONTINUATION_ATTACHMENT_TIMEOUT", {
+      disclosure: latest?.continuationOutcome?.disclosure || "unobserved",
+      status: latest?.continuationOutcome?.status || "unobserved",
+    });
+}
+
 async function waitForProviderStart(client, label) {
   const event = await Promise.race([client.providerStarted, sleep(30_000).then(() => null)]);
   assert(event?.type === "provider.started" && Number.isSafeInteger(event.providerPid),
@@ -588,6 +616,14 @@ async function main() {
     const published = publishWorkspaceHostExportSnapshot({
       exportRoot, projectRoot, hostInstanceId, endpoints,
     });
+    const recovery = createRecoveryCheckpoint({
+      root: projectRoot,
+      purpose: "Preserve the provider-neutral HEAD direction before optional live provider attachment.",
+      approvedDecisions: ["Treat the P2 checkpoint as recovery authority and the workspace-host attachment as optional P5 continuity."],
+      currentPosition: "The isolated HEAD Session is ready to attach its already-running Codex endpoint.",
+      nextExpectedResult: "Continue from the same P2 projection after exact live attachment without importing provider session identity.",
+      openReviewIds: [],
+    });
     const headBefore = treeBytes(path.join(projectRoot, ".head"));
     const messageMarker = `LIVE_PROVIDER_COORDINATION_${digest(nonce).slice(0, 24)}`;
     const replyMarker = `LIVE_PROVIDER_REPLY_${digest(`${nonce}\0reply`).slice(0, 24)}`;
@@ -615,6 +651,39 @@ async function main() {
     });
     const headProviderStart = await waitForProviderStart(headClient, "Codex HEAD");
     await waitForRolesAttached(environment, ["head"], [headClient]);
+    const continuationHeadBefore = treeBytes(path.join(projectRoot, ".head"));
+    const currentHeadAdapter = new VerifiedWorkspaceHostAdapter({
+      driver: createWorkspaceHostExportDriver({
+        exportRoot, projectRoot,
+        caller: {
+          workspaceId: endpoint.head.workspaceId,
+          tabId: endpoint.head.tabId,
+          endpointId: endpoint.head.endpointId,
+        },
+        bindingId: head.binding.bindingId,
+        processProof: proofs.head,
+        acknowledgementTimeoutMs: ackTimeoutMs,
+      }),
+    });
+    const continuation = await waitForLiveContinuation({
+      environment,
+      bindingToken: head.bindingToken,
+      workspaceHostAdapter: currentHeadAdapter,
+      runtime: "codex",
+      checkpointId: recovery.checkpoint.checkpointId,
+      client: headClient,
+    });
+    assert(continuation.continuationOutcome.status === "attached"
+      && continuation.continuationOutcome.p2RestoredBeforeAttachment === true
+      && continuation.continuationOutcome.p2DirectionChanged === false,
+    "Actual Codex continuation did not preserve the P2-first optional P5 boundary.",
+    "LIVE_PROVIDER_CONTINUATION_BOUNDARY_FAILED");
+    assert(continuation.restore.checkpoint.checkpointId === recovery.checkpoint.checkpointId
+      && continuation.continuationOutcome.sessionRestoreId === continuation.restore.projection.sessionRestoreId,
+    "Actual Codex continuation did not retain the exact P2 recovery projection.",
+    "LIVE_PROVIDER_CONTINUATION_PROJECTION_DRIFT");
+    assert(canonicalJson(treeBytes(path.join(projectRoot, ".head"))) === canonicalJson(continuationHeadBefore),
+      "Optional live attachment changed canonical .head bytes.", "LIVE_PROVIDER_CONTINUATION_PROJECT_MUTATION");
     const openCodePrompt = [
       "Act only as the already-bound developer role in this isolated HEAD Agent verification.",
       "Use only the head_core MCP coordination tools named below.",
@@ -759,6 +828,15 @@ async function main() {
       authorityGeneration: generation.generation.authorityGeneration,
       hostSnapshotId: published.snapshotId,
       replacedAttachmentId: staleAttachment.attachmentId,
+      continuation: {
+        checkpointId: recovery.checkpoint.checkpointId,
+        sessionRestoreId: continuation.restore.projection.sessionRestoreId,
+        continuationOutcomeId: continuation.continuationOutcome.continuationOutcomeId,
+        status: continuation.continuationOutcome.status,
+        p2RestoredBeforeAttachment: true,
+        p2DirectionChanged: false,
+        providerSessionIdentityPersisted: false,
+      },
       messageId: request.messageId,
       acknowledgementHash: acknowledgement.acknowledgementHash,
       codexProviderStartedBeforeRequest: true,

@@ -46,9 +46,12 @@ and a condition under which it can be narrowed or removed.
 
 ## Deferred optional capabilities
 
-Durable provider-session attachment, resume/stream/interrupt/close, role
-messaging, workspace-host integration, automatic DAG merge/conflict resolution,
-Obsidian/Notion publication, and OpenAI universal plugin-directory publication remain optional.
+General provider-session resume/stream, broader process-host control, automatic
+DAG merge/conflict resolution, Obsidian/Notion publication, and OpenAI universal
+plugin-directory publication remain optional. P2-first exact optional HEAD
+attachment, bounded worker ownership/wait, role messaging, WorkspaceHost
+integration, and exact-owned one-shot interrupt/close are active scoped
+capabilities rather than universal prerequisites.
 Their absence does not block installation, onboarding, graph recovery, Context,
 Session, Run, provider replacement, or Git/GraphDB-free core operation.
 

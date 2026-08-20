@@ -51,6 +51,12 @@ import {
   readRuntimeInvocationResult,
 } from "./lib/runtime-run-result-application.mjs";
 import { resolveVerifiedProcessSupervisor } from "./lib/runtime-process-supervisor.mjs";
+import {
+  applyBoundedWorkerDispatchResult,
+  createBoundedWorkerDispatch,
+  executeBoundedWorkerDispatch,
+  waitForBoundedWorkerDispatch,
+} from "./lib/bounded-worker-dispatch.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureNonce = `${process.pid}-${Date.now()}`;
@@ -201,6 +207,29 @@ process.stdin.on('end', () => {
   write({ type: 'step_start', timestamp: 1, sessionID, part: { type: 'step-start', sessionID } });
   write({ type: 'text', timestamp: 2, sessionID, part: { type: 'text', sessionID, text: JSON.stringify(result), time: { start: 1, end: 2 } } });
   write({ type: 'step_finish', timestamp: 3, sessionID, part: { type: 'step-finish', sessionID, tokens: { input: input.length, output: 1 } } });
+});
+`;
+
+const BOUNDED_WORKER_RUN_PROTOCOL_FIXTURE = String.raw`
+let input = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => { input = Buffer.concat([input, chunk]); });
+process.stdin.on('end', () => {
+  const result = {
+    schemaVersion: 1,
+    kind: 'RuntimeStructuredResult',
+    protocolVersion: '0.1.0',
+    outcome: 'Bounded worker completed the exact authorized Run scope.',
+    evidence: ['The exact Run input reached one native-supervised worker process.'],
+    planDelta: 'The bounded worker result is ready for Fresh HEAD review.',
+    impactRadius: ['runtime lifecycle fixture'],
+    verification: ['Structured result and owned process cleanup were verified.'],
+    unknowns: [],
+  };
+  const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
+  write({ type: 'thread.started', thread_id: 'bounded-worker-protocol-fixture-thread' });
+  write({ type: 'turn.started' });
+  write({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(result) } });
+  write({ type: 'turn.completed', usage: { input_tokens: input.length, output_tokens: 1 } });
 });
 `;
 
@@ -1002,6 +1031,114 @@ async function main() {
     }
     assert(legacyProjectLockRejected, "Legacy project-local owner lock was silently ignored.");
     fs.rmdirSync(legacyProjectLock);
+    const reviewDirectory = path.join(resolvedRoot, ".head", "lineage", "review-decisions");
+    const reviewCount = () => fs.existsSync(reviewDirectory)
+      ? fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")).length : 0;
+    const reviewsBeforeDispatch = reviewCount();
+    const workerAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      scope: { kind: "run" },
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000, maxEvents: 4_092 },
+      persist: true,
+    }).authorization;
+    const workerDispatch = createBoundedWorkerDispatch({
+      root: resolvedRoot,
+      authorizationId: workerAuthorization.authorizationId,
+      role: "coder",
+    });
+    assert(workerDispatch.status === "dispatched"
+      && workerDispatch.dispatch.authorityBoundary.planeId === "P3"
+      && workerDispatch.dispatch.ownershipBoundary.wholeOutcomeOwner === "head",
+    "Bounded worker dispatch did not preserve P3 scope/result ownership beneath HEAD.");
+    const sameDispatch = createBoundedWorkerDispatch({
+      root: resolvedRoot,
+      authorizationId: workerAuthorization.authorizationId,
+      role: "coder",
+    });
+    assert(sameDispatch.status === "existing" && sameDispatch.dispatch.dispatchId === workerDispatch.dispatch.dispatchId,
+      "Identical bounded worker dispatch did not replay to the same ownership record.");
+    let competingOwnerRejected = false;
+    try {
+      createBoundedWorkerDispatch({
+        root: resolvedRoot,
+        authorizationId: workerAuthorization.authorizationId,
+        role: "developer",
+      });
+    } catch (error) {
+      competingOwnerRejected = error.code === "BOUNDED_WORKER_DISPATCH_OWNERSHIP_CONFLICT";
+    }
+    assert(competingOwnerRejected, "A second worker role acquired the same Run authorization.");
+    const pendingWorker = await waitForBoundedWorkerDispatch({
+      root: resolvedRoot,
+      authorizationId: workerAuthorization.authorizationId,
+      timeoutMs: 0,
+    });
+    assert(pendingWorker.waitOutcome.status === "pending"
+      && pendingWorker.waitOutcome.authorityBoundary.planeId === "P5"
+      && reviewCount() === reviewsBeforeDispatch,
+    "Pending worker wait created authority or lost its P5 boundary.");
+    const workerExecution = await executeBoundedWorkerDispatch({
+      root: resolvedRoot,
+      authorizationId: workerAuthorization.authorizationId,
+      role: "coder",
+      execution: {
+        protocolEvidence,
+        projectBinding,
+        targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+        supervisorSelection,
+        providerArguments: ["-e", BOUNDED_WORKER_RUN_PROTOCOL_FIXTURE],
+        evidenceMode: "protocol-fixture",
+        onProcessEvent: recordProcess,
+      },
+    });
+    assert(workerExecution.result.receipt.status === "completed"
+      && workerExecution.result.descendantTreeOwnershipValidated === true,
+    "Native-supervised bounded worker execution did not complete and clean up.");
+    const completedWorker = await waitForBoundedWorkerDispatch({
+      root: resolvedRoot,
+      authorizationId: workerAuthorization.authorizationId,
+      timeoutMs: 1_000,
+    });
+    assert(completedWorker.waitOutcome.status === "completed"
+      && completedWorker.waitOutcome.lifecycleReceiptId === workerExecution.result.receipt.receiptId
+      && completedWorker.waitOutcome.resultDraftId === workerExecution.result.draft.draftId
+      && reviewCount() === reviewsBeforeDispatch,
+    "Durable worker wait did not return the exact result evidence without creating review authority.");
+    let duplicateWorkerConsumptionRejected = false;
+    try {
+      await executeBoundedWorkerDispatch({
+        root: resolvedRoot,
+        authorizationId: workerAuthorization.authorizationId,
+        role: "coder",
+        execution: {
+          protocolEvidence,
+          projectBinding,
+          targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+          supervisorSelection,
+          providerArguments: ["-e", BOUNDED_WORKER_RUN_PROTOCOL_FIXTURE],
+          evidenceMode: "protocol-fixture",
+          onProcessEvent: recordProcess,
+        },
+      });
+    } catch (error) {
+      duplicateWorkerConsumptionRejected = error.code === "RUNTIME_INVOCATION_AUTHORIZATION_ALREADY_CONSUMED";
+    }
+    assert(duplicateWorkerConsumptionRejected, "The bounded worker authorization was consumed twice.");
+    let fixtureApplicationRejected = false;
+    try {
+      applyBoundedWorkerDispatchResult({
+        root: resolvedRoot,
+        authorizationId: workerAuthorization.authorizationId,
+      });
+    } catch (error) {
+      fixtureApplicationRejected = error.code === "RUNTIME_RUN_RESULT_NOT_APPLICABLE";
+    }
+    assert(fixtureApplicationRejected && reviewCount() === reviewsBeforeDispatch,
+      "Protocol-fixture worker evidence crossed into canonical ResultPacket or review authority.");
     process.stdout.write(`${JSON.stringify({
       status: "runtime_invocation_lifecycle_verified",
       projectId: initialized.project.projectId,
@@ -1047,6 +1184,13 @@ async function main() {
       sessionRunResultApplicationRejected: true,
       operationalStateExternalized: true,
       legacyProjectLockRejected,
+      boundedWorker: {
+        dispatchId: workerDispatch.dispatch.dispatchId,
+        waitOutcomeId: completedWorker.waitOutcome.waitOutcomeId,
+        competingOwnerRejected,
+        duplicateWorkerConsumptionRejected,
+        fixtureApplicationRejected,
+      },
       rawTranscriptPersisted: false,
       actualProviderInvoked: false,
       providerControlEnabled: false,
