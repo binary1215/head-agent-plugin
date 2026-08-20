@@ -141,6 +141,27 @@ target, or post-send fences. Raw endpoint coordinates remain host-local
 operational state, provider session identity is not persisted, and only the
 attachment identity enters the delivery receipt.
 
+The bundled production reference is `host-export`, a provider-neutral filesystem
+mailbox rather than a workspace-manager integration. A trusted external host
+publishes a content-addressed immutable endpoint snapshot and current pointer
+outside the project. Delivery creates one exclusive request beneath the hashed
+endpoint location. The host must acquire one exclusive pre-effect claim, then
+return one exclusive, request-hash-bound acknowledgment within the bounded wait.
+Claim acquisition revalidates the request's host, snapshot, workspace, tab,
+endpoint, terminal, canonical CWD, and runtime against the current export.
+An existing unacknowledged claim is ambiguous and is never processed again
+automatically. The host decides how to wake its provider;
+Core never sees a binary, socket, CLI command, pane, TUI, provider session, or
+credential. `scripts/workspace-host-export-mcp.mjs` composes this adapter from
+host-injected environment references and rejects a requested project that differs
+from the injected canonical project root.
+
+The host must pre-create the export root and inject
+`HEAD_AGENT_HOST_PROJECT_ROOT`, `HEAD_AGENT_WORKSPACE_HOST_EXPORT_ROOT`,
+`HEAD_AGENT_HOST_WORKSPACE_ID`, `HEAD_AGENT_HOST_TAB_ID`,
+`HEAD_AGENT_HOST_ENDPOINT_ID`, and the existing role binding token. These are
+process-composition inputs, never role-tool arguments or project artifacts.
+
 ## Current claim boundary
 
 The Core, CLI, and role-bound MCP contract are implemented and tested for local
@@ -153,10 +174,12 @@ delivery, stale/replaced/detached targets, target-chain rollback, target TOCTOU,
 post-send topology change, partial-send ambiguity, exact acknowledgment,
 project-CWD fencing, and provider-session absence.
 
-Host-specific adapter implementation, actual live-host E2E, shared-host service
-installation, and general provider start/resume/stream/interrupt/close remain
-unimplemented. The missing host-specific behavior must be reached through the
-generic contract or a separately owned optional adapter, not by adding Herdr
-knowledge to this plugin. Until live-host evidence and original-author direct
-source audit pass, this slice narrows but does not claim complete replacement of
-the original HEAD Core's live coordination advantage.
+The host-export production path additionally passes with two fresh role-bound MCP
+processes and a separate live host consumer that reads the create-only request and
+writes the exact acknowledgment. Project/export overlap, host-project mismatch,
+ack timeout, and pointer tamper fail closed. Actual Codex/OpenCode provider clients
+have not yet consumed the wake and completed a role-tool round trip; shared-host
+service installation and general provider start/resume/stream/interrupt/close also
+remain unimplemented. Until that provider-client evidence and original-author
+direct source audit pass, this slice does not claim complete replacement of the
+original HEAD Core's live coordination advantage.

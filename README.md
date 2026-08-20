@@ -149,8 +149,12 @@ When a dedicated MCP endpoint is started by a trusted workspace host, an active
 unique endpoint and revalidates the exact target before and after delivery. The
 plugin accepts only the provider-neutral `WorkspaceHostDriver` snapshot/send
 contract; host-specific executable, socket, CLI, pane, and TUI knowledge belongs
-in a separately owned optional adapter. Deterministic two-process Codex/OpenCode
-host fixtures pass; actual host-specific integration and live E2E remain open.
+in a separately owned optional adapter. The production `host-export` reference
+uses content-addressed snapshots and create-only filesystem request/ack records
+outside the project, with a create-only pre-effect claim preventing automatic
+replay after an uncertain host crash. Two fresh role MCP processes and a separate live host
+consumer pass this bridge; actual Codex/OpenCode provider-client wake/tool
+consumption remains open.
 See [Role coordination](docs/role-coordination.md).
 
 ## Architecture at a glance
@@ -344,7 +348,9 @@ Status terms in this README have exact meanings:
 | Artifact-only Codex-to-OpenCode provider replacement recovery | **Available** |
 | Host-bound durable role messaging Core/CLI/MCP | **Available** |
 | Exact-endpoint two-process WorkspaceHost delivery | **Available** |
-| Host-specific WorkspaceHost adapters and live delivery | **Planned** |
+| Production host-export filesystem bridge | **Available** |
+| Actual Codex/OpenCode provider-client live role round trip | **Planned** |
+| Host-specific WorkspaceHost adapters | **Optional external** |
 | Verified Git-backed Codex marketplace distribution | **Available** |
 | OpenAI universal plugin directory publication | **Planned** |
 | `install.ps1` and `install.sh` | **Available** |

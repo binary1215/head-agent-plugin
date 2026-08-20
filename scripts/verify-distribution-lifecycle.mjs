@@ -82,6 +82,9 @@ try {
   assert.equal(installed.project.onboardingAction, "started");
   assert.equal(installed.project.onboarding.storageMode, "local");
   assert.equal(installed.project.onboarding.candidateCount > 0, true);
+  const installedReleaseRoot = path.join(installRoot, "releases", installed.releaseId);
+  assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "workspace-host-export-mcp.mjs")), true);
+  assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "lib", "workspace-host-export-driver.mjs")), true);
   assert.equal(fs.existsSync(path.join(projectRoot, ".git")), false);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
 
@@ -176,6 +179,7 @@ try {
     rollbackVerified: true,
     failedUpgradePreservedCurrent: true,
     launcherVerified: true,
+    workspaceHostExportBridgePackaged: true,
     publicInitializeResumeVerified: true,
     projectAuthorityDeduplicated: true,
     gitAndGraphDbIndependentOnboardingVerified: true,

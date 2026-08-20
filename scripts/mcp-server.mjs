@@ -801,6 +801,15 @@ function activateGraphDbFromMcp(args, transport) {
 
 function coordinationHostCall({ root, bindingToken, coordinationWorkspaceHost }) {
   if (!coordinationWorkspaceHost) return null;
+  if (coordinationWorkspaceHost.projectRoot) {
+    const requested = fs.realpathSync(path.resolve(root));
+    const injected = fs.realpathSync(path.resolve(coordinationWorkspaceHost.projectRoot));
+    if (requested !== injected) {
+      const error = new Error("The host-injected coordination project does not match the requested project.");
+      error.code = "COORDINATION_HOST_PROJECT_MISMATCH";
+      throw error;
+    }
+  }
   attachCoordinationWorkspaceHost({
     root,
     bindingToken,

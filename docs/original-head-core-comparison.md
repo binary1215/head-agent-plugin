@@ -34,7 +34,7 @@ The reference establishes six portable principles that this plugin must retain:
 
 | Concern | Original HEAD Core | This plugin | Universal-plugin consequence |
 | --- | --- | --- | --- |
-| Runtime composition | A user-scoped OpenCode/Herdr installation with one loopback coordination daemon and exact pane/tab/session evidence | One provider-neutral Core with typed Codex and OpenCode adapters, a portable CLI/MCP surface, runtime-independent HEAD identities, and an injected exact-endpoint WorkspaceHost contract | Provider replacement does not replace project meaning; the plugin generalizes endpoint identity without embedding host-specific executable, socket, command, pane, or TUI knowledge, while the original still has the established installed-Herdr operating path |
+| Runtime composition | A user-scoped OpenCode/Herdr installation with one loopback coordination daemon and exact pane/tab/session evidence | One provider-neutral Core with typed Codex and OpenCode adapters, a portable CLI/MCP surface, runtime-independent HEAD identities, an injected exact-endpoint WorkspaceHost contract, and a production host-export filesystem bridge | Provider replacement does not replace project meaning; the plugin generalizes endpoint identity and external-host delivery without embedding host-specific executable, socket, command, pane, or TUI knowledge, while the original still has the established installed-Herdr provider-client operating path |
 | Durable authority | Project-owned Session/Run canon plus host-owned task/message state | Git-independent Project, Session, Run, Product Canon, World Model, Context, Execution Lineage, and recovery artifacts | More semantic and execution state is portable across providers and storage backends |
 | Graph role | A retrieval index whose linked source files remain authoritative | An embedded content-addressed GraphSnapshot with local, GraphDB, and document projections that remain rebuildable and non-authoritative | Graph storage is optional and cannot become a hidden orchestrator or source of truth |
 | Product model | Product and policy definitions remain project-owned extensions | Strict user-owned Product Canon plus candidate/review boundaries and a Product Operating Loop | Product learning is integrated without allowing inference or outcomes to promote Canon |
@@ -120,9 +120,10 @@ durable provider-session attachment, resume/stream/interrupt/close, and an
 established installed-Herdr operating path. The plugin now has provider-neutral
 host-bound durable project-role messaging, append-only exact endpoint targets,
 fresh-snapshot/ack/post-snapshot delivery fencing, deterministic two-fresh-process
-Codex/OpenCode generic-host evidence, and a host-neutral driver contract. It does
-not bundle a Herdr-specific adapter and does not yet have an actual host-specific
-multi-role E2E. Automatic DAG
+Codex/OpenCode generic-host evidence, and a production host-export bridge whose
+separate live consumer acknowledges create-only requests. It does not bundle a
+Herdr-specific adapter and does not yet have actual Codex/OpenCode provider-client
+wake/tool consumption. Automatic DAG
 merge/conflict resolution, Obsidian/Notion publication, and OpenAI universal
 plugin-directory publication also remain incomplete. These are extension gaps,
 not reasons to weaken authority separation, but they bound any superiority
@@ -140,9 +141,9 @@ The proposition is false if any mandatory everyday rule still lacks a protected
 outcome, if the new light path can bypass a user-owned authority transition, if
 the cache merges independent trust boundaries, or if an original portable Core
 responsibility was lost rather than relocated. It does not assert superiority
-for host-native coordination until the implemented endpoint binding and
-provider-neutral delivery contract pass an actual live-host E2E through a
-separately owned adapter plus original-author source audit.
+for host-native coordination until actual Codex/OpenCode provider clients consume
+the host-export wake, complete the role-tool round trip, and pass original-author
+source audit.
 
 ## Original-author review outcome
 
@@ -174,10 +175,11 @@ This is not approval of overall superiority, philosophical superiority,
 OpenCode/Herdr-native completeness, or live provider-network replacement
 completeness. At the time of that verdict, the original remained stronger in
 Herdr workspace/pane/session fencing and live coordination delivery. Since then,
-the plugin has implemented the provider-neutral exact-endpoint contract described
-above and explicitly rejected an embedded Herdr-specific driver in favor of an
-external-adapter route, but no new author verdict or real live-host acceptance has
-yet replaced that historical conclusion. Graph non-authority,
+the plugin has implemented the provider-neutral exact-endpoint contract and
+production host-export bridge described above and explicitly rejected an embedded
+Herdr-specific driver. A separate live host consumer passes, but no actual
+Codex/OpenCode provider-client coordination or new author verdict has yet replaced
+that historical conclusion. Graph non-authority,
 whole-outcome ownership,
 and candidate/review separation remain inherited standards, not dimensions in
 which this plugin claims to have improved the original philosophy.

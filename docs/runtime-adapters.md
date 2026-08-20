@@ -15,6 +15,7 @@ HEAD Core
        -> native-process contract reference
        -> verified exact-endpoint role coordination
             -> injected provider-neutral WorkspaceHostDriver
+                 -> host-export filesystem mailbox reference
 ```
 
 `AgentRuntimeAdapter` fixes the method surface `probe`, `start`, `resume`, `stream`, `interrupt`, and `close`. `PlatformAdapter` fixes platform-owned executable discovery, owned-process start/inspection/termination, paths, permissions, IPC, atomic file operations, and service lifecycle. `WorkspaceHostAdapter` fixes host attachment, messaging, receipt, and detachment.
@@ -115,6 +116,20 @@ project-contained canonical CWD without knowing how the external host obtained
 that evidence. Host-specific translation belongs to a separately owned optional
 adapter and cannot weaken these checks.
 
+`host-export` is the production portable reference for that injection boundary.
+Its root must be canonical, non-symlinked, outside the project, and must not
+contain the project. Immutable content-addressed snapshots feed a verified current
+pointer. Delivery request, pre-effect claim, and acknowledgment are separate
+create-only files under a hashed endpoint location; claim and acknowledgment are
+bound to the exact request hash, host instance, endpoint tuple, and message. A
+claim also rechecks the current snapshot, canonical CWD, and runtime before the
+external host may apply its effect. A
+claim without acknowledgment is ambiguous and cannot be consumed again
+automatically. Missing acknowledgment after a bounded wait is likewise ambiguous.
+The optional MCP entrypoint receives
+the project/caller/export tuple only from its host process environment and rejects
+tool requests for another project.
+
 ## Authority and identity boundary
 
 Runtime capability never grants authorization. A future control operation must still be bounded by a valid Session or Run `ExecutionAuthorization`, exact project binding, caller identity, owned-process evidence, resource limits, and cleanup. Only Run scope requires accepted ExecutionContract and ResultPacket/ReviewDecision lineage.
@@ -176,7 +191,7 @@ The adapter verifier proves deterministic contract identities, Codex/OpenCode co
 
 ## Next activation gate
 
-Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, canonical HEAD project/Session capability binding, host-local role coordination, and opt-in exact-endpoint WorkspaceHost attachment/delivery are active. The host slice has deterministic two-fresh-process Codex/OpenCode evidence; an actual host-specific adapter/live E2E and original-author source audit remain its acceptance gates. Before any `start`, `resume`, `stream`, `interrupt`, `close`, or broader process-host control becomes active, the platform/runtime/host composition must still verify:
+Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, canonical HEAD project/Session capability binding, host-local role coordination, and opt-in exact-endpoint WorkspaceHost attachment/delivery are active. The host slice has deterministic in-memory evidence plus a production host-export E2E with two fresh role MCP processes and a separate live host consumer. Actual Codex/OpenCode provider-client wake/tool consumption and original-author source audit remain its acceptance gates. Before any `start`, `resume`, `stream`, `interrupt`, `close`, or broader process-host control becomes active, the platform/runtime/host composition must still verify:
 
 1. preserve the completed live Codex Session conformance evidence through the externalized operational-state root, exact authorization/lease/caller/project fences, and verified native descendant supervisor;
 2. validate the diagnosed large-event fix against evidence-led consequential live Codex Runs, including actual provider input, structured events, isolated file write, ResultPacket evidence, and provider-specific errors through the provider-neutral schemas;
