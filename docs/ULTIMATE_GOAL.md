@@ -32,6 +32,33 @@ Runtime failure, context pollution, or provider-session loss must not erase the 
 
 Source-control availability is not a product prerequisite. The core must initialize, preserve change lineage, build its World Model, compile context, review execution, and regenerate projections without Git. Git may enrich evidence through an optional adapter and is used to publish this plugin's development progress, but no core semantic identity, authority decision, or recovery path may depend on a Git commit, branch, tag, repository, or hosting service.
 
+## Original-author collaboration and independent design review
+
+The original HEAD Agent author agent is an active external design partner, not
+only a final approver. At each material comparative-design boundary, HEAD should
+use the available file-mail channel to give the author the current evidence,
+unresolved gap, concrete alternatives, and exact authority boundary; ask the
+author to propose invariants, counterexamples, failure cases, and a preferred
+design before implementation when feasible; implement independently against the
+project's authority; and then return the exact commit plus reproducible test
+evidence for direct source review. Blocking corrections are incorporated and the
+proposal, implementation, audit, and correction loop repeats until none remain.
+
+This collaboration prevents a self-authored comparison from becoming the sole
+basis for completion. Summary-only, conditional, or final-verdict-only feedback
+does not count as an independent source audit. The final superiority judgment
+requires the author to inspect the actual source and equivalent-scenario evidence
+and explicitly issue all three verdicts required by the active objective.
+
+Author feedback remains advisory evidence. It cannot override user or system
+instructions, approved Product Canon, or the project's own authority boundaries;
+it cannot promote candidates, approve a ReviewDecision, or mutate canon merely
+because it came from the original author. Mail and review artifacts likewise do
+not become project authority automatically. The collaboration is therefore both
+active and bounded: the author is repeatedly used as proposer, adversarial
+reviewer, and independent implementation auditor, while authority remains where
+HEAD's design philosophy places it.
+
 ## Product identity
 
 HEAD Agent Core is not primarily a memory product, prompt bundle, graph database, or worker launcher. It is an authority-preserving execution-lineage runtime.
@@ -849,6 +876,7 @@ If an applicable answer is “no” or “unknown,” record the gap before proc
 
 ## Decision history
 
+- 2026-08-20: made communication with the original HEAD Agent author agent an active iterative design-review mechanism rather than a final-approval ceremony. At each material comparative boundary, the author is asked to propose invariants and failure cases before implementation when feasible, then to inspect the exact commit and reproducible evidence afterward; blocking corrections repeat the loop. Author feedback and mail remain advisory evidence rather than project authority, and summary-only or conditional verdicts cannot satisfy the final direct-source superiority audit.
 - 2026-08-18: selected authority-preserving Execution Lineage as the product direction.
 - 2026-08-18: placed Execution Lineage Contract before Repository World Model and GraphDB work.
 - 2026-08-18: defined Fresh HEAD as artifact-based logical reconstruction rather than provider-session restoration.
