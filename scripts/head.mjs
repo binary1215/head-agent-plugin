@@ -27,6 +27,7 @@ import { executeRuntimeInvocation } from "./lib/runtime-one-shot-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
 import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
+import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
@@ -80,6 +81,13 @@ export function usage() {
       "head change-impact-review-read <project> --review <change-impact-review-decision-id>",
       "head change-set-vcs-attach <project> --input <vcs-evidence.json>",
       "head change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>",
+      "head product-signal-record <project> --input <signal.json>",
+      "head product-hypothesis-record <project> --input <hypothesis.json>",
+      "head product-initiative-propose <project> --input <initiative.json>",
+      "head product-initiative-review <project> --input <review.json>",
+      "head product-outcome-observe <project> --input <outcome.json>",
+      "head product-operating-status <project>",
+      "head head-continuity <project>",
       "head world-index <project> [--git-log <host-exported-log-file>] [--runtime-state <host-exported-json-file>] [--parent-snapshot <id,id>] [--revision-parents <json-file>]",
       "head world-status <project>",
       "head world-refresh <project> [--expect-changed <path,path>] [--trigger-evidence <id,id>] [--parent-snapshot <id,id>]",
@@ -214,6 +222,13 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "change-impact-review-read") return readChangeImpactReviewDecision({ root, reviewDecisionId: options.review });
   if (command === "change-set-vcs-attach") return attachVcsEvidence({ ...inputJson(options, "VCS evidence attachment"), root });
   if (command === "change-set-vcs-read") return readVcsEvidence({ root, vcsEvidenceId: options["vcs-evidence"] });
+  if (command === "product-signal-record") return recordProductSignal({ ...inputJson(options, "ProductSignal"), root });
+  if (command === "product-hypothesis-record") return recordProductHypothesis({ ...inputJson(options, "ProductHypothesis"), root });
+  if (command === "product-initiative-propose") return proposeProductInitiative({ ...inputJson(options, "ProductInitiativeCandidate"), root });
+  if (command === "product-initiative-review") return reviewProductInitiative({ ...inputJson(options, "Product Initiative ReviewDecision"), root });
+  if (command === "product-outcome-observe") return observeProductOutcome({ ...inputJson(options, "OutcomeObservation"), root });
+  if (command === "product-operating-status") return inspectProductOperatingLoop({ root });
+  if (command === "head-continuity") return buildHeadContinuitySnapshot({ root });
   if (command === "world-index") return buildWorldModel({
     root,
     persist: true,

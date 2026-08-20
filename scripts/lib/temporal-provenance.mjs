@@ -3,9 +3,10 @@ import { verifyOnboardingGraphProjectionInput } from "./onboarding-projection.mj
 import { verifyFeatureMappingProjectionInput } from "./feature-mapping-projection.mjs";
 import { verifyChangeSetProjectionInput } from "./change-set-projection.mjs";
 import { verifyDocumentChangeProjectionInput } from "./document-change-projection.mjs";
+import { verifyProductOperatingProjectionInput } from "./product-operating-loop.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.7.0";
+export const TEMPORAL_PROVENANCE_VERSION = "0.8.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -42,7 +43,8 @@ const TEMPORAL_RELATION_TYPES_V06 = Object.freeze([
   ...TEMPORAL_RELATION_TYPES_V05,
   "MATERIALIZED_AS",
 ]);
-export const TEMPORAL_RELATION_TYPES = Object.freeze([...TEMPORAL_RELATION_TYPES_V06]);
+const TEMPORAL_RELATION_TYPES_V07 = Object.freeze([...TEMPORAL_RELATION_TYPES_V06]);
+export const TEMPORAL_RELATION_TYPES = Object.freeze([...TEMPORAL_RELATION_TYPES_V07, "OBSERVES"]);
 
 const TEMPORAL_NODE_KINDS_V02 = Object.freeze([
   "Repository",
@@ -105,7 +107,7 @@ const TEMPORAL_NODE_KINDS_V06 = Object.freeze([
   "VcsEvidence",
   "GitCommit",
 ]);
-export const TEMPORAL_NODE_KINDS = Object.freeze([
+const TEMPORAL_NODE_KINDS_V07 = Object.freeze([
   ...TEMPORAL_NODE_KINDS_V06,
   "DocumentChangeCandidateSet",
   "DocumentChangeCandidate",
@@ -113,6 +115,17 @@ export const TEMPORAL_NODE_KINDS = Object.freeze([
   "DocumentChangeApplication",
   "DocumentProductModelRevision",
   "DocumentProjectionReference",
+]);
+export const TEMPORAL_NODE_KINDS = Object.freeze([
+  ...TEMPORAL_NODE_KINDS_V07,
+  "ProductSignal",
+  "ProductHypothesis",
+  "ProductInitiativeCandidate",
+  "ProductInitiativeReviewDecision",
+  "ReviewedProductInitiative",
+  "ProductFeatureCandidate",
+  "ProductFeatureReference",
+  "OutcomeObservation",
 ]);
 
 const PRODUCER = "head-agent-core-temporal-provenance";
@@ -1333,6 +1346,89 @@ function appendDocumentChangeProjection({ projectId, sourceSnapshotId, projectio
   };
 }
 
+function productOperatingProjectionDescriptor(projection) {
+  if (!projection) return {
+    status: "not-provided", projectionInputId: null, projectionInputHash: null,
+    signalIds: [], hypothesisIds: [], initiativeCandidateIds: [], reviewDecisionIds: [],
+    reviewedInitiativeIds: [], featureCandidateIds: [], outcomeObservationIds: [],
+  };
+  return {
+    status: "projected", projectionInputId: projection.projectionInputId, projectionInputHash: projection.projectionInputHash,
+    signalIds: projection.signals.map((item) => item.signalId),
+    hypothesisIds: projection.hypotheses.map((item) => item.hypothesisId),
+    initiativeCandidateIds: projection.initiativeCandidates.map((item) => item.initiativeCandidateId),
+    reviewDecisionIds: projection.initiativeReviews.map((item) => item.reviewDecisionId),
+    reviewedInitiativeIds: projection.reviewedInitiatives.map((item) => item.initiativeId),
+    featureCandidateIds: projection.featureCandidates.map((item) => item.featureCandidateId),
+    outcomeObservationIds: projection.outcomeObservations.map((item) => item.outcomeObservationId),
+  };
+}
+
+function appendProductOperatingProjection({ projectId, productModelId, sourceSnapshotId, projection, nodes, edges }) {
+  const empty = { productSignalCount: 0, productHypothesisCount: 0, productInitiativeCandidateCount: 0, productInitiativeReviewDecisionCount: 0, reviewedProductInitiativeCount: 0, productFeatureCandidateCount: 0, outcomeObservationCount: 0 };
+  if (!projection) return empty;
+  verifyProductOperatingProjectionInput(projection);
+  const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
+  const pushNode = (node) => { const existing = nodeById.get(node.nodeId); if (existing) return existing; nodeById.set(node.nodeId, node); nodes.push(node); return node; };
+  const evidence = (ids) => [...new Set(ids.filter(Boolean))].sort();
+  const meta = (ids, authorityClass, origin, freshness = "current") => nodeMetadata({ evidenceIds: evidence(ids), sourceSnapshotId, authorityClass, origin, freshness });
+  const add = (type, from, to, ids, authorityClass, origin) => edges.push(edgeRecord({ type, from, to, sourceSnapshotId, evidenceIds: evidence(ids), authorityClass, origin }));
+  const featureByKey = new Map(nodes.filter((node) => node.kind === "Feature").map((node) => [node.key, node]));
+  const featureCandidates = new Map(projection.featureCandidates.map((item) => [item.featureCandidateId, item]));
+
+  for (const signal of projection.signals) pushNode({
+    nodeId: signal.signalId, kind: "ProductSignal", projectId, signalHash: signal.signalHash, statement: signal.statement,
+    observedAt: signal.observedAt, epistemicClass: signal.epistemicClass, sourceAuthority: signal.authority,
+    ...meta([signal.signalId, ...signal.evidenceIds], "runtime-observed", "product-operating-observation"),
+  });
+  for (const hypothesis of projection.hypotheses) {
+    pushNode({ nodeId: hypothesis.hypothesisId, kind: "ProductHypothesis", projectId, hypothesisHash: hypothesis.hypothesisHash, statement: hypothesis.statement, rationale: hypothesis.rationale, signalIds: hypothesis.signalIds, epistemicClass: hypothesis.epistemicClass, sourceAuthority: hypothesis.authority, ...meta([hypothesis.hypothesisId, ...hypothesis.signalIds], "derived", "explicit-product-hypothesis") });
+    for (const signalId of hypothesis.signalIds) add("SUPPORTED_BY", hypothesis.hypothesisId, signalId, [hypothesis.hypothesisId, signalId], "derived", "explicit-product-hypothesis");
+  }
+  for (const feature of projection.featureCandidates) pushNode({
+    nodeId: feature.featureCandidateId, kind: "ProductFeatureCandidate", projectId, featureCandidateHash: feature.featureCandidateHash,
+    feature: feature.feature, initiativeCandidateSeed: feature.initiativeCandidateSeed, epistemicClass: feature.epistemicClass,
+    sourceAuthority: feature.authority, ...meta([feature.featureCandidateId], "derived", "product-feature-candidate"),
+  });
+  const targetFor = (resolution) => {
+    if (resolution.kind === "existing-feature") {
+      const target = featureByKey.get(resolution.featureKey);
+      if (target && resolution.productModelId === productModelId) return target.nodeId;
+      const nodeId = identity("product-feature-reference", { projectId, featureKey: resolution.featureKey, productModelId: resolution.productModelId });
+      pushNode({ nodeId, kind: "ProductFeatureReference", projectId, featureKey: resolution.featureKey, referencedProductModelId: resolution.productModelId, ...meta([resolution.productModelId], "derived", "historical-product-feature-reference", "historical") });
+      return nodeId;
+    }
+    if (resolution.kind === "candidate") {
+      if (!featureCandidates.has(resolution.featureCandidateId)) fail("Product Initiative references a missing Feature candidate.", "PRODUCT_OPERATING_FEATURE_CANDIDATE_MISSING");
+      return resolution.featureCandidateId;
+    }
+    return null;
+  };
+  for (const initiative of projection.initiativeCandidates) {
+    pushNode({ nodeId: initiative.initiativeCandidateId, kind: "ProductInitiativeCandidate", projectId, initiativeCandidateHash: initiative.initiativeCandidateHash, title: initiative.title, description: initiative.description, hypothesisIds: initiative.hypothesisIds, featureResolution: initiative.featureResolution, epistemicClass: initiative.epistemicClass, sourceAuthority: initiative.authority, ...meta([initiative.initiativeCandidateId, ...initiative.hypothesisIds], "derived", "product-initiative-candidate") });
+    for (const hypothesisId of initiative.hypothesisIds) add("PROPOSES_FROM", initiative.initiativeCandidateId, hypothesisId, [initiative.initiativeCandidateId, hypothesisId], "derived", "product-initiative-candidate");
+    const targetId = targetFor(initiative.featureResolution); if (targetId) add("PROPOSES_TO", initiative.initiativeCandidateId, targetId, [initiative.initiativeCandidateId, targetId], "derived", "product-initiative-candidate");
+  }
+  for (const review of projection.initiativeReviews) {
+    pushNode({ nodeId: review.reviewDecisionId, kind: "ProductInitiativeReviewDecision", projectId, reviewDecisionHash: review.reviewDecisionHash, initiativeCandidateId: review.initiativeCandidateId, disposition: review.disposition, rationale: review.rationale, sourceAuthority: review.authority, sourcePromotionAuthority: review.promotionAuthority, ...meta([review.reviewDecisionId, review.initiativeCandidateId], "reviewed", "explicit-user-product-initiative-review") });
+    add("REVIEWED_BY", review.initiativeCandidateId, review.reviewDecisionId, [review.initiativeCandidateId, review.reviewDecisionId], "reviewed", "explicit-user-product-initiative-review");
+    add(review.disposition === "accept" ? "ACCEPTED_BY" : "REJECTED_BY", review.initiativeCandidateId, review.reviewDecisionId, [review.initiativeCandidateId, review.reviewDecisionId], "reviewed", "explicit-user-product-initiative-review");
+  }
+  for (const initiative of projection.reviewedInitiatives) {
+    pushNode({ nodeId: initiative.initiativeId, kind: "ReviewedProductInitiative", projectId, initiativeHash: initiative.initiativeHash, initiativeCandidateId: initiative.initiativeCandidateId, reviewDecisionId: initiative.reviewDecisionId, title: initiative.title, description: initiative.description, featureResolution: initiative.featureResolution, epistemicClass: initiative.epistemicClass, sourceAuthority: initiative.authority, ...meta([initiative.initiativeId, initiative.initiativeCandidateId, initiative.reviewDecisionId], "reviewed", "reviewed-product-initiative") });
+    add("PROMOTED_FROM", initiative.initiativeId, initiative.initiativeCandidateId, [initiative.initiativeId, initiative.initiativeCandidateId], "reviewed", "reviewed-product-initiative");
+    add("PRODUCES", initiative.reviewDecisionId, initiative.initiativeId, [initiative.initiativeId, initiative.reviewDecisionId], "reviewed", "reviewed-product-initiative");
+    const targetId = targetFor(initiative.featureResolution); if (targetId) add("PROPOSES_TO", initiative.initiativeId, targetId, [initiative.initiativeId, targetId], "reviewed", "reviewed-product-initiative");
+  }
+  for (const outcome of projection.outcomeObservations) {
+    if (!nodeById.has(outcome.changeSetId)) fail("OutcomeObservation ChangeSet is absent from the graph.", "PRODUCT_OPERATING_CHANGE_SET_MISSING");
+    pushNode({ nodeId: outcome.outcomeObservationId, kind: "OutcomeObservation", projectId, outcomeObservationHash: outcome.outcomeObservationHash, initiativeId: outcome.initiativeId, changeSetId: outcome.changeSetId, resultPacketId: outcome.resultPacketId, executionReviewDecisionId: outcome.executionReviewDecisionId, statement: outcome.statement, epistemicClass: outcome.epistemicClass, sourceAuthority: outcome.authority, ...meta([outcome.outcomeObservationId, outcome.changeSetId, outcome.resultPacketId, outcome.executionReviewDecisionId, ...outcome.evidenceIds], outcome.epistemicClass === "observed-fact" ? "runtime-observed" : "derived", "product-outcome-observation") });
+    add("OBSERVES", outcome.outcomeObservationId, outcome.changeSetId, [outcome.outcomeObservationId, outcome.changeSetId], outcome.epistemicClass === "observed-fact" ? "runtime-observed" : "derived", "product-outcome-observation");
+    if (outcome.initiativeId) add("OBSERVES", outcome.outcomeObservationId, outcome.initiativeId, [outcome.outcomeObservationId, outcome.initiativeId], outcome.epistemicClass === "observed-fact" ? "runtime-observed" : "derived", "product-outcome-observation");
+  }
+  return { productSignalCount: projection.signals.length, productHypothesisCount: projection.hypotheses.length, productInitiativeCandidateCount: projection.initiativeCandidates.length, productInitiativeReviewDecisionCount: projection.initiativeReviews.length, reviewedProductInitiativeCount: projection.reviewedInitiatives.length, productFeatureCandidateCount: projection.featureCandidates.length, outcomeObservationCount: projection.outcomeObservations.length };
+}
+
 export function buildTemporalProvenanceGraph({
   projectId,
   files,
@@ -1342,6 +1438,7 @@ export function buildTemporalProvenanceGraph({
   featureMappingProjection = null,
   changeSetProjection = null,
   documentChangeProjection = null,
+  productOperatingProjection = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
 } = {}) {
@@ -1352,11 +1449,15 @@ export function buildTemporalProvenanceGraph({
   const selectedFeatureMappingProjection = featureMappingProjection ? verifyFeatureMappingProjectionInput(featureMappingProjection) : null;
   const selectedChangeSetProjection = changeSetProjection ? verifyChangeSetProjectionInput(changeSetProjection) : null;
   const selectedDocumentChangeProjection = documentChangeProjection ? verifyDocumentChangeProjectionInput(documentChangeProjection) : null;
+  const selectedProductOperatingProjection = productOperatingProjection ? verifyProductOperatingProjectionInput(productOperatingProjection) : null;
   if (selectedChangeSetProjection && selectedChangeSetProjection.projectId !== projectId) {
     fail("ChangeSet projection input does not match the temporal graph scope.", "CHANGE_SET_TEMPORAL_SCOPE_MISMATCH");
   }
   if (selectedDocumentChangeProjection && selectedDocumentChangeProjection.projectId !== projectId) {
     fail("Document-change projection input does not match the temporal graph scope.", "DOCUMENT_CHANGE_TEMPORAL_SCOPE_MISMATCH");
+  }
+  if (selectedProductOperatingProjection && selectedProductOperatingProjection.projectId !== projectId) {
+    fail("Product operating projection input does not match the temporal graph scope.", "PRODUCT_OPERATING_TEMPORAL_SCOPE_MISMATCH");
   }
   if (selectedOnboardingProjection && (selectedOnboardingProjection.projectId !== projectId
     || selectedOnboardingProjection.currentProductModelId !== selectedProductModel.productModelId)) {
@@ -1705,6 +1806,14 @@ export function buildTemporalProvenanceGraph({
     nodes,
     edges,
   });
+  const productOperatingSummary = appendProductOperatingProjection({
+    projectId,
+    productModelId: selectedProductModel.productModelId,
+    sourceSnapshotId,
+    projection: selectedProductOperatingProjection,
+    nodes,
+    edges,
+  });
 
   const uniqueEdges = new Map();
   for (const edge of edges) {
@@ -1741,6 +1850,7 @@ export function buildTemporalProvenanceGraph({
     ...featureMappingSummary,
     ...changeSetSummary,
     ...documentChangeSummary,
+    ...productOperatingSummary,
   };
   const payload = {
     kind: "GraphSnapshot",
@@ -1755,6 +1865,7 @@ export function buildTemporalProvenanceGraph({
     featureMappingProjection: featureMappingProjectionDescriptor(selectedFeatureMappingProjection),
     changeSetProjection: changeSetProjectionDescriptor(selectedChangeSetProjection),
     documentChangeProjection: documentChangeProjectionDescriptor(selectedDocumentChangeProjection),
+    productOperatingProjection: productOperatingProjectionDescriptor(selectedProductOperatingProjection),
     sourceSnapshotId,
     parentSourceSnapshotIds: parents,
     revisionParentIds: revisionParents,
@@ -1909,6 +2020,14 @@ function expectedNodeId(node) {
     graphSnapshotHash: node.graphSnapshotHash,
     referencedSourceSnapshotId: node.referencedSourceSnapshotId,
   });
+  if (node.kind === "ProductSignal") return `product-signal-${String(node.signalHash || "").slice(0, 24)}`;
+  if (node.kind === "ProductHypothesis") return `product-hypothesis-${String(node.hypothesisHash || "").slice(0, 24)}`;
+  if (node.kind === "ProductInitiativeCandidate") return `product-initiative-candidate-${String(node.initiativeCandidateHash || "").slice(0, 24)}`;
+  if (node.kind === "ProductInitiativeReviewDecision") return `product-initiative-review-${String(node.reviewDecisionHash || "").slice(0, 24)}`;
+  if (node.kind === "ReviewedProductInitiative") return `reviewed-product-initiative-${String(node.initiativeHash || "").slice(0, 24)}`;
+  if (node.kind === "ProductFeatureCandidate") return `product-feature-candidate-${String(node.featureCandidateHash || "").slice(0, 24)}`;
+  if (node.kind === "ProductFeatureReference") return identity("product-feature-reference", { projectId: node.projectId, featureKey: node.featureKey, productModelId: node.referencedProductModelId });
+  if (node.kind === "OutcomeObservation") return `outcome-observation-${String(node.outcomeObservationHash || "").slice(0, 24)}`;
   return "";
 }
 
@@ -1936,32 +2055,39 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "GOVERNED_BY") return fromKind === "Feature" && ["Requirement", "Constraint", "Decision"].includes(toKind);
   if (type === "PROPOSES_FROM") return (fromKind === "OnboardingCandidateSet" && ["SourceSnapshot", "SourceSnapshotReference"].includes(toKind))
     || (fromKind === "FeatureMappingCandidate" && ["File", "Symbol", "Feature", "Capability", "MappingEndpointReference"].includes(toKind))
-    || (fromKind === "DocumentChangeCandidateSet" && toKind === "DocumentProjectionReference");
+    || (fromKind === "DocumentChangeCandidateSet" && toKind === "DocumentProjectionReference")
+    || (fromKind === "ProductInitiativeCandidate" && toKind === "ProductHypothesis");
   if (type === "PROPOSES_TO") return (fromKind === "OnboardingProductCandidate" && toKind === "ProductConceptReference")
     || (fromKind === "FeatureMappingCandidate" && ["Feature", "Capability", "Test", "MappingEndpointReference"].includes(toKind))
-    || (fromKind === "ChangeImpactCandidate" && ["Feature", "Capability", "ChangeProductReference"].includes(toKind));
+    || (fromKind === "ChangeImpactCandidate" && ["Feature", "Capability", "ChangeProductReference"].includes(toKind))
+    || (["ProductInitiativeCandidate", "ReviewedProductInitiative"].includes(fromKind) && ["Feature", "ProductFeatureCandidate", "ProductFeatureReference"].includes(toKind));
   if (type === "SUPPORTED_BY") return (fromKind === "OnboardingProductCandidate" && toKind === "OnboardingEvidence")
     || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingEvidence")
     || (fromKind === "ChangeSet" && toKind === "ExecutionLineageReference")
-    || (fromKind === "ChangeImpactCandidate" && toKind === "ChangeSet");
+    || (fromKind === "ChangeImpactCandidate" && toKind === "ChangeSet")
+    || (fromKind === "ProductHypothesis" && toKind === "ProductSignal");
   if (type === "REVIEWED_BY") return (fromKind === "OnboardingCandidateSet" && toKind === "OnboardingReviewDecision")
     || (fromKind === "FeatureMappingCandidateSet" && toKind === "FeatureMappingReviewDecision")
     || (fromKind === "ChangeSet" && toKind === "ExecutionLineageReference")
     || (fromKind === "ChangeImpactCandidateSet" && toKind === "ChangeImpactReviewDecision")
-    || (fromKind === "DocumentChangeCandidateSet" && toKind === "DocumentChangeReviewDecision");
+    || (fromKind === "DocumentChangeCandidateSet" && toKind === "DocumentChangeReviewDecision")
+    || (fromKind === "ProductInitiativeCandidate" && toKind === "ProductInitiativeReviewDecision");
   if (["ACCEPTED_BY", "REJECTED_BY"].includes(type)) return (fromKind === "OnboardingProductCandidate" && toKind === "OnboardingReviewDecision")
     || (fromKind === "FeatureMappingCandidate" && toKind === "FeatureMappingReviewDecision")
     || (fromKind === "ChangeImpactCandidate" && toKind === "ChangeImpactReviewDecision")
-    || (fromKind === "DocumentChangeCandidate" && toKind === "DocumentChangeReviewDecision");
+    || (fromKind === "DocumentChangeCandidate" && toKind === "DocumentChangeReviewDecision")
+    || (fromKind === "ProductInitiativeCandidate" && toKind === "ProductInitiativeReviewDecision");
   if (type === "PROMOTED_FROM") return (fromKind === "ProductModelRevision" && toKind === "OnboardingProductCandidate")
     || (fromKind === "ReviewedRelationship" && toKind === "FeatureMappingCandidate")
     || (fromKind === "ReviewedImpact" && toKind === "ChangeImpactCandidate")
-    || (fromKind === "DocumentProductModelRevision" && toKind === "DocumentChangeCandidate");
+    || (fromKind === "DocumentProductModelRevision" && toKind === "DocumentChangeCandidate")
+    || (fromKind === "ReviewedProductInitiative" && toKind === "ProductInitiativeCandidate");
   if (type === "PRODUCES") return (fromKind === "OnboardingReviewDecision" && toKind === "ProductModelRevision")
     || (fromKind === "FeatureMappingReviewDecision" && toKind === "ReviewedRelationship")
     || (fromKind === "ChangeImpactReviewDecision" && toKind === "ReviewedImpact")
     || (fromKind === "DocumentChangeReviewDecision" && ["DocumentProductModelRevision", "DocumentChangeApplication"].includes(toKind))
-    || (fromKind === "DocumentChangeApplication" && toKind === "DocumentProjectionReference");
+    || (fromKind === "DocumentChangeApplication" && toKind === "DocumentProjectionReference")
+    || (fromKind === "ProductInitiativeReviewDecision" && toKind === "ReviewedProductInitiative");
   if (type === "IMPLEMENTS") return ["File", "Symbol"].includes(fromKind) && ["Feature", "Capability"].includes(toKind);
   if (type === "VERIFIED_BY") return ["Feature", "Capability"].includes(fromKind) && toKind === "Test";
   if (type === "CHANGES") return fromKind === "ChangeSet" && toKind === "ChangeRevisionReference";
@@ -1969,6 +2095,7 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "SUPERSEDES") return (fromKind === "ChangeSet" && toKind === "ChangeSet")
     || (fromKind === "ChangeRevisionReference" && toKind === "ChangeRevisionReference");
   if (type === "MATERIALIZED_AS") return fromKind === "ChangeSet" && toKind === "VcsEvidence";
+  if (type === "OBSERVES") return fromKind === "OutcomeObservation" && ["ChangeSet", "ReviewedProductInitiative"].includes(toKind);
   return false;
 }
 
@@ -1979,8 +2106,9 @@ export function verifyTemporalProvenanceGraph(graph) {
   const legacyV04 = graphVersion === "0.4.0";
   const legacyV05 = graphVersion === "0.5.0";
   const legacyV06 = graphVersion === "0.6.0";
+  const legacyV07 = graphVersion === "0.7.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
+    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
@@ -2002,8 +2130,8 @@ export function verifyTemporalProvenanceGraph(graph) {
   if (canonicalJson(graph.revisionParentIds) !== canonicalJson(normalizeRevisionParentIds(graph.revisionParentIds))) {
     fail("Revision parents must be normalized.", "INVALID_REVISION_PARENT_SET");
   }
-  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : legacyV05 ? TEMPORAL_RELATION_TYPES_V05 : legacyV06 ? TEMPORAL_RELATION_TYPES_V06 : TEMPORAL_RELATION_TYPES;
-  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : legacyV05 ? TEMPORAL_NODE_KINDS_V05 : legacyV06 ? TEMPORAL_NODE_KINDS_V06 : TEMPORAL_NODE_KINDS;
+  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : legacyV05 ? TEMPORAL_RELATION_TYPES_V05 : legacyV06 ? TEMPORAL_RELATION_TYPES_V06 : legacyV07 ? TEMPORAL_RELATION_TYPES_V07 : TEMPORAL_RELATION_TYPES;
+  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : legacyV05 ? TEMPORAL_NODE_KINDS_V05 : legacyV06 ? TEMPORAL_NODE_KINDS_V06 : legacyV07 ? TEMPORAL_NODE_KINDS_V07 : TEMPORAL_NODE_KINDS;
   if (canonicalJson(graph.relationTypes) !== canonicalJson([...expectedRelationTypes])
     || canonicalJson(graph.nodeKinds) !== canonicalJson([...expectedNodeKinds])) {
     fail("Temporal graph vocabulary does not match the implemented allowlist.", "TEMPORAL_VOCABULARY_MISMATCH");
@@ -2519,7 +2647,7 @@ export function verifyTemporalProvenanceGraph(graph) {
       fail(`Git commit observation is not referenced by VCS evidence: ${commit.nodeId}`, "VCS_EVIDENCE_TEMPORAL_RELATION_MISSING");
     }
   }
-  const documentDescriptor = graphVersion === TEMPORAL_PROVENANCE_VERSION ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
+  const documentDescriptor = (legacyV07 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
   if (!documentDescriptor || !["not-provided", "projected"].includes(documentDescriptor.status)) {
     fail("Temporal graph document-change projection descriptor is invalid.", "INVALID_DOCUMENT_CHANGE_TEMPORAL_PROJECTION");
   }
@@ -2572,6 +2700,28 @@ export function verifyTemporalProvenanceGraph(graph) {
     || !/^graph-snapshot-[a-f0-9]{24}$/.test(reference.graphSnapshotId || "") || !/^source-snapshot-[a-f0-9]{24}$/.test(reference.referencedSourceSnapshotId || "")) {
     fail(`DocumentProjectionReference is invalid: ${reference.nodeId}`, "INVALID_DOCUMENT_CHANGE_TEMPORAL_NODE");
   }
+  const productOperatingDescriptor = graphVersion === TEMPORAL_PROVENANCE_VERSION ? graph.productOperatingProjection : productOperatingProjectionDescriptor(null);
+  if (!productOperatingDescriptor || !["not-provided", "projected"].includes(productOperatingDescriptor.status)) fail("Product operating projection descriptor is invalid.", "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
+  for (const field of ["signalIds", "hypothesisIds", "initiativeCandidateIds", "reviewDecisionIds", "reviewedInitiativeIds", "featureCandidateIds", "outcomeObservationIds"]) {
+    if (!Array.isArray(productOperatingDescriptor[field]) || canonicalJson(productOperatingDescriptor[field]) !== canonicalJson([...new Set(productOperatingDescriptor[field])].sort())) fail(`Product operating descriptor ${field} is invalid.`, "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
+  }
+  if (productOperatingDescriptor.status === "projected" && (!/^product-operating-projection-[a-f0-9]{24}$/.test(productOperatingDescriptor.projectionInputId || "") || !/^[a-f0-9]{64}$/.test(productOperatingDescriptor.projectionInputHash || ""))) fail("Product operating projection identity is invalid.", "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
+  const operatingSignals = graph.nodes.filter((node) => node.kind === "ProductSignal");
+  const operatingHypotheses = graph.nodes.filter((node) => node.kind === "ProductHypothesis");
+  const operatingInitiativeCandidates = graph.nodes.filter((node) => node.kind === "ProductInitiativeCandidate");
+  const operatingReviews = graph.nodes.filter((node) => node.kind === "ProductInitiativeReviewDecision");
+  const operatingReviewedInitiatives = graph.nodes.filter((node) => node.kind === "ReviewedProductInitiative");
+  const operatingFeatureCandidates = graph.nodes.filter((node) => node.kind === "ProductFeatureCandidate");
+  const operatingOutcomes = graph.nodes.filter((node) => node.kind === "OutcomeObservation");
+  const operatingSets = [[operatingSignals, "signalIds"], [operatingHypotheses, "hypothesisIds"], [operatingInitiativeCandidates, "initiativeCandidateIds"], [operatingReviews, "reviewDecisionIds"], [operatingReviewedInitiatives, "reviewedInitiativeIds"], [operatingFeatureCandidates, "featureCandidateIds"], [operatingOutcomes, "outcomeObservationIds"]];
+  for (const [values, field] of operatingSets) if (canonicalJson(idsOf(values)) !== canonicalJson(productOperatingDescriptor[field])) fail(`Product operating projected ${field} does not match its descriptor.`, "PRODUCT_OPERATING_TEMPORAL_SET_MISMATCH");
+  for (const hypothesis of operatingHypotheses) for (const signalId of hypothesis.signalIds) if (!hasEdge("SUPPORTED_BY", hypothesis.nodeId, signalId)) fail("ProductHypothesis support relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
+  for (const candidate of operatingInitiativeCandidates) {
+    for (const hypothesisId of candidate.hypothesisIds) if (!hasEdge("PROPOSES_FROM", candidate.nodeId, hypothesisId)) fail("Product Initiative hypothesis relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
+  }
+  for (const review of operatingReviews) if (!hasEdge("REVIEWED_BY", review.initiativeCandidateId, review.nodeId) || !hasEdge(review.disposition === "accept" ? "ACCEPTED_BY" : "REJECTED_BY", review.initiativeCandidateId, review.nodeId)) fail("Product Initiative review relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
+  for (const initiative of operatingReviewedInitiatives) if (!hasEdge("PROMOTED_FROM", initiative.nodeId, initiative.initiativeCandidateId) || !hasEdge("PRODUCES", initiative.reviewDecisionId, initiative.nodeId)) fail("Reviewed Product Initiative lineage is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
+  for (const outcome of operatingOutcomes) if (!hasEdge("OBSERVES", outcome.nodeId, outcome.changeSetId)) fail("OutcomeObservation relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
   const productLogical = new Map();
   for (const kind of Object.keys(PRODUCT_DEFINITIONS)) {
     for (const node of graph.nodes.filter((candidate) => candidate.kind === kind)) productLogical.set(`${kind}:${node.key}`, node.nodeId);
@@ -2694,13 +2844,22 @@ export function verifyTemporalProvenanceGraph(graph) {
     vcsEvidenceCount: vcsEvidenceNodes.length,
     gitCommitObservationCount: gitCommitNodes.length,
   });
-  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV07 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     documentChangeCandidateSetCount: documentCandidateSets.length,
     documentChangeCandidateCount: documentCandidates.length,
     documentChangeReviewDecisionCount: documentReviews.length,
     documentChangeProductModelRevisionCount: documentRevisions.length,
     documentChangeApplicationCount: documentApplications.length,
     documentProjectionReferenceCount: documentReferences.length,
+  });
+  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+    productSignalCount: operatingSignals.length,
+    productHypothesisCount: operatingHypotheses.length,
+    productInitiativeCandidateCount: operatingInitiativeCandidates.length,
+    productInitiativeReviewDecisionCount: operatingReviews.length,
+    reviewedProductInitiativeCount: operatingReviewedInitiatives.length,
+    productFeatureCandidateCount: operatingFeatureCandidates.length,
+    outcomeObservationCount: operatingOutcomes.length,
   });
   if (canonicalJson(summary) !== canonicalJson(graph.summary)) fail("Temporal graph summary does not match its contents.", "TEMPORAL_SUMMARY_MISMATCH");
   return graph;
@@ -2727,7 +2886,7 @@ export function queryTemporalProvenanceGraph(graph, {
   query,
   kinds = null,
   relations = null,
-  authorityClasses = ["canon-projected", "reviewed", "derived", "heuristic"],
+  authorityClasses = ["canon-projected", "reviewed", "derived", "heuristic", "runtime-observed"],
   freshness = ["current"],
   minConfidence = 0,
   includeUnreviewedCandidates = false,
@@ -2758,6 +2917,7 @@ export function queryTemporalProvenanceGraph(graph, {
     "FeatureMappingCandidateSet", "FeatureMappingCandidate", "FeatureMappingEvidence", "FeatureMappingUnknown", "MappingEndpointReference",
     "ChangeImpactCandidateSet", "ChangeImpactCandidate", "ChangeImpactUnknown", "ChangeProductReference",
     "DocumentChangeCandidateSet", "DocumentChangeCandidate",
+    "ProductInitiativeCandidate", "ProductFeatureCandidate",
   ]);
   const candidatePolicyAllows = (record) => includeUnreviewedCandidates || !candidateSurfaceKinds.has(record.kind);
   const nodeEligible = (node) => allowedKinds.includes(node.kind) && allowedAuthorityClasses.includes(node.authorityClass)

@@ -19,6 +19,7 @@ import { activateArcadeDbGraphProjection, inspectArcadeDbCredentialPreflight, in
 import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from "./lib/arcadedb-database-lifecycle.mjs";
 import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
+import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -583,6 +584,45 @@ export const tools = [
       additionalProperties: false
     }
   },
+  {
+    name: "head_product_signal_record",
+    description: "Record an immutable observed-fact ProductSignal and rebuild the derived Product Graph without changing Product Canon.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, statement: { type: "string", minLength: 1 }, observed_at: { type: "string", format: "date-time" }, source: { type: "string" }, evidence_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } } }, required: ["project_root", "statement"], additionalProperties: false },
+  },
+  {
+    name: "head_product_hypothesis_record",
+    description: "Record an immutable hypothesis linked to ProductSignals; it remains non-authoritative.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, statement: { type: "string", minLength: 1 }, rationale: { type: "string" }, signal_ids: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: "^product-signal-[a-f0-9]{24}$" } } }, required: ["project_root", "statement", "signal_ids"], additionalProperties: false },
+  },
+  {
+    name: "head_product_initiative_propose",
+    description: "Propose a Product Initiative from hypotheses with an explicit existing Feature, Feature candidate, or honest gap. It does not approve the initiative or mutate Product Canon.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, title: { type: "string", minLength: 1 }, description: { type: "string" }, hypothesis_ids: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: "^product-hypothesis-[a-f0-9]{24}$" } }, feature_resolution: { oneOf: [
+      { type: "object", properties: { kind: { const: "existing-feature" }, feature_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }, required: ["kind", "feature_key"], additionalProperties: false },
+      { type: "object", properties: { kind: { const: "candidate" }, feature: { type: "object", properties: { key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }, name: { type: "string", minLength: 1 }, description: { type: "string" }, capability_keys: { type: "array", uniqueItems: true, items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } } }, required: ["key", "name"], additionalProperties: false } }, required: ["kind", "feature"], additionalProperties: false },
+      { type: "object", properties: { kind: { const: "gap" }, reason: { type: "string", minLength: 1 } }, required: ["kind", "reason"], additionalProperties: false },
+    ] } }, required: ["project_root", "title", "hypothesis_ids", "feature_resolution"], additionalProperties: false },
+  },
+  {
+    name: "head_product_initiative_review",
+    description: "Record the user's explicit accept/reject ReviewDecision for one Product Initiative candidate. Acceptance creates a separate reviewed Initiative and never mutates Product Canon.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, initiative_candidate_id: { type: "string", pattern: "^product-initiative-candidate-[a-f0-9]{24}$" }, disposition: { type: "string", enum: ["accept", "reject"] }, rationale: { type: "string", minLength: 1 }, confirm_user_review: { type: "boolean" } }, required: ["project_root", "initiative_candidate_id", "disposition", "rationale", "confirm_user_review"], additionalProperties: false },
+  },
+  {
+    name: "head_product_outcome_observe",
+    description: "Record observed or derived outcome evidence bound to an accepted ChangeSet, ResultPacket, and execution ReviewDecision without judging success or changing Feature status.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, change_set_id: { type: "string", pattern: "^change-set-[a-f0-9]{24}$" }, initiative_id: { type: "string", pattern: "^reviewed-product-initiative-[a-f0-9]{24}$" }, statement: { type: "string", minLength: 1 }, epistemic_class: { type: "string", enum: ["observed-fact", "derived-projection"] }, evidence_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } } }, required: ["project_root", "change_set_id", "statement"], additionalProperties: false },
+  },
+  {
+    name: "head_product_operating_status",
+    description: "Read the verified Product Operating Loop artifacts and their explicit authority classes.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+  },
+  {
+    name: "head_continuity_snapshot",
+    description: "Build an on-demand non-persisted derived reference view over exact Session, Run, lineage, product, and graph identities. It is not recovery canon or HEAD judgment authority.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+  },
 ];
 
 const success = (id, result) => ({ jsonrpc: "2.0", id, result });
@@ -606,6 +646,12 @@ function onboardingInputFromMcp(args) {
   };
   if (args.brief != null) onboarding.brief = args.brief;
   return onboarding;
+}
+
+function productFeatureResolutionFromMcp(value) {
+  if (value?.kind === "existing-feature") return { kind: value.kind, featureKey: value.feature_key };
+  if (value?.kind === "candidate") return { kind: value.kind, feature: { key: value.feature?.key, name: value.feature?.name, description: value.feature?.description || "", capabilityKeys: value.feature?.capability_keys || [] } };
+  return { kind: "gap", reason: value?.reason };
 }
 
 function compactReviewResult(result) {
@@ -809,6 +855,20 @@ export async function dispatch(request, { graphDbTransport = null } = {}) {
                             kind: args.kind || "",
                             limit: args.limit ?? 50,
                           })
+                          : name === "head_product_signal_record"
+                            ? recordProductSignal({ root: args.project_root, statement: args.statement, observedAt: args.observed_at, source: args.source || "", evidenceIds: args.evidence_ids || [] })
+                          : name === "head_product_hypothesis_record"
+                            ? recordProductHypothesis({ root: args.project_root, statement: args.statement, rationale: args.rationale || "", signalIds: args.signal_ids })
+                          : name === "head_product_initiative_propose"
+                            ? proposeProductInitiative({ root: args.project_root, title: args.title, description: args.description || "", hypothesisIds: args.hypothesis_ids, featureResolution: productFeatureResolutionFromMcp(args.feature_resolution) })
+                          : name === "head_product_initiative_review"
+                            ? (requireMcpConfirmation(args.confirm_user_review, "Product Initiative review requires explicit user confirmation.", "PRODUCT_INITIATIVE_REVIEW_CONFIRMATION_REQUIRED"), reviewProductInitiative({ root: args.project_root, initiativeCandidateId: args.initiative_candidate_id, disposition: args.disposition, rationale: args.rationale }))
+                          : name === "head_product_outcome_observe"
+                            ? observeProductOutcome({ root: args.project_root, changeSetId: args.change_set_id, initiativeId: args.initiative_id || "", statement: args.statement, epistemicClass: args.epistemic_class || "observed-fact", evidenceIds: args.evidence_ids || [] })
+                          : name === "head_product_operating_status"
+                            ? inspectProductOperatingLoop({ root: args.project_root })
+                          : name === "head_continuity_snapshot"
+                            ? buildHeadContinuitySnapshot({ root: args.project_root })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());
     return success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
   } catch (error) {

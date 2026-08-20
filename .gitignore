@@ -1,6 +1,7 @@
 node_modules/
 /dist/
-test/
+test/*
+!test/product-operating-loop.test.mjs
 .test-tmp-*/
 .qa-*/
 *.log

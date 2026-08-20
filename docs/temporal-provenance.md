@@ -10,7 +10,7 @@ The graph builder consumes only provider-neutral inputs:
 
 - project identity;
 - normalized `.head/context/product-model.json` content and its evidence identity;
-- digest-verified onboarding artifacts, FeatureMappingCandidateSets and mapping ReviewDecisions, provider-neutral ChangeSets with change-impact review artifacts, and optional immutable VCS evidence attachments;
+- digest-verified onboarding artifacts, FeatureMappingCandidateSets and mapping ReviewDecisions, provider-neutral ChangeSets with change-impact review artifacts, Product Operating Loop artifacts, and optional immutable VCS evidence attachments;
 - normalized file paths, SHA-256 content digests, classifications, languages, and extracted symbols;
 - zero-or-more explicit parent `SourceSnapshot` identities;
 - optional zero-or-more parent Revision identities keyed by stable logical entity identity.
@@ -19,7 +19,7 @@ Git commits, branches, tags, GraphDB record IDs, provider session IDs, document-
 
 ## Logical entities and immutable revisions
 
-Temporal provenance protocol `0.7.0` materializes:
+Temporal provenance protocol `0.8.0` materializes:
 
 - stable product logical entities: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`;
 - immutable product states: the corresponding `*Revision` kinds;
@@ -31,6 +31,7 @@ Temporal provenance protocol `0.7.0` materializes:
 - change lineage: `ChangeSet`, `ChangeRevisionReference`, execution-lineage references, `ChangeImpactCandidateSet`, `ChangeImpactCandidate`, `ChangeImpactUnknown`, `ChangeImpactReviewDecision`, `ReviewedImpact`, and historical product references.
 - optional external change evidence: `VcsEvidence` and immutable `GitCommit` observation nodes. These nodes are omitted when no attachment exists and never replace the ChangeSet.
 - document review lineage: hidden `DocumentChangeCandidateSet` and `DocumentChangeCandidate` nodes plus normally visible `DocumentChangeReviewDecision`, `DocumentProductModelRevision`, `DocumentChangeApplication`, and historical `DocumentProjectionReference` evidence.
+- product operating evidence: `ProductSignal`, `ProductHypothesis`, hidden `ProductInitiativeCandidate` and `ProductFeatureCandidate`, historical `ProductFeatureReference`, explicit `ProductInitiativeReviewDecision`, separate `ReviewedProductInitiative`, and execution-bound `OutcomeObservation` nodes.
 
 Product logical identity derives from project identity, entity kind, and stable user-owned key. Renaming a Feature preserves logical identity while semantic edits create a new FeatureRevision. `File` identity derives from project identity and normalized path. `Symbol` identity derives from its File identity, kind, name, and deterministic same-name occurrence rather than its line number. `Test` identity derives from project identity and path. Revision identities derive from the logical identity, semantic state, and sorted parent Revision identities. A line move therefore preserves the Symbol logical identity while changing its SymbolRevision.
 
@@ -56,6 +57,7 @@ Every edge records the same authority and provenance surface plus `edgeId`, type
 - reviewed canonical `IMPLEMENTS` and `VERIFIED_BY` edges.
 - provider-neutral `CHANGES` and `SUPERSEDES` lineage plus explicitly reviewed `IMPACTS` edges.
 - optional `ChangeSet -[:MATERIALIZED_AS]-> VcsEvidence -[:REFERENCES]-> GitCommit` evidence links.
+- product learning and observation through `SUPPORTED_BY`, `PROPOSES_FROM`, `PROPOSES_TO`, review/promotion relations, and `OutcomeObservation -[:OBSERVES]-> ChangeSet|ReviewedProductInitiative`.
 
 The verifier rejects digest mismatch, unsupported node or relation types, duplicate identities, nondeterministic ordering, dangling or invalid endpoint kinds, missing provenance, invalid authority flags, invalid confidence, scope mismatch, and direct self-parent cycles.
 
@@ -65,7 +67,7 @@ The verifier rejects digest mismatch, unsupported node or relation types, duplic
 
 - node-kind, relation, authority-class, and freshness allowlists;
 - minimum confidence;
-- default exclusion of CandidateSet, candidate, Evidence, Unknown, and ProductConceptReference nodes, with an explicit `includeUnreviewedCandidates` opt-in;
+- default exclusion of CandidateSet, candidate, Evidence, Unknown, ProductConceptReference, ProductInitiativeCandidate, and ProductFeatureCandidate nodes, with an explicit `includeUnreviewedCandidates` opt-in;
 - maximum depth, node count, and edge count;
 - anchor identities and deterministic ordering.
 

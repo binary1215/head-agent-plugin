@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.63",
+  "version": "0.3.0-alpha.64",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -39,6 +39,11 @@
       "Provider-neutral Reviewed ChangeSets",
       "Multiple-parent ChangeSet DAG",
       "Review-gated IMPACTS Relations",
+      "Epistemically Typed Product Operating Loop",
+      "Human-reviewed Product Initiatives",
+      "Execution-bound Outcome Observations",
+      "Derived Product Operating Graph",
+      "Non-persisted HEAD Continuity Snapshot",
       "Optional ChangeSet VCS Evidence",
       "MATERIALIZED_AS and REFERENCES Relations",
       "Context Continuity",
@@ -126,6 +131,9 @@
       "Infer Feature-to-code mapping candidates, then require explicit review before creating IMPLEMENTS or VERIFIED_BY relationships.",
       "Record an accepted execution as a Git-independent ChangeSet, then review inferred Feature or Capability impact before creating IMPACTS relationships.",
       "Attach explicitly selected Git commits as optional evidence without changing the provider-neutral ChangeSet identity.",
+      "Record an observed Product Signal, form an explicit Hypothesis, and propose a Product Initiative without changing Product Canon.",
+      "Review a Product Initiative explicitly, then bind OutcomeObservation evidence to an accepted ChangeSet without judging Feature success.",
+      "Inspect the on-demand HEAD continuity snapshot as a derived exact-reference view, never as recovery canon.",
       "Inspect external runtime observations without granting runtime control authority.",
       "Inspect the Codex/OpenCode runtime adapter contract, read-only discovery, bounded version and protocol capability evidence, and HEAD project/Session binding without creating, resuming, streaming, interrupting, or closing a provider session.",
       "Prepare an ExecutionContract-bound runtime invocation authorization without starting a provider, then inspect its digest-verifiable project, Session, Run, input, and resource boundaries.",

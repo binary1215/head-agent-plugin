@@ -20,6 +20,7 @@ import {
   VCS_EVIDENCE_VERSION,
 } from "./change-set-projection.mjs";
 import { DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION, loadDocumentChangeProjection } from "./document-change-projection.mjs";
+import { loadProductOperatingProjection, PRODUCT_OPERATING_LOOP_VERSION } from "./product-operating-loop.mjs";
 import {
   buildRepositoryScanInput,
   createRepositoryScanComputeAdapter,
@@ -65,7 +66,7 @@ import {
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
-export const WORLD_MODEL_VERSION = "0.10.1";
+export const WORLD_MODEL_VERSION = "0.11.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
@@ -274,6 +275,21 @@ function verifiedSnapshot(snapshot, expectedId = "") {
       || canonicalJson(documentChangeProjection.applicationReceiptIds) !== canonicalJson(graphDocumentChangeProjection?.applicationReceiptIds)) {
       fail("World Model document-change projection and temporal graph disagree.", "DOCUMENT_CHANGE_TEMPORAL_IDENTITY_MISMATCH");
     }
+    const operatingProjection = snapshot.productOperatingProjection;
+    const graphOperatingProjection = snapshot.temporalProvenanceGraph?.productOperatingProjection;
+    if (!operatingProjection || operatingProjection.authority !== "derived-product-graph-manifest-not-product-or-execution-canon"
+      || operatingProjection.instructionAuthority !== false || operatingProjection.promotionAuthority !== false
+      || operatingProjection.projectionInputId !== graphOperatingProjection?.projectionInputId
+      || operatingProjection.projectionInputHash !== graphOperatingProjection?.projectionInputHash
+      || canonicalJson(operatingProjection.signalIds) !== canonicalJson(graphOperatingProjection?.signalIds)
+      || canonicalJson(operatingProjection.hypothesisIds) !== canonicalJson(graphOperatingProjection?.hypothesisIds)
+      || canonicalJson(operatingProjection.initiativeCandidateIds) !== canonicalJson(graphOperatingProjection?.initiativeCandidateIds)
+      || canonicalJson(operatingProjection.reviewDecisionIds) !== canonicalJson(graphOperatingProjection?.reviewDecisionIds)
+      || canonicalJson(operatingProjection.reviewedInitiativeIds) !== canonicalJson(graphOperatingProjection?.reviewedInitiativeIds)
+      || canonicalJson(operatingProjection.featureCandidateIds) !== canonicalJson(graphOperatingProjection?.featureCandidateIds)
+      || canonicalJson(operatingProjection.outcomeObservationIds) !== canonicalJson(graphOperatingProjection?.outcomeObservationIds)) {
+      fail("World Model product-operating projection and temporal graph disagree.", "PRODUCT_OPERATING_TEMPORAL_IDENTITY_MISMATCH");
+    }
   }
   if (snapshot.productModel && snapshot.temporalProvenanceGraph
     && (snapshot.productModel.productModelId !== snapshot.temporalProvenanceGraph.productModelId
@@ -355,6 +371,7 @@ function indexerState() {
     changeSetVersion: CHANGE_SET_VERSION,
     changeSetProjectionVersion: CHANGE_SET_PROJECTION_VERSION,
     documentChangeGraphProjectionVersion: DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION,
+    productOperatingLoopVersion: PRODUCT_OPERATING_LOOP_VERSION,
     vcsEvidenceVersion: VCS_EVIDENCE_VERSION,
     temporalProvenanceVersion: TEMPORAL_PROVENANCE_VERSION,
     graphProjectionAdapterVersion: GRAPH_PROJECTION_ADAPTER_VERSION,
@@ -365,7 +382,7 @@ function indexerState() {
   };
 }
 
-function sourceDigestFor(files, sourceScope, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
+function sourceDigestFor(files, sourceScope, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, productOperatingProjection, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
   return digest(canonicalJson({
     files,
     sourceScope: { sourceScopeId: sourceScope.sourceScopeId, sourceScopeHash: sourceScope.sourceScopeHash },
@@ -385,6 +402,10 @@ function sourceDigestFor(files, sourceScope, productModel, onboardingProjection,
     documentChangeProjection: {
       projectionInputId: documentChangeProjection.projectionInputId,
       projectionInputHash: documentChangeProjection.projectionInputHash,
+    },
+    productOperatingProjection: {
+      projectionInputId: productOperatingProjection.projectionInputId,
+      projectionInputHash: productOperatingProjection.projectionInputHash,
     },
     git,
     runtimeState,
@@ -488,6 +509,10 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   });
+  const productOperatingProjection = loadProductOperatingProjection({
+    projectRoot: inspected.project.projectRoot,
+    projectId: inspected.project.projectId,
+  });
   const git = gitHeadState(inspected.project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
   const selectedRuntimeAdapter = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer.sourceAdapters?.runtimeState);
@@ -501,6 +526,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     featureMappingProjection,
     changeSetProjection,
     documentChangeProjection,
+    productOperatingProjection,
     git,
     runtimeState,
     externalRuntimeState,
@@ -527,6 +553,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   const featureMappingProjectionChanged = featureMappingProjection.projectionInputHash !== stored.snapshot.featureMappingProjection?.projectionInputHash;
   const changeSetProjectionChanged = changeSetProjection.projectionInputHash !== stored.snapshot.changeSetProjection?.projectionInputHash;
   const documentChangeProjectionChanged = documentChangeProjection.projectionInputHash !== stored.snapshot.documentChangeProjection?.projectionInputHash;
+  const productOperatingProjectionChanged = productOperatingProjection.projectionInputHash !== stored.snapshot.productOperatingProjection?.projectionInputHash;
   return {
     ...stored,
     status: currentSourceDigest === stored.snapshot.sourceDigest ? "current" : "stale",
@@ -543,8 +570,9 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
       featureMappingProjectionChanged,
       changeSetProjectionChanged,
       documentChangeProjectionChanged,
+      productOperatingProjectionChanged,
       temporalProvenanceChanged: sourceScopeChanged || fileChanges.added.length > 0 || fileChanges.changed.length > 0 || fileChanges.removed.length > 0
-        || productModelChanged || onboardingProjectionChanged || featureMappingProjectionChanged || changeSetProjectionChanged || documentChangeProjectionChanged,
+        || productModelChanged || onboardingProjectionChanged || featureMappingProjectionChanged || changeSetProjectionChanged || documentChangeProjectionChanged || productOperatingProjectionChanged,
     },
     fileFreshness,
     sourceAdapters: { runtimeState: externalRuntimeResult.adapter },
@@ -564,6 +592,7 @@ async function buildWorldModelLocked({
   featureMappingProjectionInput = null,
   changeSetProjectionInput = null,
   documentChangeProjectionInput = null,
+  productOperatingProjectionInput = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
   repositoryScanExecution = null,
@@ -603,6 +632,10 @@ async function buildWorldModelLocked({
     projectRoot: project.projectRoot,
     projectId: project.projectId,
   });
+  const productOperatingProjection = productOperatingProjectionInput || loadProductOperatingProjection({
+    projectRoot: project.projectRoot,
+    projectId: project.projectId,
+  });
   const git = gitHeadState(project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
   const indexer = indexerState();
@@ -618,6 +651,7 @@ async function buildWorldModelLocked({
     featureMappingProjection,
     changeSetProjection,
     documentChangeProjection,
+    productOperatingProjection,
     parentSourceSnapshotIds,
     revisionParentIds,
   });
@@ -629,6 +663,7 @@ async function buildWorldModelLocked({
     featureMappingProjection,
     changeSetProjection,
     documentChangeProjection,
+    productOperatingProjection,
     git,
     runtimeState,
     externalRuntimeState,
@@ -673,6 +708,7 @@ async function buildWorldModelLocked({
       featureMappingProjection: "immutable-feature-mapping-candidates-and-explicit-review-decisions-with-separate-reviewed-relationship-promotion",
       changeSetProjection: "reviewed-provider-neutral-changesets-with-review-gated-feature-impact-and-optional-vcs-evidence-relations",
       documentChangeProjection: "immutable-document-edit-candidates-reviews-product-revisions-and-application-receipts-projected-as-non-authoritative-audit-lineage",
+      productOperatingProjection: "epistemically-typed-signals-hypotheses-human-reviewed-initiatives-feature-links-and-outcome-observations-as-derived-product-graph",
       gitHistory: gitDecisionHistory.coverage,
       runtimeState: "canonical-head-lifecycle-state",
       externalRuntimeState: externalRuntimeState.coverage,
@@ -721,6 +757,20 @@ async function buildWorldModelLocked({
       productModelRevisionIds: documentChangeProjection.productModelRevisions.map((item) => `document-product-model-revision-${item.revisionHash.slice(0, 24)}`),
       applicationReceiptIds: documentChangeProjection.applicationReceipts.map((item) => item.applicationReceiptId),
       authority: "derived-projection-manifest-not-document-authority",
+      instructionAuthority: false,
+      promotionAuthority: false,
+    },
+    productOperatingProjection: {
+      projectionInputId: productOperatingProjection.projectionInputId,
+      projectionInputHash: productOperatingProjection.projectionInputHash,
+      signalIds: productOperatingProjection.signals.map((item) => item.signalId),
+      hypothesisIds: productOperatingProjection.hypotheses.map((item) => item.hypothesisId),
+      initiativeCandidateIds: productOperatingProjection.initiativeCandidates.map((item) => item.initiativeCandidateId),
+      reviewDecisionIds: productOperatingProjection.initiativeReviews.map((item) => item.reviewDecisionId),
+      reviewedInitiativeIds: productOperatingProjection.reviewedInitiatives.map((item) => item.initiativeId),
+      featureCandidateIds: productOperatingProjection.featureCandidates.map((item) => item.featureCandidateId),
+      outcomeObservationIds: productOperatingProjection.outcomeObservations.map((item) => item.outcomeObservationId),
+      authority: "derived-product-graph-manifest-not-product-or-execution-canon",
       instructionAuthority: false,
       promotionAuthority: false,
     },
@@ -833,6 +883,7 @@ async function buildWorldModelLocked({
     onboardingProjectionChanged: changed && previous?.onboardingProjection?.projectionInputHash !== snapshot.onboardingProjection.projectionInputHash,
     featureMappingProjectionChanged: changed && previous?.featureMappingProjection?.projectionInputHash !== snapshot.featureMappingProjection.projectionInputHash,
     changeSetProjectionChanged: changed && previous?.changeSetProjection?.projectionInputHash !== snapshot.changeSetProjection.projectionInputHash,
+    productOperatingProjectionChanged: changed && previous?.productOperatingProjection?.projectionInputHash !== snapshot.productOperatingProjection.projectionInputHash,
     temporalProvenanceChanged: changed && previous?.temporalProvenanceGraph?.graphSnapshotHash !== snapshot.temporalProvenanceGraph.graphSnapshotHash,
   };
   const pointer = {
@@ -923,7 +974,7 @@ export function queryWorldTemporalGraph({
   query,
   kinds = null,
   relations = null,
-  authorityClasses = ["canon-projected", "reviewed", "derived", "heuristic"],
+  authorityClasses = ["canon-projected", "reviewed", "derived", "heuristic", "runtime-observed"],
   freshness = ["current"],
   minConfidence = 0,
   includeUnreviewedCandidates = false,

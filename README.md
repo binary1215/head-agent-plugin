@@ -106,6 +106,25 @@ public plugin directory is a separate publisher-owned review step.
 | More prompt context is treated as better context | The Context Compiler selects bounded, reproducible evidence for one task. |
 | Runtime support forks the core architecture | Provider-neutral HEAD Session and Run identities are executed through runtime adapters. |
 
+## Product learning without authority drift
+
+The implemented Product Operating Loop records one connected, reviewable path:
+
+```text
+Signal (observed fact)
+  -> Hypothesis
+  -> Initiative candidate
+  -> explicit user ReviewDecision
+  -> reviewed Initiative
+  -> existing Feature, Feature candidate, or explicit mapping gap
+  -> accepted ChangeSet execution
+  -> OutcomeObservation
+```
+
+This is deliberately not one promotion chain. Signals and outcomes are evidence, hypotheses are hypotheses, Feature proposals remain candidates, and a reviewed Initiative is still separate from Product Canon. An OutcomeObservation must bind to an accepted `ResultPacket`/execution `ReviewDecision` through a `ChangeSet`; it does not mark a Feature successful. The resulting Product Graph is a rebuildable local projection and may later be materialized to GraphDB without making the database an orchestrator or authority.
+
+`head head-continuity <project>` returns an on-demand exact-reference view over current Session, Run, lineage, product, and graph identities. It is not persisted and cannot replace Session/Run checkpoints or continuous whole-outcome HEAD judgment. See [Product Operating Loop](docs/product-operating-loop.md).
+
 ## Architecture at a glance
 
 HEAD Agent Core uses one connected architecture for planning, repository

@@ -448,6 +448,13 @@ export function coreContract() {
     "mcp-explicit-onboarding-review",
     "mcp-markdown-projection-build",
     "actual-provider-session-project-binding",
+    "product-operating-loop",
+    "epistemically-typed-product-signals-and-hypotheses",
+    "human-reviewed-product-initiatives",
+    "product-feature-candidates-without-canon-promotion",
+    "execution-bound-outcome-observations",
+    "derived-product-operating-graph",
+    "non-persisted-head-continuity-snapshot",
   ];
   contract.deferredCapabilities = [
     ...contract.deferredCapabilities,
