@@ -128,6 +128,10 @@ This is deliberately not one promotion chain. Signals and outcomes are evidence,
 
 An Initiative may be proposed directly from explicit inline reasoning. Feature resolution can wait until the user accepts it, so the default path creates no `ProductFeatureCandidate` before review. `head operating-lane-recommend` selects the lightest safe advisory lane: Observe for read/reason work, Session for one bounded reversible result, Run for dependent or recovery-sensitive work, and Authority only for Product Canon, Initiative decisions, external writes, credentials, or recovery-canon changes. The recommendation has no authority effect; the selected Core operation still enforces the real boundary.
 
+`head help` shows only the light conversational surface. The lane recommendation
+is optional, not a prerequisite. Use `head help-all` for advanced, compatibility,
+audit, and recovery commands, including the durable Signal/Hypothesis paths.
+
 `head head-continuity <project>` returns an on-demand exact-reference view over current Session, Run, lineage, product, and graph identities. Repeated same-process status/continuity reads may reuse a disclosed snapshot/content-identity cache; writes invalidate it and `--fresh` forces full verification. The view is not persisted and cannot replace Session/Run checkpoints or continuous whole-outcome HEAD judgment. See [Product Operating Loop](docs/product-operating-loop.md).
 
 ## Architecture at a glance

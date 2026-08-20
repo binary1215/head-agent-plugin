@@ -137,6 +137,7 @@ test("keeps everyday learning ephemeral, defers Feature resolution to review, an
   assert.equal(note.note.persisted, false);
   assert.equal(note.note.contentIdentityAssigned, false);
   assert.equal(note.persistence.recommended, false);
+  assert.equal("requiredLane" in note, false);
   assert.equal(fs.readFileSync(worldPointerFile, "utf8"), pointerBefore);
   assert.equal(fs.existsSync(path.join(root, ".head", "product-operations")), false);
 
@@ -153,6 +154,9 @@ test("keeps everyday learning ephemeral, defers Feature resolution to review, an
   const authorityLane = recommendOperatingLane({ root, externalWrite: true });
   assert.equal(authorityLane.lane, "authority");
   assert.equal(authorityLane.minimumContracts.includes("explicit-user-decision-at-affected-boundary"), true);
+  assert.equal(runCommand(["help"]).commands.includes("head product-signal-record <project> --input <signal.json>"), false);
+  assert.equal(runCommand(["help"]).laneRecommendationRequired, false);
+  assert.equal(runCommand(["help-all"]).commands.includes("head product-signal-record <project> --input <signal.json>"), true);
 
   const proposed = await proposeProductInitiative({
     root,
@@ -196,6 +200,8 @@ test("keeps everyday learning ephemeral, defers Feature resolution to review, an
   assert.equal(cachedContinuity.snapshot.snapshotId, firstContinuity.snapshot.snapshotId);
   assert.equal(cachedContinuity.snapshot.persisted, false);
   assert.equal(cachedContinuity.snapshot.recoveryAuthority, false);
+  assert.equal(runCommand(["product-operating-status", root, "--fresh"]).readVerification.mode, "fresh-full-verification");
+  assert.equal((await runCommand(["head-continuity", root, "--fresh"])).readVerification.productOperating.mode, "fresh-full-verification");
 
   await recordProductSignal({ root, statement: "A write must invalidate the verified read cache." });
   assert.equal(inspectProductOperatingLoop({ root }).readVerification.mode, "fresh-full-verification");
@@ -215,4 +221,8 @@ test("keeps everyday learning ephemeral, defers Feature resolution to review, an
   tamperedCandidate.title = "Tampered cached candidate";
   fs.writeFileSync(candidateFile, `${JSON.stringify(tamperedCandidate, null, 2)}\n`);
   assert.throws(() => inspectProductOperatingLoop({ root }), (error) => error.code === "PRODUCT_OPERATING_DIGEST_MISMATCH");
+  await assert.rejects(
+    reviewProductInitiative({ root, initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId, disposition: "reject", rationale: "A cached read must never replace review-time candidate verification." }),
+    (error) => error.code === "PRODUCT_OPERATING_DIGEST_MISMATCH",
+  );
 });

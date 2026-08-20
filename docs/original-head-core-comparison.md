@@ -45,7 +45,7 @@ The reference establishes six portable principles that this plugin must retain:
 ## Strict surfaces narrowed from the earlier plugin design
 
 The original design rejects permanent machinery that has not earned its
-coordination, context, or maintenance cost. The alpha.65 implementation applies
+coordination, context, or maintenance cost. The alpha.66 implementation applies
 that correction at executable boundaries:
 
 - `ProductLearningNote` keeps an observation, hypothesis, or inferred meaning
@@ -66,6 +66,9 @@ that correction at executable boundaries:
 - The seven existing Product Operating Loop operations remain available for
   durable work, but they are no longer the mandatory entrance to ordinary
   observation or planning.
+- `head help` exposes only the light default surface; `head help-all` retains
+  every advanced, compatibility, audit, and recovery command. The lane
+  recommendation is explicitly optional and cannot guard another operation.
 
 The universal red lines remain: epistemic classes do not merge; a candidate is
 immutable; review is a separate artifact; Product Canon never changes from

@@ -1,6 +1,6 @@
 # Product Operating Loop
 
-Status: implemented minimal vertical with a relaxed everyday path in `0.3.0-alpha.65`.
+Status: implemented minimal vertical with a relaxed everyday path in `0.3.0-alpha.66`.
 
 The Product Operating Loop connects product learning to reviewed execution without turning observations, model inference, GraphDB, or a continuity summary into HEAD or user authority.
 
@@ -65,6 +65,10 @@ Repeated `product-operating-status` and `head-continuity` reads in the same proc
 
 ## CLI
 
+`head help` exposes the light default below. `operating-lane-recommend` is an
+optional advisory aid, never an execution gate. Use `head help-all` to discover
+the durable Signal/Hypothesis, audit, compatibility, and recovery surfaces.
+
 ```text
 head operating-lane-recommend <project> --input <risk.json>
 head product-note <project> --input <note.json>
@@ -93,6 +97,6 @@ The typed MCP surface is:
 - `head_product_operating_status`
 - `head_continuity_snapshot`
 
-The default conversational surface is `head_operating_lane_recommend`, optional `head_product_note`, Initiative proposal/review, and status. The seven original record/observe/read tools remain compatible explicit surfaces rather than a mandatory ritual.
+The default conversational surface is optional `head_operating_lane_recommend`, `head_product_note`, Initiative proposal/review when durable product action is needed, and status. The seven original record/observe/read tools remain compatible explicit surfaces rather than a mandatory ritual.
 
 Initiative review requires `confirm_user_review: true`. The confirmation records user-owned review authority; MCP availability alone does not grant it.

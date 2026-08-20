@@ -40,6 +40,10 @@ export function parse(argv) {
     const item = rest[index];
     if (!item.startsWith("--")) throw new Error(`Unexpected argument: ${item}`);
     const key = item.slice(2);
+    if (key === "fresh") {
+      options[key] = true;
+      continue;
+    }
     const value = rest[++index];
     if (!value || value.startsWith("--")) throw new Error(`A value is required for ${item}.`);
     options[key] = value;
@@ -47,9 +51,8 @@ export function parse(argv) {
   return { command, root, options };
 }
 
-export function usage() {
-  return {
-    commands: [
+export function usage({ all = false } = {}) {
+  const allCommands = [
       "head init <project> [--runtime codex,opencode] [--input <onboarding.json>]",
       "head resume <project> [--runtime codex,opencode] [--input <onboarding.json>]",
       "head --version",
@@ -134,7 +137,24 @@ export function usage() {
       "head context-compile <project> --task <text> [--budget <tokens>]",
       "head context-read <project> --capsule <capsule-id>",
       "head lineage-read <project> --artifact <lineage-artifact-id>",
-    ],
+    ];
+  const defaultCommands = [
+    "head init <project> [--runtime codex,opencode] [--input <onboarding.json>]",
+    "head resume <project> [--runtime codex,opencode] [--input <onboarding.json>]",
+    "head status <project>",
+    "head product-note <project> --input <note.json>",
+    "head operating-lane-recommend <project> --input <risk.json>  # optional advisory",
+    "head product-operating-status <project> [--fresh]",
+    "head product-initiative-propose <project> --input <initiative.json>  # durable product action only",
+    "head product-initiative-review <project> --input <review.json>  # explicit user decision",
+    "head help-all  # advanced, compatibility, audit, and recovery commands",
+  ];
+  return {
+    surface: all ? "complete-compatibility" : "light-default",
+    commands: all ? allCommands : defaultCommands,
+    laneRecommendationRequired: false,
+    durableProductRecordCommandsAreDefault: false,
+    advancedCompatibilityCommand: all ? null : "head help-all",
   };
 }
 
@@ -157,6 +177,7 @@ function readJsonFile(file, label) {
 export function runCommand(argv = process.argv.slice(2)) {
   const { command, root, options } = parse(argv);
   if (command === "help" || command === "--help" || command === "-h") return usage();
+  if (command === "help-all") return usage({ all: true });
   if (command === "--version" || command === "version") return { name: "head-agent-core", version: packageMetadata.version };
   if (command === "init" || command === "resume") return initializeOrResumeProject({
     root,
