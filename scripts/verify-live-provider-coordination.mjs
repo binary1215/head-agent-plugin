@@ -474,8 +474,12 @@ function endpointRecord({ endpoint, runtime, bindingId, proof }) {
 async function waitForRolesAttached(environment, roles, clients, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    const status = inspectRoleCoordination({ root: projectRoot, environment });
-    if (roles.every((role) => status.attachedRoles.includes(role))) return status;
+    try {
+      const status = inspectRoleCoordination({ root: projectRoot, environment });
+      if (roles.every((role) => status.attachedRoles.includes(role))) return status;
+    } catch (error) {
+      if (error?.code !== "COORDINATION_TARGET_POINTER_MISSING") throw error;
+    }
     for (const client of clients) {
       if (client.child.exitCode !== null || client.child.signalCode !== null) {
         fail("A provider exited before its exact endpoint attachment was observed.",
