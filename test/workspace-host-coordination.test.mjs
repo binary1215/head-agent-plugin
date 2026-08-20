@@ -57,6 +57,16 @@ function treeBytes(root) {
   return entries;
 }
 
+function treeContainsBytes(root, value) {
+  const needle = Buffer.from(value);
+  const walk = (directory) => fs.readdirSync(directory).some((name) => {
+    const file = path.join(directory, name);
+    const stat = fs.lstatSync(file);
+    return stat.isDirectory() ? walk(file) : fs.readFileSync(file).indexOf(needle) !== -1;
+  });
+  return walk(root);
+}
+
 function snapshot(fx, endpoints) {
   return {
     schemaVersion: 1,
@@ -71,6 +81,7 @@ function snapshot(fx, endpoints) {
 }
 
 function driver(fx, state = {}) {
+  // Test double only. Production composition is scripts/workspace-host-export-mcp.mjs.
   state.endpoints ||= [
     { workspaceId: "workspace-head", tabId: "tab-head", endpointId: "endpoint-head", terminalId: "terminal-head", runtime: "codex" },
     { workspaceId: "workspace-developer", tabId: "tab-developer", endpointId: "endpoint-developer", terminalId: "terminal-developer", runtime: "opencode" },
@@ -329,6 +340,23 @@ test("production host-export bridge delivers through create-only request and exa
   };
   const attached = invoke({ token: head.bindingToken, role: "head", request: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
   assert.deepEqual(attached.result.structuredContent.messages, []);
+  const missingProofEnvironment = {
+    ...fx.environment,
+    HEAD_AGENT_COORDINATION_BINDING_TOKEN: head.bindingToken,
+    HEAD_AGENT_HOST_PROJECT_ROOT: fx.root,
+    HEAD_AGENT_WORKSPACE_HOST_EXPORT_ROOT: exportRoot,
+    HEAD_AGENT_HOST_WORKSPACE_ID: "workspace-head",
+    HEAD_AGENT_HOST_TAB_ID: "tab-head",
+    HEAD_AGENT_HOST_ENDPOINT_ID: "endpoint-head",
+  };
+  const missingProof = spawnSync(process.execPath, [exportMcp], {
+    cwd: pluginRoot,
+    encoding: "utf8",
+    input: `${JSON.stringify({ jsonrpc: "2.0", id: 8, method: "tools/list", params: {} })}\n`,
+    env: missingProofEnvironment,
+  });
+  assert.notEqual(missingProof.status, 0);
+  assert.match(missingProof.stderr, /HEAD_AGENT_HOST_PROCESS_PROOF/u);
   const copiedEndpoint = invoke({ token: developer.bindingToken, role: "developer", endpointRole: "head", request: { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
   assert.equal(copiedEndpoint.error.code, -32000);
   const forgedProof = invoke({ token: developer.bindingToken, role: "developer", proof: proofs.head, request: { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
@@ -361,6 +389,25 @@ test("production host-export bridge delivers through create-only request and exa
   assert.equal(disclosed.includes('"provider_session_id"'), false);
   assert.equal(disclosed.includes(proofs.head), false);
   assert.equal(disclosed.includes(proofs.developer), false);
+
+  openCoordinationGeneration({ root: fx.root, environment: fx.environment, rotate: true });
+  const nextDeveloper = issueCoordinationRoleBinding({ root: fx.root, role: "developer", environment: fx.environment });
+  const nextHead = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+  const nextBindings = { developer: nextDeveloper, head: nextHead };
+  const nextProofs = { developer: processProof(), head: processProof() };
+  publishWorkspaceHostExportSnapshot({
+    exportRoot,
+    projectRoot: fx.root,
+    hostInstanceId: "host-export-live",
+    endpoints: exportEndpoints(fx, nextBindings, nextProofs),
+  });
+  const oldProof = invoke({ token: nextHead.bindingToken, role: "head", proof: proofs.head, request: { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
+  assert.equal(oldProof.error.code, -32000);
+  const oldBindingAndProof = invoke({ token: head.bindingToken, role: "head", proof: proofs.head, request: { jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
+  assert.equal(oldBindingAndProof.error.code, -32000);
+  for (const proof of [...Object.values(proofs), ...Object.values(nextProofs)]) {
+    assert.equal(treeContainsBytes(fx.base, proof), false);
+  }
 });
 
 test("host-export bridge fails closed on overlap, missing acknowledgment, and pointer tamper", (t) => {

@@ -168,6 +168,9 @@ The host must pre-create the export root and inject
 role binding token. The raw process proof is a host-only bearer capability; only
 its domain-separated hash is present in the project-external snapshot. These are
 process-composition inputs, never role-tool arguments or project artifacts.
+The in-memory `fixture-host` driver is only a deterministic Core test double.
+The production MCP entrypoint requires the binding, endpoint tuple, and process
+proof together and has no proof-free fixture or delivery fallback.
 
 ## Current claim boundary
 

@@ -132,6 +132,10 @@ environment. The exported endpoint contains the unique binding ID and only the
 domain-separated proof hash. Every snapshot verifies possession plus exact
 binding ownership before exposing the sanitized endpoint to Core, and tool
 requests for another project are rejected.
+The in-memory fixture driver proves the generic adapter contract only; it is not
+a production live-caller claim. `workspace-host-export-mcp.mjs` fails closed
+when any process-proof composition input is absent or stale and cannot fall back
+to that fixture.
 
 ## Authority and identity boundary
 

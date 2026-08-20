@@ -126,6 +126,10 @@ and must not contain the project. Require the exported endpoint to bind the exac
 current binding ID and only the domain-separated proof hash; never disclose or
 persist the raw proof. Copied endpoint coordinates, a foreign binding, a forged
 proof, or duplicate endpoint ownership must fail before attach.
+The `fixture-host` driver is a test double only. Production must use the
+process-proof composition and must never fall back to the fixture when proof,
+binding, snapshot, or host delivery is unavailable. Rotate to a new proof with
+each coordination generation and prove that old proofs no longer attach.
 Treat immutable snapshots, create-only delivery requests, pre-effect claims, and
 exact create-only acknowledgments as operational evidence only. Never process an
 existing unacknowledged claim again automatically. A timeout or malformed pointer,

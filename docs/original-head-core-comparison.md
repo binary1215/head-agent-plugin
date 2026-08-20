@@ -132,6 +132,14 @@ plugin-directory publication also remain incomplete. These are extension gaps,
 not reasons to weaken authority separation, but they bound any superiority
 claim.
 
+The original author directly audited commit `309947b` and reported that the
+production process-proof/current-binding path resolves the previously reported
+live-caller blocker with no remaining blocking correction in that slice. The same
+review requires the fixture driver to remain test-only, production to have no
+proof-free fallback, and actual Codex/OpenCode wake plus send/read/reply E2E before
+any complete live-replacement claim. This is a source-audited blocker closure, not
+one of the three unconditional final superiority verdicts.
+
 ## Claim boundary for author review
 
 The proposition to validate is narrow:
