@@ -22,6 +22,7 @@ import { readRuntimeInvocationResult } from "./lib/runtime-run-result-applicatio
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 import fs from "node:fs";
 
@@ -306,6 +307,54 @@ export const tools = [
       required: ["project_root"],
       additionalProperties: false
     }
+  },
+  {
+    name: "head_session_restore",
+    description: "Reconstruct the exact current Project/Session/Run consumer input from the canonical SessionRunCheckpoint and verified artifacts. This derived view never resumes or depends on a provider session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        checkpoint_id: { type: "string", pattern: "^checkpoint-[a-f0-9]{24}$" },
+      },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_run_integrate_checkpoint",
+    description: "After an exact accepted Fresh HEAD ReviewDecision, bind one reviewed Run result to one canonical recovery checkpoint. ResultPacket evidence cannot author checkpoint direction and no ReviewDecision is created here.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        run_id: { type: "string", pattern: "^run-[0-9]+-[a-f0-9]{6}$" },
+        review_decision_id: { type: "string", pattern: "^review-decision-[a-f0-9]{24}$" },
+        purpose: { type: "string", minLength: 1 },
+        approved_decisions: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+        current_position: { type: "string", minLength: 1 },
+        next_expected_result: { type: "string", minLength: 1 },
+        open_review_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+      },
+      required: ["project_root", "run_id", "review_decision_id", "purpose", "approved_decisions", "current_position", "next_expected_result"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_run_integration",
+    description: "Read and digest-verify the one-shot Run result integration receipt and its canonical recovery checkpoint.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        review_decision_id: { type: "string", pattern: "^review-decision-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "review_decision_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_world_model",
@@ -889,6 +938,21 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
               ? readLineageArtifact({ root: args.project_root, artifactId: args.artifact_id })
               : name === "head_pending_review"
                 ? getPendingReviewContext({ root: args.project_root })
+                : name === "head_session_restore"
+                  ? restoreSessionFromArtifacts({ root: args.project_root, checkpointId: args.checkpoint_id || null })
+                  : name === "head_run_integrate_checkpoint"
+                    ? integrateReviewedRunCheckpoint({
+                        root: args.project_root,
+                        runId: args.run_id,
+                        reviewDecisionId: args.review_decision_id,
+                        purpose: args.purpose,
+                        approvedDecisions: args.approved_decisions,
+                        currentPosition: args.current_position,
+                        nextExpectedResult: args.next_expected_result,
+                        openReviewIds: args.open_review_ids || [],
+                      })
+                    : name === "head_run_integration"
+                      ? readRunResultIntegration({ root: args.project_root, reviewDecisionId: args.review_decision_id })
                 : name === "head_world_model"
                   ? inspectWorldModel({ root: args.project_root })
                   : name === "head_incremental_refresh_status"

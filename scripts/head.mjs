@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCheckpoint, inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
+import { inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSnapshot, readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
@@ -29,7 +29,8 @@ import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/rep
 import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
-import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -128,6 +129,7 @@ export function usage({ all = false } = {}) {
       "head world-history <project> [--query <text>] [--limit <1-500>]",
       "head world-runtime <project> [--query <text>] [--runtime <name>] [--state <state>] [--kind <kind>] [--limit <1-500>]",
       "head checkpoint <project> --summary <text> [--next <text>]",
+      "head session-restore <project> [--checkpoint <session-run-checkpoint-id>]",
       "head compact-prepare <project> --input <recovery.json>",
       "head compact-verify <project> --input <verification.json>",
       "head compact-continue <project> --input <continuation.json>",
@@ -148,6 +150,8 @@ export function usage({ all = false } = {}) {
       "head run-finish <project> --input <result.json>",
       "head run-review-context <project>",
       "head run-review <project> --input <review.json>",
+      "head run-integrate-checkpoint <project> --input <integration.json>",
+      "head run-integration-read <project> --review <review-decision-id>",
       "head context-preview <project> --task <text> [--budget <tokens>]",
       "head context-compile <project> --task <text> [--budget <tokens>]",
       "head context-read <project> --capsule <capsule-id>",
@@ -377,7 +381,15 @@ export function runCommand(argv = process.argv.slice(2)) {
     kind: options.kind || "",
     limit: options.limit == null ? 50 : Number(options.limit),
   });
-  if (command === "checkpoint") return createCheckpoint({ root, summary: options.summary, next: options.next });
+  if (command === "checkpoint") return createRecoveryCheckpoint({
+    root,
+    purpose: options.summary,
+    currentPosition: options.summary,
+    nextExpectedResult: options.next || options.summary,
+    approvedDecisions: [],
+    openReviewIds: [],
+  });
+  if (command === "session-restore") return restoreSessionFromArtifacts({ root, checkpointId: options.checkpoint || null });
   if (command === "compact-prepare") return prepareCompaction({ ...inputJson(options, "Compaction prepare"), root });
   if (command === "compact-verify") return verifyCompaction({ ...inputJson(options, "Compaction verification"), root });
   if (command === "compact-continue") return continueCompaction({ ...inputJson(options, "Compaction continuation"), root });
@@ -418,6 +430,8 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "run-finish") return finishRun({ ...inputJson(options, "Result Packet"), root });
   if (command === "run-review-context") return getPendingReviewContext({ root });
   if (command === "run-review") return reviewRun({ ...inputJson(options, "ReviewDecision"), root });
+  if (command === "run-integrate-checkpoint") return integrateReviewedRunCheckpoint({ ...inputJson(options, "Run result integration"), root });
+  if (command === "run-integration-read") return readRunResultIntegration({ root, reviewDecisionId: options.review });
   if (command === "context-preview") return compileContext({ root, task: options.task, budget: options.budget == null ? 4000 : Number(options.budget), persist: false });
   if (command === "context-compile") return compileContext({ root, task: options.task, budget: options.budget == null ? 4000 : Number(options.budget), persist: true });
   if (command === "context-read") return readContextCapsule({ root, capsuleId: options.capsule });

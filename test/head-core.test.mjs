@@ -1,0 +1,2735 @@
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { initializeProject, inspectProject, inspectRuntimeAdapters } from "../scripts/lib/head-core.mjs";
+import { createRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
+import { compileContext, readContextCapsule } from "../scripts/lib/context-compiler.mjs";
+import {
+  buildComputeRequest,
+  executeComputeOperation,
+  JsReferenceComputeAdapter,
+  validateComputeResponse,
+  verifyComputeAdapterConformance,
+} from "../scripts/lib/compute-adapter.mjs";
+import {
+  buildRepositoryScanInput,
+  createRepositoryScanReferenceAdapter,
+  REPOSITORY_SCAN_OPERATION,
+  REPOSITORY_SCAN_SEMANTIC_PRODUCER,
+  executeIncrementalRepositoryScan,
+  scanRepositoryReference,
+  validateRepositoryScanResult,
+} from "../scripts/lib/repository-scan.mjs";
+import {
+  createWorkerHealthReferenceAdapter,
+  defaultGoWorkerManifestPath,
+  GoWorkerComputeAdapter,
+  resolveVerifiedGoWorker,
+  validateGoWorkerManifest,
+  WORKER_HEALTH_INPUT,
+  WORKER_HEALTH_OPERATION,
+  WORKER_HEALTH_SEMANTIC_PRODUCER,
+} from "../scripts/lib/go-worker-adapter.mjs";
+import {
+  buildFreshHeadReview,
+  createExecutionContract,
+  createNextWholePlanSnapshot,
+  createResultPacket,
+  createReviewDecision,
+  createWholePlanSnapshot,
+  readLineageArtifact,
+} from "../scripts/lib/execution-lineage.mjs";
+import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
+import { buildWorldModel, captureWorldMarkdownChanges, inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet, readWorldModel } from "../scripts/lib/world-model.mjs";
+import { buildTemporalProvenanceGraph, queryTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
+import { ActivatedArcadeDbGraphProjectionAdapter, ArcadeDbGraphProjectionAdapter, GRAPH_PROJECTION_ADAPTER_VERSION, InMemoryGraphProjectionAdapter, LocalJsonGraphProjectionAdapter, buildGraphProjectionPointer, buildPreparedTraversalRequest, createActivatedArcadeDbGraphProjectionAdapter, inspectArcadeDbGraphProjectionActivation, inspectArcadeDbGraphTopologyActivation, inspectArcadeDbIncrementalSyncReceipt, materializeGraphProjection, queryGraphProjection, verifyGraphProjectionAdapterConformance } from "../scripts/lib/graph-projection-adapter.mjs";
+import { buildPreparedTraversalCostEvidence, verifyPreparedTraversalCostEvidence } from "../scripts/lib/prepared-traversal-benchmark.mjs";
+import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "../scripts/lib/graphdb-projection-activation.mjs";
+import { startOnboarding } from "../scripts/lib/onboarding.mjs";
+import { DOCUMENT_PROJECTION_ADAPTER_VERSION, InMemoryMarkdownProjectionAdapter, LocalMarkdownProjectionAdapter, buildMarkdownDocumentProjection, inspectMarkdownProjection, materializeMarkdownProjection, verifyDocumentProjectionAdapterConformance } from "../scripts/lib/document-projection-adapter.mjs";
+import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { WORLD_MODEL_STORE_ADAPTER_VERSION } from "../scripts/lib/world-model-store.mjs";
+import { GIT_HISTORY_ADAPTER_VERSION } from "../scripts/lib/git-history.mjs";
+import { RUNTIME_STATE_ADAPTER_VERSION, RuntimeStateFileAdapter } from "../scripts/lib/runtime-state.mjs";
+import {
+  ProjectionOnlyAgentRuntimeAdapter,
+  buildRuntimeAdapterComposition,
+  buildRuntimeAdapterContractMatrix,
+  verifyRuntimeAdapterComposition,
+  verifyRuntimeAdapterContractMatrix,
+} from "../scripts/lib/runtime-adapter.mjs";
+import { dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { runCommand } from "../scripts/head.mjs";
+import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel, verifyIncrementalRefreshReceipt, verifyIncrementalRefreshRequest } from "../scripts/lib/incremental-refresh.mjs";
+import {
+  buildRefreshTriggerBatch,
+  createFileSystemRefreshWatcher,
+  DebouncedRefreshTriggerQueue,
+  inspectRefreshTriggers,
+  processRefreshTriggerBatch,
+  readRefreshTriggerDelivery,
+  verifyRefreshTriggerBatch,
+  verifyRefreshTriggerDelivery,
+} from "../scripts/lib/refresh-trigger.mjs";
+import { withRefreshWriterLease } from "../scripts/lib/refresh-writer-lease.mjs";
+import { inspectPostRefreshProjectionPolicy } from "../scripts/lib/post-refresh-projection.mjs";
+import {
+  applyDocumentChangeReview,
+  inspectDocumentChangeReviewStatus,
+  readDocumentChangeApplicationReceipt,
+  readDocumentChangeReviewDecision,
+  reviewDocumentChanges,
+} from "../scripts/lib/document-change-review.mjs";
+
+const pluginRoot = path.resolve(import.meta.dirname, "..");
+const pluginVersion = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8")).version;
+
+const clone = (value) => JSON.parse(JSON.stringify(value));
+
+function canonicalTestValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalTestValue);
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalTestValue(value[key])]));
+  return value;
+}
+
+function reidentify(document, { prefix, idKey, hashKey }) {
+  const payload = clone(document);
+  delete payload[idKey];
+  delete payload[hashKey];
+  const hash = crypto.createHash("sha256").update(JSON.stringify(canonicalTestValue(payload))).digest("hex");
+  return { ...payload, [idKey]: `${prefix}-${hash.slice(0, 24)}`, [hashKey]: hash };
+}
+
+class MemoryWorldModelStoreAdapter {
+  constructor() {
+    this.adapterVersion = WORLD_MODEL_STORE_ADAPTER_VERSION;
+    this.pointer = null;
+    this.snapshots = new Map();
+  }
+
+  describe() {
+    return {
+      contract: "replaceable-rebuildable-materialized-view",
+      adapterKind: "test-memory",
+      adapterVersion: this.adapterVersion,
+      authority: "derived-evidence-only",
+      rebuildable: true,
+      uniqueAuthority: false,
+      remote: false,
+      durable: false,
+    };
+  }
+
+  readPointer() {
+    return this.pointer ? { location: "memory://current", document: clone(this.pointer) } : null;
+  }
+
+  readSnapshot(worldModelId) {
+    const document = this.snapshots.get(worldModelId);
+    return document ? { location: `memory://snapshots/${worldModelId}`, document: clone(document) } : null;
+  }
+
+  writePointer(document) {
+    this.pointer = clone(document);
+    return { location: "memory://current", document: clone(document) };
+  }
+
+  writeSnapshot(worldModelId, document) {
+    const created = !this.snapshots.has(worldModelId);
+    if (created) this.snapshots.set(worldModelId, clone(document));
+    return { location: `memory://snapshots/${worldModelId}`, created, document: clone(this.snapshots.get(worldModelId)) };
+  }
+
+  listSnapshotIds() {
+    return [...this.snapshots.keys()].sort();
+  }
+}
+
+class MemoryGitHistoryAdapter {
+  constructor({ adapterKind, commits, authority = "derived-evidence-only", rebuildable = true, uniqueAuthority = false }) {
+    this.adapterVersion = GIT_HISTORY_ADAPTER_VERSION;
+    this.adapterKind = adapterKind;
+    this.commits = clone(commits);
+    this.authority = authority;
+    this.rebuildable = rebuildable;
+    this.uniqueAuthority = uniqueAuthority;
+  }
+
+  describe() {
+    return {
+      adapterKind: this.adapterKind,
+      adapterVersion: this.adapterVersion,
+      authority: this.authority,
+      rebuildable: this.rebuildable,
+      uniqueAuthority: this.uniqueAuthority,
+      remote: false,
+    };
+  }
+
+  readHistory() {
+    return { status: "available", coverage: "all-reachable-commits", reasonCode: "", commits: clone(this.commits) };
+  }
+}
+
+class MemoryRuntimeStateAdapter {
+  constructor({ adapterKind, exported, authority = "derived-evidence-only", rebuildable = true, uniqueAuthority = false, readOnly = true }) {
+    this.adapterVersion = RUNTIME_STATE_ADAPTER_VERSION;
+    this.adapterKind = adapterKind;
+    this.exported = clone(exported);
+    this.authority = authority;
+    this.rebuildable = rebuildable;
+    this.uniqueAuthority = uniqueAuthority;
+    this.readOnly = readOnly;
+  }
+
+  describe() {
+    return {
+      adapterKind: this.adapterKind,
+      adapterVersion: this.adapterVersion,
+      authority: this.authority,
+      rebuildable: this.rebuildable,
+      uniqueAuthority: this.uniqueAuthority,
+      readOnly: this.readOnly,
+      remote: false,
+    };
+  }
+
+  readState() {
+    return { status: "available", coverage: "point-in-time-host-export", reasonCode: "", export: clone(this.exported) };
+  }
+}
+
+function temporaryProject() {
+  const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  fs.mkdirSync(parent, { recursive: true });
+  return fs.mkdtempSync(path.join(parent, "head-agent-core-test-"));
+}
+
+function hasOwnKeyDeep(value, key) {
+  if (Array.isArray(value)) return value.some((item) => hasOwnKeyDeep(item, key));
+  if (!value || typeof value !== "object") return false;
+  return Object.prototype.hasOwnProperty.call(value, key)
+    || Object.values(value).some((item) => hasOwnKeyDeep(item, key));
+}
+
+test("initializes Codex and OpenCode projections and verifies managed canon", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const result = initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  assert.equal(result.status, "ready");
+  assert.ok(fs.existsSync(path.join(root, "AGENTS.md")));
+  assert.ok(fs.existsSync(path.join(root, "opencode.json")));
+  const inspected = inspectProject(root);
+  assert.equal(inspected.status, "ready");
+  assert.equal(inspected.project.runtimes.join(","), "codex,opencode");
+});
+
+test("defines deterministic provider-neutral runtime contracts while every control operation stays disabled", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["opencode", "codex"] });
+  const first = await inspectRuntimeAdapters(root);
+  const repeated = await inspectRuntimeAdapters(root);
+  assert.deepEqual(first, repeated);
+  assert.ok([
+    "bounded-non-session-protocol-and-project-binding-verified",
+    "bounded-non-session-protocol-and-project-binding-partial",
+  ].includes(first.status));
+  assert.equal(first.composition.activationBoundary.runtimeControlEnabled, false);
+  assert.equal(first.composition.activationBoundary.machineInterfacesVerified, false);
+  assert.deepEqual(first.composition.selectedRuntimes, ["codex", "opencode"]);
+  verifyRuntimeAdapterComposition(first.composition);
+  verifyRuntimeAdapterContractMatrix(first.contractMatrix);
+  assert.deepEqual(buildRuntimeAdapterContractMatrix(), first.contractMatrix);
+  assert.deepEqual(
+    buildRuntimeAdapterComposition({ platform: process.platform, runtimes: ["opencode", "codex"] }),
+    first.composition,
+  );
+  assert.equal(first.machineInterfaces.status, "read-only-machine-discovery");
+  assert.equal(first.machineInterfaces.composition.activationBoundary.machineInterfaceDiscoveryValidated, true);
+  assert.equal(first.machineInterfaces.composition.activationBoundary.actualPlatformExecutionValidated, false);
+  assert.equal(first.machineInterfaces.composition.activationBoundary.runtimeControlEnabled, false);
+  assert.equal(first.machineInterfaces.composition.discoverySummary.rawPathsExposed, false);
+  assert.equal(first.versionEvidence.activationBoundary.actualRuntimeControlValidated, false);
+  assert.equal(first.versionEvidence.activationBoundary.runtimeControlEnabled, false);
+  assert.equal(first.versionEvidence.activationBoundary.providerSessionCreated, false);
+  assert.equal(first.versionEvidence.summary.rawPathsExposed, false);
+  assert.equal(first.versionEvidence.summary.rawOutputExposed, false);
+  assert.equal(first.protocolEvidence.activationBoundary.actualProviderSessionControlValidated, false);
+  assert.equal(first.protocolEvidence.activationBoundary.runtimeControlEnabled, false);
+  assert.equal(first.protocolEvidence.activationBoundary.providerSessionCreated, false);
+  assert.equal(first.protocolEvidence.summary.rawPathsExposed, false);
+  assert.equal(first.protocolEvidence.summary.rawOutputExposed, false);
+  assert.equal(first.protocolEvidence.summary.rawCommandsExposed, false);
+  assert.equal(first.projectBinding.bindingBoundary.headProjectIdentityCanonical, true);
+  assert.equal(first.projectBinding.bindingBoundary.headSessionIdentityCanonical, true);
+  assert.equal(first.projectBinding.bindingBoundary.providerSessionIdentityCanonical, false);
+  assert.equal(first.projectBinding.bindingBoundary.actualProviderSessionBindingValidated, false);
+  assert.equal(first.projectBinding.bindingBoundary.runtimeControlEnabled, false);
+  const codex = new ProjectionOnlyAgentRuntimeAdapter({ runtime: "codex" });
+  for (const operation of ["start", "resume", "stream", "interrupt", "close"]) {
+    assert.throws(() => codex[operation](), { code: "RUNTIME_ADAPTER_CONTROL_NOT_ENABLED" });
+  }
+  assert.equal(hasOwnKeyDeep(first, "providerSessionId"), false);
+  assert.equal(hasOwnKeyDeep(first, "executablePath"), false);
+  assert.equal(hasOwnKeyDeep(first, "stdout"), false);
+  assert.equal(hasOwnKeyDeep(first, "stderr"), false);
+  assert.equal(hasOwnKeyDeep(first, "projectRoot"), false);
+  assert.deepEqual(await runCommand(["runtime-adapters", root]), first);
+  assert.ok(mcpTools.some((tool) => tool.name === "head_runtime_adapters"));
+  const mcp = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 91,
+    method: "tools/call",
+    params: { name: "head_runtime_adapters", arguments: { project_root: root } },
+  });
+  assert.deepEqual(mcp.result.structuredContent, first);
+});
+
+test("preserves existing host files and emits manual projections", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "AGENTS.md"), "project owned\n");
+  const result = initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  assert.equal(result.status, "ready_with_manual_integration");
+  assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "project owned\n");
+  assert.ok(fs.existsSync(path.join(root, ".head", "generated", "head-instructions.md")));
+});
+
+test("binds a Run to an Execution Contract, Result Packet, and ReviewDecision", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  assert.throws(() => startRun({ root }), { code: "EXECUTION_CONTRACT_REQUIRED" });
+  const compiled = compileContext({ root, task: "Produce a verified plugin", budget: 2000, persist: true });
+  const plan = createWholePlanSnapshot({
+    root,
+    objective: "Produce a verified plugin without losing whole-plan authority",
+    plan: [{ id: "implement", outcome: "Bounded implementation" }, { id: "verify", outcome: "Evidence-backed verification" }],
+    invariants: ["The user owns material decisions"],
+  });
+  const contract = createExecutionContract({
+    root,
+    wholePlanId: plan.artifact.wholePlanId,
+    capsuleId: compiled.capsule.capsuleId,
+    scope: "Produce one verified plugin result",
+    acceptanceCriteria: ["Tests pass", "Result includes direct evidence"],
+    forbiddenActions: ["Deploy without user authority"],
+  });
+  const started = startRun({ root, executionContractId: contract.artifact.executionContractId });
+  assert.match(started.run.runId, /^run-/);
+  assert.equal(started.run.executionContractId, contract.artifact.executionContractId);
+  const checkpoint = createRecoveryCheckpoint({
+    root,
+    purpose: "Core implemented",
+    approvedDecisions: [],
+    currentPosition: "Core implemented",
+    nextExpectedResult: "Verify",
+  });
+  assert.equal(checkpoint.checkpoint.runPointer.runId, started.run.runId);
+  assert.equal(checkpoint.checkpoint.runPointer.executionContractId, contract.artifact.executionContractId);
+  assert.throws(
+    () => finishRun({ root, outcome: "Unproven result", evidence: [], verification: [] }),
+    { code: "INVALID_LINEAGE_INPUT" },
+  );
+  assert.equal(inspectProject(root).state.activeRunId, started.run.runId);
+  const knowledgeFile = path.join(root, ".head", "context", "knowledge.json");
+  const knowledgeBefore = fs.readFileSync(knowledgeFile, "utf8");
+  const finished = finishRun({
+    root,
+    outcome: "Plugin verified",
+    evidence: [{ uri: "test/head-core.test.mjs", digest: "run-test", summary: "Run lineage lifecycle coverage" }],
+    planDelta: "No direction change",
+    impactRadius: ["Run state", "Execution Lineage"],
+    verification: [{ check: "test suite", status: "passed" }],
+    unknowns: [],
+    knowledgeProposals: [{ kind: "Claim", statement: "Run review gates preserve whole-plan control.", evidenceRefs: ["run-test"] }],
+  });
+  assert.equal(finished.run.runId, started.run.runId);
+  assert.equal(finished.run.status, "awaiting_review");
+  assert.equal(inspectProject(root).state.mode, "review");
+  assert.throws(
+    () => startRun({ root, executionContractId: contract.artifact.executionContractId }),
+    { code: "RUN_REVIEW_REQUIRED" },
+  );
+  const reviewContext = getPendingReviewContext({ root });
+  assert.equal(reviewContext.review.excludedContext.includes("executor-transcript"), true);
+  assert.equal(reviewContext.review.contextReference.capsuleId, compiled.capsule.capsuleId);
+  assert.equal(reviewContext.review.resultPacket.knowledgeProposals[0].instructionAuthority, false);
+  assert.throws(
+    () => reviewRun({ root, reviewContextId: "fresh-head-review-000000000000000000000000", disposition: "accept", rationale: "stale" }),
+    { code: "STALE_FRESH_HEAD_REVIEW" },
+  );
+  const reviewed = reviewRun({
+    root,
+    reviewContextId: reviewContext.review.reviewContextId,
+    disposition: "accept",
+    rationale: "The Result Packet satisfies both acceptance criteria.",
+    nextActions: ["Return to Session mode"],
+    knowledgeProposalRecommendations: [{
+      proposalId: finished.resultPacket.knowledgeProposals[0].proposalId,
+      recommendation: "recommend-promotion",
+      rationale: "The claim is directly supported by the verified lifecycle test.",
+    }],
+  });
+  assert.equal(reviewed.run.reviewDisposition, "accept");
+  assert.equal(reviewed.reviewDecision.knowledgeProposalRecommendations[0].authorityEffect, "none-until-separate-authorized-promotion");
+  assert.equal(fs.readFileSync(knowledgeFile, "utf8"), knowledgeBefore);
+  const inspected = inspectProject(root);
+  assert.equal(inspected.state.mode, "session");
+  assert.equal(inspected.state.activeRunId, null);
+  assert.equal(inspected.state.pendingReview, null);
+  assert.equal(inspected.state.lastReviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
+});
+
+test("requires a review-linked next WholePlanSnapshot after revise", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const firstCapsule = compileContext({ root, task: "Execute the first plan generation", budget: 2000, persist: true });
+  const firstPlan = createWholePlanSnapshot({
+    root,
+    objective: "Preserve the objective while refining the execution plan",
+    plan: [{ id: "first", outcome: "Discover the required revision" }],
+    invariants: ["The objective is inherited across plan generations"],
+  });
+  const firstContract = createExecutionContract({
+    root,
+    wholePlanId: firstPlan.artifact.wholePlanId,
+    capsuleId: firstCapsule.capsule.capsuleId,
+    scope: "Produce the first bounded result",
+    acceptanceCriteria: ["Return evidence"],
+  });
+  startRun({ root, executionContractId: firstContract.artifact.executionContractId });
+  finishRun({
+    root,
+    outcome: "A plan revision is needed",
+    evidence: [{ uri: "test/head-core.test.mjs", digest: "revision", summary: "Revision lifecycle coverage" }],
+    verification: [{ check: "review precondition", status: "passed" }],
+  });
+  const reviewContext = getPendingReviewContext({ root });
+  const reviewed = reviewRun({
+    root,
+    reviewContextId: reviewContext.review.reviewContextId,
+    disposition: "revise",
+    rationale: "The whole objective is valid but the plan needs another generation.",
+    nextActions: ["Create the next WholePlanSnapshot"],
+  });
+  assert.equal(reviewed.state.requiredPlanAction.kind, "next-whole-plan");
+  assert.throws(
+    () => startRun({ root, executionContractId: firstContract.artifact.executionContractId }),
+    { code: "NEXT_WHOLE_PLAN_REQUIRED" },
+  );
+
+  const nextPlan = createNextWholePlanSnapshot({
+    root,
+    reviewDecisionId: reviewed.reviewDecision.reviewDecisionId,
+    plan: [{ id: "revised", outcome: "Execute the evidence-driven revision" }],
+  });
+  assert.equal(nextPlan.artifact.generation, 1);
+  assert.equal(nextPlan.artifact.objective, firstPlan.artifact.objective);
+  assert.deepEqual(nextPlan.artifact.lineage.map((link) => link.relation), ["refines", "responds-to"]);
+  const nextCapsule = compileContext({ root, task: "Execute the revised plan generation", budget: 2000, persist: true });
+  const nextContract = createExecutionContract({
+    root,
+    wholePlanId: nextPlan.artifact.wholePlanId,
+    capsuleId: nextCapsule.capsule.capsuleId,
+    scope: "Produce the revised bounded result",
+    acceptanceCriteria: ["Follow the revised plan generation"],
+  });
+  const nextRun = startRun({ root, executionContractId: nextContract.artifact.executionContractId });
+  assert.equal(nextRun.run.wholePlanId, nextPlan.artifact.wholePlanId);
+  assert.equal(nextRun.state.requiredPlanAction, null);
+});
+
+test("blocks another Run when review requires user-owned direction", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["opencode"] });
+  const capsule = compileContext({ root, task: "Reach a material direction boundary", budget: 2000, persist: true });
+  const plan = createWholePlanSnapshot({ root, objective: "Keep material direction with the user", plan: "Stop at escalation" });
+  const contract = createExecutionContract({
+    root,
+    wholePlanId: plan.artifact.wholePlanId,
+    capsuleId: capsule.capsule.capsuleId,
+    scope: "Report the material decision boundary",
+    acceptanceCriteria: ["Escalate instead of choosing for the user"],
+  });
+  startRun({ root, executionContractId: contract.artifact.executionContractId });
+  finishRun({
+    root,
+    outcome: "A material user choice is required",
+    evidence: [{ uri: "test/head-core.test.mjs", digest: "escalation", summary: "User authority boundary coverage" }],
+    verification: [{ check: "authority boundary", status: "passed" }],
+  });
+  const context = getPendingReviewContext({ root });
+  const reviewed = reviewRun({
+    root,
+    reviewContextId: context.review.reviewContextId,
+    disposition: "escalate",
+    rationale: "The missing choice changes material product direction.",
+    nextActions: ["Request explicit user direction"],
+  });
+  assert.equal(reviewed.state.requiredPlanAction.kind, "user-direction");
+  assert.throws(
+    () => startRun({ root, executionContractId: contract.artifact.executionContractId }),
+    { code: "USER_DIRECTION_REQUIRED" },
+  );
+});
+
+test("detects managed file drift and blocks canonical mutation", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  fs.appendFileSync(path.join(root, "AGENTS.md"), "drift\n");
+  assert.equal(inspectProject(root).status, "drifted");
+  assert.throws(() => createRecoveryCheckpoint({
+    root,
+    purpose: "must fail",
+    approvedDecisions: [],
+    currentPosition: "must fail",
+    nextExpectedResult: "must fail",
+  }), { code: "MANAGED_DRIFT" });
+});
+
+test("builds an incremental, freshness-aware Repository World Model", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".git", "refs", "heads"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+  fs.writeFileSync(path.join(root, ".git", "refs", "heads", "main"), `${"a".repeat(40)}\n`);
+  fs.writeFileSync(path.join(root, "src", "math.mjs"), "export function double(value) { return value * 2; }\n");
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), 'import value from "dependency-a";\nimport { double } from "./math.mjs";\nexport function serve() { return double(value); }\n');
+  fs.writeFileSync(path.join(root, "README.md"), "# Test project\n\nRepository World Model fixture.\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const gitHistoryAdapter = new MemoryGitHistoryAdapter({
+    adapterKind: "world-model-fixture",
+    commits: [
+      {
+        commit: "a".repeat(40),
+        parents: [],
+        authoredAt: "2026-08-18T09:00:00+09:00",
+        committedAt: "2026-08-18T09:00:00+09:00",
+        author: { name: "Fixture" },
+        refs: [],
+        subject: "Create repository fixture",
+        body: "",
+      },
+      {
+        commit: "b".repeat(40),
+        parents: ["a".repeat(40)],
+        authoredAt: "2026-08-18T10:00:00+09:00",
+        committedAt: "2026-08-18T10:00:00+09:00",
+        author: { name: "Fixture" },
+        refs: ["HEAD -> main"],
+        subject: "Update repository fixture",
+        body: "",
+      },
+    ],
+  });
+
+  const first = await buildWorldModel({ root, gitHistoryAdapter });
+  const unchanged = await buildWorldModel({ root, gitHistoryAdapter });
+  assert.equal(first.status, "indexed");
+  assert.equal(unchanged.status, "unchanged");
+  assert.equal(first.pointer.sourceAdapters.compute.fallbackUsed, true);
+  assert.equal(first.pointer.sourceAdapters.compute.fallbackReasonCode, "GO_WORKER_NOT_AVAILABLE");
+  assert.equal(first.snapshot.worldModelId, unchanged.snapshot.worldModelId);
+  assert.equal(first.snapshot.files.some((item) => item.path === "AGENTS.md"), false);
+  assert.equal(first.snapshot.git.commit, "a".repeat(40));
+  assert.equal(first.snapshot.runtimeState.mode, "session");
+  const source = first.snapshot.files.find((item) => item.path === "src/service.mjs");
+  assert.equal(source.symbols.some((item) => item.name === "serve"), true);
+  assert.equal(source.dependencies.some((item) => item.specifier === "dependency-a"), true);
+  assert.equal(first.snapshot.semanticGraph.authority, "derived-evidence-only");
+  assert.equal(first.snapshot.semanticGraph.summary.callEdgeCount, 1);
+  const graphNodes = new Map(first.snapshot.semanticGraph.nodes.map((node) => [node.id, node]));
+  const call = first.snapshot.semanticGraph.edges.find((edge) => edge.type === "CALLS");
+  assert.equal(graphNodes.get(call.from).name, "serve");
+  assert.equal(graphNodes.get(call.to).name, "double");
+  assert.equal(call.evidence.path, "src/service.mjs");
+  assert.equal(call.confidence, "heuristic");
+  assert.equal(inspectWorldModel({ root }).status, "current");
+
+  const memoryStore = new MemoryWorldModelStoreAdapter();
+  const memoryMaterialization = await buildWorldModel({ root, storeAdapter: memoryStore, gitHistoryAdapter });
+  assert.equal(memoryMaterialization.snapshot.worldModelId, first.snapshot.worldModelId);
+  assert.equal(memoryMaterialization.pointer.storage.adapterKind, "test-memory");
+  assert.equal(readWorldModel({ root, storeAdapter: memoryStore }).snapshot.worldModelId, first.snapshot.worldModelId);
+  const authorityViolatingStore = new MemoryWorldModelStoreAdapter();
+  authorityViolatingStore.describe = () => ({
+    adapterKind: "invalid-authority-store",
+    authority: "canonical-authority",
+    rebuildable: false,
+    uniqueAuthority: true,
+  });
+  await assert.rejects(buildWorldModel({ root, storeAdapter: authorityViolatingStore, gitHistoryAdapter }), { code: "INVALID_WORLD_MODEL_STORE_AUTHORITY" });
+
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export class Worker {}\n");
+  fs.writeFileSync(path.join(root, ".git", "refs", "heads", "main"), `${"b".repeat(40)}\n`);
+  const stale = inspectWorldModel({ root });
+  assert.equal(stale.status, "stale");
+  assert.equal(stale.changes.changed.includes("src/service.mjs"), true);
+  assert.equal(stale.fileFreshness.find((item) => item.path === "src/service.mjs").status, "stale");
+  assert.equal(stale.changes.gitChanged, true);
+  const staleCapsule = compileContext({ root, task: "Find Worker and dependency-a", budget: 2000, persist: false });
+  assert.equal(staleCapsule.capsule.snapshot.coverage, "curated-head-canon+stale-repository-world-model-excluded");
+  assert.deepEqual(staleCapsule.capsule.repositoryContext, []);
+  const second = await buildWorldModel({ root, gitHistoryAdapter });
+  assert.notEqual(second.snapshot.worldModelId, first.snapshot.worldModelId);
+  assert.equal(second.pointer.previousWorldModelId, first.snapshot.worldModelId);
+  assert.equal(second.pointer.tiers.warm.changed.includes("src/service.mjs"), true);
+  assert.equal(second.snapshot.files.find((item) => item.path === "src/service.mjs").symbols.some((item) => item.name === "Worker"), true);
+  const repositoryCapsule = compileContext({ root, task: "Find Worker and dependency-a", budget: 6000, persist: false });
+  assert.equal(repositoryCapsule.capsule.snapshot.coverage, "curated-head-canon+repository-world-model-semantic+temporal-provenance-alpha+product-canon-projection-alpha+git-history-alpha");
+  assert.equal(repositoryCapsule.capsule.repositoryContext.some((item) => item.path === "src/service.mjs"), true);
+  assert.equal(repositoryCapsule.capsule.repositoryContext[0].trustBoundary, "evidence-not-instruction");
+  assert.equal(repositoryCapsule.capsule.repositoryGraph.semanticGraphId, second.snapshot.semanticGraph.semanticGraphId);
+  assert.equal(repositoryCapsule.capsule.repositoryTemporalGraph.graphSnapshotId, second.snapshot.temporalProvenanceGraph.graphSnapshotId);
+  assert.equal(repositoryCapsule.capsule.repositoryContext.some((item) => item.temporalTraversal?.queryHash && item.temporalTraversal?.resultHash), true);
+  assert.equal(repositoryCapsule.capsule.repositoryContext.some((item) => item.semanticRelationships.some((edge) => edge.type === "CALLS")), true);
+
+  const neighborhood = queryWorldModel({ root, query: "serve", depth: 1, maxResults: 20 });
+  assert.equal(neighborhood.status, "current");
+  assert.equal(neighborhood.nodes.some((node) => node.name === "serve"), true);
+  assert.equal(neighborhood.nodes.some((node) => node.name === "double"), true);
+  assert.equal(neighborhood.edges.some((edge) => edge.type === "CALLS"), true);
+  assert.equal(neighborhood.trustBoundary, "evidence-not-instruction");
+  const mcpInitialization = await dispatchMcp({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  assert.equal(mcpInitialization.result.serverInfo.version, pluginVersion);
+  const mcpQuery = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "head_world_query", arguments: { project_root: root, query: "serve", depth: 1, limit: 20 } },
+  });
+  assert.equal(mcpQuery.result.structuredContent.nodes.some((node) => node.name === "double"), true);
+  assert.equal(mcpQuery.result.structuredContent.trustBoundary, "evidence-not-instruction");
+
+  const stored = JSON.parse(fs.readFileSync(second.file, "utf8"));
+  stored.summary.fileCount += 1;
+  fs.writeFileSync(second.file, `${JSON.stringify(stored, null, 2)}\n`);
+  assert.throws(() => readWorldModel({ root }), { code: "WORLD_MODEL_DIGEST_MISMATCH" });
+});
+
+test("refreshes observed state incrementally with immutable ancestry and active-Run drift disclosure", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
+  fs.writeFileSync(path.join(root, "src", "stable.mjs"), "export const stable = true;\n");
+  fs.writeFileSync(path.join(root, "src", "remove.mjs"), "export const remove = true;\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const first = await buildWorldModel({ root });
+  assert.equal(first.snapshot.git.status, "not-a-git-repository");
+  const memoryStore = new MemoryWorldModelStoreAdapter();
+  const memoryFirst = await buildWorldModel({ root, storeAdapter: memoryStore });
+  assert.equal(memoryFirst.snapshot.worldModelId, first.snapshot.worldModelId);
+
+  const incremental = await executeIncrementalRepositoryScan({
+    projectRoot: root,
+    managedRootFiles: ["AGENTS.md"],
+    previousSnapshot: first.snapshot,
+  });
+  const reference = scanRepositoryReference(buildRepositoryScanInput({ projectRoot: root, managedRootFiles: ["AGENTS.md"] }));
+  assert.deepEqual(incremental.result, reference);
+  assert.equal(incremental.diagnostics.analyzedFileCount, 0);
+  assert.equal(incremental.diagnostics.reusedFileCount, first.snapshot.files.length);
+
+  const unchanged = await refreshWorldModel({ root });
+  assert.equal(unchanged.status, "unchanged");
+  assert.equal(unchanged.receipt.next.worldModelId, first.snapshot.worldModelId);
+  assert.equal(unchanged.receipt.projectionDisposition.documents, "not-regenerated-by-refresh-core-post-policy-evaluated-separately");
+  assert.equal(unchanged.postRefreshProjection.status, "manual-deferred");
+  assert.equal(fs.existsSync(path.join(root, ".head", "generated", "knowledge")), false);
+  assert.equal(inspectIncrementalRefresh({ root }).status, "current");
+  const legacyRequest = reidentify({ ...clone(unchanged.request), protocol: { ...unchanged.request.protocol, version: "0.1.0" } }, {
+    prefix: "incremental-refresh-request",
+    idKey: "refreshRequestId",
+    hashKey: "refreshRequestHash",
+  });
+  verifyIncrementalRefreshRequest(legacyRequest);
+  const legacyReceipt = reidentify({
+    ...clone(unchanged.receipt),
+    protocol: { ...unchanged.receipt.protocol, version: "0.1.0" },
+    refreshRequestId: legacyRequest.refreshRequestId,
+    refreshRequestHash: legacyRequest.refreshRequestHash,
+    projectionDisposition: { ...unchanged.receipt.projectionDisposition, documents: "not-regenerated-explicit-follow-up-only" },
+  }, {
+    prefix: "incremental-refresh-receipt",
+    idKey: "refreshReceiptId",
+    hashKey: "refreshReceiptHash",
+  });
+  verifyIncrementalRefreshReceipt(legacyReceipt);
+
+  const firstGraph = first.snapshot.temporalProvenanceGraph;
+  const firstStableRevision = firstGraph.nodes.find((node) => node.kind === "FileRevision" && node.path === "src/stable.mjs");
+  const firstServiceRevision = firstGraph.nodes.find((node) => node.kind === "FileRevision" && node.path === "src/service.mjs");
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export class Worker {}\n");
+  fs.writeFileSync(path.join(root, "src", "added.mjs"), "export const added = true;\n");
+  fs.rmSync(path.join(root, "src", "remove.mjs"));
+  await assert.rejects(refreshWorldModel({ root, expectedChangedPaths: ["src/not-observed.mjs"] }), { code: "REFRESH_CHANGE_EXPECTATION_MISMATCH" });
+  assert.equal(readWorldModel({ root }).snapshot.worldModelId, first.snapshot.worldModelId);
+
+  const refreshed = await refreshWorldModel({
+    root,
+    expectedChangedPaths: ["src/added.mjs", "src/remove.mjs", "src/service.mjs"],
+    triggerEvidenceIds: ["evidence-manual-refresh-0001"],
+  });
+  const refreshedInMemory = await refreshWorldModel({
+    root,
+    storeAdapter: memoryStore,
+    expectedChangedPaths: ["src/added.mjs", "src/remove.mjs", "src/service.mjs"],
+    triggerEvidenceIds: ["evidence-manual-refresh-0001"],
+  });
+  assert.equal(refreshed.status, "refreshed");
+  assert.equal(refreshedInMemory.receipt.refreshReceiptId, refreshed.receipt.refreshReceiptId);
+  assert.equal(refreshedInMemory.worldModel.worldModelId, refreshed.worldModel.worldModelId);
+  assert.equal(refreshedInMemory.worldModel.sourceSnapshotId, refreshed.worldModel.sourceSnapshotId);
+  assert.equal(readIncrementalRefreshReceipt({ root, refreshReceiptId: refreshed.receipt.refreshReceiptId, storeAdapter: memoryStore }).receipt.refreshReceiptId, refreshed.receipt.refreshReceiptId);
+  assert.deepEqual(refreshed.receipt.observedChanges, {
+    added: ["src/added.mjs"],
+    changed: ["src/service.mjs"],
+    removed: ["src/remove.mjs"],
+  });
+  assert.deepEqual(refreshed.receipt.next.parentSourceSnapshotIds, [firstGraph.sourceSnapshotId]);
+  assert.equal(refreshed.diagnostics.repositoryScan.reusedPaths.includes("src/stable.mjs"), true);
+  assert.equal(refreshed.diagnostics.repositoryScan.analyzedPaths.includes("src/service.mjs"), true);
+  const refreshedGraph = readWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  const stableRevision = refreshedGraph.nodes.find((node) => node.kind === "FileRevision" && node.path === "src/stable.mjs");
+  const serviceRevision = refreshedGraph.nodes.find((node) => node.kind === "FileRevision" && node.path === "src/service.mjs");
+  assert.equal(stableRevision.nodeId, firstStableRevision.nodeId);
+  assert.notEqual(serviceRevision.nodeId, firstServiceRevision.nodeId);
+  assert.deepEqual(serviceRevision.parentRevisionIds, [firstServiceRevision.nodeId]);
+  assert.equal(readIncrementalRefreshReceipt({ root, refreshReceiptId: refreshed.receipt.refreshReceiptId }).receipt.refreshReceiptId, refreshed.receipt.refreshReceiptId);
+  assert.equal(runCommand(["world-refresh-status", root]).status, "current");
+
+  const mcpStatus = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 41,
+    method: "tools/call",
+    params: { name: "head_incremental_refresh_status", arguments: { project_root: root } },
+  });
+  assert.equal(mcpStatus.result.structuredContent.receipt.refreshReceiptId, refreshed.receipt.refreshReceiptId);
+  const mcpReceipt = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 42,
+    method: "tools/call",
+    params: { name: "head_incremental_refresh_receipt", arguments: { project_root: root, refresh_receipt_id: refreshed.receipt.refreshReceiptId } },
+  });
+  assert.equal(mcpReceipt.result.structuredContent.receipt.authority, "verified-observed-state-refresh-evidence");
+
+  const explicitSecondParent = `source-snapshot-${"f".repeat(24)}`;
+  const multiParent = await refreshWorldModel({ root, additionalParentSourceSnapshotIds: [explicitSecondParent] });
+  assert.equal(multiParent.status, "refreshed");
+  assert.deepEqual(multiParent.receipt.observedChanges, { added: [], changed: [], removed: [] });
+  assert.deepEqual(multiParent.receipt.next.parentSourceSnapshotIds, [explicitSecondParent, refreshedGraph.sourceSnapshotId].sort());
+  const runBaseGraph = readWorldModel({ root }).snapshot.temporalProvenanceGraph;
+
+  const capsule = compileContext({ root, task: "Change service without changing the whole plan", budget: 4000, persist: true });
+  const plan = createWholePlanSnapshot({
+    root,
+    objective: "Keep the service working",
+    plan: [{ id: "change-service", outcome: "Change one bounded service behavior" }],
+    invariants: ["Do not redefine Product Canon"],
+  });
+  const contract = createExecutionContract({
+    root,
+    wholePlanId: plan.artifact.wholePlanId,
+    capsuleId: capsule.capsule.capsuleId,
+    scope: "Change one bounded service behavior",
+    acceptanceCriteria: ["Preserve the accepted Capsule"],
+  });
+  const started = startRun({ root, executionContractId: contract.artifact.executionContractId });
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const refreshedDuringRun = true;\n");
+  const duringRun = await refreshWorldModel({ root, expectedChangedPaths: ["src/service.mjs"] });
+  assert.equal(duringRun.receipt.executionDrift.status, "active-run-pinned-inputs");
+  assert.equal(duringRun.receipt.executionDrift.activeRunId, started.run.runId);
+  assert.equal(duringRun.receipt.executionDrift.capsuleId, capsule.capsule.capsuleId);
+  assert.equal(duringRun.receipt.executionDrift.pinnedSourceSnapshotId, runBaseGraph.sourceSnapshotId);
+  assert.equal(duringRun.receipt.executionDrift.driftDetected, true);
+  const stateAfterRefresh = inspectProject(root).state;
+  assert.equal(stateAfterRefresh.activeRunId, started.run.runId);
+  assert.equal(stateAfterRefresh.activeExecutionContractId, contract.artifact.executionContractId);
+
+  const tamperedFile = duringRun.receiptFile;
+  const tampered = JSON.parse(fs.readFileSync(tamperedFile, "utf8"));
+  tampered.executionDrift.requiredHeadAction = "silently-replace-active-capsule";
+  fs.writeFileSync(tamperedFile, `${JSON.stringify(tampered, null, 2)}\n`);
+  assert.throws(() => readIncrementalRefreshReceipt({ root, refreshReceiptId: duringRun.receipt.refreshReceiptId }), { code: "INVALID_REFRESH_RECEIPT" });
+});
+
+test("coalesces bounded filesystem and CI triggers into serialized authority-free refresh evidence", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), "export const service = true;\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const first = await buildWorldModel({ root });
+  assert.equal(first.snapshot.git.status, "not-a-git-repository");
+
+  const events = [
+    { kind: "path-hint", operation: "change", path: "src/hint.mjs", evidenceId: null },
+    { kind: "project-signal", operation: "build", path: null, evidenceId: "ci-build-0001" },
+    { kind: "path-hint", operation: "change", path: "src/hint.mjs", evidenceId: null },
+    { kind: "path-hint", operation: "change", path: ".head/internal.json", evidenceId: null },
+  ];
+  const projectId = inspectProject(root).project.projectId;
+  const canonicalBatch = buildRefreshTriggerBatch({ projectId, sourceKind: "ci", events, managedRootFiles: ["AGENTS.md"] });
+  const reorderedBatch = buildRefreshTriggerBatch({ projectId, sourceKind: "ci", events: [...events].reverse(), managedRootFiles: ["AGENTS.md"] });
+  assert.equal(canonicalBatch.triggerBatchId, reorderedBatch.triggerBatchId);
+  assert.deepEqual(canonicalBatch.eventSummary, {
+    inputEventCount: 4,
+    acceptedEventCount: 2,
+    coalescedEventCount: 1,
+    droppedEventCount: 1,
+    discardedReasons: [
+      { reason: "duplicate-event", count: 1 },
+      { reason: "excluded-or-managed-path", count: 1 },
+    ],
+  });
+  assert.equal(canonicalBatch.instructionAuthority, false);
+  assert.equal(canonicalBatch.promotionAuthority, false);
+  assert.equal(canonicalBatch.canonMutationAuthority, false);
+  const legacyBatch = reidentify({
+    ...clone(canonicalBatch),
+    protocol: { ...canonicalBatch.protocol, version: "0.1.0" },
+    source: { ...canonicalBatch.source, adapterVersion: "0.1.0" },
+  }, {
+    prefix: "refresh-trigger-batch",
+    idKey: "triggerBatchId",
+    hashKey: "triggerBatchHash",
+  });
+  verifyRefreshTriggerBatch(legacyBatch);
+  assert.throws(() => buildRefreshTriggerBatch({
+    projectId,
+    sourceKind: "ci",
+    events: [{ kind: "path-hint", operation: "change", path: "../escape.mjs", evidenceId: null }],
+  }), { code: "INVALID_REFRESH_TRIGGER_PATH" });
+  const boundedBatch = buildRefreshTriggerBatch({
+    projectId,
+    sourceKind: "ci",
+    maxEvents: 1,
+    events: [
+      { kind: "project-signal", operation: "build", path: null, evidenceId: "ci-build-0003" },
+      { kind: "project-signal", operation: "test", path: null, evidenceId: "ci-test-0003" },
+    ],
+  });
+  assert.equal(boundedBatch.events.length, 1);
+  assert.deepEqual(boundedBatch.eventSummary.discardedReasons, [{ reason: "event-limit-exceeded", count: 1 }]);
+  assert.equal(boundedBatch.requiresRescan, true);
+
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const changedOutsideHint = true;\n");
+  const delivered = await processRefreshTriggerBatch({ root, sourceKind: "ci", events });
+  assert.equal(delivered.status, "refreshed");
+  assert.equal(delivered.batch.triggerBatchId, canonicalBatch.triggerBatchId);
+  assert.deepEqual(delivered.refresh.receipt.observedChanges, { added: [], changed: ["src/service.mjs"], removed: [] });
+  assert.equal(delivered.refresh.request.trigger.kind, "ci");
+  assert.deepEqual(delivered.refresh.request.trigger.evidenceIds, [delivered.batch.triggerBatchId]);
+  assert.equal(delivered.delivery.serialization, "exclusive-project-world-model-writer-lease-and-expected-pointer-check");
+  assert.equal(delivered.delivery.projectionDisposition.documents.status, "manual-deferred");
+  assert.equal(delivered.delivery.projectionDisposition.documents.postRefreshProjectionReceiptId, delivered.refresh.postRefreshProjection.receipt.postRefreshProjectionReceiptId);
+  const legacyDelivery = reidentify({
+    ...clone(delivered.delivery),
+    protocol: { ...delivered.delivery.protocol, version: "0.1.0" },
+    triggerBatchId: legacyBatch.triggerBatchId,
+    triggerBatchHash: legacyBatch.triggerBatchHash,
+    projectionDisposition: { ...delivered.delivery.projectionDisposition, documents: "not-regenerated-explicit-follow-up-only" },
+  }, {
+    prefix: "refresh-trigger-delivery",
+    idKey: "triggerDeliveryId",
+    hashKey: "triggerDeliveryHash",
+  });
+  verifyRefreshTriggerDelivery(legacyDelivery);
+  assert.equal(fs.existsSync(path.join(root, ".head", "generated", "knowledge")), false);
+  assert.equal(readRefreshTriggerDelivery({ root, triggerDeliveryId: delivered.delivery.triggerDeliveryId }).delivery.triggerDeliveryId, delivered.delivery.triggerDeliveryId);
+  assert.equal(inspectRefreshTriggers({ root }).status, "current");
+  assert.equal(inspectRefreshTriggers({ root }).writer.status, "idle");
+
+  const currentAfterCi = readWorldModel({ root }).snapshot.worldModelId;
+  const ignored = await processRefreshTriggerBatch({
+    root,
+    sourceKind: "filesystem",
+    events: [{ kind: "path-hint", operation: "change", path: ".head/refresh/current.json", evidenceId: null }],
+  });
+  assert.equal(ignored.status, "ignored");
+  assert.equal(ignored.batch.requiresRescan, false);
+  assert.equal(ignored.delivery.base.worldModelId, currentAfterCi);
+  assert.equal(ignored.delivery.next.worldModelId, currentAfterCi);
+  assert.equal(readWorldModel({ root }).snapshot.worldModelId, currentAfterCi);
+
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const changedThroughCli = true;\n");
+  const cliInput = path.join(root, ".head", "ci-events.json");
+  fs.writeFileSync(cliInput, `${JSON.stringify({
+    sourceKind: "ci",
+    events: [{ kind: "project-signal", operation: "build", path: null, evidenceId: "ci-build-0002" }],
+  }, null, 2)}\n`);
+  const cliDelivered = await runCommand(["world-refresh-events", root, "--input", cliInput]);
+  assert.equal(cliDelivered.status, "refreshed");
+  assert.deepEqual(cliDelivered.refresh.receipt.observedChanges.changed, ["src/service.mjs"]);
+  fs.writeFileSync(cliInput, `${JSON.stringify({
+    sourceKind: "filesystem",
+    events: [{ kind: "project-signal", operation: "unknown", path: null, evidenceId: null }],
+  }, null, 2)}\n`);
+  assert.throws(() => runCommand(["world-refresh-events", root, "--input", cliInput]), /accepts only sourceKind ci/);
+  assert.equal(runCommand(["world-refresh-trigger-status", root]).delivery.triggerDeliveryId, cliDelivered.delivery.triggerDeliveryId);
+  assert.equal(runCommand(["world-refresh-trigger-read", root, "--delivery", cliDelivered.delivery.triggerDeliveryId]).delivery.triggerDeliveryId, cliDelivered.delivery.triggerDeliveryId);
+  const mcpTriggerStatus = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 43,
+    method: "tools/call",
+    params: { name: "head_refresh_trigger_status", arguments: { project_root: root } },
+  });
+  assert.equal(mcpTriggerStatus.result.structuredContent.delivery.triggerDeliveryId, cliDelivered.delivery.triggerDeliveryId);
+  const mcpTriggerDelivery = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 44,
+    method: "tools/call",
+    params: { name: "head_refresh_trigger_delivery", arguments: { project_root: root, trigger_delivery_id: cliDelivered.delivery.triggerDeliveryId } },
+  });
+  assert.equal(mcpTriggerDelivery.result.structuredContent.delivery.triggerDeliveryId, cliDelivered.delivery.triggerDeliveryId);
+
+  const runCapsule = compileContext({ root, task: "Keep the active trigger run pinned", budget: 4000, persist: true });
+  const runPlan = createWholePlanSnapshot({
+    root,
+    objective: "Verify triggered refresh drift without changing authority",
+    plan: [{ id: "observe-trigger", outcome: "Preserve the accepted Run inputs" }],
+    invariants: ["Do not replace the active Capsule"],
+  });
+  const runContract = createExecutionContract({
+    root,
+    wholePlanId: runPlan.artifact.wholePlanId,
+    capsuleId: runCapsule.capsule.capsuleId,
+    scope: "Observe one bounded refresh trigger",
+    acceptanceCriteria: ["Keep the accepted Capsule pinned"],
+  });
+  const activeRun = startRun({ root, executionContractId: runContract.artifact.executionContractId });
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const changedDuringTriggeredRun = true;\n");
+  const triggeredDuringRun = await processRefreshTriggerBatch({
+    root,
+    sourceKind: "filesystem",
+    events: [{ kind: "project-signal", operation: "unknown", path: null, evidenceId: null }],
+  });
+  assert.equal(triggeredDuringRun.refresh.receipt.executionDrift.status, "active-run-pinned-inputs");
+  assert.equal(triggeredDuringRun.refresh.receipt.executionDrift.activeRunId, activeRun.run.runId);
+  assert.equal(triggeredDuringRun.refresh.receipt.executionDrift.capsuleId, runCapsule.capsule.capsuleId);
+  assert.equal(triggeredDuringRun.refresh.receipt.executionDrift.driftDetected, true);
+  assert.equal(inspectProject(root).state.activeExecutionContractId, runContract.artifact.executionContractId);
+  assert.equal(readWorldModel({ root }).snapshot.productModel.productModelHash, first.snapshot.productModel.productModelHash);
+
+  let activeDeliveries = 0;
+  let maximumConcurrentDeliveries = 0;
+  const deliveredInputs = [];
+  const queue = new DebouncedRefreshTriggerQueue({
+    root,
+    sourceKind: "filesystem",
+    debounceMs: 1000,
+    maxEvents: 8,
+    deliverBatch: async (input) => {
+      activeDeliveries += 1;
+      maximumConcurrentDeliveries = Math.max(maximumConcurrentDeliveries, activeDeliveries);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      deliveredInputs.push(input);
+      activeDeliveries -= 1;
+      return { status: "unchanged", input };
+    },
+  });
+  queue.enqueue({ kind: "path-hint", operation: "change", path: "src/service.mjs", evidenceId: null });
+  queue.enqueue({ kind: "path-hint", operation: "change", path: "src/service.mjs", evidenceId: null });
+  const firstFlush = queue.flush();
+  queue.enqueue({ kind: "project-signal", operation: "unknown", path: null, evidenceId: null });
+  const secondFlush = queue.flush();
+  await Promise.all([firstFlush, secondFlush]);
+  const queueStatus = await queue.close({ flush: false });
+  assert.equal(maximumConcurrentDeliveries, 1);
+  assert.equal(deliveredInputs.length, 2);
+  assert.equal(deliveredInputs[0].events.length, 2);
+  assert.equal(queueStatus.totalInputEvents, 3);
+  assert.equal(queueStatus.totalDeliveredBatches, 2);
+
+  let busyAttempts = 0;
+  const retryQueue = new DebouncedRefreshTriggerQueue({
+    root,
+    sourceKind: "filesystem",
+    debounceMs: 1000,
+    maxEvents: 8,
+    deliverBatch: async (input) => {
+      busyAttempts += 1;
+      if (busyAttempts === 1) {
+        const error = new Error("writer busy");
+        error.code = "REFRESH_WRITER_BUSY";
+        throw error;
+      }
+      return { status: "unchanged", input };
+    },
+  });
+  retryQueue.enqueue({ kind: "path-hint", operation: "change", path: "src/service.mjs", evidenceId: null });
+  await assert.rejects(retryQueue.flush(), { code: "REFRESH_WRITER_BUSY" });
+  assert.equal(retryQueue.status().bufferedEventCount, 1);
+  assert.equal(retryQueue.status().totalBusyRetries, 1);
+  const retried = await retryQueue.flush();
+  assert.equal(retried.status, "unchanged");
+  assert.equal(busyAttempts, 2);
+  const retryStatus = await retryQueue.close({ flush: false });
+  assert.equal(retryStatus.consecutiveBusyRetries, 0);
+
+  await withRefreshWriterLease({ projectRoot: root, projectId }, async (writerLease) => {
+    await assert.rejects(refreshWorldModel({ root }), { code: "REFRESH_WRITER_BUSY" });
+    await assert.rejects(buildWorldModel({ root }), { code: "REFRESH_WRITER_BUSY" });
+    const nestedWorldBuild = await buildWorldModel({ root, writerLease });
+    assert.equal(nestedWorldBuild.snapshot.worldModelId, readWorldModel({ root }).snapshot.worldModelId);
+  });
+  assert.equal(inspectRefreshTriggers({ root }).writer.status, "idle");
+
+  const tampered = JSON.parse(fs.readFileSync(delivered.deliveryFile, "utf8"));
+  tampered.authority = "canon";
+  fs.writeFileSync(delivered.deliveryFile, `${JSON.stringify(tampered, null, 2)}\n`);
+  assert.throws(() => readRefreshTriggerDelivery({ root, triggerDeliveryId: delivered.delivery.triggerDeliveryId }), { code: "INVALID_REFRESH_TRIGGER_DELIVERY" });
+});
+
+test("watches filesystem changes through the bounded debounced refresh adapter", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "watched.mjs"), "export const watched = 1;\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  await buildWorldModel({ root });
+  let resolveDelivery;
+  let rejectDelivery;
+  const delivered = new Promise((resolve, reject) => {
+    resolveDelivery = resolve;
+    rejectDelivery = reject;
+  });
+  const timeout = setTimeout(() => rejectDelivery(new Error("Filesystem refresh watcher did not deliver within the test bound.")), 5000);
+  const watcher = createFileSystemRefreshWatcher({
+    root,
+    debounceMs: 25,
+    maxEvents: 32,
+    onDelivery: resolveDelivery,
+    onError: rejectDelivery,
+  });
+  t.after(async () => {
+    clearTimeout(timeout);
+    await watcher.close({ flush: false });
+  });
+  fs.appendFileSync(path.join(root, "src", "watched.mjs"), "export const changed = 2;\n");
+  const result = await delivered;
+  clearTimeout(timeout);
+  assert.equal(result.status, "refreshed");
+  assert.equal(result.batch.source.kind, "filesystem");
+  assert.equal(result.batch.events.some((event) => event.path === "src/watched.mjs"), true);
+  assert.deepEqual(result.refresh.receipt.observedChanges.changed, ["src/watched.mjs"]);
+  assert.equal(result.refresh.request.trigger.kind, "filesystem");
+  assert.deepEqual(result.refresh.request.trigger.evidenceIds, [result.batch.triggerBatchId]);
+  const closed = await watcher.close({ flush: false });
+  assert.equal(closed.closed, true);
+});
+
+test("builds deterministic Git-independent temporal provenance with multiple parents", async (t) => {
+  const sourceFiles = [
+    {
+      path: "src/service.mjs",
+      digest: "a".repeat(64),
+      language: "javascript",
+      classification: "source",
+      symbols: [{ name: "serve", kind: "function", line: 1 }],
+    },
+    {
+      path: "test/service.test.mjs",
+      digest: "b".repeat(64),
+      language: "javascript",
+      classification: "test",
+      symbols: [{ name: "checksService", kind: "function", line: 2 }],
+    },
+  ];
+  const first = buildTemporalProvenanceGraph({ projectId: "project-temporal-test", files: sourceFiles });
+  const reordered = buildTemporalProvenanceGraph({ projectId: "project-temporal-test", files: [...sourceFiles].reverse() });
+  assert.equal(first.graphSnapshotId, reordered.graphSnapshotId);
+  assert.equal(first.summary.testRevisionCount, 1);
+  assert.equal(first.nodes.every((node) => node.instructionAuthority === false && node.promotionAuthority === false), true);
+  assert.equal(first.edges.every((edge) => edge.sourceSnapshotId === first.sourceSnapshotId), true);
+
+  const firstFile = first.nodes.find((node) => node.kind === "File" && node.path === "src/service.mjs");
+  const firstFileRevision = first.nodes.find((node) => node.kind === "FileRevision" && node.path === "src/service.mjs");
+  const firstSymbol = first.nodes.find((node) => node.kind === "Symbol" && node.name === "serve");
+  const firstSymbolRevision = first.nodes.find((node) => node.kind === "SymbolRevision" && node.name === "serve");
+  const changedFiles = clone(sourceFiles);
+  changedFiles[0].digest = "c".repeat(64);
+  changedFiles[0].symbols[0].line = 8;
+  const changed = buildTemporalProvenanceGraph({
+    projectId: "project-temporal-test",
+    files: changedFiles,
+    parentSourceSnapshotIds: [first.sourceSnapshotId, `source-snapshot-${"f".repeat(24)}`, first.sourceSnapshotId],
+    revisionParentIds: {
+      [firstFile.nodeId]: [firstFileRevision.nodeId],
+      [firstSymbol.nodeId]: [firstSymbolRevision.nodeId],
+    },
+  });
+  assert.deepEqual(changed.parentSourceSnapshotIds, [first.sourceSnapshotId, `source-snapshot-${"f".repeat(24)}`].sort());
+  assert.equal(changed.summary.sourceParentCount, 2);
+  assert.equal(changed.summary.revisionParentCount, 2);
+  assert.equal(changed.nodes.find((node) => node.kind === "File" && node.path === "src/service.mjs").nodeId, firstFile.nodeId);
+  assert.notEqual(changed.nodes.find((node) => node.kind === "FileRevision" && node.path === "src/service.mjs").nodeId, firstFileRevision.nodeId);
+  assert.equal(changed.nodes.find((node) => node.kind === "Symbol" && node.name === "serve").nodeId, firstSymbol.nodeId);
+  assert.notEqual(changed.nodes.find((node) => node.kind === "SymbolRevision" && node.name === "serve").nodeId, firstSymbolRevision.nodeId);
+  assert.equal(changed.edges.filter((edge) => edge.type === "PARENT_OF").length, 4);
+
+  const queryA = queryTemporalProvenanceGraph(changed, {
+    query: "src/service.mjs",
+    relations: ["CURRENT_REVISION", "HAS_REVISION", "DECLARES"],
+    depth: 2,
+    maxNodes: 20,
+    maxEdges: 40,
+  });
+  const queryB = queryTemporalProvenanceGraph(changed, {
+    query: "src/service.mjs",
+    relations: ["DECLARES", "HAS_REVISION", "CURRENT_REVISION"],
+    depth: 2,
+    maxNodes: 20,
+    maxEdges: 40,
+  });
+  assert.equal(queryA.queryId, queryB.queryId);
+  assert.equal(queryA.resultId, queryB.resultId);
+  assert.equal(queryA.edges.every((edge) => ["CURRENT_REVISION", "HAS_REVISION", "DECLARES"].includes(edge.type)), true);
+  assert.equal(queryA.traversalQuery.includeUnreviewedCandidates, false);
+  const tampered = clone(changed);
+  tampered.nodes.find((node) => node.kind === "File").path = "tampered.mjs";
+  assert.throws(() => verifyTemporalProvenanceGraph(tampered), { code: "TEMPORAL_GRAPH_DIGEST_MISMATCH" });
+
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "test"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
+  fs.writeFileSync(path.join(root, "test", "service.test.mjs"), "export function checksService() { return true; }\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const indexed = await buildWorldModel({ root, parentSourceSnapshotIds: [first.sourceSnapshotId, `source-snapshot-${"e".repeat(24)}`] });
+  assert.equal(indexed.snapshot.git.status, "not-a-git-repository");
+  assert.equal(indexed.snapshot.temporalProvenanceGraph.summary.sourceParentCount, 2);
+  const repeated = await buildWorldModel({ root, persist: false, parentSourceSnapshotIds: [first.sourceSnapshotId, `source-snapshot-${"e".repeat(24)}`] });
+  assert.equal(repeated.snapshot.temporalProvenanceGraph.graphSnapshotId, indexed.snapshot.temporalProvenanceGraph.graphSnapshotId);
+  const temporalQuery = queryWorldTemporalGraph({ root, query: "service.mjs", relations: ["HAS_REVISION", "CURRENT_REVISION"], depth: 1 });
+  assert.equal(temporalQuery.status, "current");
+  assert.equal(temporalQuery.nodes.some((node) => node.kind === "FileRevision"), true);
+  const mcpTemporal = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 5,
+    method: "tools/call",
+    params: { name: "head_temporal_graph", arguments: { project_root: root, query: "service.mjs", depth: 1, node_limit: 30, edge_limit: 50 } },
+  });
+  assert.equal(mcpTemporal.result.structuredContent.graphSnapshotId, indexed.snapshot.temporalProvenanceGraph.graphSnapshotId);
+});
+
+test("materializes and queries temporal graphs through an authority-free replaceable adapter", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+
+  const memory = new InMemoryGraphProjectionAdapter({ adapterKind: "conformance-memory" });
+  const indexed = await buildWorldModel({ root, graphProjectionAdapter: memory });
+  const graph = indexed.snapshot.temporalProvenanceGraph;
+  assert.equal(indexed.sourceAdapters.graphProjection.adapterKind, "conformance-memory");
+  assert.equal(indexed.sourceAdapters.graphProjection.adapterVersion, GRAPH_PROJECTION_ADAPTER_VERSION);
+  assert.equal(indexed.graphProjection.pointer.graphSnapshotId, graph.graphSnapshotId);
+  assert.equal(inspectWorldGraphProjection({ root, graphProjectionAdapter: memory }).status, "current");
+  assert.equal(inspectWorldGraphProjection({ root }).status, "not-materialized");
+
+  const queryInput = { query: "service.mjs", relations: ["HAS_REVISION", "CURRENT_REVISION"], depth: 1, maxNodes: 30, maxEdges: 50 };
+  const reference = queryTemporalProvenanceGraph(graph, queryInput);
+  const throughMemory = queryWorldTemporalGraph({ root, graphProjectionAdapter: memory, ...queryInput });
+  const throughEmbeddedFallback = queryWorldTemporalGraph({ root, ...queryInput });
+  assert.equal(throughMemory.resultId, reference.resultId);
+  assert.equal(throughMemory.resultHash, reference.resultHash);
+  assert.equal(throughMemory.graphProjection.fallbackUsed, false);
+  assert.equal(throughMemory.graphProjection.executionMode, "prepared-graph-projection-adapter");
+  assert.equal(throughMemory.graphProjection.preparedTraversal.verificationMode, "memory-snapshot-reference");
+  assert.equal(throughEmbeddedFallback.resultId, reference.resultId);
+  assert.equal(throughEmbeddedFallback.graphProjection.fallbackUsed, true);
+  assert.equal(throughEmbeddedFallback.graphProjection.fallbackReasonCode, "GRAPH_PROJECTION_NOT_MATERIALIZED");
+
+  const capsuleThroughMemory = compileContext({ root, task: "Inspect service implementation", budget: 5000, persist: false, graphProjectionAdapter: memory });
+  const capsuleThroughFallback = compileContext({ root, task: "Inspect service implementation", budget: 5000, persist: false });
+  assert.equal(capsuleThroughMemory.capsule.capsuleId, capsuleThroughFallback.capsule.capsuleId);
+
+  const conformance = verifyGraphProjectionAdapterConformance({
+    projectRoot: root,
+    graph,
+    referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: root }),
+    candidateAdapter: new InMemoryGraphProjectionAdapter({ adapterKind: "conformance-candidate" }),
+    queries: [{ name: "service-neighborhood", query: queryInput }],
+  });
+  assert.match(conformance.conformanceReportId, /^graph-projection-conformance-[a-f0-9]{24}$/);
+  assert.equal(conformance.cases[0].resultId, reference.resultId);
+  assert.equal(conformance.semanticIdentity, "adapter-neutral");
+
+  const authorityViolating = new InMemoryGraphProjectionAdapter({ adapterKind: "invalid-authority" });
+  authorityViolating.describe = () => ({
+    contract: "replaceable-rebuildable-derived-graph-projection",
+    adapterKind: "invalid-authority",
+    adapterVersion: GRAPH_PROJECTION_ADAPTER_VERSION,
+    authority: "project-canon",
+    rebuildable: false,
+    uniqueAuthority: true,
+    instructionAuthority: true,
+    promotionAuthority: true,
+    remote: false,
+    durable: false,
+  });
+  await assert.rejects(buildWorldModel({ root, graphProjectionAdapter: authorityViolating }), { code: "INVALID_GRAPH_PROJECTION_AUTHORITY" });
+
+
+  const mismatching = new InMemoryGraphProjectionAdapter({ adapterKind: "mismatching-query" });
+  materializeGraphProjection({ projectRoot: root, graph, adapter: mismatching });
+  const mismatchingDescribe = mismatching.describe.bind(mismatching);
+  mismatching.describe = () => {
+    const { preparedTraversalProtocolVersion, preparedTraversalMode, ...legacy } = mismatchingDescribe();
+    return legacy;
+  };
+  const originalQuery = mismatching.query.bind(mismatching);
+  mismatching.query = (graphSnapshotId, options) => {
+    const result = originalQuery(graphSnapshotId, options);
+    return { ...result, truncated: !result.truncated };
+  };
+  assert.throws(() => queryGraphProjection({ projectRoot: root, graph, adapter: mismatching, query: queryInput }), { code: "GRAPH_PROJECTION_QUERY_MISMATCH" });
+
+  const preparedTampering = new InMemoryGraphProjectionAdapter({ adapterKind: "tampered-prepared-verification" });
+  materializeGraphProjection({ projectRoot: root, graph, adapter: preparedTampering });
+  const originalPreparedQuery = preparedTampering.queryPrepared.bind(preparedTampering);
+  preparedTampering.queryPrepared = (request) => {
+    const verification = originalPreparedQuery(request);
+    return { ...verification, nodeCount: verification.nodeCount + 1 };
+  };
+  assert.throws(
+    () => queryGraphProjection({ projectRoot: root, graph, adapter: preparedTampering, query: queryInput }),
+    { code: "PREPARED_TRAVERSAL_VERIFICATION_DIGEST_MISMATCH" },
+  );
+
+  const tampered = new InMemoryGraphProjectionAdapter({ adapterKind: "tampered-snapshot" });
+  materializeGraphProjection({ projectRoot: root, graph, adapter: tampered });
+  tampered.snapshots.get(graph.graphSnapshotId).summary.nodeCount += 1;
+  assert.throws(() => inspectWorldGraphProjection({ root, graphProjectionAdapter: tampered }), { code: "TEMPORAL_GRAPH_DIGEST_MISMATCH" });
+
+  const mutating = new InMemoryGraphProjectionAdapter({ adapterKind: "mutating-write" });
+  const writeSnapshot = mutating.writeSnapshot.bind(mutating);
+  mutating.writeSnapshot = (graphSnapshotId, document) => {
+    document.summary.nodeCount += 1;
+    return writeSnapshot(graphSnapshotId, document);
+  };
+  assert.throws(() => materializeGraphProjection({ projectRoot: root, graph, adapter: mutating }), { code: "TEMPORAL_GRAPH_DIGEST_MISMATCH" });
+  verifyTemporalProvenanceGraph(graph);
+
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export class Worker {}\n");
+  const rebuilt = await buildWorldModel({ root });
+  assert.notEqual(rebuilt.snapshot.temporalProvenanceGraph.graphSnapshotId, graph.graphSnapshotId);
+  assert.throws(() => queryWorldTemporalGraph({ root, graphProjectionAdapter: memory, ...queryInput }), { code: "GRAPH_PROJECTION_STALE" });
+  assert.equal(inspectWorldGraphProjection({ root }).status, "current");
+  assert.equal(runCommand(["world-graph-status", root]).status, "current");
+
+  const mcpStatus = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "head_graph_projection_status", arguments: { project_root: root } },
+  });
+  assert.equal(mcpStatus.result.structuredContent.status, "current");
+  assert.equal(mcpStatus.result.structuredContent.authority, "rebuildable-derived-projection-not-project-canon");
+});
+
+test("records deterministic prepared traversal cost without making latency semantic", () => {
+  const graph = buildTemporalProvenanceGraph({
+    projectId: "project-prepared-cost-test",
+    files: Array.from({ length: 12 }, (_, index) => ({
+      path: `src/cost-${index}.mjs`,
+      digest: crypto.createHash("sha256").update(`cost-${index}`).digest("hex"),
+      language: "javascript",
+      classification: "source",
+      symbols: [{ name: `cost${index}`, kind: "function", line: 1 }],
+    })),
+  });
+  const query = { query: graph.nodes.find((node) => node.kind === "File").nodeId, depth: 1, maxNodes: 30, maxEdges: 50 };
+  const result = queryTemporalProvenanceGraph(graph, query);
+  const request = buildPreparedTraversalRequest({ graph, result });
+  const first = buildPreparedTraversalCostEvidence({ graph, request });
+  const repeated = buildPreparedTraversalCostEvidence({ graph, request });
+  assert.deepEqual(first, repeated);
+  assert.equal(first.savedBytes > 0, true);
+  assert.equal(first.preparedQueryBytes < first.fullReloadBaselineBytes, true);
+  assert.equal(first.semanticIdentityEffect, "none");
+  assert.equal(JSON.stringify(first).includes("elapsed"), false);
+  assert.equal(JSON.stringify(first).includes("latency"), false);
+  verifyPreparedTraversalCostEvidence(first, { graph, request });
+  assert.throws(
+    () => verifyPreparedTraversalCostEvidence({ ...first, savedBytes: first.savedBytes + 1 }),
+    { code: "INVALID_PREPARED_TRAVERSAL_COST_EVIDENCE" },
+  );
+  assert.throws(
+    () => verifyPreparedTraversalCostEvidence({ ...first, protocol: { ...first.protocol, unexpected: true } }),
+    { code: "INVALID_PREPARED_TRAVERSAL_COST_EVIDENCE" },
+  );
+});
+
+class MockArcadeDbTransport {
+  constructor({ failureCode = "", traversalFault = "", failCheckpointAfter = -1 } = {}) {
+    this.failureCode = failureCode;
+    this.traversalFault = traversalFault;
+    this.failCheckpointAfter = failCheckpointAfter;
+    this.checkpointFailureUsed = false;
+    this.successfulCheckpointWrites = 0;
+    this.snapshots = new Map();
+    this.pointers = new Map();
+    this.topologies = new Map();
+    this.syncManifests = new Map();
+    this.syncCheckpoints = new Map();
+    this.appliedSyncBatchIds = [];
+    this.resetCounters();
+  }
+
+  resetCounters() {
+    this.readPointerCount = 0;
+    this.readSnapshotCount = 0;
+    this.readTopologyCount = 0;
+    this.readTopologyManifestCount = 0;
+    this.queryTopologyCount = 0;
+  }
+
+  describe() {
+    return { protocol: "arcadedb-http-json", credentialsPersisted: false };
+  }
+
+  check() {
+    if (!this.failureCode) return;
+    const error = new Error("mock transport failure");
+    error.code = this.failureCode;
+    throw error;
+  }
+
+  ensureSchema() { this.check(); }
+  ensureTopologySchema() { this.check(); }
+  ensureSyncSchema() { this.check(); }
+  ready() { this.check(); return true; }
+  databaseExists() { this.check(); return true; }
+  createDatabase() { this.check(); return true; }
+  dropDatabase() { this.check(); return true; }
+  readSchemaTypes() { this.check(); return []; }
+  readPointer(projectId) { this.check(); this.readPointerCount += 1; return this.pointers.get(projectId) ?? null; }
+  readSnapshot(projectId, id) { this.check(); this.readSnapshotCount += 1; return this.snapshots.get(`${projectId}:${id}`) ?? null; }
+  writePointer(projectId, pointerJson) { this.check(); this.pointers.set(projectId, pointerJson); }
+  writePointerCompareAndSwap(projectId, expectedPointerJson, pointerJson) {
+    this.check();
+    const current = this.pointers.get(projectId) ?? null;
+    if (current !== expectedPointerJson) return false;
+    this.pointers.set(projectId, pointerJson);
+    return true;
+  }
+  writeSnapshot(projectId, id, documentJson) {
+    this.check();
+    const key = `${projectId}:${id}`;
+    const created = !this.snapshots.has(key);
+    if (created) this.snapshots.set(key, documentJson);
+    return created;
+  }
+  listSnapshotIds(projectId) {
+    this.check();
+    return [...this.snapshots.keys()].filter((key) => key.startsWith(`${projectId}:`)).map((key) => key.slice(projectId.length + 1)).sort();
+  }
+  readTopology(projectId, graphSnapshotId) {
+    this.check();
+    this.readTopologyCount += 1;
+    const value = this.topologies.get(`${projectId}:${graphSnapshotId}`);
+    return value == null ? null : JSON.parse(JSON.stringify(value));
+  }
+  readTopologyManifest(projectId, graphSnapshotId) {
+    this.check();
+    this.readTopologyManifestCount += 1;
+    const value = this.topologies.get(`${projectId}:${graphSnapshotId}`)?.topologyJson ?? null;
+    if (value == null || this.traversalFault !== "manifest") return value;
+    const tampered = JSON.parse(value);
+    tampered.nodeCount += 1;
+    return JSON.stringify(tampered);
+  }
+  readSyncManifest(projectId, syncId) {
+    this.check();
+    return this.syncManifests.get(`${projectId}:${syncId}`) ?? null;
+  }
+  writeSyncManifest(projectId, syncId, syncJson) {
+    this.check();
+    const key = `${projectId}:${syncId}`;
+    const existing = this.syncManifests.get(key);
+    if (existing != null && existing !== syncJson) throw Object.assign(new Error("sync manifest conflict"), { code: "ARCADEDB_INCREMENTAL_SYNC_MANIFEST_CONFLICT" });
+    this.syncManifests.set(key, syncJson);
+    return existing == null;
+  }
+  readSyncCheckpoints(projectId, syncId) {
+    this.check();
+    const prefix = `${projectId}:${syncId}:`;
+    return [...this.syncCheckpoints.entries()].filter(([key]) => key.startsWith(prefix)).map(([, value]) => value).sort();
+  }
+  writeSyncCheckpoint(projectId, syncId, batchId, checkpointJson) {
+    this.check();
+    if (!this.checkpointFailureUsed && this.failCheckpointAfter >= 0
+      && this.successfulCheckpointWrites >= this.failCheckpointAfter) {
+      this.checkpointFailureUsed = true;
+      throw Object.assign(new Error("mock checkpoint transport interruption"), { code: "ARCADEDB_TRANSPORT_UNAVAILABLE" });
+    }
+    const key = `${projectId}:${syncId}:${batchId}`;
+    const existing = this.syncCheckpoints.get(key);
+    if (existing != null && existing !== checkpointJson) throw Object.assign(new Error("sync checkpoint conflict"), { code: "ARCADEDB_INCREMENTAL_SYNC_CHECKPOINT_CONFLICT" });
+    this.syncCheckpoints.set(key, checkpointJson);
+    if (existing == null) this.successfulCheckpointWrites += 1;
+    return existing == null;
+  }
+  applySyncBatch(projectId, manifest, batch) {
+    this.check();
+    const targetKey = `${projectId}:${manifest.targetGraphSnapshotId}`;
+    const target = this.topologies.get(targetKey) || { topologyJson: null, nodeJsons: [], edgeJsons: [] };
+    const base = manifest.baseGraphSnapshotId == null
+      ? { nodeJsons: [], edgeJsons: [] }
+      : this.topologies.get(`${projectId}:${manifest.baseGraphSnapshotId}`) || { nodeJsons: [], edgeJsons: [] };
+    const field = batch.recordKind === "node" ? "nodeJsons" : "edgeJsons";
+    const idField = batch.recordKind === "node" ? "nodeId" : "edgeId";
+    const baseById = new Map(base[field].map((value) => {
+      const record = JSON.parse(value);
+      return [record[idField], record];
+    }));
+    const targetById = new Map(target[field].map((value) => {
+      const record = JSON.parse(value);
+      return [record[idField], record];
+    }));
+    for (const record of batch.records) {
+      const sourceId = batch.recordKind === "node" ? record.sourceNodeId : record.sourceEdgeId;
+      const source = baseById.get(sourceId || record[idField]);
+      const value = batch.operation === "carry-forward"
+        ? source
+        : batch.operation === "rebase"
+          ? { ...source, [idField]: record[idField], sourceSnapshotId: manifest.sourceSnapshotId }
+          : record;
+      if (!value) throw Object.assign(new Error("missing carry-forward source"), { code: "ARCADEDB_INCREMENTAL_SYNC_BASE_MISSING" });
+      targetById.set(record[idField], JSON.parse(JSON.stringify(value)));
+    }
+    target[field] = [...targetById.values()].sort((left, right) => left[idField].localeCompare(right[idField])).map((value) => JSON.stringify(value));
+    this.topologies.set(targetKey, target);
+    this.appliedSyncBatchIds.push(batch.batchId);
+    return true;
+  }
+  readSyncBatchRecords(projectId, graphSnapshotId, batch) {
+    this.check();
+    const topology = this.topologies.get(`${projectId}:${graphSnapshotId}`) || { nodeJsons: [], edgeJsons: [] };
+    const field = batch.recordKind === "node" ? "nodeJsons" : "edgeJsons";
+    const idField = batch.recordKind === "node" ? "nodeId" : "edgeId";
+    const requested = new Set(batch.records.map((record) => record[idField]));
+    return topology[field].filter((value) => requested.has(JSON.parse(value)[idField]));
+  }
+  writeTopology(projectId, graphSnapshotId, graph, topology) {
+    this.check();
+    const key = `${projectId}:${graphSnapshotId}`;
+    const existing = this.topologies.get(key);
+    if (!existing) this.topologies.set(key, {
+      topologyJson: JSON.stringify(topology),
+      nodeJsons: graph.nodes.map((node) => JSON.stringify(node)),
+      edgeJsons: graph.edges.map((edge) => JSON.stringify(edge)),
+    });
+    else if (existing.topologyJson == null) existing.topologyJson = JSON.stringify(topology);
+  }
+  queryTopology(projectId, graphSnapshotId, { anchorIds, maxDepth, maxRecords }) {
+    this.check();
+    this.queryTopologyCount += 1;
+    const topology = this.topologies.get(`${projectId}:${graphSnapshotId}`);
+    const nodes = (topology?.nodeJsons || []).map((value) => JSON.parse(value));
+    const edges = (topology?.edgeJsons || []).map((value) => JSON.parse(value));
+    const nodesById = new Map(nodes.map((node) => [node.nodeId, node]));
+    const visitedNodes = new Set(anchorIds);
+    const visitedEdges = new Set();
+    const records = anchorIds.map((nodeId) => ({
+      recordType: "HeadAgentGraphNode",
+      nodeJson: JSON.stringify(nodesById.get(nodeId)),
+      edgeJson: null,
+      recordDepth: 0,
+    }));
+    let frontier = new Set(anchorIds);
+    for (let level = 0; level < maxDepth && frontier.size; level += 1) {
+      const next = new Set();
+      for (const edge of edges) {
+        if ((!frontier.has(edge.from) && !frontier.has(edge.to)) || visitedEdges.has(edge.edgeId)) continue;
+        visitedEdges.add(edge.edgeId);
+        records.push({
+          recordType: "HeadAgentGraphEdge",
+          nodeJson: null,
+          edgeJson: JSON.stringify(edge),
+          recordDepth: (level * 2) + 1,
+        });
+        for (const nodeId of [edge.from, edge.to]) if (!visitedNodes.has(nodeId)) next.add(nodeId);
+      }
+      for (const node of nodes) {
+        if (!next.has(node.nodeId)) continue;
+        visitedNodes.add(node.nodeId);
+        records.push({
+          recordType: "HeadAgentGraphNode",
+          nodeJson: JSON.stringify(node),
+          edgeJson: null,
+          recordDepth: (level + 1) * 2,
+        });
+      }
+      frontier = next;
+    }
+    if (this.traversalFault === "missing") records.pop();
+    if (this.traversalFault === "forged" && records.length) {
+      const forged = { ...records[0], nodeJson: JSON.stringify({ ...JSON.parse(records[0].nodeJson), nodeId: "forged-node" }) };
+      records[0] = forged;
+    }
+    return {
+      protocolVersion: "0.1.0",
+      graphSnapshotId,
+      anchorIds: [...anchorIds],
+      maxDepth,
+      maxRecords,
+      truncated: this.traversalFault === "truncated" || records.length > maxRecords,
+      records: records.slice(0, maxRecords),
+    };
+  }
+}
+
+test("activates an ArcadeDB projection only after adapter-neutral conformance and keeps local recovery", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const onboarding = await startOnboarding({
+    root,
+    mode: "existing",
+    storage: {
+      mode: "graphdb",
+      endpoint: "https://graph.example.test",
+      database: "head_agent",
+      secretReferenceNames: { username: "HEAD_GRAPHDB_USERNAME", password: "HEAD_GRAPHDB_PASSWORD" },
+    },
+  });
+  assert.equal(onboarding.storageSelection.graphdb.capabilityStatus, "pending-unverified-adapter");
+  assert.equal(runCommand(["help"]).commands.includes("head world-graph-remote-activate <project>"), false);
+  assert.equal(runCommand(["help"]).surface, "light-default");
+  assert.equal(runCommand(["help"]).laneRecommendationRequired, false);
+  assert.equal(runCommand(["help-all"]).commands.includes("head world-graph-remote-activate <project>"), true);
+  assert.equal(runCommand(["help-all"]).surface, "complete-compatibility");
+  assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_projection_status"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_database_initialize"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_projection_activate"), true);
+  assert.equal(inspectArcadeDbGraphProjectionActivation({ projectRoot: root }).status, "pending-activation");
+
+  const transport = new MockArcadeDbTransport();
+  const preActivationGraph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  transport.topologies.set(`${onboarding.storageSelection.projectId}:${preActivationGraph.graphSnapshotId}`, {
+    topologyJson: null,
+    nodeJsons: [JSON.stringify(preActivationGraph.nodes[0])],
+    edgeJsons: [],
+  });
+  const initializeWithoutConfirmation = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: "graphdb-initialize-rejected",
+    method: "tools/call",
+    params: { name: "head_graphdb_database_initialize", arguments: { project_root: root } },
+  }, { graphDbTransport: transport });
+  assert.match(initializeWithoutConfirmation.error.message, /explicit user confirmation/i);
+
+  const initializedResponse = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: "graphdb-initialize",
+    method: "tools/call",
+    params: {
+      name: "head_graphdb_database_initialize",
+      arguments: { project_root: root, confirm_initialize: true },
+    },
+  }, { graphDbTransport: transport });
+  assert.equal(initializedResponse.error, undefined);
+  assert.equal(initializedResponse.result.structuredContent.status, "compatible-ready-for-activation");
+  assert.equal(initializedResponse.result.structuredContent.action, "reused-compatible-database");
+
+  const activateWithoutConfirmation = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: "graphdb-activate-rejected",
+    method: "tools/call",
+    params: { name: "head_graphdb_projection_activate", arguments: { project_root: root } },
+  }, { graphDbTransport: transport });
+  assert.match(activateWithoutConfirmation.error.message, /explicit user confirmation/i);
+
+  const activatedResponse = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: "graphdb-activate",
+    method: "tools/call",
+    params: {
+      name: "head_graphdb_projection_activate",
+      arguments: { project_root: root, confirm_remote_write: true },
+    },
+  }, { graphDbTransport: transport });
+  assert.equal(activatedResponse.error, undefined);
+  const activated = activatedResponse.result.structuredContent;
+  assert.equal(activated.status, "verified-active");
+  assert.equal(activated.credentialsPersisted, false);
+  assert.equal(activated.conformanceReport.semanticIdentity, "adapter-neutral");
+  assert.equal(activated.conformanceReport.cases.length, 2);
+  assert.equal(activated.conformanceReport.candidateAdapter.traversalMode, "server-expanded-client-canonicalized");
+  assert.equal(activated.traversalMode, "server-expanded-client-canonicalized");
+  assert.equal(activated.topology.traversalMode, "verified-topology-client-reference");
+  assert.equal(activated.topology.nodeCount > 0, true);
+  assert.equal(activated.topology.edgeCount >= 0, true);
+  assert.equal(activated.incrementalSync.batchCount > 0, true);
+  assert.equal(activated.incrementalSync.appliedBatchCount, activated.incrementalSync.batchCount);
+  assert.equal(activated.incrementalSync.atomicPointerTransitionVerified, true);
+  assert.equal(activated.incrementalSync.localMirrorVerified, true);
+  assert.equal(JSON.stringify(activated).includes("HEAD_GRAPHDB_PASSWORD"), false);
+
+  const interruptedTransport = new MockArcadeDbTransport({ failCheckpointAfter: 1 });
+  const interruptedAdapter = new ArcadeDbGraphProjectionAdapter({
+    storageSelection: onboarding.storageSelection,
+    transport: interruptedTransport,
+    topologyRequired: true,
+    incrementalSyncRequired: true,
+  });
+  assert.throws(
+    () => interruptedAdapter.writeSnapshot(preActivationGraph.graphSnapshotId, preActivationGraph),
+    { code: "ARCADEDB_TRANSPORT_UNAVAILABLE" },
+  );
+  assert.equal(interruptedTransport.readPointer(onboarding.storageSelection.projectId), null);
+  const resumedAdapter = new ArcadeDbGraphProjectionAdapter({
+    storageSelection: onboarding.storageSelection,
+    transport: interruptedTransport,
+    topologyRequired: true,
+    incrementalSyncRequired: true,
+  });
+  resumedAdapter.writeSnapshot(preActivationGraph.graphSnapshotId, preActivationGraph);
+  resumedAdapter.writePointer(buildGraphProjectionPointer(preActivationGraph));
+  const resumedSync = resumedAdapter.takeCompletedIncrementalSync();
+  assert.equal(resumedSync.syncState.resumedBatchCount >= 1, true);
+  assert.equal(resumedSync.syncState.appliedBatchCount + resumedSync.syncState.resumedBatchCount, resumedSync.manifest.batchCount);
+
+  const conflictTransport = new MockArcadeDbTransport();
+  const conflictAdapter = new ArcadeDbGraphProjectionAdapter({
+    storageSelection: onboarding.storageSelection,
+    transport: conflictTransport,
+    topologyRequired: true,
+    incrementalSyncRequired: true,
+  });
+  conflictAdapter.writeSnapshot(preActivationGraph.graphSnapshotId, preActivationGraph);
+  const externallyAdvancedPointer = buildGraphProjectionPointer(preActivationGraph);
+  conflictTransport.pointers.set(onboarding.storageSelection.projectId, JSON.stringify(externallyAdvancedPointer));
+  assert.throws(
+    () => conflictAdapter.writePointer(externallyAdvancedPointer),
+    { code: "ARCADEDB_INCREMENTAL_SYNC_POINTER_CONFLICT" },
+  );
+  assert.equal(conflictTransport.readPointer(onboarding.storageSelection.projectId), JSON.stringify(externallyAdvancedPointer));
+
+  const conflictingPartialTransport = new MockArcadeDbTransport();
+  const conflictingNode = JSON.parse(JSON.stringify(preActivationGraph.nodes[0]));
+  conflictingNode.freshness = "stale";
+  conflictingPartialTransport.topologies.set(`${onboarding.storageSelection.projectId}:${preActivationGraph.graphSnapshotId}`, {
+    topologyJson: null,
+    nodeJsons: [JSON.stringify(conflictingNode)],
+    edgeJsons: [],
+  });
+  const conflictingPartialAdapter = new ArcadeDbGraphProjectionAdapter({
+    storageSelection: onboarding.storageSelection,
+    transport: conflictingPartialTransport,
+  });
+  assert.throws(() => conflictingPartialAdapter.materializeTopology(preActivationGraph), { code: "ARCADEDB_GRAPH_TOPOLOGY_CONTENT_MISMATCH" });
+
+  const configured = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, transport });
+  assert.ok(configured instanceof ActivatedArcadeDbGraphProjectionAdapter);
+  const remoteStatus = inspectArcadeDbGraphProjectionStatus({ root, transport });
+  assert.equal(remoteStatus.status, "verified-active-current");
+  assert.equal(remoteStatus.projection.adapter.adapterKind, "activated-arcadedb-with-local-mirror");
+  assert.equal(remoteStatus.projection.adapter.fallbackUsed, false);
+  assert.equal(remoteStatus.projection.adapter.topologyMode, "snapshot-scoped-vertex-edge-verified");
+  assert.equal(remoteStatus.projection.adapter.traversalMode, "server-expanded-client-canonicalized");
+  assert.equal(remoteStatus.traversalMode, "server-expanded-client-canonicalized");
+  assert.equal(remoteStatus.topology.status, "verified-active");
+  assert.equal(remoteStatus.incrementalSync.status, "verified-current");
+
+  const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  const query = { query: graph.nodes[0].nodeId, depth: 1, maxNodes: 50, maxEdges: 100 };
+  const expected = queryTemporalProvenanceGraph(graph, query);
+  transport.resetCounters();
+  const remote = queryWorldTemporalGraph({ root, graphProjectionAdapter: configured, ...query });
+  assert.equal(remote.resultId, expected.resultId);
+  assert.equal(remote.resultHash, expected.resultHash);
+  assert.equal(remote.graphProjection.executionMode, "prepared-graph-projection-adapter");
+  assert.equal(remote.graphProjection.preparedTraversal.verificationMode, "arcadedb-manifest-bounded-expansion");
+  assert.equal(transport.readSnapshotCount, 0);
+  assert.equal(transport.readPointerCount, 1);
+  assert.equal(transport.readTopologyCount, 0);
+  assert.equal(transport.readTopologyManifestCount, 1);
+  assert.equal(transport.queryTopologyCount, 1);
+
+  for (const [traversalFault, code] of [
+    ["missing", "ARCADEDB_SERVER_TRAVERSAL_COVERAGE_MISMATCH"],
+    ["forged", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH"],
+    ["truncated", "ARCADEDB_SERVER_TRAVERSAL_TRUNCATED"],
+    ["manifest", "ARCADEDB_GRAPH_TOPOLOGY_DIGEST_MISMATCH"],
+  ]) {
+    const faultyTransport = new MockArcadeDbTransport({ traversalFault });
+    faultyTransport.snapshots = new Map(transport.snapshots);
+    faultyTransport.pointers = new Map(transport.pointers);
+    faultyTransport.topologies = new Map(transport.topologies);
+    const faulty = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, transport: faultyTransport });
+    assert.throws(() => queryWorldTemporalGraph({ root, graphProjectionAdapter: faulty, ...query }), { code });
+  }
+
+  const legacyClientMode = new ArcadeDbGraphProjectionAdapter({
+    storageSelection: onboarding.storageSelection,
+    transport,
+    topologyRequired: true,
+  });
+  assert.equal(legacyClientMode.describe().traversalMode, "verified-topology-client-reference");
+  assert.equal(legacyClientMode.query(graph.graphSnapshotId, query).resultId, expected.resultId);
+
+  const repeated = activateArcadeDbGraphProjection({ root, transport });
+  assert.equal(repeated.topology.activationId, activated.topology.activationId);
+  assert.equal(repeated.incrementalSync.batchCount, 0);
+  assert.equal(repeated.incrementalSync.pointerAdvanced, false);
+
+  const topologyKey = `${activated.projectId}:${graph.graphSnapshotId}`;
+  const exactTopology = transport.topologies.get(topologyKey);
+  transport.topologies.set(topologyKey, { ...exactTopology, nodeJsons: exactTopology.nodeJsons.slice(1) });
+  assert.throws(() => inspectArcadeDbGraphProjectionStatus({ root, transport }), { code: "ARCADEDB_GRAPH_TOPOLOGY_CONTENT_MISMATCH" });
+  transport.topologies.set(topologyKey, exactTopology);
+
+  const topologyReceipt = inspectArcadeDbGraphTopologyActivation({ projectRoot: root, graph });
+  const exactTopologyActivation = JSON.parse(fs.readFileSync(topologyReceipt.activationFile, "utf8"));
+  fs.writeFileSync(topologyReceipt.activationFile, JSON.stringify({ ...exactTopologyActivation, nodeCount: exactTopologyActivation.nodeCount + 1 }));
+  assert.throws(() => inspectArcadeDbGraphTopologyActivation({ projectRoot: root, graph }), { code: "ARCADEDB_TOPOLOGY_ACTIVATION_DIGEST_MISMATCH" });
+  fs.writeFileSync(topologyReceipt.activationFile, JSON.stringify(exactTopologyActivation));
+
+  const unavailable = new ActivatedArcadeDbGraphProjectionAdapter({
+    projectRoot: root,
+    storageSelection: onboarding.storageSelection,
+    remoteAdapter: new ArcadeDbGraphProjectionAdapter({
+      storageSelection: onboarding.storageSelection,
+      transport: new MockArcadeDbTransport({ failureCode: "ARCADEDB_TRANSPORT_UNAVAILABLE" }),
+    }),
+  });
+  const fallback = queryWorldTemporalGraph({ root, graphProjectionAdapter: unavailable, ...query });
+  assert.equal(fallback.resultId, expected.resultId);
+  assert.equal(fallback.graphProjection.adapter.fallbackUsed, true);
+  assert.equal(fallback.graphProjection.adapter.fallbackReasonCode, "ARCADEDB_TRANSPORT_UNAVAILABLE");
+
+  const rejected = new ActivatedArcadeDbGraphProjectionAdapter({
+    projectRoot: root,
+    storageSelection: onboarding.storageSelection,
+    remoteAdapter: new ArcadeDbGraphProjectionAdapter({
+      storageSelection: onboarding.storageSelection,
+      transport: new MockArcadeDbTransport({ failureCode: "ARCADEDB_AUTHENTICATION_FAILED" }),
+    }),
+  });
+  assert.throws(() => inspectWorldGraphProjection({ root, graphProjectionAdapter: rejected }), { code: "ARCADEDB_AUTHENTICATION_FAILED" });
+
+  fs.writeFileSync(path.join(root, "src", "topology-refresh.mjs"), "export const topologyRefresh = true;\n");
+  const advancingAdapter = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, transport });
+  const advanced = await buildWorldModel({ root, graphProjectionAdapter: advancingAdapter });
+  const advancedGraph = advanced.snapshot.temporalProvenanceGraph;
+  const advancedTopology = inspectArcadeDbGraphTopologyActivation({ projectRoot: root, graph: advancedGraph });
+  assert.equal(advancedTopology.status, "verified-active");
+  assert.equal(advancedTopology.activation.graphSnapshotId, advancedGraph.graphSnapshotId);
+  assert.equal(transport.topologies.has(`${activated.projectId}:${advancedGraph.graphSnapshotId}`), true);
+  assert.equal(inspectArcadeDbGraphProjectionStatus({ root, transport }).status, "verified-active-current");
+  const advancedSync = inspectArcadeDbIncrementalSyncReceipt({ projectRoot: root, graph: advancedGraph });
+  assert.equal(advancedSync.status, "verified-current");
+  const advancedManifest = JSON.parse(transport.syncManifests.get(`${activated.projectId}:${advancedSync.receipt.syncId}`));
+  assert.equal(advancedManifest.nodeDelta.carried.count + advancedManifest.nodeDelta.rebased.count > 0, true);
+  assert.equal(advancedManifest.edgeDelta.carried.count + advancedManifest.edgeDelta.rebased.count > 0, true);
+  assert.equal(advancedManifest.nodeDelta.added.count + advancedManifest.nodeDelta.changed.count < advancedGraph.nodes.length, true);
+
+  const receipt = inspectArcadeDbGraphProjectionActivation({ projectRoot: root });
+  const conformance = JSON.parse(fs.readFileSync(receipt.conformanceFile, "utf8"));
+  const tamperedConformance = JSON.parse(JSON.stringify(conformance));
+  tamperedConformance.cases[0].resultHash = "0".repeat(64);
+  fs.writeFileSync(receipt.conformanceFile, JSON.stringify(tamperedConformance));
+  assert.throws(() => inspectArcadeDbGraphProjectionActivation({ projectRoot: root }), { code: "GRAPH_PROJECTION_CONFORMANCE_DIGEST_MISMATCH" });
+  fs.writeFileSync(receipt.conformanceFile, JSON.stringify(conformance));
+  const tampered = JSON.parse(fs.readFileSync(receipt.activationFile, "utf8"));
+  tampered.activationStatus = "authority";
+  fs.writeFileSync(receipt.activationFile, JSON.stringify(tampered));
+  assert.throws(() => inspectArcadeDbGraphProjectionActivation({ projectRoot: root }), { code: "ARCADEDB_ACTIVATION_DIGEST_MISMATCH" });
+});
+
+test("renders deterministic Markdown projections and captures edits as non-authoritative candidates", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const indexed = await buildWorldModel({ root });
+  const graph = indexed.snapshot.temporalProvenanceGraph;
+
+  const rendered = buildMarkdownDocumentProjection(graph);
+  assert.match(rendered.documentProjectionId, /^document-projection-[a-f0-9]{24}$/);
+  assert.equal(rendered.authority, "derived-human-view-only");
+  assert.equal(rendered.instructionAuthority, false);
+  assert.equal(rendered.promotionAuthority, false);
+  assert.equal(rendered.documents.some((item) => item.relativePath === "index.md"), true);
+  assert.equal(rendered.documents.some((item) => item.content.includes("not project canon")), true);
+
+  const memory = new InMemoryMarkdownProjectionAdapter({ adapterKind: "conformance-memory-markdown" });
+  const throughMemory = materializeWorldMarkdownProjection({ root, documentProjectionAdapter: memory });
+  assert.equal(throughMemory.projection.adapter.adapterVersion, DOCUMENT_PROJECTION_ADAPTER_VERSION);
+  assert.equal(throughMemory.documentProjectionId, rendered.documentProjectionId);
+  assert.equal(inspectWorldMarkdownProjection({ root, documentProjectionAdapter: memory }).status, "current");
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "not-materialized");
+
+  const conformance = verifyDocumentProjectionAdapterConformance({
+    projectRoot: root,
+    graph,
+    referenceAdapter: new LocalMarkdownProjectionAdapter({ projectRoot: root }),
+    candidateAdapter: new InMemoryMarkdownProjectionAdapter({ adapterKind: "candidate-memory-markdown" }),
+  });
+  assert.match(conformance.conformanceReportId, /^document-projection-conformance-[a-f0-9]{24}$/);
+  assert.equal(conformance.documentProjectionId, rendered.documentProjectionId);
+  assert.equal(conformance.semanticIdentity, "adapter-neutral");
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
+  assert.equal(runCommand(["world-docs-status", root]).status, "current");
+  assert.equal(runCommand(["world-docs-build", root]).documentProjectionId, rendered.documentProjectionId);
+
+  const mcpStatus = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 61,
+    method: "tools/call",
+    params: { name: "head_markdown_projection_status", arguments: { project_root: root } },
+  });
+  assert.equal(mcpStatus.result.structuredContent.status, "current");
+  assert.equal(mcpStatus.result.structuredContent.authority, "rebuildable-derived-human-view-not-project-canon");
+
+  const authorityViolating = new InMemoryMarkdownProjectionAdapter({ adapterKind: "invalid-document-authority" });
+  authorityViolating.describe = () => ({
+    contract: "replaceable-rebuildable-derived-human-document-projection",
+    adapterKind: "invalid-document-authority",
+    adapterVersion: DOCUMENT_PROJECTION_ADAPTER_VERSION,
+    formats: ["markdown"],
+    authority: "project-canon",
+    rebuildable: false,
+    uniqueAuthority: true,
+    instructionAuthority: true,
+    promotionAuthority: true,
+    publishedViewIsCanon: true,
+    inboundEdits: "automatic-canon-mutation",
+    remote: false,
+    durable: false,
+  });
+  assert.throws(() => materializeMarkdownProjection({ projectRoot: root, graph, adapter: authorityViolating }), { code: "INVALID_DOCUMENT_PROJECTION_AUTHORITY" });
+
+  const tampered = new InMemoryMarkdownProjectionAdapter({ adapterKind: "tampered-document-projection" });
+  const tamperedResult = materializeMarkdownProjection({ projectRoot: root, graph, adapter: tampered });
+  tampered.projections.get(tamperedResult.projection.documentProjectionId).summary.documentCount += 1;
+  assert.throws(() => inspectMarkdownProjection({ projectRoot: root, graph, adapter: tampered }), { code: "DOCUMENT_PROJECTION_DIGEST_MISMATCH" });
+
+  const mutating = new InMemoryMarkdownProjectionAdapter({ adapterKind: "mutating-publisher" });
+  const originalPublish = mutating.publishDocuments.bind(mutating);
+  mutating.publishDocuments = (documents, options) => {
+    documents[0].content += "mutated\n";
+    return originalPublish(documents, options);
+  };
+  assert.throws(() => materializeMarkdownProjection({ projectRoot: root, graph, adapter: mutating }), { code: "DOCUMENT_PROJECTION_PUBLISH_MISMATCH" });
+  assert.equal(buildMarkdownDocumentProjection(graph).documentProjectionId, rendered.documentProjectionId);
+
+  const indexFile = path.join(root, ".head", "generated", "knowledge", "index.md");
+  fs.appendFileSync(indexFile, "\nUser-proposed documentation change.\n");
+  const removedDocument = rendered.documents.find((item) => item.relativePath.startsWith("nodes/"));
+  fs.unlinkSync(path.join(root, ".head", "generated", "knowledge", ...removedDocument.relativePath.split("/")));
+  fs.mkdirSync(path.join(root, ".head", "generated", "knowledge", "notes"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head", "generated", "knowledge", "notes", "proposal.md"), "# Proposed note\n");
+  const modified = inspectWorldMarkdownProjection({ root });
+  assert.equal(modified.status, "modified");
+  assert.equal(modified.projection.candidateRequired, true);
+  assert.deepEqual([...new Set(modified.projection.drift.map((item) => item.changeType))].sort(), ["added", "modified", "removed"]);
+  assert.throws(() => materializeWorldMarkdownProjection({ root }), { code: "DOCUMENT_PROJECTION_UNREVIEWED_DRIFT" });
+
+  const captured = captureWorldMarkdownChanges({ root, persist: true });
+  assert.equal(captured.status, "captured");
+  assert.match(captured.candidateSet.candidateSetId, /^document-change-candidate-set-[a-f0-9]{24}$/);
+  assert.deepEqual([...new Set(captured.candidateSet.candidates.map((item) => item.changeType))].sort(), ["added", "modified", "removed"]);
+  assert.equal(captured.candidateSet.requiresReviewDecision, true);
+  assert.equal(captured.candidateSet.instructionAuthority, false);
+  assert.equal(captured.candidateSet.promotionAuthority, false);
+  assert.equal(captureWorldMarkdownChanges({ root, persist: true }).candidateSet.candidateSetId, captured.candidateSet.candidateSetId);
+  assert.equal(readWorldDocumentChangeCandidateSet({ root, candidateSetId: captured.candidateSet.candidateSetId }).candidateSet.candidateSetId, captured.candidateSet.candidateSetId);
+  assert.equal(runCommand(["world-docs-candidates", root, "--candidate-set", captured.candidateSet.candidateSetId]).candidateSet.candidateSetId, captured.candidateSet.candidateSetId);
+
+  const mcpCandidate = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 62,
+    method: "tools/call",
+    params: { name: "head_document_change_candidates", arguments: { project_root: root, candidate_set_id: captured.candidateSet.candidateSetId } },
+  });
+  assert.equal(mcpCandidate.result.structuredContent.candidateSet.candidateSetId, captured.candidateSet.candidateSetId);
+
+  const tamperedCandidateSet = clone(captured.candidateSet);
+  tamperedCandidateSet.candidates[0].proposedContentHash = "f".repeat(64);
+  fs.writeFileSync(captured.file, `${JSON.stringify(tamperedCandidateSet, null, 2)}\n`);
+  assert.throws(() => readWorldDocumentChangeCandidateSet({ root, candidateSetId: captured.candidateSet.candidateSetId }), { code: "DOCUMENT_CHANGE_CANDIDATE_DIGEST_MISMATCH" });
+  fs.writeFileSync(captured.file, `${JSON.stringify(captured.candidateSet, null, 2)}\n`);
+
+  fs.writeFileSync(indexFile, rendered.documents.find((item) => item.relativePath === "index.md").content);
+  fs.writeFileSync(path.join(root, ".head", "generated", "knowledge", ...removedDocument.relativePath.split("/")), removedDocument.content);
+  fs.unlinkSync(path.join(root, ".head", "generated", "knowledge", "notes", "proposal.md"));
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export class Worker {}\n");
+  await buildWorldModel({ root });
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "stale");
+});
+
+test("promotes document edits only through explicit structured Product Canon review and reconciles rejected views", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const indexed = await buildWorldModel({ root });
+  assert.equal(indexed.snapshot.git.status, "not-a-git-repository");
+  const initialCanon = fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8");
+  const rendered = materializeWorldMarkdownProjection({ root });
+  const indexFile = path.join(root, ".head", "generated", "knowledge", "index.md");
+  fs.appendFileSync(indexFile, "\nProposal: add an auditable document review feature.\n");
+  const captured = captureWorldMarkdownChanges({ root, persist: true });
+  const resultingProductModel = {
+    schemaVersion: 1,
+    featureGroups: [{ key: "knowledge", name: "Knowledge projections", description: "Human-facing graph projections.", parentFeatureGroupKeys: [] }],
+    capabilities: [{ key: "review-docs", name: "Review document changes", description: "Review document edits before Canon mutation." }],
+    features: [{
+      key: "document-change-review",
+      name: "Document change review",
+      description: "Turns explicitly reviewed document proposals into structured Product Canon.",
+      featureGroupKeys: ["knowledge"],
+      capabilityKeys: ["review-docs"],
+      governedBy: [],
+    }],
+    requirements: [],
+    constraints: [],
+    decisions: [],
+  };
+
+  const reviewed = await reviewDocumentChanges({
+    root,
+    candidateSetId: captured.candidateSet.candidateSetId,
+    disposition: "accept-all",
+    resultingProductModel,
+    rationale: "The user explicitly maps this proposal to a complete typed Product Model.",
+    apply: false,
+  });
+  assert.equal(reviewed.status, "reviewed-awaiting-application");
+  assert.equal(reviewed.reviewDecision.instructionAuthority, true);
+  assert.equal(reviewed.reviewDecision.promotionAuthority, true);
+  assert.equal(fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8"), initialCanon);
+  assert.equal(inspectDocumentChangeReviewStatus({ root, candidateSetId: captured.candidateSet.candidateSetId }).status, "reviewed-awaiting-application");
+  assert.equal(readDocumentChangeReviewDecision({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }).resultingProductModelRevision.productModelId, reviewed.reviewDecision.resultingProductModelId);
+  assert.equal(runCommand(["world-docs-review-status", root, "--candidate-set", captured.candidateSet.candidateSetId]).status, "reviewed-awaiting-application");
+  assert.equal(runCommand(["world-docs-review-read", root, "--review", reviewed.reviewDecision.reviewDecisionId]).reviewDecision.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
+  const mcpReviewStatus = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 63,
+    method: "tools/call",
+    params: { name: "head_document_change_review_status", arguments: { project_root: root, candidate_set_id: captured.candidateSet.candidateSetId } },
+  });
+  assert.equal(mcpReviewStatus.result.structuredContent.status, "reviewed-awaiting-application");
+  const mcpReview = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 64,
+    method: "tools/call",
+    params: { name: "head_document_change_review", arguments: { project_root: root, review_decision_id: reviewed.reviewDecision.reviewDecisionId } },
+  });
+  assert.equal(mcpReview.result.structuredContent.reviewDecision.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
+
+  const applied = await applyDocumentChangeReview({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId });
+  assert.equal(applied.status, "applied");
+  assert.equal(applied.applicationReceipt.canonChanged, true);
+  assert.equal(applied.applicationReceipt.canonMutation, "exact-user-reviewed-product-model");
+  assert.equal(applied.applicationReceipt.activeRunMutation, "none");
+  assert.equal(applied.worldModel.productModel.productModelId, reviewed.reviewDecision.resultingProductModelId);
+  assert.equal(applied.worldModel.temporalProvenanceGraph.parentSourceSnapshotIds.includes(indexed.snapshot.temporalProvenanceGraph.sourceSnapshotId), true);
+  assert.equal(inspectWorldModel({ root }).status, "current");
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
+  assert.equal(applied.auditWorldModel.temporalProvenanceGraph.documentChangeProjection.applicationReceiptIds.includes(applied.applicationReceipt.applicationReceiptId), true);
+  assert.equal(applied.auditWorldModel.temporalProvenanceGraph.nodes.some((node) => node.kind === "DocumentChangeReviewDecision" && node.nodeId === reviewed.reviewDecision.reviewDecisionId), true);
+  assert.equal(applied.auditWorldModel.temporalProvenanceGraph.nodes.some((node) => node.kind === "DocumentChangeApplication" && node.nodeId === applied.applicationReceipt.applicationReceiptId), true);
+  const hiddenDocumentCandidate = queryWorldTemporalGraph({
+    root,
+    query: captured.candidateSet.candidates[0].candidateId,
+    freshness: ["historical"],
+  });
+  assert.equal(hiddenDocumentCandidate.nodes.some((node) => node.kind === "DocumentChangeCandidate"), false);
+  const visibleDocumentCandidate = queryWorldTemporalGraph({
+    root,
+    query: captured.candidateSet.candidates[0].candidateId,
+    freshness: ["historical"],
+    includeUnreviewedCandidates: true,
+  });
+  assert.equal(visibleDocumentCandidate.nodes.some((node) => node.kind === "DocumentChangeCandidate"), true);
+  assert.equal(inspectDocumentChangeReviewStatus({ root, candidateSetId: captured.candidateSet.candidateSetId }).status, "applied");
+  assert.equal(readDocumentChangeApplicationReceipt({ root, applicationReceiptId: applied.applicationReceipt.applicationReceiptId }).applicationReceipt.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
+  assert.equal(runCommand(["world-docs-application-read", root, "--application", applied.applicationReceipt.applicationReceiptId]).applicationReceipt.applicationReceiptId, applied.applicationReceipt.applicationReceiptId);
+  const mcpApplication = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 65,
+    method: "tools/call",
+    params: { name: "head_document_change_application", arguments: { project_root: root, application_receipt_id: applied.applicationReceipt.applicationReceiptId } },
+  });
+  assert.equal(mcpApplication.result.structuredContent.applicationReceipt.applicationReceiptId, applied.applicationReceipt.applicationReceiptId);
+  assert.equal((await applyDocumentChangeReview({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId })).status, "already-applied");
+
+  const appliedCanon = fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8");
+  fs.appendFileSync(indexFile, "\nProposal that the user rejects.\n");
+  const rejectedCandidateSet = captureWorldMarkdownChanges({ root, persist: true }).candidateSet;
+  const rejectionInput = path.join(root, ".head", "document-change-rejection-input.json");
+  fs.writeFileSync(rejectionInput, `${JSON.stringify({
+    candidateSetId: rejectedCandidateSet.candidateSetId,
+    disposition: "reject",
+    rationale: "The edit does not describe an intended Product Canon change.",
+  }, null, 2)}\n`);
+  const rejected = await runCommand(["world-docs-review", root, "--input", rejectionInput]);
+  assert.equal(rejected.status, "rejected-and-reconciled");
+  assert.equal(rejected.reviewDecision.promotionAuthority, false);
+  assert.equal(rejected.applicationReceipt.canonChanged, false);
+  assert.equal(rejected.applicationReceipt.canonMutation, "none");
+  assert.equal(fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8"), appliedCanon);
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
+  assert.equal(inspectDocumentChangeReviewStatus({ root, candidateSetId: rejectedCandidateSet.candidateSetId }).status, "rejected-and-reconciled");
+
+  fs.appendFileSync(indexFile, "\nA later proposal.\n");
+  const staleCandidateSet = captureWorldMarkdownChanges({ root, persist: true }).candidateSet;
+  fs.appendFileSync(indexFile, "\nChanged after capture.\n");
+  await assert.rejects(() => reviewDocumentChanges({
+    root,
+    candidateSetId: staleCandidateSet.candidateSetId,
+    disposition: "reject",
+    rationale: "This must fail because the published proposal changed after capture.",
+  }), { code: "DOCUMENT_CHANGE_CANDIDATE_PUBLISHED_DRIFT" });
+
+  const reviewFile = path.join(root, ".head", "document-changes", "review-decisions", `${reviewed.reviewDecision.reviewDecisionId}.json`);
+  const reviewDocument = JSON.parse(fs.readFileSync(reviewFile, "utf8"));
+  const tamperedReview = clone(reviewDocument);
+  tamperedReview.rationale = "tampered";
+  fs.writeFileSync(reviewFile, `${JSON.stringify(tamperedReview, null, 2)}\n`);
+  assert.throws(() => readDocumentChangeReviewDecision({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }), { code: "DOCUMENT_CHANGE_REVIEW_DIGEST_MISMATCH" });
+  fs.writeFileSync(reviewFile, `${JSON.stringify(reviewDocument, null, 2)}\n`);
+
+  const applicationFile = path.join(root, ".head", "document-changes", "applications", `${applied.applicationReceipt.applicationReceiptId}.json`);
+  const applicationDocument = JSON.parse(fs.readFileSync(applicationFile, "utf8"));
+  const tamperedApplication = clone(applicationDocument);
+  tamperedApplication.applicationReceiptHash = "f".repeat(64);
+  fs.writeFileSync(applicationFile, `${JSON.stringify(tamperedApplication, null, 2)}\n`);
+  assert.throws(() => readDocumentChangeApplicationReceipt({ root, applicationReceiptId: applied.applicationReceipt.applicationReceiptId }), { code: "DOCUMENT_CHANGE_APPLICATION_DIGEST_MISMATCH" });
+  fs.writeFileSync(applicationFile, `${JSON.stringify(applicationDocument, null, 2)}\n`);
+});
+
+test("applies explicit post-refresh Markdown policy without overwriting edited projections or changing authority", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const indexed = await buildWorldModel({ root });
+  assert.equal(indexed.snapshot.git.status, "not-a-git-repository");
+  const productCanonBefore = fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8");
+
+  const implicit = inspectPostRefreshProjectionPolicy({ root });
+  assert.equal(implicit.status, "implicit-default");
+  assert.equal(implicit.policy.mode, "manual");
+  const manual = await refreshWorldModel({ root });
+  assert.equal(manual.postRefreshProjection.status, "manual-deferred");
+  assert.equal(fs.existsSync(path.join(root, ".head", "generated", "knowledge")), false);
+
+  const policyInput = path.join(root, ".head", "automatic-markdown-policy.json");
+  fs.writeFileSync(policyInput, `${JSON.stringify({ mode: "automatic" }, null, 2)}\n`);
+  const configured = runCommand(["world-docs-policy-set", root, "--input", policyInput]);
+  assert.equal(configured.policy.mode, "automatic");
+  assert.equal(configured.policy.selection, "explicit-user-selection");
+  assert.equal(runCommand(["world-docs-policy-status", root]).policy.policyId, configured.policy.policyId);
+
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const refreshed = true;\n");
+  const projected = await refreshWorldModel({ root, expectedChangedPaths: ["src/service.mjs"] });
+  assert.equal(projected.status, "refreshed");
+  assert.equal(projected.postRefreshProjection.status, "projected");
+  assert.equal(projected.postRefreshProjection.receipt.policy.policyId, configured.policy.policyId);
+  assert.equal(projected.postRefreshProjection.receipt.canonMutation, "none");
+  assert.equal(projected.postRefreshProjection.receipt.activeRunMutation, "none");
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
+  const projectedRead = readPostRefreshProjectionReceipt({
+    root,
+    postRefreshProjectionReceiptId: projected.postRefreshProjection.receipt.postRefreshProjectionReceiptId,
+  });
+  assert.equal(projectedRead.refresh.receipt.refreshReceiptId, projected.receipt.refreshReceiptId);
+  assert.equal(projectedRead.projection.graphSnapshotId, projected.receipt.next.graphSnapshotId);
+  assert.equal(runCommand(["world-docs-refresh-status", root]).status, "projected");
+  assert.equal(runCommand(["world-docs-refresh-read", root, "--receipt", projected.postRefreshProjection.receipt.postRefreshProjectionReceiptId]).receipt.postRefreshProjectionReceiptId, projected.postRefreshProjection.receipt.postRefreshProjectionReceiptId);
+
+  const mcpStatus = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 63,
+    method: "tools/call",
+    params: { name: "head_post_refresh_projection_status", arguments: { project_root: root } },
+  });
+  assert.equal(mcpStatus.result.structuredContent.status, "projected");
+  const mcpReceipt = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 64,
+    method: "tools/call",
+    params: {
+      name: "head_post_refresh_projection_receipt",
+      arguments: {
+        project_root: root,
+        post_refresh_projection_receipt_id: projected.postRefreshProjection.receipt.postRefreshProjectionReceiptId,
+      },
+    },
+  });
+  assert.equal(mcpReceipt.result.structuredContent.receipt.refresh.refreshReceiptId, projected.receipt.refreshReceiptId);
+
+  const indexFile = path.join(root, ".head", "generated", "knowledge", "index.md");
+  const projectedIndex = fs.readFileSync(indexFile, "utf8");
+  const editedIndex = `${projectedIndex}\nUser-authored projection proposal.\n`;
+  fs.writeFileSync(indexFile, editedIndex);
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const changedAgain = true;\n");
+  const blocked = await refreshWorldModel({ root, expectedChangedPaths: ["src/service.mjs"] });
+  assert.equal(blocked.status, "refreshed");
+  assert.equal(blocked.postRefreshProjection.status, "blocked-edited-view");
+  assert.equal(blocked.postRefreshProjection.receipt.outcome.candidateSetId !== null, true);
+  assert.equal(fs.readFileSync(indexFile, "utf8"), editedIndex);
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "modified");
+  const blockedRead = readPostRefreshProjectionReceipt({
+    root,
+    postRefreshProjectionReceiptId: blocked.postRefreshProjection.receipt.postRefreshProjectionReceiptId,
+  });
+  assert.equal(blockedRead.candidateSet.requiresReviewDecision, true);
+  assert.equal(blockedRead.candidateSet.instructionAuthority, false);
+  assert.equal(blockedRead.candidateSet.promotionAuthority, false);
+
+  fs.writeFileSync(indexFile, projectedIndex);
+  const recovered = await refreshWorldModel({ root });
+  assert.equal(recovered.status, "unchanged");
+  assert.equal(recovered.postRefreshProjection.status, "projected");
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
+  assert.equal(fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8"), productCanonBefore);
+  assert.equal(inspectPostRefreshProjectionStatus({ root }).receipt.canonMutation, "none");
+
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const triggeredProjection = true;\n");
+  const triggered = await processRefreshTriggerBatch({
+    root,
+    sourceKind: "ci",
+    events: [{ kind: "project-signal", operation: "build", path: null, evidenceId: "ci-post-refresh-projection-0001" }],
+  });
+  assert.equal(triggered.delivery.projectionDisposition.documents.status, "projected");
+  const triggeredRead = readRefreshTriggerDelivery({ root, triggerDeliveryId: triggered.delivery.triggerDeliveryId });
+  assert.equal(triggeredRead.postRefreshProjection.receipt.refresh.refreshReceiptId, triggered.refresh.receipt.refreshReceiptId);
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
+
+  const storedPolicy = fs.readFileSync(configured.policyFile, "utf8");
+  const tamperedPolicy = JSON.parse(storedPolicy);
+  tamperedPolicy.safeguards.editedDocuments = "overwrite-silently";
+  fs.writeFileSync(configured.policyFile, `${JSON.stringify(tamperedPolicy, null, 2)}\n`);
+  fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const policyFailureStillRefreshes = true;\n");
+  const failedPolicy = await refreshWorldModel({ root, expectedChangedPaths: ["src/service.mjs"] });
+  assert.equal(failedPolicy.status, "refreshed");
+  assert.equal(failedPolicy.postRefreshProjection.status, "failed");
+  assert.equal(failedPolicy.postRefreshProjection.receipt.policy, null);
+  assert.equal(inspectPostRefreshProjectionStatus({ root }).policy.status, "invalid");
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "stale");
+  fs.writeFileSync(configured.policyFile, storedPolicy);
+  const policyRecovered = await refreshWorldModel({ root });
+  assert.equal(policyRecovered.status, "unchanged");
+  assert.equal(policyRecovered.postRefreshProjection.status, "projected");
+  assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
+
+  const tamperedFile = policyRecovered.postRefreshProjection.receiptFile;
+  const tampered = JSON.parse(fs.readFileSync(tamperedFile, "utf8"));
+  tampered.outcome.reasonCode = "SILENTLY_PROMOTE_DOCUMENT_EDIT";
+  fs.writeFileSync(tamperedFile, `${JSON.stringify(tampered, null, 2)}\n`);
+  assert.throws(() => readPostRefreshProjectionReceipt({ root, postRefreshProjectionReceiptId: policyRecovered.postRefreshProjection.receipt.postRefreshProjectionReceiptId }), { code: "POST_REFRESH_PROJECTION_RECEIPT_DIGEST_MISMATCH" });
+});
+
+test("projects user-owned product canon into immutable temporal revisions and bounded context", async (t) => {
+  const productDocument = {
+    schemaVersion: 1,
+    featureGroups: [{ key: "messaging", name: "Messaging", description: "User communication features" }],
+    capabilities: [{ key: "deliver-message", name: "Deliver a message" }],
+    features: [{
+      key: "message-send",
+      name: "Message delivery",
+      description: "Send one user-authored message",
+      featureGroupKeys: ["messaging"],
+      capabilityKeys: ["deliver-message"],
+      governedBy: [
+        { kind: "Requirement", key: "message-persists" },
+        { kind: "Constraint", key: "retain-input" },
+        { kind: "Decision", key: "inline-payment" },
+      ],
+    }],
+    requirements: [{ key: "message-persists", statement: "A submitted message is persisted before streaming begins." }],
+    constraints: [{ key: "retain-input", statement: "A payment interruption must not discard the chat input." }],
+    decisions: [{ key: "inline-payment", statement: "Keep credit purchase inside the chat flow.", status: "active" }],
+  };
+  const productModel = normalizeProductModelDocument(productDocument);
+  const first = buildTemporalProvenanceGraph({
+    projectId: "project-product-test",
+    files: [],
+    productModel,
+    productEvidenceId: `evidence-${"a".repeat(24)}`,
+  });
+  assert.equal(first.summary.featureGroupCount, 1);
+  assert.equal(first.summary.capabilityCount, 1);
+  assert.equal(first.summary.featureCount, 1);
+  assert.equal(first.summary.productRevisionCount, 6);
+  assert.equal(first.nodes.filter((node) => node.authorityClass === "canon-projected").every((node) => node.instructionAuthority === false), true);
+  const feature = first.nodes.find((node) => node.kind === "Feature");
+  const featureRevision = first.nodes.find((node) => node.kind === "FeatureRevision");
+  assert.ok(first.edges.some((edge) => edge.type === "REALIZES" && edge.from === feature.nodeId));
+  assert.equal(first.edges.filter((edge) => edge.type === "GOVERNED_BY").length, 3);
+
+  const renamedDocument = clone(productDocument);
+  renamedDocument.features[0].name = "Send message";
+  const renamed = buildTemporalProvenanceGraph({
+    projectId: "project-product-test",
+    files: [],
+    productModel: normalizeProductModelDocument(renamedDocument),
+    productEvidenceId: `evidence-${"b".repeat(24)}`,
+    parentSourceSnapshotIds: [first.sourceSnapshotId],
+    revisionParentIds: { [feature.nodeId]: [featureRevision.nodeId] },
+  });
+  assert.equal(renamed.nodes.find((node) => node.kind === "Feature").nodeId, feature.nodeId);
+  assert.notEqual(renamed.nodes.find((node) => node.kind === "FeatureRevision").nodeId, featureRevision.nodeId);
+  assert.ok(renamed.edges.some((edge) => edge.type === "PARENT_OF" && edge.from === featureRevision.nodeId));
+
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const productFile = path.join(root, ".head", "context", "product-model.json");
+  assert.ok(fs.existsSync(productFile));
+  fs.writeFileSync(productFile, `${JSON.stringify(productDocument, null, 2)}\n`);
+  const indexed = await buildWorldModel({ root });
+  assert.equal(indexed.snapshot.productModel.productModelId, productModel.productModelId);
+  assert.equal(indexed.snapshot.summary.featureCount, 1);
+  assert.equal(indexed.snapshot.temporalProvenanceGraph.summary.productRevisionCount, 6);
+  const query = queryWorldTemporalGraph({
+    root,
+    query: "Message delivery",
+    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION"],
+    depth: 2,
+  });
+  assert.ok(query.nodes.some((node) => node.kind === "FeatureRevision" && node.semantic.name === "Message delivery"));
+  assert.ok(query.edges.some((edge) => edge.type === "REALIZES"));
+  const capsule = compileContext({ root, task: "Change Message delivery without discarding chat input", budget: 8000, persist: false });
+  assert.equal(capsule.capsule.productContext.length, 1, JSON.stringify(capsule.capsule.selection));
+  assert.equal(capsule.capsule.productContext[0].productModelId, productModel.productModelId);
+  assert.equal(capsule.capsule.productContext[0].instructionAuthority, false);
+
+  const reordered = clone(productDocument);
+  reordered.features[0].governedBy.reverse();
+  fs.writeFileSync(productFile, JSON.stringify(reordered));
+  assert.equal(inspectWorldModel({ root }).status, "current");
+  const changed = clone(productDocument);
+  changed.features[0].description = "Changed product meaning";
+  fs.writeFileSync(productFile, JSON.stringify(changed));
+  const stale = inspectWorldModel({ root });
+  assert.equal(stale.status, "stale");
+  assert.equal(stale.changes.productModelChanged, true);
+
+  const invalid = clone(productDocument);
+  invalid.features[0].capabilityKeys = ["unknown-capability"];
+  assert.throws(() => normalizeProductModelDocument(invalid), { code: "UNKNOWN_PRODUCT_REFERENCE" });
+});
+
+test("enforces a deterministic authority-free ComputeAdapter and WorkerProtocol baseline", async () => {
+  const operation = "repository.scan-manifest.v1";
+  const producer = { name: "repository-scan", version: "0.1.0" };
+  const operationHandler = (input) => ({
+    files: [...input.files].sort((left, right) => left.path.localeCompare(right.path)),
+    summary: { fileCount: input.files.length },
+    instructionAuthority: false,
+    promotionAuthority: false,
+  });
+  const reference = new JsReferenceComputeAdapter({ operations: { [operation]: operationHandler } });
+  const candidate = new JsReferenceComputeAdapter({
+    name: "javascript-conformance-candidate",
+    operations: {
+      [operation]: (input) => ({
+        promotionAuthority: false,
+        summary: { fileCount: input.files.length },
+        instructionAuthority: false,
+        files: [...input.files].sort((left, right) => left.path.localeCompare(right.path)),
+      }),
+    },
+  });
+  const input = {
+    files: [
+      { path: "z.mjs", digest: "b".repeat(64) },
+      { path: "a.mjs", digest: "a".repeat(64) },
+    ],
+  };
+  const first = await executeComputeOperation({ adapter: reference, operation, input, semanticProducer: producer });
+  const repeated = await executeComputeOperation({ adapter: reference, operation, input: clone(input), semanticProducer: producer });
+  assert.equal(first.request.requestId, repeated.request.requestId);
+  assert.equal(first.response.resultDigest, repeated.response.resultDigest);
+  assert.deepEqual(first.result.files.map((file) => file.path), ["a.mjs", "z.mjs"]);
+  assert.equal(first.response.authorityEffect, "none");
+
+  const report = await verifyComputeAdapterConformance({
+    referenceAdapter: reference,
+    candidateAdapter: candidate,
+    fixtures: [{ name: "unordered-files", operation, input, semanticProducer: producer }],
+  });
+  assert.match(report.conformanceReportId, /^compute-conformance-[a-f0-9]{24}$/);
+  assert.equal(report.fixtures[0].resultDigest, first.response.resultDigest);
+
+  const tampered = clone(first.response);
+  tampered.result.files[0].digest = "f".repeat(64);
+  assert.throws(() => validateComputeResponse(first.request, tampered), { code: "COMPUTE_RESULT_MISMATCH" });
+  const request = buildComputeRequest({ operation, input, semanticProducer: producer });
+  const authorityEscalating = new JsReferenceComputeAdapter({
+    operations: { [operation]: () => ({ instructionAuthority: true }) },
+  });
+  await assert.rejects(
+    executeComputeOperation({ adapter: authorityEscalating, operation, input, semanticProducer: producer }),
+    (error) => error.code === "COMPUTE_OPERATION_FAILED"
+      && error.details.errors.some((item) => item.code === "COMPUTE_AUTHORITY_ESCALATION"),
+  );
+  const unsupported = new JsReferenceComputeAdapter({ operations: {} });
+  await assert.rejects(
+    executeComputeOperation({ adapter: unsupported, operation, input, semanticProducer: producer }),
+    { code: "UNSUPPORTED_COMPUTE_OPERATION" },
+  );
+  assert.throws(
+    () => buildComputeRequest({ operation, input, semanticProducer: producer, limits: { maxInputBytes: 2 } }),
+    { code: "COMPUTE_INPUT_LIMIT" },
+  );
+  const slow = new JsReferenceComputeAdapter({
+    operations: {
+      [operation]: (_input, { signal }) => new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve({ cancelled: true }), { once: true });
+      }),
+    },
+  });
+  await assert.rejects(
+    executeComputeOperation({ adapter: slow, operation, input, semanticProducer: producer, limits: { timeoutMs: 10 } }),
+    { code: "COMPUTE_TIMEOUT" },
+  );
+  const cancelled = new AbortController();
+  cancelled.abort();
+  await assert.rejects(
+    executeComputeOperation({ adapter: reference, operation, input, semanticProducer: producer, signal: cancelled.signal }),
+    { code: "COMPUTE_CANCELLED" },
+  );
+  assert.equal(request.inputDigest, first.request.inputDigest);
+});
+
+test("routes deterministic repository scan v1 through a replaceable compute adapter", async (t) => {
+  const corpus = path.join(pluginRoot, "benchmarks", "repository-scan-v1", "basic");
+  const input = buildRepositoryScanInput({ projectRoot: corpus });
+  const expected = JSON.parse(fs.readFileSync(path.join(pluginRoot, "benchmarks", "repository-scan-v1", "expected.json"), "utf8"));
+  const first = scanRepositoryReference(input);
+  const repeated = scanRepositoryReference(clone(input));
+  assert.equal(first.scanId, repeated.scanId);
+  assert.equal(first.scanHash, repeated.scanHash);
+  assert.equal(first.scanId, expected.scanId);
+  assert.equal(first.summary.fileCount, 10);
+  assert.equal(first.files.find((file) => file.path === "fixtures/duplicate-symbols.mjs").symbols.length, 1);
+  assert.equal(JSON.stringify(first).includes(corpus), false);
+  assert.equal(first.files.every((file) => !path.isAbsolute(file.path) && file.instructionAuthority == null), true);
+  assert.equal(first.files.find((file) => file.path === "src/main.mjs").semanticFacts.calls.some((call) => call.callee === "double"), true);
+
+  const reference = createRepositoryScanReferenceAdapter();
+  const candidate = new JsReferenceComputeAdapter({
+    name: "repository-scan-candidate",
+    operations: {
+      [REPOSITORY_SCAN_OPERATION]: (candidateInput, { limits }) => scanRepositoryReference(candidateInput, { limits }),
+    },
+  });
+  const report = await verifyComputeAdapterConformance({
+    referenceAdapter: reference,
+    candidateAdapter: candidate,
+    fixtures: [{
+      name: "repository-scan-basic",
+      operation: REPOSITORY_SCAN_OPERATION,
+      input,
+      semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER,
+    }],
+  });
+  assert.match(report.fixtures[0].resultDigest, /^[a-f0-9]{64}$/);
+
+  const tampered = clone(first);
+  tampered.files[0].digest = "f".repeat(64);
+  assert.throws(() => validateRepositoryScanResult(tampered), { code: "REPOSITORY_SCAN_DIGEST_MISMATCH" });
+  assert.throws(() => scanRepositoryReference(input, { limits: { maxFiles: 1 } }), { code: "REPOSITORY_SCAN_FILE_LIMIT" });
+  assert.throws(() => scanRepositoryReference(input, { limits: { maxTotalBytes: 1 } }), { code: "REPOSITORY_SCAN_TOTAL_BYTES_LIMIT" });
+  assert.equal(scanRepositoryReference(input, { limits: { maxFileBytes: 1 } }).summary.fileCount, 0);
+
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.cpSync(corpus, root, { recursive: true });
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const referenceWorld = await buildWorldModel({ root, persist: false, computeAdapter: reference });
+  const candidateWorld = await buildWorldModel({ root, persist: false, computeAdapter: candidate });
+  assert.match(referenceWorld.snapshot.repositoryScan.scanId, /^repository-scan-[a-f0-9]{24}$/);
+  assert.equal(referenceWorld.snapshot.repositoryScan.scanId, candidateWorld.snapshot.repositoryScan.scanId);
+  assert.equal(referenceWorld.snapshot.worldModelId, candidateWorld.snapshot.worldModelId);
+  assert.equal(referenceWorld.snapshot.semanticGraph.semanticGraphId, candidateWorld.snapshot.semanticGraph.semanticGraphId);
+  assert.equal(referenceWorld.snapshot.semanticGraph.summary.callEdgeCount >= 2, true);
+  assert.notEqual(referenceWorld.sourceDiagnostics.compute.adapterName, candidateWorld.sourceDiagnostics.compute.adapterName);
+});
+
+test("verifies Go worker distribution identity and discloses safe JavaScript fallback", async (t) => {
+  const fixtureRoot = process.env.HEAD_AGENT_GO_WORKER_FIXTURE_ROOT;
+  if (!fixtureRoot) {
+    t.skip("HEAD_AGENT_GO_WORKER_FIXTURE_ROOT is required only for the dedicated native distribution verification lane");
+    return;
+  }
+  const resolved = resolveVerifiedGoWorker({ pluginRoot: fixtureRoot });
+  assert.match(resolved.manifest.manifestId, /^go-worker-manifest-[a-f0-9]{24}$/);
+  assert.equal(resolved.workerRelativePath, "dist/windows-x64/head-agent-worker.exe");
+
+  const absentRoot = temporaryProject();
+  t.after(() => fs.rmSync(absentRoot, { recursive: true, force: true }));
+  assert.throws(() => resolveVerifiedGoWorker({ pluginRoot: absentRoot }), { code: "GO_WORKER_NOT_AVAILABLE" });
+  const absentAdapter = new GoWorkerComputeAdapter({ pluginRoot: absentRoot });
+  const absent = await executeComputeOperation({
+    adapter: absentAdapter,
+    operation: WORKER_HEALTH_OPERATION,
+    input: WORKER_HEALTH_INPUT,
+    semanticProducer: WORKER_HEALTH_SEMANTIC_PRODUCER,
+  });
+  assert.equal(absent.diagnostics.backend, "javascript-reference");
+  assert.equal(absent.diagnostics.fallbackUsed, true);
+  assert.equal(absent.diagnostics.fallbackReasonCode, "GO_WORKER_NOT_AVAILABLE");
+
+  const corruptRoot = temporaryProject();
+  t.after(() => fs.rmSync(corruptRoot, { recursive: true, force: true }));
+  fs.cpSync(fixtureRoot, corruptRoot, { recursive: true });
+  const corruptManifestFile = defaultGoWorkerManifestPath({ pluginRoot: corruptRoot });
+  const corruptManifest = JSON.parse(fs.readFileSync(corruptManifestFile, "utf8"));
+  const corruptBinary = path.join(path.dirname(corruptManifestFile), corruptManifest.binary.relativePath);
+  fs.appendFileSync(corruptBinary, "tamper");
+  assert.throws(() => resolveVerifiedGoWorker({ pluginRoot: corruptRoot }), { code: "GO_WORKER_BINARY_DIGEST_MISMATCH" });
+  const corruptAdapter = new GoWorkerComputeAdapter({ pluginRoot: corruptRoot });
+  const recovered = await executeComputeOperation({
+    adapter: corruptAdapter,
+    operation: WORKER_HEALTH_OPERATION,
+    input: WORKER_HEALTH_INPUT,
+    semanticProducer: WORKER_HEALTH_SEMANTIC_PRODUCER,
+  });
+  assert.equal(recovered.diagnostics.fallbackUsed, true);
+  assert.equal(recovered.diagnostics.fallbackReasonCode, "GO_WORKER_BINARY_DIGEST_MISMATCH");
+  const unsafeManifest = clone(corruptManifest);
+  unsafeManifest.binary.relativePath = "../escape.exe";
+  assert.throws(() => validateGoWorkerManifest(unsafeManifest), { code: "INVALID_GO_WORKER_MANIFEST" });
+
+  const conformance = await verifyComputeAdapterConformance({
+    referenceAdapter: createWorkerHealthReferenceAdapter(),
+    candidateAdapter: absentAdapter,
+    fixtures: [{
+      name: "worker-health-fallback",
+      operation: WORKER_HEALTH_OPERATION,
+      input: WORKER_HEALTH_INPUT,
+      semanticProducer: WORKER_HEALTH_SEMANTIC_PRODUCER,
+    }],
+  });
+  assert.match(conformance.conformanceReportId, /^compute-conformance-[a-f0-9]{24}$/);
+});
+
+test("materializes adapter-neutral Git decision evidence without promoting commit messages", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  fs.mkdirSync(path.join(root, ".git", "refs", "heads"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+  fs.writeFileSync(path.join(root, ".git", "refs", "heads", "main"), `${"d".repeat(40)}\n`);
+  const commits = [
+    {
+      commit: "c".repeat(40),
+      parents: [],
+      authoredAt: "2026-08-16T10:00:00+09:00",
+      committedAt: "2026-08-16T10:05:00+09:00",
+      author: { name: "Architect" },
+      refs: ["tag: v0.1"],
+      subject: "Centralize authentication policy",
+      body: "Keep session expiry under project policy instead of runtime defaults.",
+    },
+    {
+      commit: "d".repeat(40),
+      parents: ["c".repeat(40)],
+      authoredAt: "2026-08-17T11:00:00+09:00",
+      committedAt: "2026-08-17T11:05:00+09:00",
+      author: { name: "Developer" },
+      refs: ["HEAD -> main"],
+      subject: "Document context compilation",
+      body: "Explain evidence boundaries for runtime adapters.",
+    },
+  ];
+  const firstAdapter = new MemoryGitHistoryAdapter({ adapterKind: "memory-a", commits });
+  const secondAdapter = new MemoryGitHistoryAdapter({ adapterKind: "memory-b", commits: [...commits].reverse() });
+  const first = await buildWorldModel({ root, persist: false, gitHistoryAdapter: firstAdapter });
+  const second = await buildWorldModel({ root, persist: false, gitHistoryAdapter: secondAdapter });
+  assert.equal(first.snapshot.worldModelId, second.snapshot.worldModelId);
+  assert.equal(first.snapshot.gitDecisionHistory.historyId, second.snapshot.gitDecisionHistory.historyId);
+  assert.equal(first.snapshot.gitDecisionHistory.coverage, "all-reachable-commits");
+  assert.equal(first.snapshot.gitDecisionHistory.summary.commitCount, 2);
+  assert.equal(first.snapshot.gitDecisionHistory.commits[0].commit, "d".repeat(40));
+  assert.equal(first.snapshot.gitDecisionHistory.commits[0].trustBoundary, "evidence-not-instruction");
+
+  const invalidAdapter = new MemoryGitHistoryAdapter({
+    adapterKind: "authority-violating-history",
+    commits,
+    authority: "project-canon",
+    rebuildable: false,
+    uniqueAuthority: true,
+  });
+  await assert.rejects(buildWorldModel({ root, persist: false, gitHistoryAdapter: invalidAdapter }), { code: "INVALID_GIT_HISTORY_AUTHORITY" });
+
+  const persisted = await buildWorldModel({ root, gitHistoryAdapter: firstAdapter });
+  assert.equal(persisted.sourceAdapters.gitHistory.adapterKind, "memory-a");
+  assert.equal(inspectWorldModel({ root }).status, "current");
+  const history = queryWorldHistory({ root, query: "authentication", limit: 10 });
+  assert.equal(history.commits.length, 1);
+  assert.equal(history.commits[0].subject, "Centralize authentication policy");
+  assert.equal(history.trustBoundary, "evidence-not-instruction");
+
+  const capsule = compileContext({ root, task: "Why was authentication policy centralized?", budget: 5000, persist: false });
+  assert.equal(capsule.capsule.snapshot.coverage, "curated-head-canon+repository-world-model-semantic+temporal-provenance-alpha+product-canon-projection-alpha+git-history-alpha");
+  assert.equal(capsule.capsule.gitDecisionEvidence.some((item) => item.commit === "c".repeat(40)), true);
+  assert.equal(capsule.capsule.gitDecisionEvidence[0].instructionAuthority, false);
+  assert.equal(capsule.capsule.repositoryHistory.interpretation, "commit-messages-are-decision-evidence-not-promoted-decisions");
+
+  const mcpHistory = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "head_git_history", arguments: { project_root: root, query: "authentication", limit: 10 } },
+  });
+  assert.equal(mcpHistory.result.structuredContent.commits.length, 1);
+  assert.equal(mcpHistory.result.structuredContent.commits[0].evidence.instructionAuthority, false);
+});
+
+test("indexes adapter-neutral external runtime observations without granting control authority", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  const exported = {
+    schemaVersion: 1,
+    kind: "HeadRuntimeStateExport",
+    observedAt: "2026-08-18T12:00:00Z",
+    observations: [
+      {
+        runtime: "codex",
+        kind: "session",
+        state: "active",
+        externalId: "provider-session-sensitive-123",
+        workspaceRoot: root,
+        pid: 1234,
+        parentPid: 1000,
+        providerVersion: "26.814",
+        commandDigest: "a".repeat(64),
+        capabilities: ["resume", "inspect"],
+      },
+      {
+        runtime: "opencode",
+        kind: "worker",
+        state: "idle",
+        externalId: "worker-456",
+        workspaceRoot: path.join(root, "other-worktree"),
+        providerVersion: "1.0",
+        capabilities: ["inspect"],
+      },
+    ],
+  };
+  const memoryA = new MemoryRuntimeStateAdapter({ adapterKind: "runtime-memory-a", exported });
+  const memoryB = new MemoryRuntimeStateAdapter({ adapterKind: "runtime-memory-b", exported: { ...exported, observations: [...exported.observations].reverse() } });
+  const first = await buildWorldModel({ root, persist: false, runtimeStateAdapter: memoryA });
+  const second = await buildWorldModel({ root, persist: false, runtimeStateAdapter: memoryB });
+  assert.equal(first.snapshot.worldModelId, second.snapshot.worldModelId);
+  assert.equal(first.snapshot.externalRuntimeState.runtimeStateId, second.snapshot.externalRuntimeState.runtimeStateId);
+  assert.equal(first.snapshot.externalRuntimeState.summary.observationCount, 2);
+  assert.equal(first.snapshot.externalRuntimeState.observations.every((item) => item.instructionAuthority === false && item.controlAuthority === false), true);
+  assert.equal(JSON.stringify(first.snapshot).includes("provider-session-sensitive-123"), false);
+
+  const invalidAdapter = new MemoryRuntimeStateAdapter({
+    adapterKind: "runtime-authority-violator",
+    exported,
+    authority: "runtime-control-authority",
+    rebuildable: false,
+    uniqueAuthority: true,
+    readOnly: false,
+  });
+  await assert.rejects(buildWorldModel({ root, persist: false, runtimeStateAdapter: invalidAdapter }), { code: "INVALID_RUNTIME_STATE_AUTHORITY" });
+
+  const inputDirectory = path.join(root, ".head", "world-model", "inputs");
+  const inputFile = path.join(inputDirectory, "runtime-state.json");
+  fs.mkdirSync(inputDirectory, { recursive: true });
+  fs.writeFileSync(inputFile, `${JSON.stringify(exported, null, 2)}\n`);
+  const persisted = await buildWorldModel({ root, runtimeStateAdapter: new RuntimeStateFileAdapter({ file: inputFile }) });
+  assert.equal(persisted.sourceAdapters.runtimeState.adapterKind, "runtime-state-file");
+  assert.equal(persisted.snapshot.coverage.externalRuntimeState, "point-in-time-host-export");
+  assert.equal(inspectWorldModel({ root }).status, "current");
+
+  const queried = queryWorldRuntimeState({ root, runtime: "codex", state: "active", limit: 10 });
+  assert.equal(queried.observations.length, 1);
+  assert.equal(queried.observations[0].runtime, "codex");
+  assert.equal(queried.observations[0].workspace.binding, "project-root");
+  assert.equal(queried.controlAuthority, false);
+
+  const capsule = compileContext({ root, task: "Inspect the active codex runtime session", budget: 5000, persist: false });
+  assert.equal(capsule.capsule.snapshot.coverage, "curated-head-canon+repository-world-model-semantic-alpha+temporal-provenance-alpha+product-canon-projection-alpha+external-runtime-state-alpha");
+  assert.equal(capsule.capsule.runtimeStateEvidence.length, 1);
+  assert.equal(capsule.capsule.runtimeStateEvidence[0].controlAuthority, false);
+  assert.equal(capsule.capsule.repositoryRuntimeState.interpretation, "runtime-observations-are-evidence-not-control-authority");
+
+  const mcpRuntime = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: { name: "head_runtime_state", arguments: { project_root: root, runtime: "codex", state: "active", limit: 10 } },
+  });
+  assert.equal(mcpRuntime.result.structuredContent.observations.length, 1);
+  assert.equal(mcpRuntime.result.structuredContent.controlAuthority, false);
+
+  const changedExport = clone(exported);
+  changedExport.observedAt = "2026-08-18T12:05:00Z";
+  changedExport.observations[0].state = "idle";
+  fs.writeFileSync(inputFile, `${JSON.stringify(changedExport, null, 2)}\n`);
+  const stale = inspectWorldModel({ root });
+  assert.equal(stale.status, "stale");
+  assert.equal(stale.changes.externalRuntimeStateChanged, true);
+  assert.throws(() => queryWorldRuntimeState({ root }), { code: "WORLD_MODEL_STALE" });
+  const staleCapsule = compileContext({ root, task: "Inspect the codex runtime session", budget: 5000, persist: false });
+  assert.deepEqual(staleCapsule.capsule.runtimeStateEvidence, []);
+  assert.equal(staleCapsule.capsule.repositoryRuntimeState, null);
+  const rebuilt = await buildWorldModel({ root, runtimeStateAdapter: new RuntimeStateFileAdapter({ file: inputFile }) });
+  assert.equal(rebuilt.pointer.tiers.warm.externalRuntimeStateChanged, true);
+  assert.equal(queryWorldRuntimeState({ root, runtime: "codex" }).observations[0].state, "idle");
+
+  const invalidExport = clone(changedExport);
+  invalidExport.observations[0].transcript = "must never enter the World Model";
+  fs.writeFileSync(inputFile, `${JSON.stringify(invalidExport, null, 2)}\n`);
+  await assert.rejects(
+    buildWorldModel({ root, persist: false, runtimeStateAdapter: new RuntimeStateFileAdapter({ file: inputFile }) }),
+    { code: "INVALID_RUNTIME_STATE_EXPORT" },
+  );
+});
+
+test("compiles a reproducible minimum-sufficient Context Capsule", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const knowledgeFile = path.join(root, ".head", "context", "knowledge.json");
+  const knowledge = JSON.parse(fs.readFileSync(knowledgeFile, "utf8"));
+  knowledge.evidence.push({ id: "evidence-auth-ttl", sourceKind: "source", uri: "src/auth/session.ts:44", digest: "abc123", summary: "Session TTL is read from the active policy." });
+  knowledge.claims.push({ id: "claim-session-ttl", statement: "Session TTL is controlled by the active authentication policy.", status: "active", importance: 4, tags: ["auth", "session", "ttl"], evidenceIds: ["evidence-auth-ttl"] });
+  knowledge.claims.push({ id: "claim-frontend-color", statement: "The login button uses the blue palette.", status: "active", importance: 1, tags: ["frontend", "color"] });
+  knowledge.decisions.push({ id: "decision-auth-policy", title: "Centralize authentication expiry", decision: "Authentication expiry remains policy-owned.", reason: "Avoid runtime-specific TTL drift.", constraints: ["Executors must not hardcode TTL."], importance: 5, tags: ["auth", "ttl"], evidenceIds: ["evidence-auth-ttl"] });
+  fs.writeFileSync(knowledgeFile, `${JSON.stringify(knowledge, null, 2)}\n`);
+
+  const first = compileContext({ root, task: "Why is the auth session TTL policy-owned?", budget: 2000, persist: false });
+  const second = compileContext({ root, task: "Why is the auth session TTL policy-owned?", budget: 2000, persist: false });
+  assert.equal(first.capsule.capsuleId, second.capsule.capsuleId);
+  assert.equal(first.capsule.compiler.historyRelevance, "DECISIONS");
+  assert.deepEqual(first.capsule.selection.includedIds.includes("claim-session-ttl"), true);
+  assert.deepEqual(first.capsule.selection.includedIds.includes("decision-auth-policy"), true);
+  assert.deepEqual(first.capsule.selection.includedIds.includes("claim-frontend-color"), false);
+  assert.equal(first.capsule.claims[0].evidence[0].instructionAuthority, false);
+});
+
+test("persists and digest-verifies a Context Capsule", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["opencode"] });
+  const compiled = compileContext({ root, task: "Inspect current project context", budget: 2000, persist: true });
+  const verified = readContextCapsule({ root, capsuleId: compiled.capsule.capsuleId });
+  assert.equal(verified.status, "verified");
+  assert.equal(verified.capsule.snapshot.coverage, "curated-head-canon-only");
+  assert.deepEqual(verified.capsule.selection.includedIds.includes("unknown-repository-index"), true);
+});
+
+test("records a deterministic whole-plan execution lineage", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const compiled = compileContext({ root, task: "Implement the first execution lineage contract", budget: 2000, persist: true });
+  const planInput = {
+    root,
+    objective: "Preserve whole-plan authority across bounded execution",
+    plan: [{ id: "lineage-contract", outcome: "Freeze verifiable lineage artifacts" }],
+    invariants: ["Project canon outranks derived artifacts", "Provider sessions are replaceable"],
+    sources: [{ uri: "docs/ULTIMATE_GOAL.md", role: "direction-authority" }],
+  };
+  const firstPlan = createWholePlanSnapshot(planInput);
+  const samePlan = createWholePlanSnapshot({ ...planInput, persist: false });
+  assert.equal(firstPlan.artifact.wholePlanId, samePlan.artifact.wholePlanId);
+
+  const contract = createExecutionContract({
+    root,
+    wholePlanId: firstPlan.artifact.wholePlanId,
+    capsuleId: compiled.capsule.capsuleId,
+    scope: "Implement content-derived lineage contracts without automatic worker launch",
+    acceptanceCriteria: ["Every artifact is digest-verifiable", "Every child records typed parent links"],
+    constraints: ["Do not treat provider session state as canon"],
+    allowedActions: ["Write plugin source and tests"],
+    forbiddenActions: ["Deploy or activate a remote runtime"],
+  });
+  const result = createResultPacket({
+    root,
+    executionContractId: contract.artifact.executionContractId,
+    outcome: "Lineage contract builders implemented",
+    evidence: [{ uri: "test/head-core.test.mjs", digest: "test-evidence", summary: "End-to-end lineage contract test" }],
+    planDelta: "No change to the approved whole-plan direction",
+    impactRadius: ["lineage artifact contract", "plugin documentation"],
+    verification: [{ check: "node test suite", status: "passed" }],
+    unknowns: ["Automatic Run binding remains deferred"],
+  });
+  const conflictingPlan = createWholePlanSnapshot({
+    root,
+    objective: "A different whole-plan objective",
+    plan: "Do not accept a result from another plan",
+  });
+  const freshReview = buildFreshHeadReview({
+    root,
+    wholePlanId: firstPlan.artifact.wholePlanId,
+    resultPacketId: result.artifact.resultPacketId,
+    sessionId: "session-test",
+    runId: "run-test",
+  });
+  assert.throws(
+    () => createReviewDecision({
+      root,
+      wholePlanId: conflictingPlan.artifact.wholePlanId,
+      resultPacketId: result.artifact.resultPacketId,
+      reviewContext: freshReview.review,
+      disposition: "accept",
+      rationale: "This mismatch must fail.",
+    }),
+    { code: "LINEAGE_CONFLICT" },
+  );
+  const review = createReviewDecision({
+    root,
+    wholePlanId: firstPlan.artifact.wholePlanId,
+    resultPacketId: result.artifact.resultPacketId,
+    reviewContext: freshReview.review,
+    disposition: "accept",
+    rationale: "The result satisfies the bounded contract without changing authority boundaries.",
+    nextActions: ["Connect accepted contracts to Run state in a later milestone"],
+  });
+
+  assert.equal(readLineageArtifact({ root, artifactId: contract.artifact.executionContractId }).status, "verified");
+  assert.equal(readLineageArtifact({ root, artifactId: result.artifact.resultPacketId }).artifact.evidence[0].instructionAuthority, false);
+  assert.equal(readLineageArtifact({ root, artifactId: review.artifact.reviewDecisionId }).artifact.disposition, "accept");
+  assert.deepEqual(review.artifact.lineage.map((item) => item.relation), ["reviews-against", "reviews-result", "reviewed-through"]);
+});
+
+test("rejects a tampered execution lineage artifact", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["opencode"] });
+  const plan = createWholePlanSnapshot({ root, objective: "Keep the whole plan stable", plan: "Build and verify lineage" });
+  const stored = JSON.parse(fs.readFileSync(plan.file, "utf8"));
+  stored.objective = "Tampered objective";
+  fs.writeFileSync(plan.file, `${JSON.stringify(stored, null, 2)}\n`);
+  assert.throws(
+    () => readLineageArtifact({ root, artifactId: plan.artifact.wholePlanId }),
+    { code: "LINEAGE_DIGEST_MISMATCH" },
+  );
+});

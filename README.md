@@ -137,6 +137,14 @@ audit, and recovery commands, including the durable Signal/Hypothesis paths.
 
 Intentional context compaction uses an explicit advanced recovery flow. `compact-prepare` first writes a canonical purpose/decision/position/next-result checkpoint, provider compaction happens outside Core, `compact-verify` rejects summary-based or drifted recovery, and `compact-continue` consumes one checkpoint-bound token. A newer real user turn wins and invalidates the pending continuation. No provider session identity, Git object, or GraphDB record is required. See [Compaction recovery](docs/compaction-recovery.md).
 
+Provider loss does not require provider-session resume. `session-restore` rebuilds
+the same deterministic consumer input from the current content-addressed
+Session/Run checkpoint and verified plan/contract/Capsule artifacts. A bounded
+worker result remains P3 evidence until Fresh HEAD records an explicit accept
+ReviewDecision; only then can `run-integrate-checkpoint` bind that reviewed result
+once to a P2 recovery checkpoint whose next direction is supplied explicitly by
+HEAD/user input. See [Session restore and reviewed-result integration](docs/session-recovery.md).
+
 Provider-neutral role coordination is an advanced host-bound surface. A trusted
 administrator opens one coordination generation and issues a one-time binding
 token for a verified project role. The endpoint then exposes exactly send,

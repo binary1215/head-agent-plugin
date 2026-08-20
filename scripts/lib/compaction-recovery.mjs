@@ -3,10 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
-import { readLineageArtifact } from "./execution-lineage.mjs";
+import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
-export const COMPACTION_RECOVERY_VERSION = "0.2.0";
+export const COMPACTION_RECOVERY_VERSION = "0.3.0";
+const RUN_RESULT_INTEGRATION_VERSION = "0.1.0";
 
 const OPEN_STATES = new Set(["prepared", "provider_compacted", "verified"]);
 const TERMINAL_STATES = new Set(["continued", "superseded", "aborted"]);
@@ -52,6 +53,8 @@ function turnId(value, label) {
 
 function readyProject(root, action) {
   const inspected = inspectProject(root);
+  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status === "drifted") fail(`Managed file drift must be resolved before ${action}.`, "MANAGED_DRIFT");
   if (inspected.status !== "ready") fail(`Project must be ready before ${action}; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   return inspected;
 }
@@ -158,8 +161,136 @@ function readRunPointer(inspected) {
   };
 }
 
-function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds }) {
+function readSessionPointer(inspected) {
+  const state = inspected.state;
+  return {
+    mode: state.mode,
+    currentWholePlanId: state.currentWholePlanId || null,
+    activeRunId: state.activeRunId || null,
+    activeExecutionContractId: state.activeExecutionContractId || null,
+    lastResultPacketId: state.lastResultPacketId || null,
+    pendingReview: state.pendingReview == null ? null : canonical(state.pendingReview),
+    lastReviewDecisionId: state.lastReviewDecisionId || null,
+    requiredPlanAction: state.requiredPlanAction == null ? null : canonical(state.requiredPlanAction),
+  };
+}
+
+function verifyIntegrationRequest(inspected, input, checkpointInput) {
+  const requestFile = path.join(
+    inspected.project.projectRoot,
+    ".head",
+    "sessions",
+    "integrations",
+    "requests",
+    `${input.reviewDecisionId}.json`,
+  );
+  if (!fs.existsSync(requestFile)) {
+    fail("Reviewed Run integration requires its create-only P3 request.", "RUN_RESULT_INTEGRATION_REQUEST_REQUIRED");
+  }
+  const request = readJson(requestFile, "Run result integration request");
+  if (request.kind !== "RunResultIntegrationRequest"
+    || request.protocol?.name !== "head-agent-core-run-result-integration"
+    || request.protocol?.version !== RUN_RESULT_INTEGRATION_VERSION
+    || request.projectId !== inspected.project.projectId
+    || request.sessionId !== inspected.state.sessionId
+    || request.runId !== input.runId
+    || request.reviewDecisionId !== input.reviewDecisionId
+    || request.integrationRequestId !== input.integrationRequestId
+    || request.integrationInputHash !== input.integrationInputHash
+    || request.recoveryAuthority !== false
+    || request.instructionAuthority !== false
+    || request.promotionAuthority !== false) {
+    fail("Run result integration request does not match the current transaction.", "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT");
+  }
+  verifyArtifactAuthorityBoundary("RunResultIntegrationRequest", request.authorityBoundary);
+  const payload = { ...request };
+  const recordedId = payload.integrationRequestId;
+  const recordedHash = payload.integrationRequestHash;
+  delete payload.integrationRequestId;
+  delete payload.integrationRequestHash;
+  const actualHash = digest(canonicalJson(payload));
+  if (recordedHash !== actualHash
+    || recordedId !== `run-result-integration-request-${actualHash.slice(0, 24)}`
+    || request.integrationInputHash !== digest(canonicalJson(request.input))
+    || canonicalJson(request.input) !== canonicalJson(checkpointInput)) {
+    fail("Run result integration request cannot author a different recovery direction.", "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT");
+  }
+  return request;
+}
+
+function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
+  if (input == null) return null;
+  const keys = Object.keys(input).sort();
+  if (canonicalJson(keys) !== canonicalJson(["integrationInputHash", "integrationRequestId", "reviewDecisionId", "runId"])) {
+    fail("Reviewed Run integration requires one exact create-only request identity.", "INVALID_RUN_RESULT_INTEGRATION");
+  }
+  const runId = requiredText(input.runId, "Reviewed Run id");
+  const reviewDecisionId = requiredText(input.reviewDecisionId, "Reviewed Run ReviewDecision id");
+  const integrationRequestId = requiredText(input.integrationRequestId, "Run result integration request id");
+  const integrationInputHash = requiredText(input.integrationInputHash, "Run result integration input hash");
+  if (!/^run-[0-9]+-[a-f0-9]{6}$/.test(runId) || !/^review-decision-[a-f0-9]{24}$/.test(reviewDecisionId)
+    || !/^run-result-integration-request-[a-f0-9]{24}$/.test(integrationRequestId) || !/^[a-f0-9]{64}$/.test(integrationInputHash)) {
+    fail("Reviewed Run integration identities are invalid.", "INVALID_RUN_RESULT_INTEGRATION");
+  }
+  verifyIntegrationRequest(inspected, { runId, reviewDecisionId, integrationRequestId, integrationInputHash }, checkpointInput);
+  if (inspected.state.activeRunId || inspected.state.pendingReview || inspected.state.lastReviewDecisionId !== reviewDecisionId) {
+    fail("Reviewed Run integration requires the current completed review state.", "RUN_RESULT_INTEGRATION_STATE_CONFLICT");
+  }
+  const file = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", runId, "run.json");
+  if (!fs.existsSync(file)) fail(`Reviewed Run canon not found: ${runId}`, "RUN_RESULT_INTEGRATION_RUN_NOT_FOUND");
+  const run = readJson(file, "Reviewed Run canon");
+  if (run.runId !== runId || run.status !== "reviewed" || run.reviewDecisionId !== reviewDecisionId || !run.resultPacketId) {
+    fail("Reviewed Run canon does not match the integration request.", "RUN_RESULT_INTEGRATION_RUN_CONFLICT");
+  }
+  const review = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: reviewDecisionId }).artifact;
+  const result = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: run.resultPacketId }).artifact;
+  if (review.kind !== "ReviewDecision" || result.kind !== "ResultPacket" || review.disposition !== "accept"
+    || review.resultPacketId !== result.resultPacketId || review.resultPacketId !== run.resultPacketId
+    || review.wholePlanId !== run.wholePlanId) {
+    fail("Only an accepted ResultPacket with exact Fresh HEAD review lineage may be integrated.", "RUN_RESULT_NOT_ACCEPTED");
+  }
+  const contract = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: result.executionContractId }).artifact;
+  const plan = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: review.wholePlanId }).artifact;
+  const capsule = readContextCapsule({ root: inspected.project.projectRoot, capsuleId: contract.capsuleId }).capsule;
+  const freshReview = buildFreshHeadReview({
+    root: inspected.project.projectRoot,
+    wholePlanId: run.wholePlanId,
+    resultPacketId: run.resultPacketId,
+    sessionId: inspected.state.sessionId,
+    runId,
+  }).review;
+  if (contract.kind !== "ExecutionContract" || plan.kind !== "WholePlanSnapshot"
+    || contract.executionContractId !== run.executionContractId || contract.wholePlanId !== plan.wholePlanId
+    || run.capsuleId !== contract.capsuleId || review.reviewContextId !== freshReview.reviewContextId) {
+    fail("Reviewed Run integration lineage is inconsistent.", "RUN_RESULT_INTEGRATION_LINEAGE_CONFLICT");
+  }
+  return {
+    runId,
+    wholePlanId: plan.wholePlanId,
+    executionContractId: contract.executionContractId,
+    contextCapsuleDigest: capsule.capsuleHash,
+    resultPacketId: result.resultPacketId,
+    reviewDecisionId: review.reviewDecisionId,
+    reviewContextId: review.reviewContextId,
+    integrationRequestId,
+    integrationInputHash,
+    disposition: review.disposition,
+    reviewedAt: requiredText(run.reviewedAt, "Reviewed Run timestamp"),
+  };
+}
+
+function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds, reviewedRunIntegration }) {
   const pendingReviewIds = inspected.state.pendingReview?.resultPacketId ? [inspected.state.pendingReview.resultPacketId] : [];
+  const normalizedCheckpointInput = {
+    runId: reviewedRunIntegration?.runId || null,
+    reviewDecisionId: reviewedRunIntegration?.reviewDecisionId || null,
+    purpose: requiredText(purpose, "Checkpoint purpose"),
+    approvedDecisions: stringList(approvedDecisions, "Approved decisions"),
+    currentPosition: requiredText(currentPosition, "Current position"),
+    nextExpectedResult: requiredText(nextExpectedResult, "Next expected result"),
+    openReviewIds: [...new Set([...stringList(openReviewIds || [], "Open review ids"), ...pendingReviewIds])].sort(),
+  };
+  const verifiedIntegration = verifiedReviewedRunIntegration(inspected, reviewedRunIntegration, normalizedCheckpointInput);
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: "SessionRunCheckpoint",
@@ -167,13 +298,15 @@ function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, curr
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     authorityBoundary: artifactAuthorityBoundary("SessionRunCheckpoint"),
-    purpose: requiredText(purpose, "Checkpoint purpose"),
-    approvedDecisions: stringList(approvedDecisions, "Approved decisions"),
-    currentPosition: requiredText(currentPosition, "Current position"),
-    nextExpectedResult: requiredText(nextExpectedResult, "Next expected result"),
+    purpose: normalizedCheckpointInput.purpose,
+    approvedDecisions: normalizedCheckpointInput.approvedDecisions,
+    currentPosition: normalizedCheckpointInput.currentPosition,
+    nextExpectedResult: normalizedCheckpointInput.nextExpectedResult,
+    sessionPointer: readSessionPointer(inspected),
     runPointer: readRunPointer(inspected),
-    openReviewIds: [...new Set([...stringList(openReviewIds || [], "Open review ids"), ...pendingReviewIds])].sort(),
-    createdAt: now(),
+    reviewedRunIntegration: verifiedIntegration,
+    openReviewIds: normalizedCheckpointInput.openReviewIds,
+    createdAt: verifiedIntegration?.reviewedAt || now(),
     authority: {
       recovery: "canonical-session-run-checkpoint",
       recoveryFieldSources: "explicit-head-user-direction-and-verified-p2-lineage-only",
@@ -184,9 +317,9 @@ function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, curr
   };
 }
 
-export function createRecoveryCheckpoint({ root = ".", purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] } = {}) {
+export function createRecoveryCheckpoint({ root = ".", purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [], reviewedRunIntegration = null } = {}) {
   const inspected = readyProject(root, "a recovery checkpoint is created");
-  const payload = recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
+  const payload = recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds, reviewedRunIntegration });
   const checkpointDigest = digest(canonicalJson(payload));
   const checkpointId = `checkpoint-${checkpointDigest.slice(0, 24)}`;
   const checkpoint = { ...payload, checkpointId, checkpointDigest };
@@ -210,10 +343,16 @@ export function readRecoveryCheckpoint({ root = ".", checkpointId } = {}) {
     fail("Recovery checkpoint is incomplete or belongs to another Project/Session.", "INVALID_RECOVERY_CHECKPOINT");
   }
   const checkpointVersion = checkpoint.protocol?.version;
-  if (checkpoint.protocol?.name !== "head-agent-core-session-run-recovery" || !new Set(["0.1.0", COMPACTION_RECOVERY_VERSION]).has(checkpointVersion)) {
+  if (checkpoint.protocol?.name !== "head-agent-core-session-run-recovery" || !new Set(["0.1.0", "0.2.0", COMPACTION_RECOVERY_VERSION]).has(checkpointVersion)) {
     fail("Recovery checkpoint protocol is invalid.", "INVALID_RECOVERY_CHECKPOINT");
   }
-  if (checkpointVersion === COMPACTION_RECOVERY_VERSION) verifyArtifactAuthorityBoundary("SessionRunCheckpoint", checkpoint.authorityBoundary);
+  if (new Set(["0.2.0", COMPACTION_RECOVERY_VERSION]).has(checkpointVersion)) {
+    verifyArtifactAuthorityBoundary("SessionRunCheckpoint", checkpoint.authorityBoundary);
+  }
+  if (checkpointVersion === COMPACTION_RECOVERY_VERSION && (!checkpoint.sessionPointer || typeof checkpoint.sessionPointer !== "object"
+    || !("reviewedRunIntegration" in checkpoint))) {
+    fail("Current recovery checkpoint is missing its immutable Session pointer.", "INVALID_RECOVERY_CHECKPOINT");
+  }
   verifyContentIdentity(checkpoint, { idField: "checkpointId", hashField: "checkpointDigest", prefix: "checkpoint", label: "Recovery checkpoint" });
   return { status: "verified", file, checkpoint };
 }
@@ -242,6 +381,10 @@ function currentEpoch(root) {
 function assertCurrentStateMatchesCheckpoint(inspected, checkpoint) {
   if (inspected.state.sessionId !== checkpoint.sessionId || inspected.state.latestCheckpoint !== checkpoint.checkpointId) {
     fail("Current Session no longer points to the prepared recovery checkpoint.", "COMPACTION_CHECKPOINT_STALE");
+  }
+  if (checkpoint.protocol?.version === COMPACTION_RECOVERY_VERSION
+    && canonicalJson(readSessionPointer(inspected)) !== canonicalJson(checkpoint.sessionPointer)) {
+    fail("Current Session pointer changed after compaction prepare.", "COMPACTION_SESSION_DRIFT");
   }
   const currentRun = readRunPointer(inspected);
   if (canonicalJson(currentRun) !== canonicalJson(checkpoint.runPointer)) {

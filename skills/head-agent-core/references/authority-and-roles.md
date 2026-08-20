@@ -33,6 +33,8 @@ Reviewer evaluates a consequential decision before implementation. Reviewer test
 - ResultPacket and Worker Report are P3 evidence; SessionRunCheckpoint is the P2 recovery record; ReviewDecision is a P1 normative record.
 - ProductCanonFeature and ReviewedFeature are P1; FeatureCandidate and ProductFeatureCandidate are P3. A graph label never promotes a candidate.
 - P3 evidence, P4 views, and P5 effects cannot be promoted into P2 recovery authority; checkpoint fields come only from explicit HEAD/user direction and verified P2 lineage.
+- Artifact-only Session restore is a non-persisted P4 projection; it reproduces a P2 checkpoint direction but cannot replace or rewrite that checkpoint.
+- An accepted ResultPacket may be checkpoint-integrated only after its exact P1 ReviewDecision, and the P3 integration receipt cannot author recovery fields.
 - GraphSnapshot, GraphDB, traversal, Markdown, and continuity views are P4 derived indexes/views and cannot mutate Product Canon.
 - PID, tokens, proofs, endpoints, inboxes, delivery receipts, and provider-session references are P5 operational effects and cannot become meaning or recovery authority.
 - Distribution and Host are architectural planes outside the semantic authority lattice.

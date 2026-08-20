@@ -22,8 +22,8 @@ become an additional source of product meaning or recovery direction.
 |---|---|---|---|
 | P1 Normative Authority | approved product meaning, policy, and explicit decisions | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision | existence in a graph, message, result, or host cannot create approval |
 | P2 Canonical Recovery/Lineage Record | provider-independent recovery of Project, Session, Run, plan, context, contract, and next direction | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | evidence deletion or provider summary cannot rewrite checkpoint fields |
-| P3 Evidence Record | reviewable results, observations, candidates, claims, and audit receipts | ResultPacket, WorkerReport, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, DocumentCanonApplicationReceipt | evidence cannot promote itself or become recovery canon |
-| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
+| P3 Evidence Record | reviewable results, observations, candidates, claims, and audit receipts | ResultPacket, WorkerReport, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
+| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
 | P5 Operational Effect | host-local process and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, provider-session reference | successful delivery or process control cannot authorize execution, review, promotion, or recovery |
 
 `scripts/lib/authority-plane-contract.mjs` emits one content-derived
@@ -87,6 +87,17 @@ Only the former owns meaning; the latter owns navigation.
 or deleted without changing the exact `nextExpectedResult` already frozen in a P2
 `SessionRunCheckpoint`. `ReviewDecision` is P1 normative record. The checkpoint is
 the recovery record. Neither substitutes for the other.
+
+An accepted reviewed result may be connected to recovery only by the explicit
+one-shot integration operation. Its caller supplies the checkpoint recovery
+fields; ResultPacket and ReviewDecision are verified references, never implicit
+field sources. A create-only P3 request freezes those caller-supplied fields and
+the P2 checkpoint binds its ID and input hash; direct checkpoint construction
+cannot bypass or diverge from that transaction. The request remains P3 provenance
+and is not required to restore the resulting self-contained P2 checkpoint. The
+resulting receipt remains P3, while artifact-only Session
+restore is a non-persisted P4 projection of the exact P2 checkpoint and current
+verified lineage.
 
 The executable recovery test creates a ResultPacket, prepares a checkpoint,
 deletes the ResultPacket file, and verifies that the checkpoint still reproduces

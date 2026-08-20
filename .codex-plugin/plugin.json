@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.76",
+  "version": "0.3.0-alpha.77",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -48,6 +48,9 @@
       "Derived Product Operating Graph",
       "Non-persisted HEAD Continuity Snapshot",
       "Canonical Session and Run Compaction Recovery",
+      "Artifact-only Provider-independent Session Restore",
+      "Accepted Run Result Integration Checkpoint",
+      "One-shot Run Result Integration Receipt",
       "At-most-once Compaction Continuation",
       "Newer User Turn Compaction Supersession",
       "Optional ChangeSet VCS Evidence",
@@ -154,6 +157,8 @@
       "Review a Product Initiative explicitly, then bind OutcomeObservation evidence to an accepted ChangeSet without judging Feature success.",
       "Inspect the on-demand HEAD continuity snapshot as a derived exact-reference view, never as recovery canon.",
       "Prepare, verify, and continue an intentional lossy provider compaction from a canonical Session or Run checkpoint without treating the provider summary as authority.",
+      "Restore the exact current Session consumer input from verified artifacts without resuming a provider session.",
+      "After an accepted Fresh HEAD review, bind one reviewed Run result to one explicit recovery checkpoint without letting worker evidence author the next direction.",
       "Exchange durable role messages through a trusted host binding without allowing messages to replace ExecutionContracts, ReviewDecisions, or Product Canon.",
       "Attach a trusted host-injected caller to an exact live role endpoint and require fresh target, acknowledgment, and post-send evidence before reporting delivery.",
       "Wake one exact current offline-registered role binding through a provider-neutral claimed host request, then require the started provider to prove its own binding and process proof before reading or replying.",

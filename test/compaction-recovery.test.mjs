@@ -201,6 +201,24 @@ test("an active Run checkpoint pins verified plan, contract, and capsule identit
   abortCompaction({ root, epochId: prepared.epoch.epochId, reason: "fixture cleanup" });
 });
 
+test("compaction verification rejects Session pointer drift beyond the active Run tuple", (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const prepared = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 22 }) });
+  const stateFile = path.join(root, ".head", "sessions", "current.json");
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  state.lastReviewDecisionId = "review-decision-000000000000000000000000";
+  fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+  assert.throws(() => verifyCompaction({
+    root,
+    epochId: prepared.epoch.epochId,
+    checkpointDigest: prepared.checkpoint.checkpointDigest,
+    currentUserTurnId: 22,
+    providerCompacted: true,
+  }), { code: "COMPACTION_SESSION_DRIFT" });
+  assert.equal(inspectCompaction({ root }).epoch.state, "aborted");
+});
+
 test("checkpoint recovery remains sufficient after ResultPacket evidence is deleted", (t) => {
   const root = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

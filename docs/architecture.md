@@ -80,6 +80,16 @@ WholePlanSnapshot
 
 Each artifact has a content-derived identifier, digest verification, and typed `LineageLink` parents. `ResultPacket` evidence is explicitly non-instructional. A Fresh HEAD reconstructs review context from these verified artifacts rather than resuming a hidden model session.
 
+Artifact-only Session restore now reconstructs the current consumer input from
+the exact content-addressed `SessionRunCheckpoint`, immutable Session pointer,
+and verified Run/plan/contract/Capsule lineage. The returned
+`SessionRestoreProjection` is non-persisted P4 and does not use provider session
+identity, transcript, summary, resume, or stream. After an accepted Fresh HEAD
+ReviewDecision, a separate one-shot operation may bind the reviewed Run to a P2
+checkpoint whose recovery fields are explicit HEAD/user input; ResultPacket and
+the P3 integration receipt cannot author or replace that direction. See
+[`session-recovery.md`](session-recovery.md).
+
 Version 0.3 alpha binds Runs to verified contracts, converts completion into a ResultPacket, builds a deterministic minimum Fresh HEAD review projection, and requires that exact projection for the manual HEAD ReviewDecision. `revise` and `expand` require a ReviewDecision-linked next WholePlanSnapshot before another Run. Candidate knowledge and HEAD recommendations remain authority-free. Provider-session attachment, general runtime controls, and broader authorized knowledge-promotion surfaces remain deferred.
 
 ## Repository World Model plane

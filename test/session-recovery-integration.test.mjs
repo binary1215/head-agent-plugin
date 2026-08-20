@@ -1,0 +1,338 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { initializeProject, createCheckpoint } from "../scripts/lib/head-core.mjs";
+import { compileContext } from "../scripts/lib/context-compiler.mjs";
+import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
+import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
+import { createRecoveryCheckpoint, readRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
+import {
+  integrateReviewedRunCheckpoint,
+  readRunResultIntegration,
+  restoreSessionFromArtifacts,
+} from "../scripts/lib/session-recovery.mjs";
+import { dispatch, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { runCommand } from "../scripts/head.mjs";
+
+const pluginRoot = path.resolve(import.meta.dirname, "..");
+const cliFile = path.join(pluginRoot, "scripts", "head.mjs");
+
+function temporaryProject(prefix = "head-session-recovery-test-") {
+  const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  fs.mkdirSync(parent, { recursive: true });
+  return fs.mkdtempSync(path.join(parent, prefix));
+}
+
+function initialize(root) {
+  initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  return root;
+}
+
+function startFixtureRun(root, suffix = "artifact-only recovery") {
+  const capsule = compileContext({ root, task: `Verify ${suffix}`, budget: 2000, persist: true }).capsule;
+  const plan = createWholePlanSnapshot({
+    root,
+    objective: `Complete ${suffix}`,
+    plan: [{ id: "execute", outcome: suffix }],
+    invariants: ["Worker evidence cannot become recovery direction"],
+  }).artifact;
+  const contract = createExecutionContract({
+    root,
+    wholePlanId: plan.wholePlanId,
+    capsuleId: capsule.capsuleId,
+    scope: `Produce ${suffix}`,
+    acceptanceCriteria: ["Fresh HEAD verifies the bounded result"],
+  }).artifact;
+  const run = startRun({ root, executionContractId: contract.executionContractId }).run;
+  return { capsule, plan, contract, run };
+}
+
+function finishFixtureRun(root) {
+  return finishRun({
+    root,
+    outcome: "Bounded worker result returned as evidence",
+    evidence: [{ uri: "test/session-recovery-integration.test.mjs", digest: "bounded-worker-evidence" }],
+    planDelta: "No objective rewrite",
+    impactRadius: ["session recovery"],
+    verification: [{ check: "bounded result", status: "passed" }],
+    unknowns: [],
+  });
+}
+
+function reviewFixtureRun(root, disposition = "accept") {
+  const context = getPendingReviewContext({ root });
+  return reviewRun({
+    root,
+    reviewContextId: context.review.reviewContextId,
+    disposition,
+    rationale: disposition === "accept" ? "The exact contract is satisfied." : "A revised WholePlan is required.",
+    nextActions: disposition === "accept" ? ["Checkpoint the explicit next direction"] : ["Create a next WholePlanSnapshot"],
+  });
+}
+
+function integrationInput(run, reviewDecision, overrides = {}) {
+  return {
+    runId: run.runId,
+    reviewDecisionId: reviewDecision.reviewDecisionId,
+    purpose: "Advance recovery only after accepted Fresh HEAD review",
+    approvedDecisions: ["Fresh HEAD accepted the exact ResultPacket"],
+    currentPosition: "The bounded worker result is reviewed and integrated",
+    nextExpectedResult: "Start only the next explicitly authorized unit of work",
+    openReviewIds: [],
+    ...overrides,
+  };
+}
+
+function childRestore(root, environment) {
+  const result = spawnSync(process.execPath, [cliFile, "session-restore", root], {
+    cwd: pluginRoot,
+    env: { ...process.env, ...environment },
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
+
+const canonicalJson = (value) => JSON.stringify(canonical(value));
+
+test("the public checkpoint surface creates one content-addressed P2 canon and restores identically across fresh provider processes", (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.throws(() => createCheckpoint({ root, summary: "legacy", next: "legacy" }), { code: "LEGACY_CHECKPOINT_API_RETIRED" });
+
+  const checkpointed = runCommand([
+    "checkpoint", root,
+    "--summary", "Preserve the exact provider-neutral Session direction",
+    "--next", "Continue from the verified artifact projection",
+  ]);
+  assert.match(checkpointed.checkpoint.checkpointId, /^checkpoint-[a-f0-9]{24}$/u);
+  assert.equal(checkpointed.checkpoint.kind, "SessionRunCheckpoint");
+  assert.equal(checkpointed.checkpoint.authorityBoundary.planeId, "P2");
+  assert.equal(checkpointed.checkpoint.protocol.version, "0.3.0");
+  assert.equal(checkpointed.checkpoint.sessionPointer.mode, "session");
+
+  const codex = childRestore(root, { CODEX_THREAD_ID: "provider-secret-codex-thread" });
+  const opencode = childRestore(root, { OPENCODE_SESSION_ID: "provider-secret-opencode-session" });
+  assert.equal(codex.projection.sessionRestoreId, opencode.projection.sessionRestoreId);
+  assert.equal(codex.projection.sessionRestoreHash, opencode.projection.sessionRestoreHash);
+  assert.equal(codex.projection.consumerInstruction.nextExpectedResult, "Continue from the verified artifact projection");
+  assert.equal(codex.projection.providerBoundary.providerSessionIdentityRequired, false);
+  assert.equal(codex.projection.providerBoundary.resumeEnabled, false);
+  assert.equal(codex.projection.authorityBoundary.planeId, "P4");
+  assert.equal(JSON.stringify(codex).includes("provider-secret-codex-thread"), false);
+  assert.equal(JSON.stringify(opencode).includes("provider-secret-opencode-session"), false);
+});
+
+test("artifact-only restore revalidates the exact active Run lineage and rejects pointer drift", (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fixture = startFixtureRun(root, "active Run restore");
+  const checkpoint = createRecoveryCheckpoint({
+    root,
+    purpose: "Recover the active Run without a provider session",
+    approvedDecisions: ["The exact ExecutionContract remains active"],
+    currentPosition: "The bounded Run is active",
+    nextExpectedResult: "The exact contract-bound ResultPacket",
+  }).checkpoint;
+  const restored = restoreSessionFromArtifacts({ root });
+  assert.deepEqual(restored.projection.activeRun, {
+    runId: fixture.run.runId,
+    wholePlanId: fixture.plan.wholePlanId,
+    executionContractId: fixture.contract.executionContractId,
+    contextCapsuleDigest: fixture.capsule.capsuleHash,
+    currentResultPacketId: null,
+  });
+  assert.equal(restored.checkpoint.checkpointId, checkpoint.checkpointId);
+
+  const stateFile = path.join(root, ".head", "sessions", "current.json");
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  state.activeExecutionContractId = "execution-contract-000000000000000000000000";
+  fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+  assert.throws(() => restoreSessionFromArtifacts({ root }), { code: "SESSION_RESTORE_POINTER_DRIFT" });
+});
+
+test("legacy content-addressed checkpoints stay readable but cannot drive current Session restore", (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const current = createRecoveryCheckpoint({
+    root,
+    purpose: "Create a current checkpoint before simulating legacy bytes",
+    approvedDecisions: [],
+    currentPosition: "Session is idle",
+    nextExpectedResult: "A legacy compatibility read",
+  }).checkpoint;
+  const payload = { ...current, protocol: { ...current.protocol, version: "0.2.0" }, authorityBoundary: { ...current.authorityBoundary, contractVersion: "0.2.0" } };
+  delete payload.checkpointId;
+  delete payload.checkpointDigest;
+  delete payload.sessionPointer;
+  delete payload.reviewedRunIntegration;
+  const checkpointDigest = crypto.createHash("sha256").update(canonicalJson(payload)).digest("hex");
+  const checkpointId = `checkpoint-${checkpointDigest.slice(0, 24)}`;
+  const legacy = { ...payload, checkpointId, checkpointDigest };
+  fs.writeFileSync(path.join(root, ".head", "sessions", "ledger", `${checkpointId}.json`), `${JSON.stringify(legacy, null, 2)}\n`);
+  const stateFile = path.join(root, ".head", "sessions", "current.json");
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  fs.writeFileSync(stateFile, `${JSON.stringify({ ...state, latestCheckpoint: checkpointId }, null, 2)}\n`);
+
+  assert.equal(readRecoveryCheckpoint({ root, checkpointId }).checkpoint.protocol.version, "0.2.0");
+  assert.throws(() => restoreSessionFromArtifacts({ root }), { code: "SESSION_RESTORE_CURRENT_CHECKPOINT_REQUIRED" });
+});
+
+test("checkpoint direction survives deletion of pending ResultPacket evidence without inventing a Fresh HEAD review", (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  startFixtureRun(root, "pending review recovery");
+  const finished = finishFixtureRun(root);
+  const nextExpectedResult = "Recover the exact pending position and request missing evidence instead of guessing";
+  createRecoveryCheckpoint({
+    root,
+    purpose: "Preserve pending review recovery",
+    approvedDecisions: [],
+    currentPosition: "One ResultPacket is awaiting Fresh HEAD review",
+    nextExpectedResult,
+  });
+  const resultFile = path.join(root, ".head", "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
+  fs.unlinkSync(resultFile);
+
+  const restored = restoreSessionFromArtifacts({ root });
+  assert.equal(restored.projection.checkpoint.nextExpectedResult, nextExpectedResult);
+  assert.equal(restored.projection.pendingReview.resultEvidence.status, "missing-evidence");
+  assert.equal(restored.projection.pendingReview.freshHeadReviewContextId, null);
+  assert.equal(restored.projection.consumerInstruction.nextExpectedResult, nextExpectedResult);
+  assert.equal(restored.projection.recoveryAuthority, false);
+});
+
+test("accepted worker evidence integrates once through Fresh HEAD into an explicit P2 checkpoint", (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fixture = startFixtureRun(root, "bounded worker integration");
+  const finished = finishFixtureRun(root);
+  const reviewed = reviewFixtureRun(root, "accept");
+  const input = integrationInput(fixture.run, reviewed.reviewDecision);
+
+  const integrated = integrateReviewedRunCheckpoint({ root, ...input });
+  assert.equal(integrated.status, "run_result_integrated_checkpointed");
+  assert.equal(integrated.checkpoint.authorityBoundary.planeId, "P2");
+  assert.equal(integrated.integrationReceipt.authorityBoundary.planeId, "P3");
+  const request = JSON.parse(fs.readFileSync(path.join(root, ".head", "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`), "utf8"));
+  assert.equal(request.authorityBoundary.planeId, "P3");
+  assert.equal(request.integrationRequestId, integrated.integrationReceipt.integrationRequestId);
+  assert.equal(integrated.integrationReceipt.reviewDecisionCreated, false);
+  assert.equal(integrated.integrationReceipt.resultPacketRole, "reference-evidence-only");
+  assert.equal(integrated.checkpoint.reviewedRunIntegration.runId, fixture.run.runId);
+  assert.equal(integrated.checkpoint.reviewedRunIntegration.resultPacketId, finished.resultPacket.resultPacketId);
+  assert.equal(integrated.checkpoint.reviewedRunIntegration.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
+  assert.equal(integrated.checkpoint.reviewedRunIntegration.integrationRequestId, request.integrationRequestId);
+  assert.equal(integrated.checkpoint.reviewedRunIntegration.integrationInputHash, request.integrationInputHash);
+  assert.equal(integrated.checkpoint.nextExpectedResult, input.nextExpectedResult);
+
+  assert.throws(() => createRecoveryCheckpoint({
+    root,
+    purpose: input.purpose,
+    approvedDecisions: input.approvedDecisions,
+    currentPosition: input.currentPosition,
+    nextExpectedResult: input.nextExpectedResult,
+    openReviewIds: input.openReviewIds,
+    reviewedRunIntegration: { runId: input.runId, reviewDecisionId: input.reviewDecisionId },
+  }), { code: "INVALID_RUN_RESULT_INTEGRATION" });
+  assert.throws(() => createRecoveryCheckpoint({
+    root,
+    purpose: input.purpose,
+    approvedDecisions: input.approvedDecisions,
+    currentPosition: input.currentPosition,
+    nextExpectedResult: "A direction not frozen by the create-only request",
+    openReviewIds: input.openReviewIds,
+    reviewedRunIntegration: {
+      runId: input.runId,
+      reviewDecisionId: input.reviewDecisionId,
+      integrationRequestId: request.integrationRequestId,
+      integrationInputHash: request.integrationInputHash,
+    },
+  }), { code: "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT" });
+
+  const retry = integrateReviewedRunCheckpoint({ root, ...input });
+  assert.equal(retry.status, "run_result_integration_existing");
+  assert.equal(retry.checkpoint.checkpointId, integrated.checkpoint.checkpointId);
+  assert.equal(retry.receipt.integrationReceiptId, integrated.integrationReceipt.integrationReceiptId);
+  assert.throws(() => integrateReviewedRunCheckpoint({ root, ...integrationInput(fixture.run, reviewed.reviewDecision, { nextExpectedResult: "A conflicting direction" }) }), {
+    code: "RUN_RESULT_INTEGRATION_CONFLICT",
+  });
+  assert.equal(readRunResultIntegration({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }).checkpoint.checkpointId, integrated.checkpoint.checkpointId);
+
+  const resultFile = path.join(root, ".head", "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
+  fs.unlinkSync(resultFile);
+  const requestFile = path.join(root, ".head", "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`);
+  fs.unlinkSync(requestFile);
+  const restored = restoreSessionFromArtifacts({ root });
+  assert.equal(restored.projection.consumerInstruction.nextExpectedResult, input.nextExpectedResult);
+  assert.equal(restored.projection.integrationEvidence.status, "missing-evidence");
+  assert.equal(restored.projection.reviewedRunIntegration.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
+  assert.equal(fs.existsSync(requestFile), false);
+});
+
+test("non-accept review cannot be mislabeled as worker-result integration", (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fixture = startFixtureRun(root, "rejected worker integration");
+  finishFixtureRun(root);
+  const reviewed = reviewFixtureRun(root, "revise");
+  assert.throws(() => integrateReviewedRunCheckpoint({ root, ...integrationInput(fixture.run, reviewed.reviewDecision) }), {
+    code: "RUN_RESULT_NOT_ACCEPTED",
+  });
+  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "integrations", `${reviewed.reviewDecision.reviewDecisionId}.json`)), false);
+  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`)), false);
+});
+
+test("CLI help and MCP expose artifact restore plus explicit integration without provider resume", async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fixture = startFixtureRun(root, "MCP integration surface");
+  finishFixtureRun(root);
+  const reviewed = reviewFixtureRun(root, "accept");
+  const input = integrationInput(fixture.run, reviewed.reviewDecision);
+
+  assert.equal(runCommand(["help"]).commands.some((command) => command.includes("session-restore")), false);
+  assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("session-restore")), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_session_restore"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_run_integrate_checkpoint"), true);
+
+  const integrated = await dispatch({
+    jsonrpc: "2.0",
+    id: 701,
+    method: "tools/call",
+    params: {
+      name: "head_run_integrate_checkpoint",
+      arguments: {
+        project_root: root,
+        run_id: input.runId,
+        review_decision_id: input.reviewDecisionId,
+        purpose: input.purpose,
+        approved_decisions: input.approvedDecisions,
+        current_position: input.currentPosition,
+        next_expected_result: input.nextExpectedResult,
+      },
+    },
+  });
+  assert.equal(integrated.result.structuredContent.status, "run_result_integrated_checkpointed");
+
+  const restored = await dispatch({
+    jsonrpc: "2.0",
+    id: 702,
+    method: "tools/call",
+    params: { name: "head_session_restore", arguments: { project_root: root } },
+  });
+  assert.equal(restored.result.structuredContent.status, "session_restored_from_artifacts");
+  assert.equal(restored.result.structuredContent.projection.providerBoundary.resumeEnabled, false);
+  assert.equal(restored.result.structuredContent.projection.consumerInstruction.nextExpectedResult, input.nextExpectedResult);
+});

@@ -85,6 +85,26 @@ The lineage boundary is `WholePlanSnapshot`, `ExecutionContract`, `ResultPacket`
 
 An `accept` decision permits another contract against the current plan. `revise` or `expand` requires `lineage-next-plan` to create a new generation linked to the ReviewDecision before another Run. `rollback` or `escalate` requires user-owned direction. ResultPacket knowledge proposals and HEAD recommendations have no authority effect until a separate authorized promotion process exists. Automatic provider runtime hydration, authorized knowledge promotion, runtime resumption, and non-compute worker control remain deferred.
 
+## Artifact Session restore and result integration
+
+Read `../../docs/session-recovery.md` before restoring a Session after provider
+loss or integrating a reviewed bounded-worker result. Use
+`head_session_restore`/`session-restore` only from the exact current
+content-addressed checkpoint. It returns a non-persisted P4 projection and must
+fail on Session/checkpoint/Run/plan/contract/Capsule drift. Never fill a missing
+field from a provider summary, transcript, session identifier, reply, graph, or
+continuity view. Missing ResultPacket evidence may be reported while preserving
+the checkpoint's exact next direction, but it must not produce a fabricated
+Fresh HEAD review.
+
+After `run-review` records an exact `accept` ReviewDecision, use
+`head_run_integrate_checkpoint`/`run-integrate-checkpoint` only when HEAD or the
+user explicitly supplies purpose, approved decisions, current position, and next
+expected result. The operation may reference the accepted ResultPacket and
+ReviewDecision but cannot derive recovery fields from them. Identical retries
+must return the same checkpoint; divergent retries and non-accept reviews fail.
+The P3 integration receipt is evidence, not recovery or review authority.
+
 ## Compaction recovery
 
 Read `../../docs/compaction-recovery.md` before intentionally compacting a recovery-sensitive Session or active Run. Compaction is lossy; never use a provider summary, transcript, provider-session identity, ContextCapsule, or `HEADContinuitySnapshot` to rewrite `purpose`, approved decisions, current position, or the next expected result.
@@ -210,6 +230,7 @@ node <plugin-root>/scripts/head.mjs lineage-next-plan <project> --input <next-wh
 node <plugin-root>/scripts/head.mjs lineage-contract <project> --input <execution-contract.json>
 node <plugin-root>/scripts/head.mjs run-start <project> --contract <execution-contract-id>
 node <plugin-root>/scripts/head.mjs checkpoint <project> --summary "observed state" --next "next action"
+node <plugin-root>/scripts/head.mjs session-restore <project> [--checkpoint <checkpoint-id>]
 node <plugin-root>/scripts/head.mjs compact-prepare <project> --input <recovery.json>
 node <plugin-root>/scripts/head.mjs compact-verify <project> --input <verification.json>
 node <plugin-root>/scripts/head.mjs compact-continue <project> --input <continuation.json>
@@ -224,6 +245,8 @@ node <plugin-root>/scripts/head.mjs coordination-reply <project> --input <reply.
 node <plugin-root>/scripts/head.mjs run-finish <project> --input <result.json>
 node <plugin-root>/scripts/head.mjs run-review-context <project>
 node <plugin-root>/scripts/head.mjs run-review <project> --input <review.json>
+node <plugin-root>/scripts/head.mjs run-integrate-checkpoint <project> --input <integration.json>
+node <plugin-root>/scripts/head.mjs run-integration-read <project> --review <review-decision-id>
 ```
 
 Initialization writes only absent managed files. If `AGENTS.md` or `opencode.json` already exists, preserve it and report the generated projection under `.head/generated/` for manual integration.
@@ -237,7 +260,8 @@ linked subsystem documents: conversational onboarding and explicit reviews,
 Product Canon and World Model projection, deterministic Context Capsules,
 contract-bound Runs and Fresh HEAD review, Git-independent ChangeSet/impact
 lineage, compaction recovery, Codex/OpenCode one-shot execution and replacement,
-and host-local durable role coordination. The coordination surface has four
+artifact-only Session restore, accepted-result checkpoint integration, and
+host-local durable role coordination. The coordination surface has four
 role-bound MCP operations: send, read-inbox, bounded wait-reply, and immutable
 reply. Production host-export evidence includes exact process-proof fencing,
 already-running Codex/OpenCode attachment, current-endpoint replacement with zero

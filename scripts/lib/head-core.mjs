@@ -393,29 +393,13 @@ export async function inspectRuntimeAdapters(root = ".") {
 }
 
 export function createCheckpoint({ root = ".", summary, next = "" } = {}) {
-  if (!summary?.trim()) fail("Checkpoint summary is required.", "CHECKPOINT_SUMMARY_REQUIRED");
-  const inspected = inspectProject(root);
-  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
-  if (inspected.status === "drifted") fail("Managed file drift must be resolved before checkpointing.", "MANAGED_DRIFT");
-  const canonicalRoot = inspected.project.projectRoot;
-  const ledgerRoot = path.join(canonicalRoot, ".head", "sessions", "ledger");
-  fs.mkdirSync(ledgerRoot, { recursive: true });
-  const checkpointId = `checkpoint-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
-  const checkpoint = {
-    schemaVersion: SCHEMA_VERSION,
-    checkpointId,
-    sessionId: inspected.state.sessionId,
-    runId: inspected.state.activeRunId,
-    executionContractId: inspected.state.activeExecutionContractId || null,
-    wholePlanId: inspected.state.currentWholePlanId || null,
-    summary: summary.trim(),
-    next: next.trim(),
-    createdAt: now(),
-  };
-  atomicWrite(path.join(ledgerRoot, `${checkpointId}.json`), json(checkpoint));
-  const state = { ...inspected.state, latestCheckpoint: checkpointId, updatedAt: now() };
-  atomicWrite(path.join(canonicalRoot, ".head", "sessions", "current.json"), json(state));
-  return { status: "checkpointed", checkpoint, state };
+  void root;
+  void summary;
+  void next;
+  fail(
+    "The legacy time-based checkpoint API is retired. Use createRecoveryCheckpoint or the `head checkpoint` command, which creates the canonical content-addressed SessionRunCheckpoint.",
+    "LEGACY_CHECKPOINT_API_RETIRED",
+  );
 }
 
 export function coreContract() {
@@ -464,6 +448,10 @@ export function coreContract() {
     "at-most-once-compaction-continuation",
     "newer-user-turn-compaction-supersession",
     "derived-compaction-recovery-receipt",
+    "artifact-only-session-restore",
+    "provider-session-independent-recovery-projection",
+    "accepted-run-result-integration-checkpoint",
+    "one-shot-run-result-integration-receipt",
     "provider-neutral-durable-role-coordination",
     "host-issued-coordination-role-binding",
     "generation-fenced-coordination-inbox",
