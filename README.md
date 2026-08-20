@@ -108,6 +108,7 @@ public plugin directory is a separate publisher-owned review step.
 | A database backend becomes the real source of truth | The World Model retains a recoverable GraphSnapshot; storage and document backends remain replaceable projections. |
 | More prompt context is treated as better context | The Context Compiler selects bounded, reproducible evidence for one task. |
 | Runtime support forks the core architecture | Provider-neutral HEAD Session and Run identities are executed through runtime adapters. |
+| An agent can claim another role in a message | The trusted host binds the endpoint role; send/read/reply arguments contain neither sender role nor binding token. |
 
 ## Product learning without authority drift
 
@@ -135,6 +136,15 @@ audit, and recovery commands, including the durable Signal/Hypothesis paths.
 `head head-continuity <project>` returns an on-demand exact-reference view over current Session, Run, lineage, product, and graph identities. Repeated same-process status/continuity reads may reuse a disclosed snapshot/content-identity cache; writes invalidate it and `--fresh` forces full verification. The view is not persisted and cannot replace Session/Run checkpoints or continuous whole-outcome HEAD judgment. See [Product Operating Loop](docs/product-operating-loop.md).
 
 Intentional context compaction uses an explicit advanced recovery flow. `compact-prepare` first writes a canonical purpose/decision/position/next-result checkpoint, provider compaction happens outside Core, `compact-verify` rejects summary-based or drifted recovery, and `compact-continue` consumes one checkpoint-bound token. A newer real user turn wins and invalidates the pending continuation. No provider session identity, Git object, or GraphDB record is required. See [Compaction recovery](docs/compaction-recovery.md).
+
+Provider-neutral role coordination is an advanced host-bound surface. A trusted
+administrator opens one coordination generation and issues a one-time binding
+token for a verified project role. The endpoint then exposes exactly send,
+read-inbox, and reply; role and token are not message arguments. Inboxes,
+idempotency, read markers, immutable replies, and delivery receipts live in the
+external operational root and never mutate `.head` or Product Canon. Messages
+have no instruction, decision, review, execution, promotion, or Canon authority.
+See [Role coordination](docs/role-coordination.md).
 
 ## Architecture at a glance
 
@@ -325,6 +335,8 @@ Status terms in this README have exact meanings:
 | OpenCode project projection | **Available** |
 | OpenCode one-shot Session and Run execution | **Available** |
 | Artifact-only Codex-to-OpenCode provider replacement recovery | **Available** |
+| Host-bound durable role messaging Core/CLI/MCP | **Available** |
+| Actual multi-role Codex/OpenCode/Herdr live delivery | **Planned** |
 | Verified Git-backed Codex marketplace distribution | **Available** |
 | OpenAI universal plugin directory publication | **Planned** |
 | `install.ps1` and `install.sh` | **Available** |
@@ -697,6 +709,7 @@ lineage.
 - [Incremental refresh](docs/incremental-refresh.md)
 - [Execution Lineage](docs/execution-lineage.md)
 - [Runtime adapters](docs/runtime-adapters.md)
+- [Role coordination](docs/role-coordination.md)
 - [Graph projection adapter](docs/graph-projection-adapter.md)
 - [Document projection adapter](docs/document-projection-adapter.md)
 

@@ -116,8 +116,10 @@ has stronger portable semantics than the original runtime composition:
   than making those deeper contracts universal overhead.
 
 The original still has capabilities this plugin deliberately has not claimed:
-durable provider-session attachment, resume/stream/interrupt/close, Herdr
-workspace/pane integration, and project-role messaging. Automatic DAG
+durable provider-session attachment, resume/stream/interrupt/close, and exact
+Herdr workspace/pane caller fencing plus live target delivery. The plugin now
+has provider-neutral host-bound durable project-role messaging, but no actual
+Codex/OpenCode multi-endpoint or Herdr delivery conformance. Automatic DAG
 merge/conflict resolution, Obsidian/Notion publication, and OpenAI universal
 plugin-directory publication also remain incomplete. These are extension gaps,
 not reasons to weaken authority separation, but they bound any superiority
@@ -135,8 +137,8 @@ The proposition is false if any mandatory everyday rule still lacks a protected
 outcome, if the new light path can bypass a user-owned authority transition, if
 the cache merges independent trust boundaries, or if an original portable Core
 responsibility was lost rather than relocated. It does not assert superiority
-for OpenCode/Herdr-native coordination until the deferred runtime and messaging
-capabilities are implemented and verified.
+for OpenCode/Herdr-native coordination until live endpoint binding and delivery
+adapters are implemented and verified.
 
 ## Original-author review outcome
 
@@ -167,7 +169,9 @@ universal provider-neutral plugin use**. The component verdict was:
 This is not approval of overall superiority, philosophical superiority,
 OpenCode/Herdr-native completeness, or live provider-network replacement
 completeness. The original remains stronger in Herdr workspace/pane/session
-fencing and role coordination. Graph non-authority, whole-outcome ownership,
+fencing and live coordination delivery; the plugin's new host-local messaging
+contract has not yet replaced that live advantage. Graph non-authority,
+whole-outcome ownership,
 and candidate/review separation remain inherited standards, not dimensions in
 which this plugin claims to have improved the original philosophy.
 

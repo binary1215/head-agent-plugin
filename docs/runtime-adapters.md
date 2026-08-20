@@ -1,6 +1,6 @@
 # Runtime adapter contracts
 
-Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation, runtime-protocol-evidence protocol `0.2.0` observes fixed provider-specific help surfaces and exact one-shot option sets, and runtime-project-binding protocol `0.1.0` binds those observations to canonical HEAD project and Session identities. Execution-authorization protocol `0.3.0` adds one envelope with `scope.kind: session | run` and an optional exact `provider/model` selection; execution-lease protocol `0.3.0` separates durable consumption/release evidence from operational owner state; process-supervisor protocol/manifest `0.1.0`, event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, and ResultPacket-draft `0.5.0` carry scope through the common lifecycle boundary. Codex and OpenCode one-shot adapters share the same native descendant-tree supervisor and invocation-record core. Both runtimes have passed live Session and consequential Run conformance, including isolated write, canonical ResultPacket application, Fresh HEAD review, and descendant-tree cleanup. OpenCode protocol fixtures and fresh-process Codex-to-OpenCode artifact recovery also pass. HEAD now supplies only the exact authorized model plus an ephemeral permission/privacy overlay; OpenCode's global resolved configuration and authentication remain the provider authority. HEAD neither synthesizes provider packages nor rewrites configured endpoints. The separately observed Bun crash remains attributed to external security software and is excluded from adapter, model, and authentication conclusions. Provider resume/attachment and general runtime controls remain disabled.
+Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation, runtime-protocol-evidence protocol `0.2.0` observes fixed provider-specific help surfaces and exact one-shot option sets, and runtime-project-binding protocol `0.1.0` binds those observations to canonical HEAD project and Session identities. Execution-authorization protocol `0.3.0` adds one envelope with `scope.kind: session | run` and an optional exact `provider/model` selection; execution-lease protocol `0.3.0` separates durable consumption/release evidence from operational owner state; process-supervisor protocol/manifest `0.1.0`, event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, and ResultPacket-draft `0.5.0` carry scope through the common lifecycle boundary. Codex and OpenCode one-shot adapters share the same native descendant-tree supervisor and invocation-record core. Both runtimes have passed live Session and consequential Run conformance, including isolated write, canonical ResultPacket application, Fresh HEAD review, and descendant-tree cleanup. OpenCode protocol fixtures and fresh-process Codex-to-OpenCode artifact recovery also pass. HEAD now supplies only the exact authorized model plus an ephemeral permission/privacy overlay; OpenCode's global resolved configuration and authentication remain the provider authority. HEAD neither synthesizes provider packages nor rewrites configured endpoints. The separately observed Bun crash remains attributed to external security software and is excluded from adapter, model, and authentication conclusions. Provider-neutral host-local role coordination is active through a separate trusted binding boundary; provider resume/attachment, live WorkspaceHost delivery, and general runtime controls remain disabled.
 
 ```text
 HEAD Core
@@ -78,6 +78,23 @@ The deterministic lifecycle verifier proves that removing one required Codex opt
 
 The tracked lifecycle verifier uses deterministic capability fixtures and fixed Node execution fixtures, not Codex or OpenCode model execution. It proves Session and Run scopes for both runtime identities, provider-specific fixture-mode derivation from the authorization runtime, Session-request drift rejection, model binding, local reversible workspace-write authorization, pre-start consumption, sequential and in-flight replay rejection, tamper detection, release inspection, bounded stdin, JSONL validation, exact-child exit, timeout/caller-cancellation termination, Run contract action enforcement, and scope-correct review requirements. The separate provider-replacement verifier adds a fresh-process, artifact-only Codex-to-OpenCode recovery proof. Provider-session attachment and general runtime control remain disabled.
 
+## Provider-neutral role coordination boundary
+
+Role coordination protocol `0.1.0` reuses the validated external operational
+root but remains separate from `ExecutionAuthorization` and provider-session
+control. A trusted host/admin opens a generation and issues a one-time raw
+binding token to one verified direct project role. Public send/read/reply
+operations derive the caller role from that binding; role and token are absent
+from MCP arguments. Project, HEAD Session, generation, binding replacement, and
+cross-project fences fail closed.
+
+Durable message acceptance precedes optional notification delivery. Inbox,
+idempotency, read, immutable reply, and delivery records are host-local and
+survive process restart without entering `.head` or Product Canon. All message
+and reply authority flags are false. An ambiguous live delivery is not retried
+automatically. See [`role-coordination.md`](role-coordination.md) for the state,
+CLI/MCP, failure, and current-claim boundaries.
+
 ## Authority and identity boundary
 
 Runtime capability never grants authorization. A future control operation must still be bounded by a valid Session or Run `ExecutionAuthorization`, exact project binding, caller identity, owned-process evidence, resource limits, and cleanup. Only Run scope requires accepted ExecutionContract and ResultPacket/ReviewDecision lineage.
@@ -139,7 +156,7 @@ The adapter verifier proves deterministic contract identities, Codex/OpenCode co
 
 ## Next activation gate
 
-Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, and canonical HEAD project/Session capability binding are active. Before any `start`, `resume`, `stream`, `interrupt`, `close`, attach, messaging, or process-host control becomes active, the platform/runtime/host composition must still verify:
+Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, canonical HEAD project/Session capability binding, and host-local role coordination are active. Before any `start`, `resume`, `stream`, `interrupt`, `close`, live attach/delivery, or process-host control becomes active, the platform/runtime/host composition must still verify:
 
 1. preserve the completed live Codex Session conformance evidence through the externalized operational-state root, exact authorization/lease/caller/project fences, and verified native descendant supervisor;
 2. validate the diagnosed large-event fix against evidence-led consequential live Codex Runs, including actual provider input, structured events, isolated file write, ResultPacket evidence, and provider-specific errors through the provider-neutral schemas;

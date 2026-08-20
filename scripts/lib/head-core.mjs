@@ -464,6 +464,13 @@ export function coreContract() {
     "at-most-once-compaction-continuation",
     "newer-user-turn-compaction-supersession",
     "derived-compaction-recovery-receipt",
+    "provider-neutral-durable-role-coordination",
+    "host-issued-coordination-role-binding",
+    "generation-fenced-coordination-inbox",
+    "immutable-coordination-reply",
+    "idempotent-coordination-send",
+    "optional-post-acceptance-delivery-effect",
+    "role-bound-mcp-send-read-reply",
   ];
   contract.deferredCapabilities = [
     ...contract.deferredCapabilities,
@@ -474,6 +481,7 @@ export function coreContract() {
     "actual-provider-runtime-event-normalization",
     "actual-provider-session-project-binding",
     "arcadedb-live-prepared-query-performance-evidence",
+    "agent-comm",
   ]).has(capability));
   return contract;
 }

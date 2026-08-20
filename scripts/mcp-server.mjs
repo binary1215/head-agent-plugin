@@ -22,6 +22,7 @@ import { readRuntimeInvocationResult } from "./lib/runtime-run-result-applicatio
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { COORDINATION_BINDING_ENV, readCoordinationInbox, replyCoordinationMessage, sendCoordinationMessage } from "./lib/role-coordination.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -595,6 +596,26 @@ export const tools = [
     }, required: ["project_root"], additionalProperties: false },
   },
   {
+    name: "head_coordination_send_message",
+    description: "Send one durable project/HEAD-Session/generation-fenced role message. Sender role is derived only from the host-injected endpoint binding; the message has no instruction, decision, review, execution-authorization, promotion, or Canon authority.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, to_role: { type: "string", pattern: "^[a-z][a-z0-9-]{0,63}$" }, content: { type: "string", minLength: 1, maxLength: 32768 }, evidence_ids: { type: "array", maxItems: 64, uniqueItems: true, items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }, idempotency_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }, lane: { type: "string", enum: ["observe", "session", "run", "authority"], default: "session" },
+    }, required: ["project_root", "to_role", "content", "idempotency_key"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_coordination_read_inbox",
+    description: "Read the inbox of the host-bound role and record host-local read markers. Caller role cannot be supplied by tool arguments.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, unread_only: { type: "boolean", default: true } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_coordination_reply_message",
+    description: "Write one immutable reply as the host-bound role. The reply is coordination evidence only and cannot approve a ReviewDecision, ExecutionContract, or Product Canon change.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, in_reply_to: { type: "string", pattern: "^coord-message-[a-f0-9]{32}$" }, content: { type: "string", minLength: 1, maxLength: 32768 } }, required: ["project_root", "in_reply_to", "content"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "head_compact_prepare",
     description: "Create the canonical Session/Run recovery checkpoint and one bounded compaction epoch. This does not invoke a provider or treat a provider summary as recovery authority.",
     inputSchema: { type: "object", properties: {
@@ -744,6 +765,14 @@ function requireMcpConfirmation(value, message, code) {
   if (value === true) return;
   const error = new Error(message);
   error.code = code;
+  throw error;
+}
+
+function mcpCoordinationBindingToken() {
+  const token = String(process.env[COORDINATION_BINDING_ENV] || "").trim();
+  if (token) return token;
+  const error = new Error(`Role coordination requires a trusted host-injected ${COORDINATION_BINDING_ENV} endpoint binding.`);
+  error.code = "COORDINATION_BINDING_REQUIRED";
   throw error;
 }
 
@@ -903,6 +932,12 @@ export async function dispatch(request, { graphDbTransport = null } = {}) {
                           })
                           : name === "head_operating_lane_recommend"
                             ? recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
+                          : name === "head_coordination_send_message"
+                            ? sendCoordinationMessage({ root: args.project_root, bindingToken: mcpCoordinationBindingToken(), toRole: args.to_role, content: args.content, evidenceIds: args.evidence_ids || [], idempotencyKey: args.idempotency_key, lane: args.lane || "session" })
+                          : name === "head_coordination_read_inbox"
+                            ? readCoordinationInbox({ root: args.project_root, bindingToken: mcpCoordinationBindingToken(), unreadOnly: args.unread_only ?? true })
+                          : name === "head_coordination_reply_message"
+                            ? replyCoordinationMessage({ root: args.project_root, bindingToken: mcpCoordinationBindingToken(), inReplyTo: args.in_reply_to, content: args.content })
                           : name === "head_compact_prepare"
                             ? prepareCompaction({ root: args.project_root, runtime: args.runtime || "manual", userTurnIdAtPrepare: args.user_turn_id_at_prepare, purpose: args.purpose, approvedDecisions: args.approved_decisions, currentPosition: args.current_position, nextExpectedResult: args.next_expected_result, openReviewIds: args.open_review_ids || [] })
                           : name === "head_compact_verify"

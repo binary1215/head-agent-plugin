@@ -30,6 +30,7 @@ import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, readCoordinationInbox, replyCoordinationMessage, sendCoordinationMessage } from "./lib/role-coordination.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
@@ -132,6 +133,13 @@ export function usage({ all = false } = {}) {
       "head compact-continue <project> --input <continuation.json>",
       "head compact-status <project>",
       "head compact-abort <project> --input <abort.json>",
+      "head coordination-open <project>",
+      "head coordination-rotate <project>",
+      "head coordination-bind <project> --role <head|developer|coder|reviewer>",
+      "head coordination-status <project>",
+      "head coordination-send <project> --input <message.json> [--binding-env <environment-name>]",
+      "head coordination-inbox <project> [--unread-only <true|false>] [--binding-env <environment-name>]",
+      "head coordination-reply <project> --input <reply.json> [--binding-env <environment-name>]",
       "head lineage-plan <project> --input <whole-plan.json>",
       "head lineage-next-plan <project> --input <next-whole-plan.json>",
       "head lineage-contract <project> --input <execution-contract.json>",
@@ -173,6 +181,18 @@ function inputJson(options, label) {
 
 function optionalInputJson(options, label) {
   return options.input ? inputJson(options, label) : {};
+}
+
+function coordinationBindingToken(options) {
+  const name = String(options["binding-env"] || COORDINATION_BINDING_ENV).trim();
+  if (!/^[A-Z][A-Z0-9_]{2,127}$/u.test(name)) throw new Error("Coordination binding environment name is invalid.");
+  const token = String(process.env[name] || "").trim();
+  if (!token) {
+    const error = new Error(`Coordination binding token is unavailable through environment reference ${name}.`);
+    error.code = "COORDINATION_BINDING_REQUIRED";
+    throw error;
+  }
+  return token;
 }
 
 function readJsonFile(file, label) {
@@ -362,6 +382,27 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "compact-continue") return continueCompaction({ ...inputJson(options, "Compaction continuation"), root });
   if (command === "compact-status") return inspectCompaction({ root });
   if (command === "compact-abort") return abortCompaction({ ...inputJson(options, "Compaction abort"), root });
+  if (command === "coordination-open") return openCoordinationGeneration({ root });
+  if (command === "coordination-rotate") return openCoordinationGeneration({ root, rotate: true });
+  if (command === "coordination-bind") return issueCoordinationRoleBinding({ root, role: options.role });
+  if (command === "coordination-status") return inspectRoleCoordination({ root });
+  if (command === "coordination-send") {
+    const input = inputJson(options, "Coordination message");
+    const unexpected = Object.keys(input).filter((key) => !new Set(["toRole", "content", "evidenceIds", "idempotencyKey", "lane"]).has(key));
+    if (unexpected.length) throw new Error(`Coordination message contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    return sendCoordinationMessage({ ...input, root, bindingToken: coordinationBindingToken(options) });
+  }
+  if (command === "coordination-inbox") return readCoordinationInbox({
+    root,
+    bindingToken: coordinationBindingToken(options),
+    unreadOnly: options["unread-only"] == null ? true : options["unread-only"] === "true",
+  });
+  if (command === "coordination-reply") {
+    const input = inputJson(options, "Coordination reply");
+    const unexpected = Object.keys(input).filter((key) => !new Set(["inReplyTo", "content"]).has(key));
+    if (unexpected.length) throw new Error(`Coordination reply contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    return replyCoordinationMessage({ ...input, root, bindingToken: coordinationBindingToken(options) });
+  }
   if (command === "lineage-plan") return createWholePlanSnapshot({ ...inputJson(options, "Whole plan"), root, persist: true });
   if (command === "lineage-next-plan") return createNextWholePlanSnapshot({ ...inputJson(options, "Next whole plan"), root, persist: true });
   if (command === "lineage-contract") return createExecutionContract({ ...inputJson(options, "Execution Contract"), root, persist: true });
