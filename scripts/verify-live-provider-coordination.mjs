@@ -7,16 +7,20 @@ import { fileURLToPath } from "node:url";
 import { initializeProject } from "./lib/head-core.mjs";
 import { buildRuntimeVersionEvidence } from "./lib/runtime-machine-execution.mjs";
 import { resolveReadOnlyRuntimeExecutableTarget } from "./lib/runtime-machine-discovery.mjs";
-import { resolveVerifiedProcessSupervisor, spawnSupervisedProcess } from "./lib/runtime-process-supervisor.mjs";
+import { resolveVerifiedProcessSupervisor, spawnBoundedRuntimeOneShot } from "./lib/runtime-process-supervisor.mjs";
 import {
+  attachCoordinationWorkspaceHost,
   issueCoordinationRoleBinding,
+  inspectRoleCoordination,
   openCoordinationGeneration,
   readCoordinationInbox,
   readCoordinationReply,
 } from "./lib/role-coordination.mjs";
+import { VerifiedWorkspaceHostAdapter } from "./lib/workspace-host-coordination.mjs";
 import {
   acknowledgeWorkspaceHostExportDelivery,
   claimWorkspaceHostExportDelivery,
+  createWorkspaceHostExportDriver,
   listWorkspaceHostExportDeliveryRequests,
   publishWorkspaceHostExportSnapshot,
   workspaceHostExportProcessProofHash,
@@ -36,6 +40,7 @@ const exportMcp = path.join(pluginRoot, "scripts", "workspace-host-export-mcp.mj
 const knownTools = new Set([
   "head_coordination_send_message",
   "head_coordination_read_inbox",
+  "head_coordination_wait_reply",
   "head_coordination_reply_message",
 ]);
 
@@ -151,15 +156,24 @@ function baseRuntimeEnvironment(environment = process.env) {
   return result;
 }
 
-function hostEnvironment({ bindingToken, endpointRole, proof }) {
+function endpointIdentity(role, suffix = "current") {
+  return {
+    workspaceId: `workspace-${role}`,
+    tabId: `tab-${role}`,
+    endpointId: `endpoint-${role}-${suffix}`,
+    terminalId: `terminal-${role}-${suffix}`,
+  };
+}
+
+function hostEnvironment({ bindingToken, endpoint, proof }) {
   return {
     HEAD_AGENT_OPERATIONAL_STATE_ROOT: operationalRoot,
     HEAD_AGENT_COORDINATION_BINDING_TOKEN: bindingToken,
     HEAD_AGENT_HOST_PROJECT_ROOT: projectRoot,
     HEAD_AGENT_WORKSPACE_HOST_EXPORT_ROOT: exportRoot,
-    HEAD_AGENT_HOST_WORKSPACE_ID: `workspace-${endpointRole}`,
-    HEAD_AGENT_HOST_TAB_ID: `tab-${endpointRole}`,
-    HEAD_AGENT_HOST_ENDPOINT_ID: `endpoint-${endpointRole}`,
+    HEAD_AGENT_HOST_WORKSPACE_ID: endpoint.workspaceId,
+    HEAD_AGENT_HOST_TAB_ID: endpoint.tabId,
+    HEAD_AGENT_HOST_ENDPOINT_ID: endpoint.endpointId,
     HEAD_AGENT_HOST_PROCESS_PROOF: proof,
     HEAD_AGENT_WORKSPACE_HOST_ACK_TIMEOUT_MS: String(ackTimeoutMs),
   };
@@ -204,7 +218,7 @@ function codexArguments(model) {
   ];
 }
 
-function openCodeEnvironment(bindingToken, proof) {
+function openCodeEnvironment(bindingToken, endpoint, proof) {
   const permission = {
     "*": "allow",
     bash: "deny",
@@ -236,7 +250,7 @@ function openCodeEnvironment(bindingToken, proof) {
   };
   return {
     ...baseRuntimeEnvironment(),
-    ...hostEnvironment({ bindingToken, endpointRole: "developer", proof }),
+    ...hostEnvironment({ bindingToken, endpoint, proof }),
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
     OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
     OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
@@ -291,8 +305,8 @@ function toolEvidence(records) {
   };
 }
 
-function launchSupervisedClient({ runtime, executablePath, args, environment, input, supervisorSelection }) {
-  const controlDirectory = path.join(operationalRoot, "live-provider-control", runtime);
+function launchSupervisedClient({ runtime, label = runtime, executablePath, args, environment, input, supervisorSelection }) {
+  const controlDirectory = path.join(operationalRoot, "live-provider-control", label);
   fs.mkdirSync(controlDirectory, { recursive: true });
   const controlFile = path.join(controlDirectory, "supervisor-control.jsonl");
   assert(!fs.existsSync(controlFile), "Live provider control file already exists.", "LIVE_PROVIDER_COORDINATION_CONTROL_EXISTS");
@@ -301,13 +315,13 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
   let lineBuffer = "";
   const records = [];
   let timedOut = false;
-  let forceTimer = null;
   let settled = false;
   let child = null;
   let providerStartEvent = null;
   let resolveProviderStarted;
   const providerStarted = new Promise((resolve) => { resolveProviderStarted = resolve; });
-  const supervised = spawnSupervisedProcess({
+  const controlled = spawnBoundedRuntimeOneShot({
+    runtime,
     selection: supervisorSelection,
     executablePath,
     args,
@@ -331,10 +345,10 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
       });
     },
   });
-  child = supervised.child;
-  const terminate = (force = false) => {
+  child = controlled.child;
+  const requestControl = (action = "close") => {
     if (settled) return;
-    supervised.terminate(force);
+    return controlled[action]({ token: controlled.controlToken });
   };
   const completed = new Promise((resolve, reject) => {
     child.once("spawn", () => recordProcess({
@@ -346,7 +360,7 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
     })));
     child.stdout.on("data", (chunk) => {
       stdout = Buffer.concat([stdout, chunk]);
-      if (stdout.length > 16 * 1024 * 1024) terminate(false);
+      if (stdout.length > 16 * 1024 * 1024) requestControl("close");
       lineBuffer += chunk.toString("utf8");
       const lines = lineBuffer.split(/\r?\n/u);
       lineBuffer = lines.pop() || "";
@@ -357,25 +371,22 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
     });
     child.stderr.on("data", (chunk) => {
       stderr = Buffer.concat([stderr, chunk]);
-      if (stderr.length > 4 * 1024 * 1024) terminate(false);
+      if (stderr.length > 4 * 1024 * 1024) requestControl("close");
     });
     const timer = setTimeout(() => {
       timedOut = true;
-      terminate(false);
-      forceTimer = setTimeout(() => terminate(true), 5_000);
-      forceTimer.unref?.();
+      requestControl("close");
     }, clientTimeoutMs);
     timer.unref?.();
     child.once("close", (code, signal) => {
       settled = true;
       if (!providerStartEvent) resolveProviderStarted(null);
       clearTimeout(timer);
-      if (forceTimer) clearTimeout(forceTimer);
       if (lineBuffer.trim()) {
         try { records.push(JSON.parse(lineBuffer)); } catch {}
       }
       recordProcess({ type: "exit", pid: child.pid, parentPid: process.pid, exitCode: code, signal: signal || "none" });
-      const supervision = supervised.finalize({ exactSupervisorExitObserved: true, terminationRequested: timedOut });
+      const supervision = controlled.finalize({ token: controlled.controlToken, exactSupervisorExitObserved: true });
       const evidence = toolEvidence(records);
       if (fs.existsSync(controlFile)) fs.unlinkSync(controlFile);
       if (fs.existsSync(controlDirectory) && fs.readdirSync(controlDirectory).length === 0) fs.rmdirSync(controlDirectory);
@@ -394,19 +405,17 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
       });
     });
   });
-  return { runtime, child, supervised, terminate, providerStarted, completed };
+  return {
+    runtime, child, controlled, providerStarted, completed,
+    interrupt: () => requestControl("interrupt"),
+    close: () => requestControl("close"),
+  };
 }
 
 async function stopClient(client) {
   if (!client) return null;
-  if (client.child.exitCode === null && client.child.signalCode === null) client.terminate(false);
-  return await Promise.race([
-    client.completed,
-    sleep(7_000).then(() => {
-      client.terminate(true);
-      return client.completed;
-    }),
-  ]);
+  if (client.child.exitCode === null && client.child.signalCode === null) client.close();
+  return client.completed;
 }
 
 function providerSummary(result) {
@@ -426,6 +435,7 @@ function providerSummary(result) {
     providerSessionReferenceDigests: result.providerSessionReferences.map((value) => digest(value)).sort(),
     supervisionMode: result.supervision.supervisionMode,
     supervisionStrategy: result.supervision.supervisionStrategy,
+    controlAction: result.supervision.action,
     ownershipEstablished: result.supervision.ownershipEstablished,
     treeCleanupVerified: result.supervision.treeCleanupVerified,
   };
@@ -451,6 +461,41 @@ async function waitForDeliveryRequest(endpointId, developerClient) {
   fail("Timed out waiting for OpenCode's live coordination request.", "LIVE_PROVIDER_COORDINATION_REQUEST_TIMEOUT");
 }
 
+function endpointRecord({ endpoint, runtime, bindingId, proof }) {
+  return {
+    ...endpoint,
+    cwd: projectRoot,
+    runtime,
+    bindingId,
+    processProofHash: workspaceHostExportProcessProofHash(proof),
+  };
+}
+
+async function waitForRolesAttached(environment, roles, clients, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const status = inspectRoleCoordination({ root: projectRoot, environment });
+    if (roles.every((role) => status.attachedRoles.includes(role))) return status;
+    for (const client of clients) {
+      if (client.child.exitCode !== null || client.child.signalCode !== null) {
+        fail("A provider exited before its exact endpoint attachment was observed.",
+          "LIVE_PROVIDER_COORDINATION_ATTACHMENT_MISSING", { role: roles.join(","), runtime: client.runtime });
+      }
+    }
+    await sleep(50);
+  }
+  fail("Timed out waiting for exact already-running endpoint attachments.",
+    "LIVE_PROVIDER_COORDINATION_ATTACHMENT_TIMEOUT", { roles });
+}
+
+async function waitForProviderStart(client, label) {
+  const event = await Promise.race([client.providerStarted, sleep(30_000).then(() => null)]);
+  assert(event?.type === "provider.started" && Number.isSafeInteger(event.providerPid),
+    `${label} did not expose one owned provider child before coordination.`,
+    "LIVE_PROVIDER_COORDINATION_PROVIDER_START_MISSING");
+  return event;
+}
+
 async function main() {
   assert(process.env[liveOptIn] === "1",
     `${liveOptIn}=1 is required because this verifier performs real Codex and OpenCode model calls.`,
@@ -473,8 +518,12 @@ async function main() {
 
   let developerClient = null;
   let headClient = null;
+  let coderControlClient = null;
+  let reviewerControlClient = null;
   let developerResult = null;
   let headResult = null;
+  let coderControlResult = null;
+  let reviewerControlResult = null;
   let successSummary = null;
   fs.mkdirSync(projectRoot);
   fs.mkdirSync(operationalRoot);
@@ -491,84 +540,108 @@ async function main() {
     const generation = openCoordinationGeneration({ root: projectRoot, environment });
     const developer = issueCoordinationRoleBinding({ root: projectRoot, role: "developer", environment });
     const head = issueCoordinationRoleBinding({ root: projectRoot, role: "head", environment });
+    const coder = issueCoordinationRoleBinding({ root: projectRoot, role: "coder", environment });
+    const reviewer = issueCoordinationRoleBinding({ root: projectRoot, role: "reviewer", environment });
     const proofs = {
       developer: crypto.randomBytes(32).toString("base64url"),
       head: crypto.randomBytes(32).toString("base64url"),
+      coder: crypto.randomBytes(32).toString("base64url"),
+      reviewer: crypto.randomBytes(32).toString("base64url"),
     };
-    const endpoints = [
-      {
-        workspaceId: "workspace-developer", tabId: "tab-developer", endpointId: "endpoint-developer",
-        terminalId: "terminal-developer", cwd: projectRoot, runtime: "opencode",
-        bindingId: developer.binding.bindingId,
-        processProofHash: workspaceHostExportProcessProofHash(proofs.developer),
-      },
-      {
-        workspaceId: "workspace-head", tabId: "tab-head", endpointId: "endpoint-head",
-        terminalId: "terminal-head", cwd: projectRoot, runtime: "codex",
-        bindingId: head.binding.bindingId,
-        processProofHash: workspaceHostExportProcessProofHash(proofs.head),
-      },
+    const endpoint = {
+      developer: endpointIdentity("developer"),
+      head: endpointIdentity("head"),
+      staleHead: endpointIdentity("head", "stale"),
+      coder: endpointIdentity("coder"),
+      reviewer: endpointIdentity("reviewer"),
+    };
+    const hostInstanceId = `live-provider-host-${digest(nonce).slice(0, 16)}`;
+    const staleEndpoints = [
+      endpointRecord({ endpoint: endpoint.developer, runtime: "opencode", bindingId: developer.binding.bindingId, proof: proofs.developer }),
+      endpointRecord({ endpoint: endpoint.staleHead, runtime: "codex", bindingId: head.binding.bindingId, proof: proofs.head }),
+      endpointRecord({ endpoint: endpoint.coder, runtime: "codex", bindingId: coder.binding.bindingId, proof: proofs.coder }),
+      endpointRecord({ endpoint: endpoint.reviewer, runtime: "opencode", bindingId: reviewer.binding.bindingId, proof: proofs.reviewer }),
     ];
+    publishWorkspaceHostExportSnapshot({ exportRoot, projectRoot, hostInstanceId, endpoints: staleEndpoints });
+    const staleCaller = {
+      workspaceId: endpoint.staleHead.workspaceId,
+      tabId: endpoint.staleHead.tabId,
+      endpointId: endpoint.staleHead.endpointId,
+    };
+    const staleAdapter = new VerifiedWorkspaceHostAdapter({
+      driver: createWorkspaceHostExportDriver({
+        exportRoot, projectRoot, caller: staleCaller, bindingId: head.binding.bindingId,
+        processProof: proofs.head, acknowledgementTimeoutMs: ackTimeoutMs,
+      }),
+    });
+    const staleAttachment = attachCoordinationWorkspaceHost({
+      root: projectRoot, environment, bindingToken: head.bindingToken,
+      workspaceHostAdapter: staleAdapter, caller: staleCaller,
+    });
+    const endpoints = staleEndpoints.map((candidate) => candidate.bindingId === head.binding.bindingId
+      ? endpointRecord({ endpoint: endpoint.head, runtime: "codex", bindingId: head.binding.bindingId, proof: proofs.head })
+      : candidate);
     const published = publishWorkspaceHostExportSnapshot({
-      exportRoot, projectRoot, hostInstanceId: `live-provider-host-${digest(nonce).slice(0, 16)}`, endpoints,
+      exportRoot, projectRoot, hostInstanceId, endpoints,
     });
     const headBefore = treeBytes(path.join(projectRoot, ".head"));
     const messageMarker = `LIVE_PROVIDER_COORDINATION_${digest(nonce).slice(0, 24)}`;
     const replyMarker = `LIVE_PROVIDER_REPLY_${digest(`${nonce}\0reply`).slice(0, 24)}`;
     const idempotencyKey = `live-provider-${digest(nonce).slice(0, 24)}`;
-    const openCodePrompt = [
-      "Act only as the already-bound developer role in this isolated HEAD Agent verification.",
-      "Use the head_core MCP tool head_coordination_send_message exactly once and no other tool.",
-      `Call it with project_root=${JSON.stringify(projectRoot)}, to_role=\"head\", content=${JSON.stringify(messageMarker)}, and idempotency_key=${JSON.stringify(idempotencyKey)}.`,
-      "Wait for the tool result. If and only if delivery is reported, answer exactly OPENCODE_LIVE_SEND_DELIVERED.",
-      "Do not use shell, files, network tools, or disclose environment values.",
-    ].join("\n");
-    developerClient = launchSupervisedClient({
-      runtime: "opencode",
-      executablePath: targets.opencode.executablePath,
-      args: ["run", "--format", "json", "--pure", "--dir", projectRoot, "--model", openCodeModel, "--auto", "--title", "HEAD live coordination developer"],
-      environment: openCodeEnvironment(developer.bindingToken, proofs.developer),
-      input: `${openCodePrompt}\n`,
-      supervisorSelection,
-    });
-    const request = await waitForDeliveryRequest("endpoint-head", developerClient);
-    assert(request.text.includes(messageMarker),
-      "Live host request did not carry the expected opaque notification marker.", "LIVE_PROVIDER_COORDINATION_NOTIFICATION_MISMATCH");
-    const claimed = claimWorkspaceHostExportDelivery({ exportRoot, projectRoot, request });
-    assert(claimed.status === "claimed", "Live host could not acquire the exact pre-effect delivery claim.",
-      "LIVE_PROVIDER_COORDINATION_CLAIM_FAILED", { status: claimed.status });
-
     const codexPrompt = [
       "Act only as the already-bound HEAD role in this isolated HEAD Agent verification.",
       "Use only head_core MCP coordination tools.",
-      `First call head_coordination_read_inbox with project_root=${JSON.stringify(projectRoot)} and unread_only=true.`,
-      `Find the one message whose content is ${JSON.stringify(messageMarker)}.`,
+      `Call head_coordination_read_inbox with project_root=${JSON.stringify(projectRoot)}, unread_only=true, and wait_timeout_ms=600000.`,
+      `Wait for and find the one authority question whose content is ${JSON.stringify(messageMarker)}.`,
       `Then call head_coordination_reply_message with project_root=${JSON.stringify(projectRoot)}, in_reply_to set to that message_id, and content=${JSON.stringify(replyMarker)}.`,
       "After both tool calls succeed, answer exactly CODEX_LIVE_READ_REPLY_COMPLETED.",
       "Do not use shell, files, network tools, or disclose environment values.",
     ].join("\n");
     headClient = launchSupervisedClient({
       runtime: "codex",
+      label: "head-already-running",
       executablePath: targets.codex.executablePath,
       args: codexArguments(codexModel),
       environment: {
         ...baseRuntimeEnvironment(),
-        ...hostEnvironment({ bindingToken: head.bindingToken, endpointRole: "head", proof: proofs.head }),
+        ...hostEnvironment({ bindingToken: head.bindingToken, endpoint: endpoint.head, proof: proofs.head }),
       },
       input: `${codexPrompt}\n`,
       supervisorSelection,
     });
-    const providerStart = await Promise.race([
-      headClient.providerStarted,
-      sleep(30_000).then(() => null),
-    ]);
-    assert(providerStart?.type === "provider.started" && Number.isSafeInteger(providerStart.providerPid),
-      "The claimed wake did not start one owned Codex provider process.", "LIVE_PROVIDER_COORDINATION_WAKE_START_MISSING");
-    const replyBeforeAcknowledgement = readCoordinationReply({
-      root: projectRoot, environment, bindingToken: developer.bindingToken, messageId: request.messageId,
+    const headProviderStart = await waitForProviderStart(headClient, "Codex HEAD");
+    await waitForRolesAttached(environment, ["head"], [headClient]);
+    const openCodePrompt = [
+      "Act only as the already-bound developer role in this isolated HEAD Agent verification.",
+      "Use only the head_core MCP coordination tools named below.",
+      `Call head_coordination_send_message exactly once with project_root=${JSON.stringify(projectRoot)}, to_role=\"head\", content=${JSON.stringify(messageMarker)}, and idempotency_key=${JSON.stringify(idempotencyKey)}.`,
+      "From that result, retain message_id. Then call head_coordination_wait_reply with the same project_root, that message_id, and wait_timeout_ms=600000.",
+      `Only after the reply content equals ${JSON.stringify(replyMarker)}, answer exactly OPENCODE_LIVE_REPLY_OBSERVED.`,
+      "Do not use shell, files, network tools, or disclose environment values.",
+    ].join("\n");
+    developerClient = launchSupervisedClient({
+      runtime: "opencode",
+      label: "developer-already-running",
+      executablePath: targets.opencode.executablePath,
+      args: ["run", "--format", "json", "--pure", "--dir", projectRoot, "--model", openCodeModel, "--auto", "--title", "HEAD live coordination developer"],
+      environment: openCodeEnvironment(developer.bindingToken, endpoint.developer, proofs.developer),
+      input: `${openCodePrompt}\n`,
+      supervisorSelection,
     });
-    assert(replyBeforeAcknowledgement.status === "pending",
-      "Wake acknowledgment was incorrectly delayed until the recipient reply.", "LIVE_PROVIDER_COORDINATION_ACK_REPLY_COUPLED");
+    const developerProviderStart = await waitForProviderStart(developerClient, "OpenCode developer");
+    const request = await waitForDeliveryRequest(endpoint.head.endpointId, developerClient);
+    assert(request.text.includes(messageMarker),
+      "Live host request did not carry the expected opaque notification marker.", "LIVE_PROVIDER_COORDINATION_NOTIFICATION_MISMATCH");
+    const claimed = claimWorkspaceHostExportDelivery({ exportRoot, projectRoot, request });
+    assert(claimed.status === "claimed", "Live host could not acquire the exact pre-effect delivery claim.",
+      "LIVE_PROVIDER_COORDINATION_CLAIM_FAILED", { status: claimed.status });
+    assert(listWorkspaceHostExportDeliveryRequests({
+      exportRoot, projectRoot, endpointId: endpoint.staleHead.endpointId,
+    }).length === 0, "The replaced stale HEAD endpoint received a delivery request.",
+    "LIVE_PROVIDER_COORDINATION_STALE_ENDPOINT_RECEIVED");
+    assert(headProviderStart.providerPid !== developerProviderStart.providerPid,
+      "Codex and OpenCode did not expose distinct already-running process proofs.",
+      "LIVE_PROVIDER_COORDINATION_PROVIDER_PROOF_REUSED");
     const acknowledgement = acknowledgeWorkspaceHostExportDelivery({
       exportRoot, projectRoot, request, claim: claimed.claim,
     });
@@ -591,24 +664,81 @@ async function main() {
     const reply = readCoordinationReply({
       root: projectRoot, environment, bindingToken: developer.bindingToken, messageId: request.messageId,
     });
-    assert(reply.status === "replied" && reply.reply.content === replyMarker,
+    assert(reply.status === "replied" && reply.reply.content === replyMarker
+      && reply.reply.reviewAuthority === false && reply.reply.promotionAuthority === false,
       "Durable developer reply did not prove the exact Codex reply.", "LIVE_PROVIDER_COORDINATION_REPLY_MISSING");
     assert(developerResult.exitCode === 0 && !developerResult.timedOut
       && developerResult.supervision.ownershipEstablished && developerResult.supervision.treeCleanupVerified,
     "Actual OpenCode developer client did not complete under verified descendant ownership.",
     "LIVE_PROVIDER_COORDINATION_OPENCODE_FAILED", providerSummary(developerResult));
-    assert(developerResult.observedTools.includes("head_coordination_send_message"),
-      "Actual OpenCode event stream did not prove its send-message tool call.",
+    assert(developerResult.observedTools.includes("head_coordination_send_message")
+      && developerResult.observedTools.includes("head_coordination_wait_reply"),
+      "Actual OpenCode event stream did not prove both send and bounded reply-wait tool calls.",
       "LIVE_PROVIDER_COORDINATION_OPENCODE_TOOL_MISSING", providerSummary(developerResult));
+
+    const controlPrompt = (role) => [
+      `Act only as the already-bound ${role} role in this isolated control verification.`,
+      `Call head_coordination_read_inbox with project_root=${JSON.stringify(projectRoot)}, unread_only=true, and wait_timeout_ms=600000.`,
+      "Wait for the call. Do not use any other tool or disclose environment values.",
+    ].join("\n");
+    coderControlClient = launchSupervisedClient({
+      runtime: "codex",
+      label: "coder-interrupt-control",
+      executablePath: targets.codex.executablePath,
+      args: codexArguments(codexModel),
+      environment: {
+        ...baseRuntimeEnvironment(),
+        ...hostEnvironment({ bindingToken: coder.bindingToken, endpoint: endpoint.coder, proof: proofs.coder }),
+      },
+      input: `${controlPrompt("coder")}\n`,
+      supervisorSelection,
+    });
+    reviewerControlClient = launchSupervisedClient({
+      runtime: "opencode",
+      label: "reviewer-close-control",
+      executablePath: targets.opencode.executablePath,
+      args: ["run", "--format", "json", "--pure", "--dir", projectRoot, "--model", openCodeModel, "--auto", "--title", "HEAD bounded close reviewer"],
+      environment: openCodeEnvironment(reviewer.bindingToken, endpoint.reviewer, proofs.reviewer),
+      input: `${controlPrompt("reviewer")}\n`,
+      supervisorSelection,
+    });
+    await Promise.all([
+      waitForProviderStart(coderControlClient, "Codex coder control"),
+      waitForProviderStart(reviewerControlClient, "OpenCode reviewer control"),
+    ]);
+    await waitForRolesAttached(environment, ["coder", "reviewer"], [coderControlClient, reviewerControlClient]);
+    coderControlClient.interrupt();
+    reviewerControlClient.close();
+    [coderControlResult, reviewerControlResult] = await Promise.all([
+      coderControlClient.completed,
+      reviewerControlClient.completed,
+    ]);
+    assert(coderControlResult.supervision.action === "interrupt"
+      && coderControlResult.supervision.ownershipEstablished
+      && coderControlResult.supervision.treeCleanupVerified,
+    "Actual Codex bounded interrupt did not verify exact owned-tree cleanup.",
+    "LIVE_PROVIDER_COORDINATION_INTERRUPT_FAILED", providerSummary(coderControlResult));
+    assert(reviewerControlResult.supervision.action === "close"
+      && reviewerControlResult.supervision.ownershipEstablished
+      && reviewerControlResult.supervision.treeCleanupVerified,
+    "Actual OpenCode bounded close did not verify exact owned-tree cleanup.",
+    "LIVE_PROVIDER_COORDINATION_CLOSE_FAILED", providerSummary(reviewerControlResult));
     assert(canonicalJson(treeBytes(path.join(projectRoot, ".head"))) === canonicalJson(headBefore),
       "Live provider coordination changed canonical .head bytes.", "LIVE_PROVIDER_COORDINATION_PROJECT_MUTATION");
-    for (const secret of [proofs.developer, proofs.head, developer.bindingToken, head.bindingToken]) {
+    for (const secret of [
+      ...Object.values(proofs),
+      developer.bindingToken, head.bindingToken, coder.bindingToken, reviewer.bindingToken,
+      developerClient.controlled.controlToken, headClient.controlled.controlToken,
+      coderControlClient.controlled.controlToken, reviewerControlClient.controlled.controlToken,
+    ]) {
       assert(!rootsContainBytes([projectRoot, operationalRoot, exportRoot], secret),
         "A raw process proof or role binding token persisted in scoped state.", "LIVE_PROVIDER_COORDINATION_SECRET_PERSISTED");
     }
     for (const providerSessionReference of [
       ...developerResult.providerSessionReferences,
       ...headResult.providerSessionReferences,
+      ...coderControlResult.providerSessionReferences,
+      ...reviewerControlResult.providerSessionReferences,
     ]) {
       assert(!rootsContainBytes([projectRoot, operationalRoot, exportRoot], providerSessionReference),
         "An actual provider session reference persisted in scoped state.", "LIVE_PROVIDER_COORDINATION_PROVIDER_SESSION_PERSISTED");
@@ -624,13 +754,27 @@ async function main() {
       headSessionId: generation.generation.headSessionId,
       authorityGeneration: generation.generation.authorityGeneration,
       hostSnapshotId: published.snapshotId,
+      replacedAttachmentId: staleAttachment.attachmentId,
       messageId: request.messageId,
       acknowledgementHash: acknowledgement.acknowledgementHash,
-      wakeAcknowledgedAfterProviderStart: true,
-      replyWasPendingAtWakeAcknowledgement: true,
+      codexProviderStartedBeforeRequest: true,
+      opencodeProviderStartedBeforeRequest: true,
+      spawnedOnClaim: false,
+      exactCurrentEndpointReceived: request.endpointId === endpoint.head.endpointId,
+      staleEndpointRequestCount: 0,
+      endpointReplacementVerified: true,
       durableReadVerified: true,
       durableReplyVerified: true,
+      boundedReplyWaitVerified: true,
+      replyAuthority: "coordination-evidence-only",
+      reviewDecisionCreated: false,
       deliveryReceiptIndependentOfReply: true,
+      runtimeOneShotControl: {
+        interrupt: providerSummary(coderControlResult),
+        close: providerSummary(reviewerControlResult),
+        resumeEnabled: false,
+        streamEnabled: false,
+      },
       projectHeadBytesUnchanged: true,
       providerSessionIdentityPersisted: false,
       rawProcessProofPersisted: false,
@@ -644,6 +788,8 @@ async function main() {
   } finally {
     developerResult ||= await stopClient(developerClient);
     headResult ||= await stopClient(headClient);
+    coderControlResult ||= await stopClient(coderControlClient);
+    reviewerControlResult ||= await stopClient(reviewerControlClient);
     removeOwnedRoot(exportRoot, ".qa-live-coordination-export-");
     removeOwnedRoot(operationalRoot, ".qa-live-coordination-operational-");
     removeOwnedRoot(projectRoot, ".qa-live-coordination-");

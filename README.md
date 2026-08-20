@@ -140,7 +140,7 @@ Intentional context compaction uses an explicit advanced recovery flow. `compact
 Provider-neutral role coordination is an advanced host-bound surface. A trusted
 administrator opens one coordination generation and issues a one-time binding
 token for a verified project role. The endpoint then exposes exactly send,
-read-inbox, and reply; role and token are not message arguments. Inboxes,
+read-inbox, bounded wait-reply, and reply; role and token are not message arguments. Inboxes,
 idempotency, read markers, immutable replies, and delivery receipts live in the
 external operational root and never mutate `.head` or Product Canon. Messages
 have no instruction, decision, review, execution, promotion, or Canon authority.
@@ -160,10 +160,13 @@ reachability only: the new process must still possess its distinct raw proof and
 pass the same fresh binding check on its first tool call. Requests, claims, and
 acknowledgments bind the exact recipient binding. Copied tuples,
 foreign/replaced bindings, forged/old proofs, explicit detach, and duplicate
-ownership fail closed. An actual OpenCode send → claimed request → newly started
-Codex → exact wake ack E2E passes, while Codex read/reply is verified separately
-from delivery. `.head` stays byte-identical, provider sessions do not persist,
-and both provider descendant trees are cleaned.
+ownership fail closed. An actual already-running Codex HEAD waits before an
+OpenCode worker sends its authority question; claim/ack targets the replaced
+current endpoint without spawning a provider, the stale endpoint receives
+nothing, and OpenCode boundedly waits for HEAD's non-authoritative reply without
+creating a `ReviewDecision`. `.head` stays byte-identical, provider sessions and
+control tokens do not persist, and separate real Codex/OpenCode clients prove
+owned-tree one-shot interrupt/close cleanup while resume/stream stay disabled.
 See [Role coordination](docs/role-coordination.md).
 
 ## Architecture at a glance

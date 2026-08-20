@@ -307,7 +307,12 @@ test("two fresh MCP processes share exact host-local targets without provider se
   assert.deepEqual(headAttached.result.structuredContent.messages, []);
   const listed = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 10, method: "tools/list", params: {} } });
   const roleTools = listed.result.tools.filter((tool) => tool.name.startsWith("head_coordination_"));
-  assert.equal(roleTools.length, 3);
+  assert.deepEqual(roleTools.map((tool) => tool.name), [
+    "head_coordination_send_message",
+    "head_coordination_read_inbox",
+    "head_coordination_wait_reply",
+    "head_coordination_reply_message",
+  ]);
   for (const tool of roleTools) {
     const properties = Object.keys(tool.inputSchema.properties || {});
     assert.deepEqual(properties.filter((field) => ["caller", "workspace_id", "tab_id", "endpoint_id", "terminal_id", "attachment_id"].includes(field)), []);

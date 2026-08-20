@@ -30,7 +30,7 @@ import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
-import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, readCoordinationInbox, replyCoordinationMessage, sendCoordinationMessage } from "./lib/role-coordination.mjs";
+import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
@@ -138,7 +138,8 @@ export function usage({ all = false } = {}) {
       "head coordination-bind <project> --role <head|developer|coder|reviewer>",
       "head coordination-status <project>",
       "head coordination-send <project> --input <message.json> [--binding-env <environment-name>]",
-      "head coordination-inbox <project> [--unread-only <true|false>] [--binding-env <environment-name>]",
+      "head coordination-inbox <project> [--unread-only <true|false>] [--wait-timeout-ms <0..600000>] [--binding-env <environment-name>]",
+      "head coordination-wait-reply <project> --message <coordination-message-id> [--wait-timeout-ms <0..600000>] [--binding-env <environment-name>]",
       "head coordination-reply <project> --input <reply.json> [--binding-env <environment-name>]",
       "head lineage-plan <project> --input <whole-plan.json>",
       "head lineage-next-plan <project> --input <next-whole-plan.json>",
@@ -392,10 +393,17 @@ export function runCommand(argv = process.argv.slice(2)) {
     if (unexpected.length) throw new Error(`Coordination message contains unsupported fields: ${unexpected.sort().join(", ")}`);
     return sendCoordinationMessage({ ...input, root, bindingToken: coordinationBindingToken(options) });
   }
-  if (command === "coordination-inbox") return readCoordinationInbox({
+  if (command === "coordination-inbox") return waitForCoordinationInbox({
     root,
     bindingToken: coordinationBindingToken(options),
     unreadOnly: options["unread-only"] == null ? true : options["unread-only"] === "true",
+    timeoutMs: options["wait-timeout-ms"] == null ? 0 : Number(options["wait-timeout-ms"]),
+  });
+  if (command === "coordination-wait-reply") return waitForCoordinationReply({
+    root,
+    bindingToken: coordinationBindingToken(options),
+    messageId: options.message,
+    timeoutMs: options["wait-timeout-ms"] == null ? 0 : Number(options["wait-timeout-ms"]),
   });
   if (command === "coordination-reply") {
     const input = inputJson(options, "Coordination reply");

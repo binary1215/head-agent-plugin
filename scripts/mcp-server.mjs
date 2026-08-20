@@ -22,7 +22,7 @@ import { readRuntimeInvocationResult } from "./lib/runtime-run-result-applicatio
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
-import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, readCoordinationInbox, replyCoordinationMessage, sendCoordinationMessage } from "./lib/role-coordination.mjs";
+import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -605,9 +605,15 @@ export const tools = [
   },
   {
     name: "head_coordination_read_inbox",
-    description: "Read the inbox of the host-bound role and record host-local read markers. Caller role cannot be supplied by tool arguments.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, unread_only: { type: "boolean", default: true } }, required: ["project_root"], additionalProperties: false },
+    description: "Read or boundedly wait for the inbox of the host-bound role and record host-local read markers. Caller role cannot be supplied by tool arguments.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, unread_only: { type: "boolean", default: true }, wait_timeout_ms: { type: "integer", minimum: 0, maximum: 600000, default: 0 } }, required: ["project_root"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_coordination_wait_reply",
+    description: "Boundedly read an immutable reply to one message sent by the host-bound role. Reply observation is separate from delivery acknowledgement and grants no authority.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, message_id: { type: "string", pattern: "^coord-message-[a-f0-9]{32}$" }, wait_timeout_ms: { type: "integer", minimum: 0, maximum: 600000, default: 0 } }, required: ["project_root", "message_id"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_coordination_reply_message",
@@ -958,7 +964,9 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                           : name === "head_coordination_send_message"
                             ? (() => { const bindingToken = mcpCoordinationBindingToken(); return sendCoordinationMessage({ root: args.project_root, bindingToken, toRole: args.to_role, content: args.content, evidenceIds: args.evidence_ids || [], idempotencyKey: args.idempotency_key, lane: args.lane || "session", deliveryAdapter: coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }) }); })()
                           : name === "head_coordination_read_inbox"
-                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return readCoordinationInbox({ root: args.project_root, bindingToken, unreadOnly: args.unread_only ?? true }); })()
+                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return waitForCoordinationInbox({ root: args.project_root, bindingToken, unreadOnly: args.unread_only ?? true, timeoutMs: args.wait_timeout_ms ?? 0 }); })()
+                          : name === "head_coordination_wait_reply"
+                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return waitForCoordinationReply({ root: args.project_root, bindingToken, messageId: args.message_id, timeoutMs: args.wait_timeout_ms ?? 0 }); })()
                           : name === "head_coordination_reply_message"
                             ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return replyCoordinationMessage({ root: args.project_root, bindingToken, inReplyTo: args.in_reply_to, content: args.content }); })()
                           : name === "head_compact_prepare"

@@ -14,7 +14,7 @@ an instruction grant, `ExecutionAuthorization`, `ExecutionContract`,
 message and reply records all of these authority flags as false. An optional lane
 label describes the surrounding risk context but grants no authority.
 
-Role identity cannot be supplied to `send`, `read-inbox`, or `reply`. A trusted
+Role identity cannot be supplied to `send`, `read-inbox`, `wait-reply`, or `reply`. A trusted
 host or administrator opens a host-local authority generation and issues a
 one-time raw `CoordinationRoleBinding` token for one verified direct project role.
 Only the token hash is stored. Each endpoint receives the raw token through the
@@ -89,7 +89,8 @@ The role-facing CLI operations are:
 
 ```text
 head coordination-send <project> --input <message.json>
-head coordination-inbox <project>
+head coordination-inbox <project> [--wait-timeout-ms <0..600000>]
+head coordination-wait-reply <project> --message <message-id> [--wait-timeout-ms <0..600000>]
 head coordination-reply <project> --input <reply.json>
 ```
 
@@ -98,11 +99,17 @@ from an explicitly named environment reference. The MCP surface exposes exactly:
 
 - `head_coordination_send_message`;
 - `head_coordination_read_inbox`;
+- `head_coordination_wait_reply`;
 - `head_coordination_reply_message`.
 
 `send` requires an idempotency key. Replaying the same key and exact normalized
 payload returns the same message and any immutable reply; conflicting reuse fails
-closed. `read-inbox` marks returned messages read in host-local state. `reply`
+closed. `read-inbox` marks returned messages read in host-local state. Both
+inbox and reply waits are bounded to at most 600000 ms and reauthenticate the
+current generation and binding on every poll. `wait-reply` neither requires nor
+creates a delivery acknowledgment, and its result explicitly records
+`replyAuthority: coordination-evidence-only` and `reviewDecisionCreated: false`.
+`reply`
 allows one immutable reply per message; the same reply is idempotent and a
 different reply is rejected.
 
@@ -120,7 +127,7 @@ An ambiguous result is never retried automatically because doing so could inject
 the same notification twice. Replaying the send returns the durable message and
 the original delivery receipt without invoking the adapter again. A future live
 host may offer an explicit, target-fenced redelivery operation as an
-administrator/adapter effect; it is not part of the three public role tools.
+administrator/adapter effect; it is not part of the four public role tools.
 
 The active provider-neutral adapter accepts caller identity only from the host
 composition. The standard dedicated stdio process can receive that identity at
@@ -209,17 +216,20 @@ delivery, stale/replaced/detached targets, target-chain rollback, target TOCTOU,
 post-send topology change, partial-send ambiguity, exact acknowledgment,
 project-CWD fencing, and provider-session absence.
 
-The host-export production path additionally passes an actual provider-client
-round trip: OpenCode calls send, the host claims the create-only binding-scoped
-request before starting Codex, Codex calls read-inbox and immutable reply under a
-distinct proof, and the waiting OpenCode call completes. The host writes the
-exact wake ack immediately after observing the owned Codex provider start while
-the reply is still pending; read and reply are then verified independently and
-never redefine the delivery receipt. Both provider trees have verified native
-ownership/cleanup; `.head` is byte-identical; raw proofs, binding tokens, and
-actual provider session references do not persist. Project/export overlap,
-host-project mismatch, explicit detach, ack timeout, stale/foreign binding,
-missing/old proof, and pointer tamper fail closed. Shared-host service
-installation and general provider start/resume/stream/interrupt/close remain
-unimplemented. Until the original author directly audits the exact source and
-evidence, this slice does not claim comparative superiority.
+The host-export production path additionally has an actual already-running
+provider-client round trip. Codex HEAD first starts, proves its distinct process
+binding, attaches the current replacement endpoint, and waits on the durable
+inbox. OpenCode then starts under its own proof, sends an authority question,
+and boundedly waits for the immutable answer. The host claims and acknowledges
+the exact current endpoint without spawning a provider; the prior stale endpoint
+receives zero requests. The HEAD reply remains coordination evidence and creates
+no `ReviewDecision`. Both ordinary clients finish under verified tree ownership;
+separate real Codex/OpenCode clients prove one-shot `interrupt` and `close`
+cleanup while `resume` and `stream` remain disabled. `.head` is byte-identical;
+raw proofs, binding tokens, control tokens, and actual provider-session
+references do not persist. Project/export overlap, host-project mismatch,
+explicit detach, ack timeout, stale/foreign binding, missing/old proof, and
+pointer tamper fail closed. Shared-host service installation, provider-session
+resume/stream, and broader process-host control remain unimplemented. Until the
+original author directly audits the exact source and evidence, this slice does
+not claim comparative superiority.

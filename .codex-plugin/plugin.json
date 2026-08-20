@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.73",
+  "version": "0.3.0-alpha.74",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -112,6 +112,9 @@
       "Host-export Process-proof WorkspaceHost Bridge",
       "Binding-scoped Offline WorkspaceHost Wake",
       "Actual Codex and OpenCode Role Round Trip",
+      "Already-running Exact Endpoint Replacement",
+      "Bounded Non-authoritative Coordination Reply Wait",
+      "One-shot Runtime Interrupt and Close",
       "Privacy-preserving Codex and OpenCode CLI Discovery",
       "Bounded Non-session Runtime Version Evidence",
       "Provider-specific Protocol Capability Evidence",
@@ -154,6 +157,8 @@
       "Exchange durable role messages through a trusted host binding without allowing messages to replace ExecutionContracts, ReviewDecisions, or Product Canon.",
       "Attach a trusted host-injected caller to an exact live role endpoint and require fresh target, acknowledgment, and post-send evidence before reporting delivery.",
       "Wake one exact current offline-registered role binding through a provider-neutral claimed host request, then require the started provider to prove its own binding and process proof before reading or replying.",
+      "Have an already-running worker ask HEAD an authority question and boundedly wait for a non-authoritative reply without creating a ReviewDecision.",
+      "Interrupt or close only one exact owned one-shot provider tree while keeping resume and stream disabled.",
       "Inspect external runtime observations without granting runtime control authority.",
       "Inspect the Codex/OpenCode runtime adapter contract, read-only discovery, bounded version and protocol capability evidence, and HEAD project/Session binding without creating, resuming, streaming, interrupting, or closing a provider session.",
       "Prepare an ExecutionContract-bound runtime invocation authorization without starting a provider, then inspect its digest-verifiable project, Session, Run, input, and resource boundaries.",

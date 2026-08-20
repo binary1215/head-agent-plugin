@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   resolveVerifiedProcessSupervisor,
+  spawnBoundedRuntimeOneShot,
   spawnSupervisedProcess,
 } from "./lib/runtime-process-supervisor.mjs";
 
@@ -133,15 +134,107 @@ async function runScenario(selection, mode) {
   }
 }
 
+async function runBoundedControlScenario(selection, runtime, action) {
+  let controlled;
+  let descendantPid = null;
+  let providerPid = null;
+  let output = "";
+  const controlFile = path.join(path.dirname(selection.manifestPath), `.runtime-control-${process.pid}-${runtime}-${action}-${crypto.randomUUID()}.jsonl`);
+  try {
+    controlled = spawnBoundedRuntimeOneShot({
+      runtime,
+      selection,
+      executablePath: process.execPath,
+      args: ["-e", PROVIDER_FIXTURE, "control"],
+      cwd: repositoryRoot,
+      providerEnvironment: {
+        SystemRoot: process.env.SystemRoot || process.env.SYSTEMROOT || "",
+        PATH: process.env.PATH || "",
+      },
+      input: Buffer.alloc(0),
+      controlFile,
+      terminationGraceMs: 500,
+      onControlEvent: (event) => {
+        if (event.type === "provider.started") providerPid = event.providerPid;
+      },
+    });
+    process.stderr.write(`NESTED_CHILD_START pid=${controlled.child.pid} parent=${process.pid} command=head-agent-bounded-${action} cwd=${path.dirname(selection.binaryPath)} ports=none\n`);
+    controlled.child.stdout.on("data", (chunk) => {
+      output += chunk.toString("utf8");
+      for (const line of output.split(/\r?\n/u)) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line);
+          if (Number.isSafeInteger(record.descendantPid)) descendantPid = record.descendantPid;
+        } catch {}
+      }
+    });
+    let unauthorized = null;
+    try { controlled[action]({ token: "wrong-token" }); } catch (error) { unauthorized = error; }
+    assert(unauthorized?.code === "RUNTIME_ONE_SHOT_CONTROL_UNAUTHORIZED", "Invalid bounded control token was accepted.");
+    for (const deferred of ["resume", "stream"]) {
+      let rejection = null;
+      try { controlled[deferred](); } catch (error) { rejection = error; }
+      assert(rejection?.code === "RUNTIME_ADAPTER_CONTROL_NOT_ENABLED", `${deferred} was unexpectedly activated.`);
+    }
+    const deadline = Date.now() + 2_000;
+    while ((!providerPid || !descendantPid) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert(providerPid && descendantPid, `Bounded ${action} fixture did not expose its exact process tree.`);
+    process.stderr.write(`NESTED_CHILD_START pid=${providerPid} parent=${controlled.child.pid} command=node-provider-fixture cwd=${repositoryRoot} ports=none\n`);
+    process.stderr.write(`NESTED_CHILD_START pid=${descendantPid} parent=${providerPid} command=node-descendant-fixture cwd=${repositoryRoot} ports=none\n`);
+    controlled[action]({ token: controlled.controlToken });
+    let conflict = null;
+    try { controlled[action === "interrupt" ? "close" : "interrupt"]({ token: controlled.controlToken }); }
+    catch (error) { conflict = error; }
+    assert(conflict?.code === "RUNTIME_ONE_SHOT_CONTROL_CONFLICT", "Conflicting bounded control action was accepted.");
+    const closed = await new Promise((resolve, reject) => {
+      controlled.child.once("error", reject);
+      controlled.child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    process.stderr.write(`NESTED_CHILD_END pid=${controlled.child.pid} parent=${process.pid} exit=${closed.code ?? "null"} signal=${closed.signal || "none"}\n`);
+    const receipt = controlled.finalize({ token: controlled.controlToken, exactSupervisorExitObserved: true });
+    assert(receipt.action === action && receipt.actionAccepted, `Bounded ${action} receipt did not bind the requested action.`);
+    assert(receipt.ownershipEstablished && receipt.treeCleanupVerified, `Bounded ${action} cleanup was not verified.`);
+    assert(receipt.resumeEnabled === false && receipt.streamEnabled === false, "Deferred controls changed state.");
+    assert(!fs.readFileSync(controlFile).includes(controlled.controlToken), "Raw runtime control token persisted in supervisor evidence.");
+    assert(await waitForExit(providerPid) && await waitForExit(descendantPid), `Bounded ${action} left an owned child alive.`);
+    process.stderr.write(`NESTED_CHILD_END pid=${descendantPid} parent=${providerPid} exit=null signal=supervised-tree-cleanup\n`);
+    return {
+      runtime,
+      action,
+      receiptId: receipt.receiptId,
+      ownershipEstablished: receipt.ownershipEstablished,
+      treeCleanupVerified: receipt.treeCleanupVerified,
+      controlTokenPersisted: receipt.controlTokenPersisted,
+      providerSessionIdentityPersisted: receipt.providerSessionIdentityPersisted,
+      resumeEnabled: receipt.resumeEnabled,
+      streamEnabled: receipt.streamEnabled,
+    };
+  } finally {
+    if (controlled?.child && controlled.child.exitCode === null && controlled.child.signalCode === null) {
+      try { controlled.close({ token: controlled.controlToken }); } catch {}
+      await waitForExit(controlled.child.pid);
+    }
+    if (descendantPid && processExists(descendantPid)) {
+      try { process.kill(descendantPid, "SIGKILL"); } catch {}
+      await waitForExit(descendantPid);
+    }
+    if (fs.existsSync(controlFile)) fs.unlinkSync(controlFile);
+  }
+}
+
 async function main() {
   const pluginRoot = path.resolve(option("--plugin-root", process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || repositoryRoot));
   const selection = resolveVerifiedProcessSupervisor({ pluginRoot });
   const normal = await runScenario(selection, "normal");
   const cancelled = await runScenario(selection, "cancel");
+  const interrupted = await runBoundedControlScenario(selection, "codex", "interrupt");
+  const closed = await runBoundedControlScenario(selection, "opencode", "close");
   process.stdout.write(`${JSON.stringify({
     status: "process_supervisor_verified",
     manifestId: selection.manifest.manifestId,
     scenarios: [normal, cancelled],
+    boundedRuntimeControl: [interrupted, closed],
     rawPidPersisted: false,
     shellInterpretation: false,
   }, null, 2)}\n`);

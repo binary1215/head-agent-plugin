@@ -39,14 +39,14 @@
     "status": "Strict request/response validation, resource limits, timeout/cancellation, structured errors, authority-escalation rejection, verified Go stdio transport, platform manifest integrity checks, bounded exact-child lifecycle, disclosed JavaScript fallback, and health-response conformance are active. A Go repository.scan.v1 candidate is complete-response conformant, but production manifests retain the JavaScript path because measured benefit is not yet material across repository sizes."
   },
   "runtimeAdapters": {
-    "purpose": "Define a provider-neutral runtime, platform, and workspace-host boundary for privacy-bounded discovery and non-session observation before provider control.",
+    "purpose": "Define a provider-neutral runtime, platform, and workspace-host boundary for privacy-bounded discovery, supervised one-shot execution, and authority-free coordination.",
     "contractVersion": "0.1.0",
     "runtimes": ["codex", "opencode"],
     "platforms": ["darwin", "linux", "win32"],
-    "workspaceHosts": ["native-process"],
+    "workspaceHosts": ["native-process", "host-export"],
     "identity": "Static descriptor, discovery, bounded version/help observation, project/Session binding, invocation authorization, immutable lease consumption/release, event envelope, lifecycle receipt, and ResultPacket draft identities are content-derived; provider sessions, raw commands/output, project paths, prompts, transcripts, credentials, live process IDs, and physical adapter identity are excluded.",
-    "authority": "Capability never grants authorization. A runtime authorization derives only from an exact active Run and ExecutionContract with explicit runtime/workspace actions; the durable lease consumes it at most once before child start, but actual provider execution still requires a live ownership boundary.",
-    "status": "Codex/OpenCode discovery, bounded non-session interface evidence, canonical HEAD project/Session capability binding, ExecutionContract-bound non-executing invocation authorization, durable at-most-once consumption/release receipts, privacy-reduced event/receipt/draft schemas, and no-descendant fixture lifecycle conformance are active. Actual provider-session binding, live caller/process-tree control, and all provider runtime operations remain disabled."
+    "authority": "Capability and coordination replies never grant authorization. Runtime invocation remains bound to Session or exact Run/ExecutionContract authority, while bounded interrupt/close applies only to one exact owned one-shot provider tree.",
+    "status": "Codex/OpenCode discovery, live Session/Run invocation, fresh-process replacement, already-running exact-endpoint coordination, bounded non-authoritative reply wait, and token-fenced one-shot interrupt/close are active. Provider-session resume/stream, broader host control, and host-specific TUI integration remain disabled."
   },
   "worldModel": {
     "purpose": "Materialize rebuildable repository file, symbol, dependency, import, and call evidence for task-specific compilation.",
@@ -153,12 +153,14 @@
     "privacy-bounded Codex/OpenCode executable discovery and non-session version evidence",
     "provider-specific fixed-help protocol capability evidence",
     "canonical HEAD project and Session runtime capability binding",
-    "ExecutionContract-bound non-executing runtime invocation authorization",
+    "Session and ExecutionContract-bound runtime invocation authorization",
     "durable at-most-once runtime execution lease consumption and release",
     "privacy-reduced runtime event envelopes and lifecycle receipts",
     "transcript-free RuntimeResultPacketDraft",
-    "no-descendant Codex/OpenCode lifecycle conformance with timeout cleanup",
-    "fail-closed disabled runtime and workspace-host control operations",
+    "native-supervised Codex/OpenCode Session and Run lifecycle conformance",
+    "provider-neutral durable role coordination with bounded reply wait",
+    "already-running exact-endpoint replacement and no-spawn-on-claim evidence",
+    "token-fenced exact-owned one-shot interrupt and close",
     "conformance-gated ArcadeDB snapshot, topology, server-expansion, and prepared-traversal projection",
     "content-derived prepared-traversal cost evidence and read-only live benchmark boundary",
     "history-and-runtime-aware minimum-sufficient Context Capsules",
@@ -169,8 +171,8 @@
     "automatic provider runtime hydration from Fresh HEAD review",
     "authorized knowledge promotion into project canon",
     "AST-accurate semantic call graph",
-    "actual provider-session project binding, invocation, and control",
-    "actual provider event normalization, cancellation, and close conformance",
+    "provider-session resume and stream control",
+    "broader workspace-host process control",
     "structured Git decision inference and supersession",
     "general conformance graph projection",
     "dedicated imported backlog evidence adapters",
@@ -180,9 +182,7 @@
     "compute-backed graph construction, traversal, and Context selection operations",
     "production selection or transport amortization for Go repository.scan.v1",
     "native worker descendant-tree supervision beyond the no-descendant contract",
-    "live caller fencing",
-    "role messaging",
     "service installation",
-    "Herdr integration"
+    "host-specific workspace-manager integration"
   ]
 }

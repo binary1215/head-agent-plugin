@@ -16,6 +16,7 @@ const TARGET_ID = /^coord-target-[A-Fa-f0-9-]{36}$/u;
 const MESSAGE_ID = /^coord-message-[a-f0-9]{32}$/u;
 const ATTACHMENT_ID = /^workspace-attachment-[a-f0-9]{32}$/u;
 const LANES = new Set(["observe", "session", "run", "authority"]);
+const MAX_COORDINATION_WAIT_MS = 600_000;
 
 const fail = (message, code = "ROLE_COORDINATION_ERROR") => {
   const error = new Error(message);
@@ -36,6 +37,36 @@ function canonical(value) {
 }
 
 const canonicalJson = (value) => JSON.stringify(canonical(value));
+
+function boundedWait(value, label) {
+  const normalized = value == null ? 0 : Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized < 0 || normalized > MAX_COORDINATION_WAIT_MS) {
+    fail(`${label} must be an integer from 0 through ${MAX_COORDINATION_WAIT_MS}.`, "INVALID_COORDINATION_WAIT");
+  }
+  return normalized;
+}
+
+const wait = (milliseconds, signal = null) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    const error = new Error("Coordination wait was cancelled.");
+    error.code = "COORDINATION_WAIT_CANCELLED";
+    reject(error);
+    return;
+  }
+  let onAbort = null;
+  const timer = setTimeout(() => {
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+    resolve();
+  }, milliseconds);
+  onAbort = () => {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+    const error = new Error("Coordination wait was cancelled.");
+    error.code = "COORDINATION_WAIT_CANCELLED";
+    reject(error);
+  };
+  if (signal) signal.addEventListener("abort", onAbort, { once: true });
+});
 
 function requiredText(value, label, maximum = 32_768) {
   if (typeof value !== "string" || !value.trim()) fail(`${label} is required.`, "INVALID_COORDINATION_INPUT");
@@ -886,6 +917,38 @@ export function readCoordinationInbox({ root = ".", environment = process.env, b
   return { status: "inbox_read", role: ctx.binding.role, authorityGeneration: ctx.generation.authorityGeneration, messages };
 }
 
+export async function waitForCoordinationInbox({
+  root = ".",
+  environment = process.env,
+  bindingToken,
+  unreadOnly = true,
+  timeoutMs = 0,
+  pollIntervalMs = 100,
+  signal = null,
+} = {}) {
+  const timeout = boundedWait(timeoutMs, "Coordination inbox wait timeout");
+  const interval = boundedWait(pollIntervalMs, "Coordination inbox poll interval");
+  if (interval < 10 || interval > 1_000) fail("Coordination inbox poll interval must be from 10 through 1000 milliseconds.", "INVALID_COORDINATION_WAIT");
+  const startedAt = Date.now();
+  while (true) {
+    const result = readCoordinationInbox({ root, environment, bindingToken, unreadOnly });
+    if (result.messages.length || Date.now() - startedAt >= timeout) {
+      return {
+        ...result,
+        wait: {
+          bounded: true,
+          timeoutMs: timeout,
+          completed: result.messages.length > 0,
+          timedOut: result.messages.length === 0 && timeout > 0,
+          deliveryAcknowledgementRequired: false,
+          replyAuthority: "none",
+        },
+      };
+    }
+    await wait(Math.min(interval, Math.max(1, timeout - (Date.now() - startedAt))), signal);
+  }
+}
+
 export function replyCoordinationMessage({ root = ".", environment = process.env, bindingToken, inReplyTo, content } = {}) {
   const ctx = authenticate({ root, environment, bindingToken, action: "a role message is replied to" });
   const messageId = String(inReplyTo || "").trim();
@@ -942,6 +1005,39 @@ export function readCoordinationReply({ root = ".", environment = process.env, b
   return { status: "replied", reply };
 }
 
+export async function waitForCoordinationReply({
+  root = ".",
+  environment = process.env,
+  bindingToken,
+  messageId,
+  timeoutMs = 0,
+  pollIntervalMs = 100,
+  signal = null,
+} = {}) {
+  const timeout = boundedWait(timeoutMs, "Coordination reply wait timeout");
+  const interval = boundedWait(pollIntervalMs, "Coordination reply poll interval");
+  if (interval < 10 || interval > 1_000) fail("Coordination reply poll interval must be from 10 through 1000 milliseconds.", "INVALID_COORDINATION_WAIT");
+  const startedAt = Date.now();
+  while (true) {
+    const result = readCoordinationReply({ root, environment, bindingToken, messageId });
+    if (result.status === "replied" || Date.now() - startedAt >= timeout) {
+      return {
+        ...result,
+        wait: {
+          bounded: true,
+          timeoutMs: timeout,
+          completed: result.status === "replied",
+          timedOut: result.status !== "replied" && timeout > 0,
+          deliveryAcknowledgementRequired: false,
+          replyAuthority: "coordination-evidence-only",
+          reviewDecisionCreated: false,
+        },
+      };
+    }
+    await wait(Math.min(interval, Math.max(1, timeout - (Date.now() - startedAt))), signal);
+  }
+}
+
 export function inspectRoleCoordination({ root = ".", environment = process.env } = {}) {
   const ctx = context({ root, environment, create: false, action: "role coordination status is read" });
   const generation = currentGeneration(ctx, { required: false });
@@ -967,7 +1063,7 @@ export function inspectRoleCoordination({ root = ".", environment = process.env 
     attachedRoles,
     stateLocation: "host-local-operational-root",
     projectCanonMutated: false,
-    publicRoleTools: ["send", "read-inbox", "reply"],
+    publicRoleTools: ["send", "read-inbox", "wait-reply", "reply"],
     adminOnlyOperations: ["open-generation", "rotate-generation", "issue-role-binding"],
     hostCompositionOperations: ["attach-exact-endpoint", "detach-exact-endpoint"],
     delivery: "optional-effect-after-durable-inbox-acceptance",

@@ -15,6 +15,8 @@ import {
   readCoordinationReply,
   replyCoordinationMessage,
   sendCoordinationMessage,
+  waitForCoordinationInbox,
+  waitForCoordinationReply,
 } from "../scripts/lib/role-coordination.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
@@ -184,7 +186,7 @@ test("host-issued bindings derive roles and durable messages remain non-authorit
 
   const status = inspectRoleCoordination({ root: fx.root, environment: fx.environment });
   assert.deepEqual(status.boundRoles, ["developer", "head"]);
-  assert.deepEqual(status.publicRoleTools, ["send", "read-inbox", "reply"]);
+  assert.deepEqual(status.publicRoleTools, ["send", "read-inbox", "wait-reply", "reply"]);
   assert.equal(status.projectCanonMutated, false);
   assert.deepEqual(treeBytes(path.join(fx.root, ".head")), projectBefore);
   const operationalText = allOperationalText(fx.operationalRoot);
@@ -283,7 +285,7 @@ test("binding corruption and authority escalation in host-local messages fail cl
   assert.throws(() => readCoordinationInbox({ root: fx.root, environment: fx.environment, bindingToken: head.bindingToken }), { code: "INVALID_COORDINATION_MESSAGE" });
 });
 
-test("advanced CLI administration and exactly three role-bound MCP tools share the Core contract", async (t) => {
+test("advanced CLI administration and bounded role-bound MCP reply waiting share the Core contract", async (t) => {
   const fx = fixture();
   t.after(() => fs.rmSync(fx.base, { recursive: true, force: true }));
   const previousOperational = process.env.HEAD_AGENT_OPERATIONAL_STATE_ROOT;
@@ -310,6 +312,7 @@ test("advanced CLI administration and exactly three role-bound MCP tools share t
   assert.deepEqual(roleTools.map((tool) => tool.name), [
     "head_coordination_send_message",
     "head_coordination_read_inbox",
+    "head_coordination_wait_reply",
     "head_coordination_reply_message",
   ]);
   for (const tool of roleTools) {
@@ -343,12 +346,68 @@ test("advanced CLI administration and exactly three role-bound MCP tools share t
   });
   assert.equal(replyResponse.result.structuredContent.reply.fromRole, "head");
 
+  process.env.HEAD_AGENT_COORDINATION_BINDING_TOKEN = developer.bindingToken;
+  const waitReplyResponse = await dispatch({
+    jsonrpc: "2.0", id: 3, method: "tools/call",
+    params: { name: "head_coordination_wait_reply", arguments: { project_root: fx.root, message_id: sent.message.messageId, wait_timeout_ms: 500 } },
+  });
+  assert.equal(waitReplyResponse.result.structuredContent.status, "replied");
+  assert.equal(waitReplyResponse.result.structuredContent.wait.deliveryAcknowledgementRequired, false);
+  assert.equal(waitReplyResponse.result.structuredContent.wait.reviewDecisionCreated, false);
+
   delete process.env.HEAD_AGENT_COORDINATION_BINDING_TOKEN;
   const unbound = await dispatch({
-    jsonrpc: "2.0", id: 3, method: "tools/call",
+    jsonrpc: "2.0", id: 4, method: "tools/call",
     params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } },
   });
   assert.match(unbound.error.message, /trusted host-injected/u);
+});
+
+test("bounded inbox and reply waits revalidate bindings and remain independent of delivery acknowledgement", async (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.base, { recursive: true, force: true }));
+  openCoordinationGeneration({ root: fx.root, environment: fx.environment });
+  const developer = issueCoordinationRoleBinding({ root: fx.root, role: "developer", environment: fx.environment });
+  const head = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+
+  const inboxWait = waitForCoordinationInbox({
+    root: fx.root, environment: fx.environment, bindingToken: head.bindingToken,
+    unreadOnly: true, timeoutMs: 2_000, pollIntervalMs: 20,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const sent = sendCoordinationMessage({
+    root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken,
+    toRole: "head", content: "Bounded worker authority question", idempotencyKey: "bounded-authority-question",
+  });
+  const inbox = await inboxWait;
+  assert.equal(inbox.wait.completed, true);
+  assert.equal(inbox.messages[0].messageId, sent.message.messageId);
+
+  const replyWait = waitForCoordinationReply({
+    root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken,
+    messageId: sent.message.messageId, timeoutMs: 2_000, pollIntervalMs: 20,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  replyCoordinationMessage({
+    root: fx.root, environment: fx.environment, bindingToken: head.bindingToken,
+    inReplyTo: sent.message.messageId, content: "Proceed within the accepted local method boundary.",
+  });
+  const reply = await replyWait;
+  assert.equal(reply.status, "replied");
+  assert.equal(reply.wait.deliveryAcknowledgementRequired, false);
+  assert.equal(reply.wait.replyAuthority, "coordination-evidence-only");
+  assert.equal(reply.reply.reviewAuthority, false);
+  assert.equal(sent.delivery.status, "not_configured");
+
+  const rotated = issueCoordinationRoleBinding({ root: fx.root, role: "developer", environment: fx.environment });
+  await assert.rejects(
+    waitForCoordinationReply({
+      root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken,
+      messageId: sent.message.messageId, timeoutMs: 100, pollIntervalMs: 20,
+    }),
+    { code: "STALE_COORDINATION_BINDING" },
+  );
+  assert.notEqual(rotated.binding.bindingId, developer.binding.bindingId);
 });
 
 test("fresh CLI processes recover the same durable host-local inbox without provider identity", (t) => {

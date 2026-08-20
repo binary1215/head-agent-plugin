@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 
 export const PROCESS_SUPERVISOR_PROTOCOL_VERSION = "0.1.0";
 export const PROCESS_SUPERVISOR_MANIFEST_VERSION = "0.1.0";
+export const RUNTIME_ONE_SHOT_CONTROL_VERSION = "0.1.0";
 
 const TARGETS = Object.freeze({
   "darwin-arm64": Object.freeze({ platform: "darwin", arch: "arm64", directory: "darwin-arm64", executable: "head-agent-supervisor" }),
@@ -353,4 +354,100 @@ export function spawnSupervisedProcess({
     });
   };
   return { child, state, terminate, finalize };
+}
+
+function canonicalControlValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalControlValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalControlValue(value[key])]));
+  }
+  return value;
+}
+
+const canonicalControlJson = (value) => JSON.stringify(canonicalControlValue(value));
+const controlDigest = (value) => crypto.createHash("sha256").update(value).digest("hex");
+
+export function spawnBoundedRuntimeOneShot(options = {}) {
+  const runtime = String(options.runtime || "").trim().toLowerCase();
+  if (!new Set(["codex", "opencode"]).has(runtime)) {
+    fail("Bounded runtime control requires an explicit supported runtime.", "RUNTIME_ONE_SHOT_CONTROL_RUNTIME_REQUIRED");
+  }
+  const supervised = spawnSupervisedProcess(options);
+  const controlToken = crypto.randomBytes(32).toString("base64url");
+  const controlTokenHash = controlDigest(`head-agent-runtime-control\n${runtime}\n${controlToken}`);
+  let action = null;
+  let finalized = null;
+
+  const authenticate = (provided) => {
+    const observed = controlDigest(`head-agent-runtime-control\n${runtime}\n${String(provided || "")}`);
+    const left = Buffer.from(controlTokenHash, "hex");
+    const right = Buffer.from(observed, "hex");
+    if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+      fail("Runtime one-shot control token is invalid.", "RUNTIME_ONE_SHOT_CONTROL_UNAUTHORIZED");
+    }
+  };
+  const request = (requestedAction, provided) => {
+    authenticate(provided);
+    if (finalized) fail("Runtime one-shot control is already finalized.", "RUNTIME_ONE_SHOT_CONTROL_FINALIZED");
+    if (action && action !== requestedAction) {
+      fail(`Runtime one-shot control already accepted ${action}.`, "RUNTIME_ONE_SHOT_CONTROL_CONFLICT");
+    }
+    if (!action) {
+      action = requestedAction;
+      supervised.terminate(false);
+    }
+    return Object.freeze({ status: `${requestedAction}_requested`, action: requestedAction, bounded: true });
+  };
+  const unsupported = (operation) => {
+    fail(`Runtime one-shot ${operation} remains deferred; use canonical recovery and a new authorization instead.`, "RUNTIME_ADAPTER_CONTROL_NOT_ENABLED");
+  };
+  const finalizeControl = ({ token, exactSupervisorExitObserved = true } = {}) => {
+    authenticate(token);
+    if (finalized) return finalized;
+    const supervision = supervised.finalize({
+      exactSupervisorExitObserved,
+      terminationRequested: action !== null,
+    });
+    const payload = {
+      schemaVersion: 1,
+      kind: "RuntimeOneShotControlReceipt",
+      protocolVersion: RUNTIME_ONE_SHOT_CONTROL_VERSION,
+      runtime,
+      controlScope: "exact-owned-one-shot-provider-tree",
+      action,
+      actionAccepted: action !== null,
+      supervisionMode: supervision.supervisionMode,
+      supervisionStrategy: supervision.supervisionStrategy,
+      ownershipEstablished: supervision.ownershipEstablished,
+      providerChildStarted: supervision.providerChildStarted,
+      providerChildExitObserved: supervision.providerChildExitObserved,
+      treeCleanupAttempted: supervision.treeCleanupAttempted,
+      treeCleanupVerified: supervision.treeCleanupVerified,
+      controlTokenPersisted: false,
+      providerSessionIdentityPersisted: false,
+      resumeEnabled: false,
+      streamEnabled: false,
+      instructionAuthority: false,
+      promotionAuthority: false,
+      reviewAuthority: false,
+      canonMutationAuthority: false,
+    };
+    const receiptHash = controlDigest(canonicalControlJson(payload));
+    finalized = Object.freeze({
+      ...payload,
+      receiptId: `runtime-one-shot-control-${receiptHash.slice(0, 24)}`,
+      receiptHash,
+    });
+    return finalized;
+  };
+  return Object.freeze({
+    child: supervised.child,
+    state: supervised.state,
+    controlToken,
+    interrupt: ({ token } = {}) => request("interrupt", token),
+    close: ({ token } = {}) => request("close", token),
+    resume: () => unsupported("resume"),
+    stream: () => unsupported("stream"),
+    finalize: finalizeControl,
+  });
 }
