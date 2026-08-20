@@ -121,7 +121,11 @@ multi-role E2E.
 For the portable production bridge, use
 `../../scripts/workspace-host-export-mcp.mjs` only when a trusted external host
 injects the exact project root, export root, caller endpoint tuple, and role
-binding token. The export root must be outside and must not contain the project.
+binding token plus a unique raw per-process proof. The export root must be outside
+and must not contain the project. Require the exported endpoint to bind the exact
+current binding ID and only the domain-separated proof hash; never disclose or
+persist the raw proof. Copied endpoint coordinates, a foreign binding, a forged
+proof, or duplicate endpoint ownership must fail before attach.
 Treat immutable snapshots, create-only delivery requests, pre-effect claims, and
 exact create-only acknowledgments as operational evidence only. Never process an
 existing unacknowledged claim again automatically. A timeout or malformed pointer,

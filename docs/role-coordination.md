@@ -144,7 +144,12 @@ attachment identity enters the delivery receipt.
 The bundled production reference is `host-export`, a provider-neutral filesystem
 mailbox rather than a workspace-manager integration. A trusted external host
 publishes a content-addressed immutable endpoint snapshot and current pointer
-outside the project. Delivery creates one exclusive request beneath the hashed
+outside the project. Each endpoint is uniquely bound to the exact current
+coordination `bindingId` and the hash of a host-issued per-process proof; only the
+raw proof injected into that process can activate the endpoint. The bridge
+rechecks endpoint tuple, binding ownership, and proof possession on every fresh
+snapshot. Copied coordinates, foreign bindings, forged proofs, and duplicate
+endpoint, terminal, binding, or proof ownership fail closed. Delivery creates one exclusive request beneath the hashed
 endpoint location. The host must acquire one exclusive pre-effect claim, then
 return one exclusive, request-hash-bound acknowledgment within the bounded wait.
 Claim acquisition revalidates the request's host, snapshot, workspace, tab,
@@ -159,7 +164,9 @@ from the injected canonical project root.
 The host must pre-create the export root and inject
 `HEAD_AGENT_HOST_PROJECT_ROOT`, `HEAD_AGENT_WORKSPACE_HOST_EXPORT_ROOT`,
 `HEAD_AGENT_HOST_WORKSPACE_ID`, `HEAD_AGENT_HOST_TAB_ID`,
-`HEAD_AGENT_HOST_ENDPOINT_ID`, and the existing role binding token. These are
+`HEAD_AGENT_HOST_ENDPOINT_ID`, `HEAD_AGENT_HOST_PROCESS_PROOF`, and the existing
+role binding token. The raw process proof is a host-only bearer capability; only
+its domain-separated hash is present in the project-external snapshot. These are
 process-composition inputs, never role-tool arguments or project artifacts.
 
 ## Current claim boundary

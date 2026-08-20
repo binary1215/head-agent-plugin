@@ -121,7 +121,10 @@ established installed-Herdr operating path. The plugin now has provider-neutral
 host-bound durable project-role messaging, append-only exact endpoint targets,
 fresh-snapshot/ack/post-snapshot delivery fencing, deterministic two-fresh-process
 Codex/OpenCode generic-host evidence, and a production host-export bridge whose
-separate live consumer acknowledges create-only requests. It does not bundle a
+separate live consumer acknowledges create-only requests. The external host binds
+each exported endpoint uniquely to the current coordination binding plus one
+per-process proof, so snapshot membership or copied coordinates cannot self-claim
+another role's live caller identity. It does not bundle a
 Herdr-specific adapter and does not yet have actual Codex/OpenCode provider-client
 wake/tool consumption. Automatic DAG
 merge/conflict resolution, Obsidian/Notion publication, and OpenAI universal

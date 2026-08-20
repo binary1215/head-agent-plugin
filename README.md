@@ -152,7 +152,10 @@ contract; host-specific executable, socket, CLI, pane, and TUI knowledge belongs
 in a separately owned optional adapter. The production `host-export` reference
 uses content-addressed snapshots and create-only filesystem request/ack records
 outside the project, with a create-only pre-effect claim preventing automatic
-replay after an uncertain host crash. Two fresh role MCP processes and a separate live host
+replay after an uncertain host crash. Each raw host endpoint is uniquely bound to
+the current coordination binding and a host-issued per-process proof whose secret
+never enters project state or receipts. Copied tuples, foreign bindings, forged
+proofs, and duplicate ownership fail closed. Two fresh role MCP processes and a separate live host
 consumer pass this bridge; actual Codex/OpenCode provider-client wake/tool
 consumption remains open.
 See [Role coordination](docs/role-coordination.md).

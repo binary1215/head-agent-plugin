@@ -126,9 +126,12 @@ claim also rechecks the current snapshot, canonical CWD, and runtime before the
 external host may apply its effect. A
 claim without acknowledgment is ambiguous and cannot be consumed again
 automatically. Missing acknowledgment after a bounded wait is likewise ambiguous.
-The optional MCP entrypoint receives
-the project/caller/export tuple only from its host process environment and rejects
-tool requests for another project.
+The optional MCP entrypoint receives the project/caller/export tuple, raw
+per-process proof, and coordination binding only from its host process
+environment. The exported endpoint contains the unique binding ID and only the
+domain-separated proof hash. Every snapshot verifies possession plus exact
+binding ownership before exposing the sanitized endpoint to Core, and tool
+requests for another project are rejected.
 
 ## Authority and identity boundary
 

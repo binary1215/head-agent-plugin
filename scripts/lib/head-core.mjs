@@ -477,6 +477,7 @@ export function coreContract() {
     "delivery-ack-and-post-snapshot-fencing",
     "two-fresh-process-workspace-host-conformance",
     "host-export-filesystem-workspace-driver",
+    "host-bound-workspace-process-proof",
     "create-only-host-delivery-request-claim-and-ack",
   ];
   contract.deferredCapabilities = contract.deferredCapabilities.map((capability) => capability === "installed-herdr-live-e2e"

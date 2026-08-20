@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.70",
+  "version": "0.3.0-alpha.71",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -109,7 +109,7 @@
       "Idempotent Send Read and Immutable Reply",
       "Optional Post-acceptance WorkspaceHost Delivery",
       "Exact Endpoint WorkspaceHost Attachment and Delivery",
-      "Host-export Filesystem WorkspaceHost Bridge",
+      "Host-export Process-proof WorkspaceHost Bridge",
       "Privacy-preserving Codex and OpenCode CLI Discovery",
       "Bounded Non-session Runtime Version Evidence",
       "Provider-specific Protocol Capability Evidence",

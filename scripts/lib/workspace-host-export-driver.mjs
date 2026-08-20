@@ -3,9 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { WORKSPACE_HOST_COORDINATION_VERSION } from "./workspace-host-coordination.mjs";
 
-export const WORKSPACE_HOST_EXPORT_VERSION = "0.1.0";
+export const WORKSPACE_HOST_EXPORT_VERSION = "0.2.0";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const PROOF = /^[A-Za-z0-9_-]{43,512}$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
 const RUNTIMES = new Set(["codex", "opencode"]);
 const MAX_JSON_BYTES = 128 * 1024;
 const MAX_NOTIFICATION_BYTES = 8192;
@@ -28,6 +30,12 @@ function canonical(value) {
 
 const canonicalJson = (value) => JSON.stringify(canonical(value));
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
+
+export function workspaceHostExportProcessProofHash(value) {
+  const proof = String(value || "");
+  if (!PROOF.test(proof)) fail("Workspace host process proof is invalid.", "INVALID_WORKSPACE_HOST_PROCESS_PROOF");
+  return digest(`workspace-host-export-process-proof\0${proof}`);
+}
 
 function exactFields(value, fields, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} is invalid.`, "INVALID_WORKSPACE_HOST_EXPORT_VALUE");
@@ -144,13 +152,51 @@ function validateEndpoint(value) {
   return { ...value, runtime };
 }
 
+function validateExportEndpoint(value) {
+  exactFields(value, [
+    "workspaceId", "tabId", "endpointId", "terminalId", "cwd", "runtime", "bindingId", "processProofHash",
+  ], "Workspace host export endpoint");
+  const endpoint = validateEndpoint({
+    workspaceId: value.workspaceId,
+    tabId: value.tabId,
+    endpointId: value.endpointId,
+    terminalId: value.terminalId,
+    cwd: value.cwd,
+    runtime: value.runtime,
+  });
+  if (!ID.test(String(value.bindingId || "")) || !SHA256.test(String(value.processProofHash || ""))) {
+    fail("Workspace host export endpoint process binding is invalid.", "INVALID_WORKSPACE_HOST_EXPORT_ENDPOINT");
+  }
+  return { ...endpoint, bindingId: value.bindingId, processProofHash: value.processProofHash };
+}
+
+const publicEndpoint = (endpoint) => ({
+  workspaceId: endpoint.workspaceId,
+  tabId: endpoint.tabId,
+  endpointId: endpoint.endpointId,
+  terminalId: endpoint.terminalId,
+  cwd: endpoint.cwd,
+  runtime: endpoint.runtime,
+});
+
 function snapshotPayload({ hostInstanceId, endpoints }) {
-  const normalized = endpoints.map(validateEndpoint).sort((left, right) => compareText(canonicalJson(left), canonicalJson(right)));
+  const normalized = endpoints.map(validateExportEndpoint).sort((left, right) => compareText(canonicalJson(left), canonicalJson(right)));
   const identities = new Set();
+  const endpointIds = new Set();
+  const terminalIds = new Set();
+  const bindingIds = new Set();
+  const processProofHashes = new Set();
   for (const endpoint of normalized) {
     const identity = canonicalJson([endpoint.workspaceId, endpoint.tabId, endpoint.endpointId, endpoint.terminalId]);
-    if (identities.has(identity)) fail("Workspace host export endpoint is duplicated.", "INVALID_WORKSPACE_HOST_EXPORT_ENDPOINT");
+    if (identities.has(identity) || endpointIds.has(endpoint.endpointId) || terminalIds.has(endpoint.terminalId)
+      || bindingIds.has(endpoint.bindingId) || processProofHashes.has(endpoint.processProofHash)) {
+      fail("Workspace host export endpoint ownership is not unique.", "INVALID_WORKSPACE_HOST_EXPORT_ENDPOINT");
+    }
     identities.add(identity);
+    endpointIds.add(endpoint.endpointId);
+    terminalIds.add(endpoint.terminalId);
+    bindingIds.add(endpoint.bindingId);
+    processProofHashes.add(endpoint.processProofHash);
   }
   const semanticHash = digest(canonicalJson({ hostInstanceId, endpoints: normalized }));
   return {
@@ -241,6 +287,26 @@ function readCurrentSnapshot(roots) {
   const pointer = verifyPointer(readJson(roots.exportRoot, paths.current, "Workspace host export current pointer"));
   const snapshot = verifySnapshot(readJson(roots.exportRoot, paths.snapshot(pointer.snapshotId), "Workspace host export current snapshot"));
   if (snapshot.snapshotHash !== pointer.snapshotHash) fail("Workspace host export pointer and snapshot differ.", "INVALID_WORKSPACE_HOST_EXPORT_POINTER");
+  return snapshot;
+}
+
+function verifyProcessCaller(snapshot, caller, bindingId, processProofHash) {
+  exactFields(caller, ["workspaceId", "tabId", "endpointId"], "Workspace host process caller");
+  const verifiedCaller = {
+    workspaceId: exactId(caller.workspaceId, "Workspace host process caller workspace"),
+    tabId: exactId(caller.tabId, "Workspace host process caller tab"),
+    endpointId: exactId(caller.endpointId, "Workspace host process caller endpoint"),
+  };
+  const verifiedBindingId = exactId(bindingId, "Workspace host process binding");
+  const matches = snapshot.endpoints.filter((endpoint) => endpoint.workspaceId === verifiedCaller.workspaceId
+    && endpoint.tabId === verifiedCaller.tabId && endpoint.endpointId === verifiedCaller.endpointId
+    && endpoint.bindingId === verifiedBindingId);
+  if (matches.length !== 1) fail("The current process is not bound to one exact host endpoint.", "WORKSPACE_HOST_PROCESS_PROOF_MISMATCH");
+  const actual = Buffer.from(matches[0].processProofHash, "hex");
+  const expected = Buffer.from(processProofHash, "hex");
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+    fail("The current process proof does not own the host endpoint.", "WORKSPACE_HOST_PROCESS_PROOF_MISMATCH");
+  }
   return snapshot;
 }
 
@@ -398,7 +464,7 @@ export function claimWorkspaceHostExportDelivery({ exportRoot, projectRoot, requ
     runtime: verified.runtime,
   };
   if (snapshot.hostInstanceId !== verified.hostInstanceId || snapshot.snapshotSequence !== verified.snapshotSequence
-    || snapshot.endpoints.filter((candidate) => canonicalJson(candidate) === canonicalJson(endpoint)).length !== 1) {
+    || snapshot.endpoints.filter((candidate) => canonicalJson(publicEndpoint(candidate)) === canonicalJson(endpoint)).length !== 1) {
     return { status: "stale_claimed", claim };
   }
   return { status: "claimed", claim };
@@ -422,7 +488,7 @@ export function acknowledgeWorkspaceHostExportDelivery({ exportRoot, projectRoot
 }
 
 export function createWorkspaceHostExportDriver({
-  exportRoot, projectRoot, acknowledgementTimeoutMs = 10_000, pollIntervalMs = 10,
+  exportRoot, projectRoot, caller, bindingId, processProof, acknowledgementTimeoutMs = 10_000, pollIntervalMs = 10,
 } = {}) {
   if (!Number.isInteger(acknowledgementTimeoutMs) || acknowledgementTimeoutMs < 10 || acknowledgementTimeoutMs > 60_000
     || !Number.isInteger(pollIntervalMs) || pollIntervalMs < 1 || pollIntervalMs > 1_000
@@ -430,7 +496,9 @@ export function createWorkspaceHostExportDriver({
     fail("Workspace host export timing bounds are invalid.", "INVALID_WORKSPACE_HOST_EXPORT_TIMING");
   }
   const roots = rootContext({ exportRoot, projectRoot });
+  const processProofHash = workspaceHostExportProcessProofHash(processProof);
   const paths = bridgePaths(roots.exportRoot);
+  const boundSnapshot = () => verifyProcessCaller(readCurrentSnapshot(roots), caller, bindingId, processProofHash);
   const descriptor = Object.freeze({
     schemaVersion: 1,
     kind: "WorkspaceHostDriverDescriptor",
@@ -444,7 +512,7 @@ export function createWorkspaceHostExportDriver({
   return Object.freeze({
     describe() { return descriptor; },
     snapshot() {
-      const snapshot = readCurrentSnapshot(roots);
+      const snapshot = boundSnapshot();
       return {
         schemaVersion: 1,
         kind: "WorkspaceHostSnapshot",
@@ -453,7 +521,7 @@ export function createWorkspaceHostExportDriver({
         transport: descriptor.transport,
         hostInstanceId: snapshot.hostInstanceId,
         snapshotSequence: snapshot.snapshotSequence,
-        endpoints: snapshot.endpoints.map((endpoint) => ({ ...endpoint })),
+        endpoints: snapshot.endpoints.map(publicEndpoint),
       };
     },
     send({ endpoint, messageId, text } = {}) {
@@ -462,8 +530,8 @@ export function createWorkspaceHostExportDriver({
       if (typeof text !== "string" || !text || Buffer.byteLength(text) > MAX_NOTIFICATION_BYTES) {
         fail("Workspace host export notification is invalid.", "INVALID_WORKSPACE_HOST_EXPORT_DELIVERY");
       }
-      const snapshot = readCurrentSnapshot(roots);
-      const exact = snapshot.endpoints.filter((candidate) => canonicalJson(candidate) === canonicalJson(verifiedEndpoint));
+      const snapshot = boundSnapshot();
+      const exact = snapshot.endpoints.filter((candidate) => canonicalJson(publicEndpoint(candidate)) === canonicalJson(verifiedEndpoint));
       if (exact.length !== 1) fail("Workspace host export endpoint is no longer exact.", "STALE_WORKSPACE_HOST_EXPORT_ENDPOINT");
       const request = deliveryPayload({ snapshot, endpoint: verifiedEndpoint, messageId, text });
       const requestFile = paths.request(verifiedEndpoint.endpointId, messageId);

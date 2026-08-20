@@ -23,6 +23,7 @@ import {
   createWorkspaceHostExportDriver,
   listWorkspaceHostExportDeliveryRequests,
   publishWorkspaceHostExportSnapshot,
+  workspaceHostExportProcessProofHash,
 } from "../scripts/lib/workspace-host-export-driver.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
@@ -108,6 +109,19 @@ function driver(fx, state = {}) {
 }
 
 const caller = (role) => ({ workspaceId: `workspace-${role}`, tabId: `tab-${role}`, endpointId: `endpoint-${role}` });
+const processProof = () => crypto.randomBytes(32).toString("base64url");
+
+function exportEndpoints(fx, bindings, proofs) {
+  return driver(fx).state.endpoints.map((endpoint) => {
+    const role = endpoint.endpointId.replace("endpoint-", "");
+    return {
+      cwd: fx.root,
+      ...endpoint,
+      bindingId: bindings[role].binding.bindingId,
+      processProofHash: workspaceHostExportProcessProofHash(proofs[role]),
+    };
+  });
+}
 
 function startExportAcker({ exportRoot, projectRoot, endpointId, outputFile }) {
   const child = spawn(process.execPath, [exportAcker, exportRoot, projectRoot, endpointId, outputFile], {
@@ -286,13 +300,15 @@ test("production host-export bridge delivers through create-only request and exa
   const exportRoot = path.join(fx.base, "host-export");
   fs.mkdirSync(exportRoot);
   const outputFile = path.join(fx.base, "host-delivery.json");
-  const endpoints = driver(fx).state.endpoints.map((endpoint) => ({ cwd: fx.root, ...endpoint }));
-  publishWorkspaceHostExportSnapshot({ exportRoot, projectRoot: fx.root, hostInstanceId: "host-export-live", endpoints });
   openCoordinationGeneration({ root: fx.root, environment: fx.environment });
   const developer = issueCoordinationRoleBinding({ root: fx.root, role: "developer", environment: fx.environment });
   const head = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+  const bindings = { developer, head };
+  const proofs = { developer: processProof(), head: processProof() };
+  const endpoints = exportEndpoints(fx, bindings, proofs);
+  publishWorkspaceHostExportSnapshot({ exportRoot, projectRoot: fx.root, hostInstanceId: "host-export-live", endpoints });
   const projectBefore = treeBytes(path.join(fx.root, ".head"));
-  const invoke = ({ token, role, request }) => {
+  const invoke = ({ token, role, endpointRole = role, proof = proofs[endpointRole], request }) => {
     const result = spawnSync(process.execPath, [exportMcp], {
       cwd: pluginRoot,
       encoding: "utf8",
@@ -302,9 +318,10 @@ test("production host-export bridge delivers through create-only request and exa
         HEAD_AGENT_COORDINATION_BINDING_TOKEN: token,
         HEAD_AGENT_HOST_PROJECT_ROOT: fx.root,
         HEAD_AGENT_WORKSPACE_HOST_EXPORT_ROOT: exportRoot,
-        HEAD_AGENT_HOST_WORKSPACE_ID: `workspace-${role}`,
-        HEAD_AGENT_HOST_TAB_ID: `tab-${role}`,
-        HEAD_AGENT_HOST_ENDPOINT_ID: `endpoint-${role}`,
+        HEAD_AGENT_HOST_WORKSPACE_ID: `workspace-${endpointRole}`,
+        HEAD_AGENT_HOST_TAB_ID: `tab-${endpointRole}`,
+        HEAD_AGENT_HOST_ENDPOINT_ID: `endpoint-${endpointRole}`,
+        HEAD_AGENT_HOST_PROCESS_PROOF: proof,
       },
     });
     assert.equal(result.status, 0, result.stderr);
@@ -312,6 +329,10 @@ test("production host-export bridge delivers through create-only request and exa
   };
   const attached = invoke({ token: head.bindingToken, role: "head", request: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
   assert.deepEqual(attached.result.structuredContent.messages, []);
+  const copiedEndpoint = invoke({ token: developer.bindingToken, role: "developer", endpointRole: "head", request: { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
+  assert.equal(copiedEndpoint.error.code, -32000);
+  const forgedProof = invoke({ token: developer.bindingToken, role: "developer", proof: proofs.head, request: { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
+  assert.equal(forgedProof.error.code, -32000);
 
   const acker = startExportAcker({ exportRoot, projectRoot: fx.root, endpointId: "endpoint-head", outputFile });
   t.after(() => { if (acker.child.exitCode === null) acker.child.kill(); });
@@ -338,6 +359,8 @@ test("production host-export bridge delivers through create-only request and exa
   const disclosed = fs.readFileSync(outputFile, "utf8") + JSON.stringify(sent);
   assert.equal(disclosed.includes('"providerSessionId"'), false);
   assert.equal(disclosed.includes('"provider_session_id"'), false);
+  assert.equal(disclosed.includes(proofs.head), false);
+  assert.equal(disclosed.includes(proofs.developer), false);
 });
 
 test("host-export bridge fails closed on overlap, missing acknowledgment, and pointer tamper", (t) => {
@@ -347,13 +370,41 @@ test("host-export bridge fails closed on overlap, missing acknowledgment, and po
   assert.equal(fs.existsSync(path.join(fx.root, "bridge")), false);
   const exportRoot = path.join(fx.base, "host-export");
   fs.mkdirSync(exportRoot);
-  const endpoints = driver(fx).state.endpoints.map((endpoint) => ({ cwd: fx.root, ...endpoint }));
-  publishWorkspaceHostExportSnapshot({ exportRoot, projectRoot: fx.root, hostInstanceId: "host-export-failure", endpoints });
   openCoordinationGeneration({ root: fx.root, environment: fx.environment });
   const developer = issueCoordinationRoleBinding({ root: fx.root, role: "developer", environment: fx.environment });
   const head = issueCoordinationRoleBinding({ root: fx.root, role: "head", environment: fx.environment });
+  const bindings = { developer, head };
+  const proofs = { developer: processProof(), head: processProof() };
+  const endpoints = exportEndpoints(fx, bindings, proofs);
+  publishWorkspaceHostExportSnapshot({ exportRoot, projectRoot: fx.root, hostInstanceId: "host-export-failure", endpoints });
+  assert.throws(() => publishWorkspaceHostExportSnapshot({
+    exportRoot,
+    projectRoot: fx.root,
+    hostInstanceId: "host-export-failure",
+    endpoints: endpoints.map((endpoint) => endpoint.endpointId === "endpoint-developer" ? { ...endpoint, bindingId: head.binding.bindingId } : endpoint),
+  }), { code: "INVALID_WORKSPACE_HOST_EXPORT_ENDPOINT" });
+  const forgedAdapter = new VerifiedWorkspaceHostAdapter({
+    driver: createWorkspaceHostExportDriver({
+      exportRoot,
+      projectRoot: fx.root,
+      caller: caller("head"),
+      bindingId: head.binding.bindingId,
+      processProof: proofs.developer,
+      acknowledgementTimeoutMs: 30,
+      pollIntervalMs: 5,
+    }),
+  });
+  assert.throws(() => forgedAdapter.attach({ caller: caller("head"), boundary: { projectId: "project-test", headSessionId: "session-test", authorityGeneration: "generation-test", role: "head", bindingId: head.binding.bindingId, projectRoot: fx.root } }), { code: "WORKSPACE_HOST_PROCESS_PROOF_MISMATCH" });
   const adapter = new VerifiedWorkspaceHostAdapter({
-    driver: createWorkspaceHostExportDriver({ exportRoot, projectRoot: fx.root, acknowledgementTimeoutMs: 30, pollIntervalMs: 5 }),
+    driver: createWorkspaceHostExportDriver({
+      exportRoot,
+      projectRoot: fx.root,
+      caller: caller("head"),
+      bindingId: head.binding.bindingId,
+      processProof: proofs.head,
+      acknowledgementTimeoutMs: 30,
+      pollIntervalMs: 5,
+    }),
   });
   attachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: head.bindingToken, workspaceHostAdapter: adapter, caller: caller("head") });
   const ambiguous = sendCoordinationMessage({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, toRole: "head", content: "no host ack", idempotencyKey: "host-export-no-ack", deliveryAdapter: createCoordinationWorkspaceHostDeliveryAdapter({ root: fx.root, environment: fx.environment, workspaceHostAdapter: adapter }) });
