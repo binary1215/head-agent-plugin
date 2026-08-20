@@ -304,6 +304,9 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
   let forceTimer = null;
   let settled = false;
   let child = null;
+  let providerStartEvent = null;
+  let resolveProviderStarted;
+  const providerStarted = new Promise((resolve) => { resolveProviderStarted = resolve; });
   const supervised = spawnSupervisedProcess({
     selection: supervisorSelection,
     executablePath,
@@ -314,10 +317,14 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
     controlFile,
     terminationGraceMs: 5_000,
     onControlEvent: (event) => {
-      if (event.type === "provider.started") recordProcess({
-        type: "spawn", pid: event.providerPid, parentPid: child?.pid || process.pid,
-        command: `${runtime} live coordination client`, cwd: projectRoot,
-      });
+      if (event.type === "provider.started") {
+        providerStartEvent = event;
+        resolveProviderStarted(event);
+        recordProcess({
+          type: "spawn", pid: event.providerPid, parentPid: child?.pid || process.pid,
+          command: `${runtime} live coordination client`, cwd: projectRoot,
+        });
+      }
       if (event.type === "provider.exited") recordProcess({
         type: "exit", pid: event.providerPid, parentPid: child?.pid || process.pid,
         exitCode: event.exitCode, signal: "none",
@@ -361,6 +368,7 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
     timer.unref?.();
     child.once("close", (code, signal) => {
       settled = true;
+      if (!providerStartEvent) resolveProviderStarted(null);
       clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
       if (lineBuffer.trim()) {
@@ -386,7 +394,7 @@ function launchSupervisedClient({ runtime, executablePath, args, environment, in
       });
     });
   });
-  return { runtime, child, supervised, terminate, completed };
+  return { runtime, child, supervised, terminate, providerStarted, completed };
 }
 
 async function stopClient(client) {
@@ -550,7 +558,21 @@ async function main() {
       input: `${codexPrompt}\n`,
       supervisorSelection,
     });
-    headResult = await headClient.completed;
+    const providerStart = await Promise.race([
+      headClient.providerStarted,
+      sleep(30_000).then(() => null),
+    ]);
+    assert(providerStart?.type === "provider.started" && Number.isSafeInteger(providerStart.providerPid),
+      "The claimed wake did not start one owned Codex provider process.", "LIVE_PROVIDER_COORDINATION_WAKE_START_MISSING");
+    const replyBeforeAcknowledgement = readCoordinationReply({
+      root: projectRoot, environment, bindingToken: developer.bindingToken, messageId: request.messageId,
+    });
+    assert(replyBeforeAcknowledgement.status === "pending",
+      "Wake acknowledgment was incorrectly delayed until the recipient reply.", "LIVE_PROVIDER_COORDINATION_ACK_REPLY_COUPLED");
+    const acknowledgement = acknowledgeWorkspaceHostExportDelivery({
+      exportRoot, projectRoot, request, claim: claimed.claim,
+    });
+    [headResult, developerResult] = await Promise.all([headClient.completed, developerClient.completed]);
     assert(headResult.exitCode === 0 && !headResult.timedOut
       && headResult.supervision.ownershipEstablished && headResult.supervision.treeCleanupVerified,
     "Actual Codex HEAD client did not complete under verified descendant ownership.",
@@ -571,10 +593,6 @@ async function main() {
     });
     assert(reply.status === "replied" && reply.reply.content === replyMarker,
       "Durable developer reply did not prove the exact Codex reply.", "LIVE_PROVIDER_COORDINATION_REPLY_MISSING");
-    const acknowledgement = acknowledgeWorkspaceHostExportDelivery({
-      exportRoot, projectRoot, request, claim: claimed.claim,
-    });
-    developerResult = await developerClient.completed;
     assert(developerResult.exitCode === 0 && !developerResult.timedOut
       && developerResult.supervision.ownershipEstablished && developerResult.supervision.treeCleanupVerified,
     "Actual OpenCode developer client did not complete under verified descendant ownership.",
@@ -608,9 +626,11 @@ async function main() {
       hostSnapshotId: published.snapshotId,
       messageId: request.messageId,
       acknowledgementHash: acknowledgement.acknowledgementHash,
+      wakeAcknowledgedAfterProviderStart: true,
+      replyWasPendingAtWakeAcknowledgement: true,
       durableReadVerified: true,
       durableReplyVerified: true,
-      exactDeliveryAcknowledgedAfterReply: true,
+      deliveryReceiptIndependentOfReply: true,
       projectHeadBytesUnchanged: true,
       providerSessionIdentityPersisted: false,
       rawProcessProofPersisted: false,

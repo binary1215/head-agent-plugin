@@ -212,8 +212,10 @@ project-CWD fencing, and provider-session absence.
 The host-export production path additionally passes an actual provider-client
 round trip: OpenCode calls send, the host claims the create-only binding-scoped
 request before starting Codex, Codex calls read-inbox and immutable reply under a
-distinct proof, the host verifies the durable reply and writes the exact ack, and
-the waiting OpenCode call completes. Both provider trees have verified native
+distinct proof, and the waiting OpenCode call completes. The host writes the
+exact wake ack immediately after observing the owned Codex provider start while
+the reply is still pending; read and reply are then verified independently and
+never redefine the delivery receipt. Both provider trees have verified native
 ownership/cleanup; `.head` is byte-identical; raw proofs, binding tokens, and
 actual provider session references do not persist. Project/export overlap,
 host-project mismatch, explicit detach, ack timeout, stale/foreign binding,

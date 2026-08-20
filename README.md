@@ -161,8 +161,9 @@ pass the same fresh binding check on its first tool call. Requests, claims, and
 acknowledgments bind the exact recipient binding. Copied tuples,
 foreign/replaced bindings, forged/old proofs, explicit detach, and duplicate
 ownership fail closed. An actual OpenCode send → claimed request → newly started
-Codex read/reply → exact ack E2E passes with byte-identical `.head`, no persisted
-provider session, and verified descendant cleanup.
+Codex → exact wake ack E2E passes, while Codex read/reply is verified separately
+from delivery. `.head` stays byte-identical, provider sessions do not persist,
+and both provider descendant trees are cleaned.
 See [Role coordination](docs/role-coordination.md).
 
 ## Architecture at a glance
