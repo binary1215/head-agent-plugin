@@ -4,7 +4,11 @@ Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this contract.
 
 Status: active, executable contract
 
-Protocol version: `0.1.0`
+Protocol version: `0.2.0`
+
+Digest-valid `0.1.0` embedded boundaries remain readable for upgrade continuity;
+new builders emit `0.2.0`. The only legacy classification retained by the reader
+is the former generic Feature/Policy naming, never used to promote a new artifact.
 
 ## Why this boundary exists
 
@@ -16,9 +20,9 @@ become an additional source of product meaning or recovery direction.
 
 | Plane | Ownership | Representative artifacts | Forbidden inference |
 |---|---|---|---|
-| P1 Normative Authority | approved product meaning, policy, and explicit decisions | Product Canon, ProductModelRevision, Feature, Policy, ReviewDecision | existence in a graph, message, result, or host cannot create approval |
+| P1 Normative Authority | approved product meaning, policy, and explicit decisions | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision | existence in a graph, message, result, or host cannot create approval |
 | P2 Canonical Recovery/Lineage Record | provider-independent recovery of Project, Session, Run, plan, context, contract, and next direction | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | evidence deletion or provider summary cannot rewrite checkpoint fields |
-| P3 Evidence Record | reviewable results, observations, candidates, claims, and audit receipts | ResultPacket, WorkerReport, CandidateSet, Evidence, DocumentCanonApplicationReceipt | evidence cannot promote itself or become recovery canon |
+| P3 Evidence Record | reviewable results, observations, candidates, claims, and audit receipts | ResultPacket, WorkerReport, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, DocumentCanonApplicationReceipt | evidence cannot promote itself or become recovery canon |
 | P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
 | P5 Operational Effect | host-local process and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, provider-session reference | successful delivery or process control cannot authorize execution, review, promotion, or recovery |
 
@@ -41,6 +45,17 @@ the exact reviewed mutation operation. A P4 graph write is fenced by exact Produ
 Canon bytes; if an adapter changes or deletes those bytes, Core restores them and
 fails with `GRAPH_PROJECTION_AUTHORITY_AMPLIFICATION` before advancing the World
 Model pointer.
+
+Candidate and reviewed product concepts have distinct names and planes. A generic
+or unreviewed Feature/Policy is never classified as P1 merely because a graph node
+uses that label. Only a Product Canon or separately reviewed Feature/Policy is P1;
+FeatureCandidate, ProductFeatureCandidate, and PolicyCandidate remain P3.
+
+P3 evidence, P4 derived views, and P5 operational effects cannot be promoted into
+P2 recovery authority at all. A checkpoint may reference evidence for audit, but
+its recovery fields come only from explicit HEAD/user direction and verified P2
+lineage. ResultPacket, GraphSnapshot, continuity, inbox, or provider-session state
+cannot supply or rewrite those fields.
 
 The same rule applies in context and coordination:
 

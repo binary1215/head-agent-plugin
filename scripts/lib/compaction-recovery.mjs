@@ -176,6 +176,8 @@ function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, curr
     createdAt: now(),
     authority: {
       recovery: "canonical-session-run-checkpoint",
+      recoveryFieldSources: "explicit-head-user-direction-and-verified-p2-lineage-only",
+      evidenceRecords: "reference-only-not-recovery-field-source",
       providerSummary: "orientation-only",
       continuitySnapshot: "derived-view-not-recovery-input",
     },

@@ -31,11 +31,14 @@ test("freezes the five semantic authority planes separately from Distribution an
   assert.deepEqual(Object.keys(first.semanticPlanes), ["P1", "P2", "P3", "P4", "P5"]);
   assert.deepEqual(Object.keys(first.architecturalPlanes), ["Distribution", "Host"]);
   assert.equal(artifactAuthorityBoundary("ReviewDecision").planeId, "P1");
+  assert.equal(artifactAuthorityBoundary("ProductCanonFeature").planeId, "P1");
+  assert.equal(artifactAuthorityBoundary("FeatureCandidate").planeId, "P3");
   assert.equal(artifactAuthorityBoundary("SessionRunCheckpoint").planeId, "P2");
   assert.equal(artifactAuthorityBoundary("ResultPacket").planeId, "P3");
   assert.equal(artifactAuthorityBoundary("GraphSnapshot").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("CoordinationInbox").planeId, "P5");
   verifyArtifactAuthorityBoundary("GraphSnapshot", artifactAuthorityBoundary("GraphSnapshot"));
+  verifyArtifactAuthorityBoundary("ResultPacket", { ...artifactAuthorityBoundary("ResultPacket"), contractVersion: "0.1.0" });
 });
 
 test("rejects upward authority amplification and projection mutation without explicit review", () => {
@@ -54,6 +57,15 @@ test("rejects upward authority amplification and projection mutation without exp
     effect: "apply-exact-reviewed-product-model",
   });
   assert.equal(reviewed.reviewDecisionRequired, true);
+  assert.throws(() => assertNoAuthorityAmplification({ sourceKind: "ResultPacket", targetKind: "SessionRunCheckpoint" }), {
+    code: "RECOVERY_AUTHORITY_AMPLIFICATION_REJECTED",
+  });
+  assert.throws(() => assertNoAuthorityAmplification({ sourceKind: "GraphSnapshot", targetKind: "SessionRunCheckpoint" }), {
+    code: "RECOVERY_AUTHORITY_AMPLIFICATION_REJECTED",
+  });
+  assert.throws(() => assertNoAuthorityAmplification({ sourceKind: "ProviderSessionReference", targetKind: "SessionRunCheckpoint" }), {
+    code: "RECOVERY_AUTHORITY_AMPLIFICATION_REJECTED",
+  });
   assert.throws(() => assertProjectionDidNotMutateCanon({ beforeBytes: Buffer.from("canon-a"), afterBytes: Buffer.from("canon-b") }), {
     code: "GRAPH_PROJECTION_AUTHORITY_AMPLIFICATION",
   });

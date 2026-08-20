@@ -232,6 +232,8 @@ test("checkpoint recovery remains sufficient after ResultPacket evidence is dele
   const recovered = readRecoveryCheckpoint({ root, checkpointId: prepared.checkpoint.checkpointId }).checkpoint;
   assert.equal(recovered.nextExpectedResult, nextExpectedResult);
   assert.equal(recovered.authorityBoundary.recoveryAuthority, true);
+  assert.equal(recovered.authority.recoveryFieldSources, "explicit-head-user-direction-and-verified-p2-lineage-only");
+  assert.equal(recovered.authority.evidenceRecords, "reference-only-not-recovery-field-source");
   assert.equal(fs.existsSync(resultFile), false);
   abortCompaction({ root, epochId: prepared.epoch.epochId, reason: "fixture cleanup" });
 });

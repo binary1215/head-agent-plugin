@@ -10,6 +10,11 @@ Deleting ResultPacket evidence after checkpoint creation is covered by an
 executable recovery test; it cannot turn a summary, graph, inbox, or provider
 session into recovery authority.
 
+Checkpoint authority metadata states that recovery fields come only from explicit
+HEAD/user direction plus verified P2 lineage. P3 evidence may be referenced for
+audit but is never a recovery-field source; general non-amplification tests reject
+P3, P4, and P5 attempts to become P2.
+
 ## State transition
 
 ```text

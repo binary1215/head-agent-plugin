@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.1.0";
+export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.2.0";
 
 const fail = (message, code = "AUTHORITY_PLANE_ERROR") => {
   const error = new Error(message);
@@ -56,8 +56,10 @@ const ARTIFACT_PLANES = Object.freeze({
   ProductCanon: "P1",
   ProductModel: "P1",
   ProductModelRevision: "P1",
-  Policy: "P1",
-  Feature: "P1",
+  PolicyCanon: "P1",
+  ReviewedPolicy: "P1",
+  ProductCanonFeature: "P1",
+  ReviewedFeature: "P1",
   ReviewDecision: "P1",
   DocumentChangeReviewDecision: "P1",
 
@@ -72,6 +74,9 @@ const ARTIFACT_PLANES = Object.freeze({
   ResultPacket: "P3",
   WorkerReport: "P3",
   CandidateSet: "P3",
+  FeatureCandidate: "P3",
+  ProductFeatureCandidate: "P3",
+  PolicyCandidate: "P3",
   Evidence: "P3",
   Claim: "P3",
   Unknown: "P3",
@@ -94,12 +99,51 @@ const ARTIFACT_PLANES = Object.freeze({
   ProviderSessionReference: "P5",
 });
 
-function boundaryPayload(kind) {
-  const planeId = ARTIFACT_PLANES[kind];
+const ARTIFACT_PLANES_V01 = Object.freeze({
+  ProductCanon: "P1",
+  ProductModel: "P1",
+  ProductModelRevision: "P1",
+  Policy: "P1",
+  Feature: "P1",
+  ReviewDecision: "P1",
+  DocumentChangeReviewDecision: "P1",
+  Project: "P2",
+  HeadSession: "P2",
+  Run: "P2",
+  WholePlanSnapshot: "P2",
+  ContextCapsule: "P2",
+  ExecutionContract: "P2",
+  SessionRunCheckpoint: "P2",
+  ResultPacket: "P3",
+  WorkerReport: "P3",
+  CandidateSet: "P3",
+  Evidence: "P3",
+  Claim: "P3",
+  Unknown: "P3",
+  DocumentCanonApplicationReceipt: "P3",
+  GraphSnapshot: "P4",
+  GraphDBProjection: "P4",
+  TraversalResult: "P4",
+  DocumentProjection: "P4",
+  MarkdownProjection: "P4",
+  HEADContinuitySnapshot: "P4",
+  ProcessId: "P5",
+  ControlToken: "P5",
+  ProcessProof: "P5",
+  LeaseLock: "P5",
+  EndpointTarget: "P5",
+  CoordinationInbox: "P5",
+  DeliveryReceipt: "P5",
+  ProviderSessionReference: "P5",
+});
+
+function boundaryPayload(kind, contractVersion = AUTHORITY_PLANE_CONTRACT_VERSION) {
+  const artifactPlanes = contractVersion === "0.1.0" ? ARTIFACT_PLANES_V01 : ARTIFACT_PLANES;
+  const planeId = artifactPlanes[kind];
   if (!planeId) fail(`Artifact kind is not assigned to an authority plane: ${kind}`, "UNKNOWN_AUTHORITY_PLANE_ARTIFACT");
   const plane = PLANE_DEFINITIONS[planeId];
   return {
-    contractVersion: AUTHORITY_PLANE_CONTRACT_VERSION,
+    contractVersion,
     artifactKind: kind,
     planeId,
     plane: plane.name,
@@ -120,7 +164,11 @@ export function artifactAuthorityBoundary(kind) {
 }
 
 export function verifyArtifactAuthorityBoundary(kind, boundary) {
-  const expected = boundaryPayload(kind);
+  const contractVersion = boundary?.contractVersion;
+  if (!new Set(["0.1.0", AUTHORITY_PLANE_CONTRACT_VERSION]).has(contractVersion)) {
+    fail(`${kind} authority-plane contract version is invalid.`, "INVALID_ARTIFACT_AUTHORITY_BOUNDARY");
+  }
+  const expected = boundaryPayload(kind, contractVersion);
   if (canonicalJson(boundary) !== canonicalJson(expected)) {
     fail(`${kind} authority-plane boundary is invalid.`, "INVALID_ARTIFACT_AUTHORITY_BOUNDARY");
   }
@@ -139,6 +187,7 @@ export function authorityPlaneContract() {
     },
     invariants: [
       "authority-does-not-amplify-upward-without-an-explicit-verified-review-decision",
+      "evidence-derived-and-operational-planes-cannot-be-promoted-into-recovery-authority",
       "result-packets-and-worker-reports-are-evidence-not-recovery-canon",
       "session-run-checkpoints-remain-sufficient-after-evidence-artifact-deletion",
       "graph-snapshots-and-graphdb-are-rebuildable-derived-indexes-not-product-semantic-canon",
@@ -165,6 +214,9 @@ export function assertNoAuthorityAmplification({ sourceKind, targetKind, reviewD
       fail(`Authority amplification from ${sourceKind} to ${targetKind} requires an explicit verified ReviewDecision.`, "AUTHORITY_AMPLIFICATION_REJECTED");
     }
     verifyArtifactAuthorityBoundary("ReviewDecision", reviewDecision.authorityBoundary);
+  }
+  if (target.planeId === "P2" && new Set(["P3", "P4", "P5"]).has(source.planeId)) {
+    fail(`Recovery authority cannot be amplified from ${sourceKind} into ${targetKind}.`, "RECOVERY_AUTHORITY_AMPLIFICATION_REJECTED");
   }
   return Object.freeze({
     status: "authority-boundary-preserved",
