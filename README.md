@@ -144,6 +144,11 @@ worker result remains P3 evidence until Fresh HEAD records an explicit accept
 ReviewDecision; only then can `run-integrate-checkpoint` bind that reviewed result
 once to a P2 recovery checkpoint whose next direction is supplied explicitly by
 HEAD/user input. See [Session restore and reviewed-result integration](docs/session-recovery.md).
+The original mapping remains explicit: HF-007 is compaction, HF-008 is Session
+restore, HF-009 is worker dispatch, and HF-010 is completed-worker integration.
+Run `npm run verify:hostless-session-recovery` to prove the provider-neutral
+resident-consumer outcome, crash convergence, missing-evidence disclosure, and
+inbox non-authority without Git, GraphDB, WorkspaceHost, Herdr, or provider resume.
 
 Provider-neutral role coordination is an advanced host-bound surface. A trusted
 administrator opens one coordination generation and issues a one-time binding

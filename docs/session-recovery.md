@@ -5,6 +5,21 @@ Session restore and worker-result integration flow without resuming a hidden
 provider conversation or embedding Herdr-specific process, pane, CLI, socket, or
 TUI behavior.
 
+## Original Feature mapping
+
+The original source numbering is preserved rather than repurposed:
+
+| Original Feature | Original outcome | This plugin's relationship |
+|---|---|---|
+| HF-007 | continue through context compaction | implemented by the separate provider-neutral compaction recovery contract |
+| HF-008 | restore a prior HEAD OpenCode Session | artifact-only restore reproduces the semantic consumer input; provider `ses_*` resume is intentionally not claimed |
+| HF-009 | dispatch an independently ownable worker task | belongs to the separate bounded runtime/coordination vertical; this integration transaction is not dispatch |
+| HF-010 | integrate a completed worker branch | represented provider-neutrally by accepted ResultPacket review plus explicit HEAD-owned checkpoint integration |
+
+This mapping distinguishes behavioral equivalence from ritual parity. It does not
+rename provider-loss continuity as HF-010 or claim that a checkpoint transaction
+alone closes the original dispatch/wait lifecycle.
+
 ## Authority boundary
 
 | Artifact | Plane | Role |
@@ -110,3 +125,12 @@ Fresh-process tests run restore with distinct Codex and OpenCode provider-sessio
 environment values and require the same projection identity with neither value
 present in the result. Counterexamples cover Session pointer drift, missing
 ResultPacket evidence, non-accept review, divergent replay, and CLI/MCP parity.
+
+`npm run verify:hostless-session-recovery` adds the resident-consumer proof. One
+fresh process integrates, independent Codex/OpenCode-labeled processes restore
+the same projection and execute one read-only next move, and injected inbox text
+cannot author that move. The verifier also covers request-before-checkpoint and
+checkpoint-before-receipt crash recovery, deletion of P3 request and ResultPacket
+evidence, concurrent identical and divergent integration, and non-accept review.
+It requires no Git repository, GraphDB, WorkspaceHost, Herdr process, or provider
+session resume.

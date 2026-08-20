@@ -336,3 +336,33 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
   assert.equal(restored.result.structuredContent.projection.providerBoundary.resumeEnabled, false);
   assert.equal(restored.result.structuredContent.projection.consumerInstruction.nextExpectedResult, input.nextExpectedResult);
 });
+
+test("hostless resident HEAD recovery verifier closes crash, concurrency, provider-loss, and inbox-authority counterexamples", () => {
+  const verifier = path.join(pluginRoot, "scripts", "verify-hostless-session-recovery.mjs");
+  const result = spawnSync(process.execPath, [verifier], {
+    cwd: pluginRoot,
+    env: { ...process.env },
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, "hostless_resident_head_recovery_verified");
+  assert.equal(report.processBoundary.identicalProjectionAcrossCodexOpenCode, true);
+  assert.equal(report.crashRecovery.requestBeforeCheckpointConverged, true);
+  assert.equal(report.crashRecovery.checkpointBeforeReceiptConverged, true);
+  assert.equal(report.missingEvidence.missingEvidenceDisclosed, true);
+  assert.equal(report.missingEvidence.nextExpectedResultUnchanged, true);
+  assert.equal(report.concurrency.checkpointCount, 1);
+  assert.equal(report.concurrency.divergentPurposeRejected, "RUN_RESULT_INTEGRATION_CONFLICT");
+  assert.equal(report.authority.nonAcceptRejected, "RUN_RESULT_NOT_ACCEPTED");
+  assert.equal(report.authority.inboxReplyUsedAsDirection, false);
+  assert.equal(report.residentHeadConsumer.sameOutcomeAfterProviderReplacement, true);
+  assert.deepEqual(report.dependencies, {
+    gitRequired: false,
+    graphDbRequired: false,
+    workspaceHostRequired: false,
+    herdrRequired: false,
+  });
+});

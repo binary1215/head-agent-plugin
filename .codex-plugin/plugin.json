@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.77",
+  "version": "0.3.0-alpha.78",
   "description": "Provider-neutral HEAD coordination with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -50,6 +50,7 @@
       "Canonical Session and Run Compaction Recovery",
       "Artifact-only Provider-independent Session Restore",
       "Accepted Run Result Integration Checkpoint",
+      "Hostless Resident HEAD Recovery Verification",
       "One-shot Run Result Integration Receipt",
       "At-most-once Compaction Continuation",
       "Newer User Turn Compaction Supersession",

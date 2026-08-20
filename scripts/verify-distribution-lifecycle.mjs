@@ -85,6 +85,7 @@ try {
   const installedReleaseRoot = path.join(installRoot, "releases", installed.releaseId);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "workspace-host-export-mcp.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-live-provider-coordination.mjs")), true);
+  assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-hostless-session-recovery.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "lib", "workspace-host-export-driver.mjs")), true);
   assert.equal(fs.existsSync(path.join(projectRoot, ".git")), false);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
@@ -182,6 +183,7 @@ try {
     launcherVerified: true,
     workspaceHostExportBridgePackaged: true,
     liveProviderCoordinationVerifierPackaged: true,
+    hostlessSessionRecoveryVerifierPackaged: true,
     publicInitializeResumeVerified: true,
     projectAuthorityDeduplicated: true,
     gitAndGraphDbIndependentOnboardingVerified: true,

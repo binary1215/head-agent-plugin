@@ -104,6 +104,12 @@ expected result. The operation may reference the accepted ResultPacket and
 ReviewDecision but cannot derive recovery fields from them. Identical retries
 must return the same checkpoint; divergent retries and non-accept reviews fail.
 The P3 integration receipt is evidence, not recovery or review authority.
+Keep the original Feature mapping exact when comparing behavior: HF-007 is
+compaction continuity, HF-008 is prior HEAD Session restore, HF-009 is bounded
+worker dispatch, and HF-010 is completed-worker integration. Artifact-only
+restore is the provider-neutral semantic HF-008 outcome without provider resume;
+the reviewed-result checkpoint transaction is an HF-010 integration equivalent
+and must not be presented as HF-009 dispatch.
 
 ## Compaction recovery
 

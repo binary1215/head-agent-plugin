@@ -324,9 +324,19 @@ export function createRecoveryCheckpoint({ root = ".", purpose, approvedDecision
   const checkpointId = `checkpoint-${checkpointDigest.slice(0, 24)}`;
   const checkpoint = { ...payload, checkpointId, checkpointDigest };
   const file = checkpointFile(inspected.project.projectRoot, checkpointId);
-  const existed = fs.existsSync(file);
-  if (!existed) atomicWrite(file, json(checkpoint));
-  else readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId });
+  let existed = fs.existsSync(file);
+  if (!existed) {
+    try {
+      atomicWrite(file, json(checkpoint));
+    } catch (error) {
+      // Two identical integrations may derive the same immutable checkpoint
+      // before either process observes the file. The losing create converges
+      // only when the exact content-addressed target now exists and verifies.
+      if (!fs.existsSync(file)) throw error;
+      existed = true;
+    }
+  }
+  if (existed) readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId });
   const state = { ...inspected.state, latestCheckpoint: checkpointId, updatedAt: now() };
   replaceJson(path.join(inspected.project.projectRoot, ".head", "sessions", "current.json"), state);
   return { status: existed ? "existing" : "checkpointed", file, checkpoint, state };

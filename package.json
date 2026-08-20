@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.77",
+  "version": "0.3.0-alpha.78",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
@@ -12,6 +12,7 @@
     "verify:runtime-adapters": "node scripts/verify-runtime-adapters.mjs",
     "verify:runtime-lifecycle": "node scripts/verify-runtime-invocation-lifecycle.mjs",
     "verify:provider-replacement": "node scripts/verify-provider-replacement-recovery.mjs",
+    "verify:hostless-session-recovery": "node scripts/verify-hostless-session-recovery.mjs",
     "verify:role-coordination": "node --test --test-isolation=none --test-concurrency=1 test/role-coordination.test.mjs",
     "verify:workspace-host-coordination": "node --test --test-isolation=none --test-concurrency=1 test/workspace-host-coordination.test.mjs",
     "verify:workspace-host-export": "node --test --test-isolation=none --test-concurrency=1 test/workspace-host-coordination.test.mjs",
