@@ -137,3 +137,44 @@ the cache merges independent trust boundaries, or if an original portable Core
 responsibility was lost rather than relocated. It does not assert superiority
 for OpenCode/Herdr-native coordination until the deferred runtime and messaging
 capabilities are implemented and verified.
+
+## Original-author review outcome
+
+The text-only file-mail review concluded on 2026-08-20 after the author first
+withheld a broad superiority claim, named the missing comparison evidence, and
+then reviewed the supplied bilateral module inventory and execution receipts.
+The final response was `20260820T091221Z--scoped-foundation-breadth` to request
+`20260820T091129Z--bilateral-evidence-verdict`.
+
+The accepted comparison is deliberately scoped:
+
+> Given the cited modules and execution receipt, `head_core_origin/6e66771`
+> does not replace the original's OpenCode/Herdr live-coordination advantage,
+> but provides a broader shared-Core foundation for provider-neutral runtime
+> coverage, fixture-verified provider-replacement semantic recovery, and
+> integrated Git-independent product/change/execution evidence.
+
+The author classified this as a **scope-limited comparative advantage for
+universal provider-neutral plugin use**. The component verdict was:
+
+- provider coverage: yes;
+- provider replacement: partial, limited to the two real adapter/supervisor
+  paths exercised with protocol fixtures across a fresh process;
+- product/change/temporal implementation integrated into the shared release:
+  yes, broader than the original base release;
+- cross-platform distribution breadth: yes.
+
+This is not approval of overall superiority, philosophical superiority,
+OpenCode/Herdr-native completeness, or live provider-network replacement
+completeness. The original remains stronger in Herdr workspace/pane/session
+fencing and role coordination. Graph non-authority, whole-outcome ownership,
+and candidate/review separation remain inherited standards, not dimensions in
+which this plugin claims to have improved the original philosophy.
+
+The receipt supporting the partial replacement verdict is
+`scripts/verify-provider-replacement-recovery.mjs`: Codex and OpenCode adapter
+and supervisor paths preserved the exact Project and HEAD Session identities
+across a fresh process, created a new authorization, recovered the replacement
+result from project artifacts, persisted no provider-session identity, and
+required neither Git nor GraphDB. It uses isolated protocol fixtures and does
+not claim a live provider-network handoff.
