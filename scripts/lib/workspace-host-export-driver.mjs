@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { WORKSPACE_HOST_COORDINATION_VERSION } from "./workspace-host-coordination.mjs";
 
-export const WORKSPACE_HOST_EXPORT_VERSION = "0.2.0";
+export const WORKSPACE_HOST_EXPORT_VERSION = "0.3.0";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const PROOF = /^[A-Za-z0-9_-]{43,512}$/u;
@@ -310,7 +310,7 @@ function verifyProcessCaller(snapshot, caller, bindingId, processProofHash) {
   return snapshot;
 }
 
-function deliveryPayload({ snapshot, endpoint, messageId, text }) {
+function deliveryPayload({ snapshot, endpoint, targetBindingId, messageId, text }) {
   const payload = {
     schemaVersion: 1,
     kind: "WorkspaceHostExportDeliveryRequest",
@@ -323,6 +323,7 @@ function deliveryPayload({ snapshot, endpoint, messageId, text }) {
     terminalId: endpoint.terminalId,
     cwd: endpoint.cwd,
     runtime: endpoint.runtime,
+    targetBindingId: exactId(targetBindingId, "Workspace host export target binding"),
     messageId,
     text,
   };
@@ -332,7 +333,7 @@ function deliveryPayload({ snapshot, endpoint, messageId, text }) {
 function verifyDeliveryRequest(value) {
   exactFields(value, [
     "schemaVersion", "kind", "protocol", "hostInstanceId", "snapshotSequence", "workspaceId", "tabId", "endpointId",
-    "terminalId", "cwd", "runtime", "messageId", "text", "requestHash",
+    "terminalId", "cwd", "runtime", "targetBindingId", "messageId", "text", "requestHash",
   ], "Workspace host export delivery request");
   exactFields(value.protocol, ["name", "version"], "Workspace host export delivery protocol");
   const payload = { ...value };
@@ -341,7 +342,7 @@ function verifyDeliveryRequest(value) {
     || value.protocol.name !== "head-agent-core-workspace-host-export"
     || value.protocol.version !== WORKSPACE_HOST_EXPORT_VERSION
     || ![value.hostInstanceId, value.snapshotSequence, value.workspaceId, value.tabId, value.endpointId,
-      value.terminalId, value.messageId].every((item) => ID.test(String(item || "")))
+      value.terminalId, value.targetBindingId, value.messageId].every((item) => ID.test(String(item || "")))
     || typeof value.cwd !== "string" || !path.isAbsolute(value.cwd)
     || value.runtime !== String(value.runtime || "").toLowerCase() || !RUNTIMES.has(value.runtime)
     || typeof value.text !== "string" || !value.text || Buffer.byteLength(value.text) > MAX_NOTIFICATION_BYTES
@@ -363,6 +364,7 @@ function acknowledgementFor(request) {
     tabId: request.tabId,
     endpointId: request.endpointId,
     terminalId: request.terminalId,
+    targetBindingId: request.targetBindingId,
     messageId: request.messageId,
   };
   return { ...payload, acknowledgementHash: digest(canonicalJson(payload)) };
@@ -377,6 +379,7 @@ function claimFor(request) {
     hostInstanceId: request.hostInstanceId,
     endpointId: request.endpointId,
     terminalId: request.terminalId,
+    targetBindingId: request.targetBindingId,
     messageId: request.messageId,
     effectAuthority: "host-delivery-effect-only",
     providerSessionIdentityPersisted: false,
@@ -387,7 +390,7 @@ function claimFor(request) {
 function verifyClaim(value, request) {
   exactFields(value, [
     "schemaVersion", "kind", "protocol", "requestHash", "hostInstanceId", "endpointId", "terminalId", "messageId",
-    "effectAuthority", "providerSessionIdentityPersisted", "claimHash",
+    "targetBindingId", "effectAuthority", "providerSessionIdentityPersisted", "claimHash",
   ], "Workspace host export delivery claim");
   const expected = claimFor(request);
   if (canonicalJson(value) !== canonicalJson(expected)) {
@@ -399,7 +402,7 @@ function verifyClaim(value, request) {
 function verifyAcknowledgement(value, request) {
   exactFields(value, [
     "schemaVersion", "kind", "protocol", "status", "requestHash", "hostInstanceId", "workspaceId", "tabId",
-    "endpointId", "terminalId", "messageId", "acknowledgementHash",
+    "endpointId", "terminalId", "targetBindingId", "messageId", "acknowledgementHash",
   ], "Workspace host export delivery acknowledgment");
   const expected = acknowledgementFor(request);
   if (canonicalJson(value) !== canonicalJson(expected)) {
@@ -464,7 +467,8 @@ export function claimWorkspaceHostExportDelivery({ exportRoot, projectRoot, requ
     runtime: verified.runtime,
   };
   if (snapshot.hostInstanceId !== verified.hostInstanceId || snapshot.snapshotSequence !== verified.snapshotSequence
-    || snapshot.endpoints.filter((candidate) => canonicalJson(publicEndpoint(candidate)) === canonicalJson(endpoint)).length !== 1) {
+    || snapshot.endpoints.filter((candidate) => candidate.bindingId === verified.targetBindingId
+      && canonicalJson(publicEndpoint(candidate)) === canonicalJson(endpoint)).length !== 1) {
     return { status: "stale_claimed", claim };
   }
   return { status: "claimed", claim };
@@ -490,7 +494,7 @@ export function acknowledgeWorkspaceHostExportDelivery({ exportRoot, projectRoot
 export function createWorkspaceHostExportDriver({
   exportRoot, projectRoot, caller, bindingId, processProof, acknowledgementTimeoutMs = 10_000, pollIntervalMs = 10,
 } = {}) {
-  if (!Number.isInteger(acknowledgementTimeoutMs) || acknowledgementTimeoutMs < 10 || acknowledgementTimeoutMs > 60_000
+  if (!Number.isInteger(acknowledgementTimeoutMs) || acknowledgementTimeoutMs < 10 || acknowledgementTimeoutMs > 600_000
     || !Number.isInteger(pollIntervalMs) || pollIntervalMs < 1 || pollIntervalMs > 1_000
     || pollIntervalMs > acknowledgementTimeoutMs) {
     fail("Workspace host export timing bounds are invalid.", "INVALID_WORKSPACE_HOST_EXPORT_TIMING");
@@ -524,16 +528,32 @@ export function createWorkspaceHostExportDriver({
         endpoints: snapshot.endpoints.map(publicEndpoint),
       };
     },
-    send({ endpoint, messageId, text } = {}) {
+    resolveBindingEndpoint({ bindingId: targetBindingId } = {}) {
+      const verifiedBindingId = exactId(targetBindingId, "Workspace host export target binding");
+      const snapshot = boundSnapshot();
+      const matches = snapshot.endpoints.filter((candidate) => candidate.bindingId === verifiedBindingId);
+      return {
+        status: matches.length === 1 ? "resolved" : "unavailable",
+        bindingId: verifiedBindingId,
+        hostInstanceId: snapshot.hostInstanceId,
+        snapshotSequence: snapshot.snapshotSequence,
+        endpoint: matches.length === 1 ? publicEndpoint(matches[0]) : null,
+      };
+    },
+    send({ endpoint, targetBindingId, messageId, text } = {}) {
       const verifiedEndpoint = validateEndpoint(endpoint);
+      const verifiedTargetBindingId = exactId(targetBindingId, "Workspace host export target binding");
       exactId(messageId, "Workspace host export message");
       if (typeof text !== "string" || !text || Buffer.byteLength(text) > MAX_NOTIFICATION_BYTES) {
         fail("Workspace host export notification is invalid.", "INVALID_WORKSPACE_HOST_EXPORT_DELIVERY");
       }
       const snapshot = boundSnapshot();
-      const exact = snapshot.endpoints.filter((candidate) => canonicalJson(publicEndpoint(candidate)) === canonicalJson(verifiedEndpoint));
+      const exact = snapshot.endpoints.filter((candidate) => candidate.bindingId === verifiedTargetBindingId
+        && canonicalJson(publicEndpoint(candidate)) === canonicalJson(verifiedEndpoint));
       if (exact.length !== 1) fail("Workspace host export endpoint is no longer exact.", "STALE_WORKSPACE_HOST_EXPORT_ENDPOINT");
-      const request = deliveryPayload({ snapshot, endpoint: verifiedEndpoint, messageId, text });
+      const request = deliveryPayload({
+        snapshot, endpoint: verifiedEndpoint, targetBindingId: verifiedTargetBindingId, messageId, text,
+      });
       const requestFile = paths.request(verifiedEndpoint.endpointId, messageId);
       if (!writeExclusive(roots.exportRoot, requestFile, request)) {
         const existing = verifyDeliveryRequest(readJson(roots.exportRoot, requestFile, "Workspace host export delivery request"));

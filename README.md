@@ -152,12 +152,17 @@ contract; host-specific executable, socket, CLI, pane, and TUI knowledge belongs
 in a separately owned optional adapter. The production `host-export` reference
 uses content-addressed snapshots and create-only filesystem request/ack records
 outside the project, with a create-only pre-effect claim preventing automatic
-replay after an uncertain host crash. Each raw host endpoint is uniquely bound to
-the current coordination binding and a host-issued per-process proof whose secret
-never enters project state or receipts. Copied tuples, foreign bindings, forged
-proofs, and duplicate ownership fail closed. Two fresh role MCP processes and a separate live host
-consumer pass this bridge; actual Codex/OpenCode provider-client wake/tool
-consumption remains open.
+replay after an uncertain host crash. Each endpoint is uniquely bound to the
+current coordination binding and a host-issued per-process proof whose secret
+never enters project state or receipts. A trusted snapshot may register a current
+recipient binding before its provider process starts, but that registration grants
+reachability only: the new process must still possess its distinct raw proof and
+pass the same fresh binding check on its first tool call. Requests, claims, and
+acknowledgments bind the exact recipient binding. Copied tuples,
+foreign/replaced bindings, forged/old proofs, explicit detach, and duplicate
+ownership fail closed. An actual OpenCode send → claimed request → newly started
+Codex read/reply → exact ack E2E passes with byte-identical `.head`, no persisted
+provider session, and verified descendant cleanup.
 See [Role coordination](docs/role-coordination.md).
 
 ## Architecture at a glance
@@ -352,7 +357,7 @@ Status terms in this README have exact meanings:
 | Host-bound durable role messaging Core/CLI/MCP | **Available** |
 | Exact-endpoint two-process WorkspaceHost delivery | **Available** |
 | Production host-export filesystem bridge | **Available** |
-| Actual Codex/OpenCode provider-client live role round trip | **Planned** |
+| Actual Codex/OpenCode provider-client live role round trip | **Available** |
 | Host-specific WorkspaceHost adapters | **Optional external** |
 | Verified Git-backed Codex marketplace distribution | **Available** |
 | OpenAI universal plugin directory publication | **Planned** |

@@ -30,6 +30,7 @@ const pluginRoot = path.resolve(import.meta.dirname, "..");
 const client = path.join(import.meta.dirname, "fixtures", "workspace-host-client.mjs");
 const exportMcp = path.join(pluginRoot, "scripts", "workspace-host-export-mcp.mjs");
 const exportAcker = path.join(import.meta.dirname, "fixtures", "workspace-host-export-acker.mjs");
+const liveProviderVerifier = path.join(pluginRoot, "scripts", "verify-live-provider-coordination.mjs");
 
 function fixture() {
   const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
@@ -155,6 +156,18 @@ function startExportAcker({ exportRoot, projectRoot, endpointId, outputFile }) {
   return { child, ready, completed };
 }
 
+test("actual provider-client coordination verifier requires explicit opt-in", () => {
+  const environment = { ...process.env };
+  delete environment.HEAD_AGENT_LIVE_COORDINATION_E2E;
+  const result = spawnSync(process.execPath, [liveProviderVerifier], {
+    cwd: pluginRoot,
+    env: environment,
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /LIVE_PROVIDER_COORDINATION_OPT_IN_REQUIRED/u);
+});
+
 test("active WorkspaceHostAdapter delivers only after durable acceptance and exact target proof", (t) => {
   const fx = fixture();
   t.after(() => fs.rmSync(fx.base, { recursive: true, force: true }));
@@ -171,7 +184,9 @@ test("active WorkspaceHostAdapter delivers only after durable acceptance and exa
   assert.equal(composition.workspaceHostProbe.status, "active");
   assert.ok(coreContract().activeCapabilities.includes("verified-workspace-host-adapter"));
   assert.ok(coreContract().activeCapabilities.includes("host-export-filesystem-workspace-driver"));
-  assert.ok(coreContract().deferredCapabilities.includes("host-specific-workspace-adapter-and-live-e2e"));
+  assert.ok(coreContract().activeCapabilities.includes("binding-scoped-offline-workspace-wake"));
+  assert.ok(coreContract().activeCapabilities.includes("actual-codex-opencode-role-round-trip"));
+  assert.ok(coreContract().deferredCapabilities.includes("host-specific-workspace-adapter"));
 
   assert.equal(attachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: developer.bindingToken, workspaceHostAdapter: adapter, caller: caller("developer") }).status, "attached");
   assert.equal(attachCoordinationWorkspaceHost({ root: fx.root, environment: fx.environment, bindingToken: head.bindingToken, workspaceHostAdapter: adapter, caller: caller("head") }).status, "attached");
@@ -318,6 +333,22 @@ test("production host-export bridge delivers through create-only request and exa
   const proofs = { developer: processProof(), head: processProof() };
   const endpoints = exportEndpoints(fx, bindings, proofs);
   publishWorkspaceHostExportSnapshot({ exportRoot, projectRoot: fx.root, hostInstanceId: "host-export-live", endpoints });
+  assert.doesNotThrow(() => createWorkspaceHostExportDriver({
+    exportRoot,
+    projectRoot: fx.root,
+    caller: caller("head"),
+    bindingId: head.binding.bindingId,
+    processProof: proofs.head,
+    acknowledgementTimeoutMs: 600_000,
+  }));
+  assert.throws(() => createWorkspaceHostExportDriver({
+    exportRoot,
+    projectRoot: fx.root,
+    caller: caller("head"),
+    bindingId: head.binding.bindingId,
+    processProof: proofs.head,
+    acknowledgementTimeoutMs: 600_001,
+  }), { code: "INVALID_WORKSPACE_HOST_EXPORT_TIMING" });
   const projectBefore = treeBytes(path.join(fx.root, ".head"));
   const invoke = ({ token, role, endpointRole = role, proof = proofs[endpointRole], request }) => {
     const result = spawnSync(process.execPath, [exportMcp], {
@@ -338,8 +369,7 @@ test("production host-export bridge delivers through create-only request and exa
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout.trim());
   };
-  const attached = invoke({ token: head.bindingToken, role: "head", request: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
-  assert.deepEqual(attached.result.structuredContent.messages, []);
+  assert.deepEqual(inspectRoleCoordination({ root: fx.root, environment: fx.environment }).attachedRoles, []);
   const missingProofEnvironment = {
     ...fx.environment,
     HEAD_AGENT_COORDINATION_BINDING_TOKEN: head.bindingToken,
@@ -367,13 +397,33 @@ test("production host-export bridge delivers through create-only request and exa
   await acker.ready;
   const sent = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "head_coordination_send_message", arguments: { project_root: fx.root, to_role: "head", content: "portable live host delivery", idempotency_key: "host-export-live" } } } });
   assert.equal(sent.result.structuredContent.delivery.status, "delivered");
+  assert.equal(sent.result.structuredContent.delivery.targetBindingId, head.binding.bindingId);
   await acker.completed;
   const hostDelivery = JSON.parse(fs.readFileSync(outputFile, "utf8"));
   assert.equal(hostDelivery.endpointId, "endpoint-head");
+  assert.equal(hostDelivery.targetBindingId, head.binding.bindingId);
   assert.match(hostDelivery.text, /portable live host delivery/);
 
   const inbox = invoke({ token: head.bindingToken, role: "head", request: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
   assert.equal(inbox.result.structuredContent.messages[0].content, "portable live host delivery");
+  const detached = detachCoordinationWorkspaceHost({
+    root: fx.root,
+    environment: fx.environment,
+    bindingToken: head.bindingToken,
+    workspaceHostAdapter: new VerifiedWorkspaceHostAdapter({
+      driver: createWorkspaceHostExportDriver({
+        exportRoot,
+        projectRoot: fx.root,
+        caller: caller("head"),
+        bindingId: head.binding.bindingId,
+        processProof: proofs.head,
+      }),
+    }),
+  });
+  assert.equal(detached.status, "detached");
+  const detachedSend = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 30, method: "tools/call", params: { name: "head_coordination_send_message", arguments: { project_root: fx.root, to_role: "head", content: "must remain detached", idempotency_key: "host-export-detached" } } } });
+  assert.equal(detachedSend.result.structuredContent.delivery.status, "unavailable");
+  assert.deepEqual(listWorkspaceHostExportDeliveryRequests({ exportRoot, projectRoot: fx.root, endpointId: "endpoint-head" }), []);
   const endpointHash = crypto.createHash("sha256").update("endpoint-head").digest("hex");
   const bridgeRoot = path.join(exportRoot, "workspace-host-export", "v1");
   const request = JSON.parse(fs.readFileSync(path.join(bridgeRoot, "deliveries", endpointHash, `${hostDelivery.messageId}.request.json`), "utf8"));

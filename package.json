@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.72",
+  "version": "0.3.0-alpha.73",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
@@ -15,6 +15,7 @@
     "verify:role-coordination": "node --test --test-isolation=none --test-concurrency=1 test/role-coordination.test.mjs",
     "verify:workspace-host-coordination": "node --test --test-isolation=none --test-concurrency=1 test/workspace-host-coordination.test.mjs",
     "verify:workspace-host-export": "node --test --test-isolation=none --test-concurrency=1 test/workspace-host-coordination.test.mjs",
+    "verify:live-coordination": "node scripts/verify-live-provider-coordination.mjs",
     "verify:live-runtime": "node scripts/verify-live-codex-runtime.mjs",
     "verify:live-codex": "node scripts/verify-live-codex-runtime.mjs",
     "verify:onboarding": "node scripts/verify-onboarding.mjs",

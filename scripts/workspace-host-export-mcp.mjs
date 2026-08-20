@@ -23,6 +23,23 @@ const requiredEnvironment = (environment, name) => {
   return value;
 };
 
+const boundedIntegerEnvironment = (environment, name, fallback, minimum, maximum) => {
+  const raw = String(environment[name] || "").trim();
+  if (!raw) return fallback;
+  if (!/^[0-9]+$/u.test(raw)) {
+    const error = new Error(`${name} must be an integer between ${minimum} and ${maximum}.`);
+    error.code = "WORKSPACE_HOST_EXPORT_ENVIRONMENT_INVALID";
+    throw error;
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    const error = new Error(`${name} must be an integer between ${minimum} and ${maximum}.`);
+    error.code = "WORKSPACE_HOST_EXPORT_ENVIRONMENT_INVALID";
+    throw error;
+  }
+  return value;
+};
+
 export function workspaceHostExportComposition({ environment = process.env } = {}) {
   const values = Object.fromEntries(REQUIRED.map((name) => [name, requiredEnvironment(environment, name)]));
   const projectRoot = values.HEAD_AGENT_HOST_PROJECT_ROOT;
@@ -38,6 +55,13 @@ export function workspaceHostExportComposition({ environment = process.env } = {
     tabId: values.HEAD_AGENT_HOST_TAB_ID,
     endpointId: values.HEAD_AGENT_HOST_ENDPOINT_ID,
   });
+  const acknowledgementTimeoutMs = boundedIntegerEnvironment(
+    environment,
+    "HEAD_AGENT_WORKSPACE_HOST_ACK_TIMEOUT_MS",
+    10_000,
+    10,
+    600_000,
+  );
   return Object.freeze({
     adapter: new VerifiedWorkspaceHostAdapter({
       driver: createWorkspaceHostExportDriver({
@@ -46,6 +70,7 @@ export function workspaceHostExportComposition({ environment = process.env } = {
         caller,
         bindingId,
         processProof: values.HEAD_AGENT_HOST_PROCESS_PROOF,
+        acknowledgementTimeoutMs,
       }),
     }),
     caller,

@@ -590,20 +590,37 @@ export function createCoordinationWorkspaceHostDeliveryAdapter({
       const verifiedMessage = verifyMessage(ctx, message, { recipient: message?.toRole || "" });
       const role = verifyProjectRole(ctx.inspected, verifiedMessage.toRole);
       const target = currentRoleTarget(ctx, generation, role);
-      if (!target?.active) return { status: "unavailable", targetBindingId: null, targetAttachmentId: null };
       const pointer = read(ctx.operationalRoot, roleBindingPointerFile(ctx.stateRoot, generation.authorityGeneration, role), "Current recipient role binding", { optional: true });
-      if (!pointer) return { status: "unavailable", targetBindingId: null, targetAttachmentId: target.attachment.attachmentId };
+      if (!pointer) return { status: "unavailable", targetBindingId: null, targetAttachmentId: target?.attachment?.attachmentId || null };
       const binding = readBinding(ctx, generation, pointer.bindingId);
       const latest = latestRoleBinding(ctx, generation, role);
       if (!latest || latest.bindingId !== binding.bindingId || pointer.bindingHash !== binding.bindingHash
-        || pointer.bindingSequence !== binding.bindingSequence || target.bindingId !== binding.bindingId) {
-        return { status: "unavailable", targetBindingId: binding.bindingId, targetAttachmentId: target.attachment.attachmentId };
+        || pointer.bindingSequence !== binding.bindingSequence) {
+        return { status: "unavailable", targetBindingId: binding.bindingId, targetAttachmentId: target?.attachment?.attachmentId || null };
+      }
+      const boundary = workspaceBoundary({ ...ctx, binding }, binding);
+      if (!target) {
+        if (typeof adapter.sendToBinding !== "function") {
+          return { status: "unavailable", targetBindingId: binding.bindingId, targetAttachmentId: null };
+        }
+        const resolved = adapter.sendToBinding({ boundary, message: verifiedMessage });
+        if (resolved && typeof resolved.then === "function") {
+          fail("WorkspaceHost delivery must be synchronous in this protocol version.", "ASYNC_COORDINATION_WORKSPACE_HOST_UNSUPPORTED");
+        }
+        if (!resolved || resolved.targetBindingId !== binding.bindingId
+          || !["delivered", "unavailable", "ambiguous"].includes(resolved.status)
+          || resolved.attachmentId !== null && typeof resolved.attachmentId !== "string") {
+          return { status: "ambiguous", targetBindingId: binding.bindingId, targetAttachmentId: null };
+        }
+        return { status: resolved.status, targetBindingId: binding.bindingId, targetAttachmentId: resolved.attachmentId };
+      }
+      if (!target.active || target.bindingId !== binding.bindingId) {
+        return { status: "unavailable", targetBindingId: binding.bindingId, targetAttachmentId: target.attachment?.attachmentId || null };
       }
       const immediatelyBefore = currentRoleTarget(ctx, generation, role);
       if (!immediatelyBefore?.active || immediatelyBefore.targetId !== target.targetId || immediatelyBefore.targetHash !== target.targetHash) {
         return { status: "unavailable", targetBindingId: binding.bindingId, targetAttachmentId: target.attachment.attachmentId };
       }
-      const boundary = workspaceBoundary({ ...ctx, binding }, binding);
       const result = adapter.send({ attachment: target.attachment, boundary, message: verifiedMessage });
       if (result && typeof result.then === "function") {
         fail("WorkspaceHost delivery must be synchronous in this protocol version.", "ASYNC_COORDINATION_WORKSPACE_HOST_UNSUPPORTED");

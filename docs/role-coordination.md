@@ -146,14 +146,23 @@ mailbox rather than a workspace-manager integration. A trusted external host
 publishes a content-addressed immutable endpoint snapshot and current pointer
 outside the project. Each endpoint is uniquely bound to the exact current
 coordination `bindingId` and the hash of a host-issued per-process proof; only the
-raw proof injected into that process can activate the endpoint. The bridge
+raw proof injected into that process can activate the endpoint as a caller. A
+snapshot may also register the exact current recipient binding before that
+provider process starts. This grants offline reachability only, not role,
+instruction, execution, review, decision, promotion, Canon, or process authority.
+The sender must own its own current binding/proof; the recipient binding must
+resolve uniquely; and the started recipient must independently prove its distinct
+raw proof on its first MCP call. The bridge
 rechecks endpoint tuple, binding ownership, and proof possession on every fresh
 snapshot. Copied coordinates, foreign bindings, forged proofs, and duplicate
-endpoint, terminal, binding, or proof ownership fail closed. Delivery creates one exclusive request beneath the hashed
-endpoint location. The host must acquire one exclusive pre-effect claim, then
-return one exclusive, request-hash-bound acknowledgment within the bounded wait.
+endpoint, terminal, binding, or proof ownership fail closed. Explicitly detached
+bindings are not resolved through the offline path. Delivery creates one
+exclusive, recipient-binding-bound request beneath the hashed endpoint location.
+The host must acquire one exclusive pre-effect claim, then return one exclusive,
+request-hash-bound acknowledgment within the bounded wait.
 Claim acquisition revalidates the request's host, snapshot, workspace, tab,
-endpoint, terminal, canonical CWD, and runtime against the current export.
+endpoint, terminal, canonical CWD, runtime, and recipient binding against the
+current export.
 An existing unacknowledged claim is ambiguous and is never processed again
 automatically. The host decides how to wake its provider;
 Core never sees a binary, socket, CLI command, pane, TUI, provider session, or
@@ -165,12 +174,28 @@ The host must pre-create the export root and inject
 `HEAD_AGENT_HOST_PROJECT_ROOT`, `HEAD_AGENT_WORKSPACE_HOST_EXPORT_ROOT`,
 `HEAD_AGENT_HOST_WORKSPACE_ID`, `HEAD_AGENT_HOST_TAB_ID`,
 `HEAD_AGENT_HOST_ENDPOINT_ID`, `HEAD_AGENT_HOST_PROCESS_PROOF`, and the existing
-role binding token. The raw process proof is a host-only bearer capability; only
+role binding token. A slow real-provider wake may additionally set the bounded
+operational `HEAD_AGENT_WORKSPACE_HOST_ACK_TIMEOUT_MS` value from 10 through
+600000; it is not persisted or used in semantic identity. The raw process proof is a host-only bearer capability; only
 its domain-separated hash is present in the project-external snapshot. These are
 process-composition inputs, never role-tool arguments or project artifacts.
 The in-memory `fixture-host` driver is only a deterministic Core test double.
 The production MCP entrypoint requires the binding, endpoint tuple, and process
 proof together and has no proof-free fixture or delivery fallback.
+
+The opt-in live verifier performs real model calls and therefore never runs as
+part of the ordinary test suite:
+
+```powershell
+$env:HEAD_AGENT_LIVE_COORDINATION_E2E = "1"
+$env:HEAD_AGENT_LIVE_COORDINATION_OPENCODE_MODEL = "provider/model"
+npm run verify:live-coordination
+```
+
+It discovers the installed Codex/OpenCode executables, uses only the production
+host-export MCP composition, captures provider output in memory, emits a
+privacy-reduced hash/tool/cleanup summary, and removes its isolated project,
+operational, export, and process-control roots on both success and failure.
 
 ## Current claim boundary
 
@@ -184,12 +209,15 @@ delivery, stale/replaced/detached targets, target-chain rollback, target TOCTOU,
 post-send topology change, partial-send ambiguity, exact acknowledgment,
 project-CWD fencing, and provider-session absence.
 
-The host-export production path additionally passes with two fresh role-bound MCP
-processes and a separate live host consumer that reads the create-only request and
-writes the exact acknowledgment. Project/export overlap, host-project mismatch,
-ack timeout, and pointer tamper fail closed. Actual Codex/OpenCode provider clients
-have not yet consumed the wake and completed a role-tool round trip; shared-host
-service installation and general provider start/resume/stream/interrupt/close also
-remain unimplemented. Until that provider-client evidence and original-author
-direct source audit pass, this slice does not claim complete replacement of the
-original HEAD Core's live coordination advantage.
+The host-export production path additionally passes an actual provider-client
+round trip: OpenCode calls send, the host claims the create-only binding-scoped
+request before starting Codex, Codex calls read-inbox and immutable reply under a
+distinct proof, the host verifies the durable reply and writes the exact ack, and
+the waiting OpenCode call completes. Both provider trees have verified native
+ownership/cleanup; `.head` is byte-identical; raw proofs, binding tokens, and
+actual provider session references do not persist. Project/export overlap,
+host-project mismatch, explicit detach, ack timeout, stale/foreign binding,
+missing/old proof, and pointer tamper fail closed. Shared-host service
+installation and general provider start/resume/stream/interrupt/close remain
+unimplemented. Until the original author directly audits the exact source and
+evidence, this slice does not claim comparative superiority.

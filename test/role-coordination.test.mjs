@@ -326,7 +326,9 @@ test("advanced CLI administration and exactly three role-bound MCP tools share t
   assert.equal(contract.deferredCapabilities.includes("agent-comm"), false);
   assert.equal(contract.deferredCapabilities.includes("live-caller-fencing"), false);
   assert.equal(contract.deferredCapabilities.includes("herdr"), false);
-  assert.equal(contract.deferredCapabilities.includes("host-specific-workspace-adapter-and-live-e2e"), true);
+  assert.equal(contract.activeCapabilities.includes("binding-scoped-offline-workspace-wake"), true);
+  assert.equal(contract.activeCapabilities.includes("actual-codex-opencode-role-round-trip"), true);
+  assert.equal(contract.deferredCapabilities.includes("host-specific-workspace-adapter"), true);
 
   process.env.HEAD_AGENT_COORDINATION_BINDING_TOKEN = head.bindingToken;
   const inboxResponse = await dispatch({

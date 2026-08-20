@@ -87,6 +87,9 @@ function validateDriver(driver) {
     || typeof driver.describe !== "function" || typeof driver.snapshot !== "function" || typeof driver.send !== "function") {
     fail("A describe/snapshot/send WorkspaceHostDriver is required.", "INVALID_WORKSPACE_HOST_DRIVER");
   }
+  if ("resolveBindingEndpoint" in driver && typeof driver.resolveBindingEndpoint !== "function") {
+    fail("WorkspaceHostDriver binding resolution is invalid.", "INVALID_WORKSPACE_HOST_DRIVER");
+  }
   const descriptor = driverDescriptor(driver.describe());
   return { driver, descriptor };
 }
@@ -222,6 +225,28 @@ function endpointMatchesAttachment(snapshot, attachment) {
     && endpoint.runtime === attachment.runtime ? endpoint : null;
 }
 
+function validateBindingEndpointResolution(value, boundary) {
+  exactFields(value, ["status", "bindingId", "hostInstanceId", "snapshotSequence", "endpoint"], "WorkspaceHost binding endpoint resolution");
+  if (!new Set(["resolved", "unavailable"]).has(value.status)
+    || value.bindingId !== boundary.bindingId || !ID.test(value.hostInstanceId || "") || !ID.test(value.snapshotSequence || "")
+    || value.status === "unavailable" && value.endpoint !== null
+    || value.status === "resolved" && value.endpoint === null) {
+    fail("WorkspaceHost binding endpoint resolution violates the coordination boundary.", "INVALID_WORKSPACE_HOST_BINDING_RESOLUTION");
+  }
+  return { ...value, endpoint: value.endpoint === null ? null : validateEndpoint(value.endpoint) };
+}
+
+function validateDeliveryMessage(message, boundary) {
+  if (!message || message.projectId !== boundary.projectId || message.headSessionId !== boundary.headSessionId
+    || message.authorityGeneration !== boundary.authorityGeneration || message.toRole !== boundary.role
+    || !ID.test(message.messageId || "") || message.instructionAuthority !== false || message.decisionAuthority !== false
+    || message.promotionAuthority !== false || message.canonMutationAuthority !== false
+    || message.reviewAuthority !== false || message.executionAuthorizationAuthority !== false) {
+    fail("WorkspaceHost delivery message violates the coordination boundary.", "INVALID_WORKSPACE_HOST_MESSAGE");
+  }
+  return message;
+}
+
 function boundedNotification(message) {
   const content = String(message.content || "").replace(/[\r\n]+/g, " ").trim();
   const text = `[HEAD coordination evidence only; from ${message.fromRole}; msg:${message.messageId}] ${content}`;
@@ -257,16 +282,42 @@ export class VerifiedWorkspaceHostAdapter {
     }));
   }
 
+  sendToBinding({ boundary, message } = {}) {
+    const verifiedBoundary = validateBoundary(boundary);
+    const verifiedMessage = validateDeliveryMessage(message, verifiedBoundary);
+    if (typeof this.driver.resolveBindingEndpoint !== "function") {
+      return { status: "unavailable", targetBindingId: verifiedBoundary.bindingId, attachmentId: null };
+    }
+    const resolution = validateBindingEndpointResolution(
+      this.driver.resolveBindingEndpoint({ bindingId: verifiedBoundary.bindingId }),
+      verifiedBoundary,
+    );
+    if (resolution.status !== "resolved") {
+      return { status: "unavailable", targetBindingId: verifiedBoundary.bindingId, attachmentId: null };
+    }
+    const snapshot = validateSnapshot(this.driver.snapshot(), this.driverDescriptor);
+    const matches = snapshot.endpoints.filter((endpoint) => canonicalJson(endpoint) === canonicalJson(resolution.endpoint));
+    if (snapshot.hostInstanceId !== resolution.hostInstanceId || snapshot.snapshotSequence !== resolution.snapshotSequence
+      || matches.length !== 1) {
+      return { status: "unavailable", targetBindingId: verifiedBoundary.bindingId, attachmentId: null };
+    }
+    const endpointCwd = directCanonicalDirectory(resolution.endpoint.cwd, "WorkspaceHost endpoint CWD");
+    if (!isWithin(verifiedBoundary.projectRoot, endpointCwd)) {
+      fail("The resolved host endpoint is outside the exact project root.", "WORKSPACE_HOST_PROJECT_MISMATCH");
+    }
+    const attachment = identifyAttachment(attachmentPayload({
+      descriptor: this.driverDescriptor,
+      snapshot,
+      endpoint: { ...resolution.endpoint, cwd: endpointCwd },
+      boundary: verifiedBoundary,
+    }));
+    return this.send({ attachment, boundary: verifiedBoundary, message: verifiedMessage });
+  }
+
   send({ attachment, boundary, message } = {}) {
     const verifiedBoundary = validateBoundary(boundary);
     const verifiedAttachment = validateAttachment(attachment, verifiedBoundary);
-    if (!message || message.projectId !== verifiedBoundary.projectId || message.headSessionId !== verifiedBoundary.headSessionId
-      || message.authorityGeneration !== verifiedBoundary.authorityGeneration || message.toRole !== verifiedBoundary.role
-      || !ID.test(message.messageId || "") || message.instructionAuthority !== false || message.decisionAuthority !== false
-      || message.promotionAuthority !== false || message.canonMutationAuthority !== false
-      || message.reviewAuthority !== false || message.executionAuthorizationAuthority !== false) {
-      fail("WorkspaceHost delivery message violates the coordination boundary.", "INVALID_WORKSPACE_HOST_MESSAGE");
-    }
+    const verifiedMessage = validateDeliveryMessage(message, verifiedBoundary);
     const before = validateSnapshot(this.driver.snapshot(), this.driverDescriptor);
     const endpoint = endpointMatchesAttachment(before, verifiedAttachment);
     if (!endpoint) return { status: "unavailable", targetBindingId: verifiedBoundary.bindingId, attachmentId: verifiedAttachment.attachmentId };
@@ -274,8 +325,9 @@ export class VerifiedWorkspaceHostAdapter {
     try {
       acknowledgement = this.driver.send({
         endpoint: { ...endpoint },
-        messageId: message.messageId,
-        text: boundedNotification(message),
+        targetBindingId: verifiedBoundary.bindingId,
+        messageId: verifiedMessage.messageId,
+        text: boundedNotification(verifiedMessage),
       });
     } catch {
       return { status: "ambiguous", targetBindingId: verifiedBoundary.bindingId, attachmentId: verifiedAttachment.attachmentId };
