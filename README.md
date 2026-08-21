@@ -747,8 +747,9 @@ lineage.
 
 ## Documentation
 
-- [Ultimate goal and design decisions](docs/ULTIMATE_GOAL.md)
 - [Architecture](docs/architecture.md)
+- [Authority planes](docs/authority-plane-contract.md)
+- [Philosophy-preserving fast path](docs/performance-fast-path-design.md)
 - [Onboarding](docs/onboarding.md)
 - [Product Model](docs/product-model.md)
 - [Context Compiler](docs/context-compiler.md)
@@ -760,8 +761,11 @@ lineage.
 - [Graph projection adapter](docs/graph-projection-adapter.md)
 - [Document projection adapter](docs/document-projection-adapter.md)
 
-Read [the active ultimate goal](docs/ULTIMATE_GOAL.md) before planning a
-material change, starting a milestone, or declaring one complete.
+Installed plugin behavior is governed by the runtime contracts above and by the
+target project's user-owned Canon. Repository-development history, benchmark
+fixtures, and maintainer milestone notes are not runtime instructions and must
+not enter a Context Capsule, WholePlan, generated project instruction, or
+execution decision merely because they are present in a source checkout.
 
 ## Verification from source
 

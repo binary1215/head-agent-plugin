@@ -1,6 +1,8 @@
 # Authority planes and the Graph/record boundary
 
-Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this contract.
+Read [`architecture.md`](architecture.md) before changing this contract. Runtime
+direction comes from user-owned project authority, not repository-development
+history or validation fixtures.
 
 Status: active, executable contract
 

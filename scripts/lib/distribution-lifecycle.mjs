@@ -18,6 +18,24 @@ const INCLUDE_ENTRIES = [
   "skills",
 ];
 const EXCLUDED_DIRECTORY_NAMES = new Set([".git", "dist", "node_modules", "test", "tmp", "__pycache__"]);
+const RUNTIME_TEXT_EXTENSIONS = new Set([".json", ".js", ".md", ".mjs", ".ps1", ".sh", ".txt"]);
+
+function developmentOnlyFiles() {
+  const developmentGoal = `${["ULTIMATE", "GOAL"].join("_")}.md`;
+  const validationProject = ["neo", "pick"].join("");
+  return new Set([
+    `docs/${developmentGoal}`,
+    `docs/${validationProject}-onboarding-review-proposal.md`,
+    "docs/HEAD-Agent_GraphDB_Brief_v4.md",
+  ]);
+}
+
+function runtimeForbiddenMarkers() {
+  return [
+    ["ultimate", "goal"].join("_"),
+    ["neo", "pick"].join(""),
+  ];
+}
 
 function fail(code, message) {
   const error = new Error(message);
@@ -108,7 +126,26 @@ function distributionFiles(sourceRoot, { includeNativeDist = false } = {}) {
     if (stat.isDirectory()) files.push(...walkRegularFiles(sourceRoot, entry));
     else if (stat.isFile()) files.push(entry);
   }
-  return [...new Set(files)].sort((left, right) => normalizeRelative(left).localeCompare(normalizeRelative(right), "en"));
+  const excluded = developmentOnlyFiles();
+  return [...new Set(files)]
+    .filter((relative) => !excluded.has(normalizeRelative(relative)))
+    .sort((left, right) => normalizeRelative(left).localeCompare(normalizeRelative(right), "en"));
+}
+
+function verifyRuntimeSurface(sourceRoot, files) {
+  const markers = runtimeForbiddenMarkers();
+  for (const relative of files) {
+    const normalized = normalizeRelative(relative);
+    const lowerPath = normalized.toLowerCase();
+    if (markers.some((marker) => lowerPath.includes(marker))) {
+      fail("HEAD_DISTRIBUTION_DEVELOPMENT_ONLY_PATH", `Development-only file entered the runtime distribution: ${normalized}`);
+    }
+    if (!RUNTIME_TEXT_EXTENSIONS.has(path.extname(normalized).toLowerCase())) continue;
+    const text = fs.readFileSync(path.join(sourceRoot, relative), "utf8").toLowerCase();
+    if (markers.some((marker) => text.includes(marker))) {
+      fail("HEAD_DISTRIBUTION_DEVELOPMENT_CONTEXT_LEAK", `Development-only context entered a runtime file: ${normalized}`);
+    }
+  }
 }
 
 function validateSource(sourceRoot) {
@@ -128,7 +165,9 @@ function validateSource(sourceRoot) {
 
 function buildManifest(sourceRoot, options = {}) {
   const { plugin, pkg } = validateSource(sourceRoot);
-  const files = distributionFiles(sourceRoot, options).map((relative) => {
+  const sourceFiles = distributionFiles(sourceRoot, options);
+  verifyRuntimeSurface(sourceRoot, sourceFiles);
+  const files = sourceFiles.map((relative) => {
     const bytes = fs.readFileSync(path.join(sourceRoot, relative));
     return { path: normalizeRelative(relative), bytes: bytes.byteLength, sha256: sha256(bytes) };
   });

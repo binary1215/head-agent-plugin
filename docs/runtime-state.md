@@ -1,6 +1,8 @@
 # External runtime state evidence
 
-Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this boundary.
+Read [`architecture.md`](architecture.md) and
+[`authority-plane-contract.md`](authority-plane-contract.md) before changing
+this boundary.
 
 ## Scope and authority
 

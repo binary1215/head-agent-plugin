@@ -1,6 +1,8 @@
 # Execution Lineage contract and Run lifecycle
 
-Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this lifecycle.
+Read [`architecture.md`](architecture.md) and
+[`authority-plane-contract.md`](authority-plane-contract.md) before changing
+this lifecycle.
 
 ## State machine
 
@@ -44,7 +46,7 @@ node scripts/head.mjs lineage-plan <project> --input <whole-plan.json>
     { "id": "verification", "outcome": "Direct proof" }
   ],
   "invariants": ["Project canon outranks derived context"],
-  "sources": [{ "uri": "docs/ULTIMATE_GOAL.md", "role": "direction-authority" }]
+  "sources": [{ "uri": ".head/instructions/project.md", "role": "verified-project-direction" }]
 }
 ```
 

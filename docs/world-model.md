@@ -1,6 +1,8 @@
 # Repository World Model semantic alpha
 
-Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this plane.
+Read [`architecture.md`](architecture.md) and
+[`authority-plane-contract.md`](authority-plane-contract.md) before changing
+this plane.
 
 ## Authority and storage contract
 

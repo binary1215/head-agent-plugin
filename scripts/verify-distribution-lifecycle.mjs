@@ -20,6 +20,28 @@ const binDirectory = path.join(scratchRoot, "user-home", ".local", "bin");
 const upgradedSource = path.join(scratchRoot, "upgraded-source");
 const projectRoot = path.join(scratchRoot, "project-without-git-or-graphdb");
 const evidenceResumeProjectRoot = path.join(scratchRoot, "project-awaiting-evidence");
+const runtimeForbiddenMarkers = [
+  ["ultimate", "goal"].join("_"),
+  ["neo", "pick"].join(""),
+];
+const runtimeTextExtensions = new Set([".json", ".js", ".md", ".mjs", ".ps1", ".sh", ".txt"]);
+
+function assertRuntimeSurfaceIsolated(root) {
+  const stack = [root];
+  while (stack.length) {
+    const directory = stack.pop();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) { stack.push(absolute); continue; }
+      if (!entry.isFile()) continue;
+      const relative = path.relative(root, absolute).replaceAll("\\", "/");
+      assert.equal(runtimeForbiddenMarkers.some((marker) => relative.toLowerCase().includes(marker)), false, relative);
+      if (!runtimeTextExtensions.has(path.extname(entry.name).toLowerCase())) continue;
+      const text = fs.readFileSync(absolute, "utf8").toLowerCase();
+      assert.equal(runtimeForbiddenMarkers.some((marker) => text.includes(marker)), false, relative);
+    }
+  }
+}
 
 function copySourceFixture() {
   fs.mkdirSync(upgradedSource, { recursive: true });
@@ -82,11 +104,14 @@ try {
   assert.equal(installed.project.onboardingAction, "started");
   assert.equal(installed.project.onboarding.storageMode, "local");
   assert.equal(installed.project.onboarding.candidateCount > 0, true);
+  const generatedInstructions = fs.readFileSync(path.join(projectRoot, ".head", "generated", "head-instructions.md"), "utf8").toLowerCase();
+  assert.equal(runtimeForbiddenMarkers.some((marker) => generatedInstructions.includes(marker)), false);
   const installedReleaseRoot = path.join(installRoot, "releases", installed.releaseId);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "workspace-host-export-mcp.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-live-provider-coordination.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-hostless-session-recovery.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "lib", "workspace-host-export-driver.mjs")), true);
+  assertRuntimeSurfaceIsolated(installedReleaseRoot);
   assert.equal(fs.existsSync(path.join(projectRoot, ".git")), false);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
 
@@ -129,6 +154,15 @@ try {
   assert.equal(resumedEvidence.project.sessionId, awaitingEvidence.project.sessionId);
 
   copySourceFixture();
+  const upgradedReadmeFile = path.join(upgradedSource, "README.md");
+  const upgradedReadme = fs.readFileSync(upgradedReadmeFile, "utf8");
+  fs.writeFileSync(upgradedReadmeFile, `${upgradedReadme}\n${runtimeForbiddenMarkers[1]}\n`, "utf8");
+  assert.throws(
+    () => installDistribution({ sourceRoot: upgradedSource, installRoot, binDirectory }),
+    (error) => error.code === "HEAD_DISTRIBUTION_DEVELOPMENT_CONTEXT_LEAK",
+  );
+  assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
+  fs.writeFileSync(upgradedReadmeFile, upgradedReadme, "utf8");
   const upgradedPluginFile = path.join(upgradedSource, ".codex-plugin", "plugin.json");
   const upgradedPlugin = JSON.parse(fs.readFileSync(upgradedPluginFile, "utf8"));
   fs.writeFileSync(upgradedPluginFile, `${JSON.stringify({ ...upgradedPlugin, version: "mismatched-e2e" }, null, 2)}\n`, "utf8");
@@ -185,6 +219,7 @@ try {
     liveProviderCoordinationVerifierPackaged: true,
     hostlessSessionRecoveryVerifierPackaged: true,
     publicInitializeResumeVerified: true,
+    runtimeDevelopmentContextExcluded: true,
     projectAuthorityDeduplicated: true,
     gitAndGraphDbIndependentOnboardingVerified: true,
     managedProjectionConvergenceVerified: true,

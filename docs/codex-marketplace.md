@@ -1,6 +1,6 @@
 # Codex marketplace distribution
 
-Before changing this distribution plane, read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md)
+Before changing this distribution plane, read [`architecture.md`](architecture.md)
 and verify that installation remains a projection of the same provider-neutral
 Core rather than a new identity or authority plane.
 

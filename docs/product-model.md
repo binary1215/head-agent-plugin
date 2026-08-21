@@ -1,6 +1,10 @@
 # Product Model canon
 
-Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this contract. The Product Model records user-owned product intent; it does not infer authority from repository layout, generated graphs, Git history, or model output.
+Read [`architecture.md`](architecture.md) and
+[`authority-plane-contract.md`](authority-plane-contract.md) before changing
+this contract. The Product Model records user-owned product intent; it does not
+infer authority from repository layout, generated graphs, Git history,
+validation fixtures, or model output.
 
 ## Authority and lifecycle
 

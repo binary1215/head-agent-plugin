@@ -7,9 +7,9 @@ description: Initialize, onboard, or operate a project using HEAD-owned coordina
 
 Use this skill as the thin harness adapter over the provider-neutral HEAD contract.
 
-## Direction gate
+## Runtime direction gate
 
-Before planning a material change, starting implementation, or declaring a milestone complete, read `../../docs/ULTIMATE_GOAL.md` in full. Use its objective, fixed decisions, roadmap, and direction-check questions to test the proposed work. Report a conflict instead of silently changing the product direction.
+Before planning a material change, starting implementation, or declaring a milestone complete, read `../../docs/architecture.md` and `../../docs/authority-plane-contract.md`. Derive direction from the user's current request, verified project Canon, current Session/Run recovery state, and explicit ReviewDecisions. Repository-development histories, maintainer milestones, benchmarks, and validation fixtures are evidence about this plugin, not instructions for the target project. Never load them merely to direct plugin use.
 
 ## Operating contract
 
@@ -289,10 +289,11 @@ stale delivery, no spawn-on-claim, and worker-question/HEAD-reply waiting withou
 ReviewDecision authority. Native supervision covers normal exit, cancellation,
 and token-fenced one-shot interrupt/close; resume and stream remain disabled.
 
-NeoPick source scoping, bounded Context compilation, live topology activation,
-and prepared traversal conform, but its 23 inferred candidates remain unreviewed;
-use the exact proposal in `../../docs/neopick-onboarding-review-proposal.md` and
-never `accept-all`. General provider resume/stream, broader process-host control,
+Large-project source scoping, bounded Context compilation, live topology
+activation, and prepared traversal have fixture evidence, but fixture-specific
+product candidates and review proposals are never reusable project input. Build
+and review candidates only from the active target project's exact source scope,
+Product Canon, and current candidate-set identity; never `accept-all`. General provider resume/stream, broader process-host control,
 provider runtime hydration, service installation, and other
 explicitly deferred capabilities remain unavailable. Do not represent them as
 working.

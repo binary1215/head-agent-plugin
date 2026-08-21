@@ -1,6 +1,8 @@
 # Review-gated Feature mapping
 
-Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this authority boundary.
+Read [`architecture.md`](architecture.md) and
+[`authority-plane-contract.md`](authority-plane-contract.md) before changing
+this authority boundary.
 
 ## Contract
 

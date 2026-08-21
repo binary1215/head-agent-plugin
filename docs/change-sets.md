@@ -1,6 +1,8 @@
 # Provider-neutral ChangeSet and reviewed impact
 
-Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this contract.
+Read [`architecture.md`](architecture.md) and
+[`authority-plane-contract.md`](authority-plane-contract.md) before changing
+this contract.
 
 ## Purpose and authority
 

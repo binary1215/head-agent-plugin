@@ -2655,7 +2655,7 @@ test("records a deterministic whole-plan execution lineage", (t) => {
     objective: "Preserve whole-plan authority across bounded execution",
     plan: [{ id: "lineage-contract", outcome: "Freeze verifiable lineage artifacts" }],
     invariants: ["Project canon outranks derived artifacts", "Provider sessions are replaceable"],
-    sources: [{ uri: "docs/ULTIMATE_GOAL.md", role: "direction-authority" }],
+    sources: [{ uri: ".head/instructions/project.md", role: "verified-project-direction" }],
   };
   const firstPlan = createWholePlanSnapshot(planInput);
   const samePlan = createWholePlanSnapshot({ ...planInput, persist: false });

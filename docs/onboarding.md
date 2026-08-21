@@ -1,6 +1,10 @@
 # Project onboarding
 
-Read [`ULTIMATE_GOAL.md`](ULTIMATE_GOAL.md) before changing this contract. Onboarding bootstraps product authority; it does not grant authority to repository structure, model inference, Git, GraphDB, or a provider conversation.
+Read [`architecture.md`](architecture.md) and
+[`authority-plane-contract.md`](authority-plane-contract.md) before changing
+this contract. Onboarding bootstraps product authority; it does not grant
+authority to repository structure, model inference, Git, GraphDB, a validation
+fixture, or a provider conversation.
 
 ## State and authority
 
