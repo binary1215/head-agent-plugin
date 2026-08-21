@@ -106,7 +106,7 @@ The server response is evidence, not semantic authority. The client requires the
 
 `PreparedTraversalCostEvidence` protocol `0.1.0` is content-derived from the exact GraphSnapshot and `PreparedTraversalRequest`. Its payload model counts normalized UTF-8 canonical-JSON response components: the identity envelope, graph manifest, bounded expansion, complete GraphSnapshot, and complete topology records. The prepared total contains only the identity envelope, manifest, and bounded expansion. The conservative full-reload baseline adds one complete snapshot and one complete topology record set. This is reproducible logical transport-cost evidence, not a claim about HTTP framing, compression, database cache state, or wall-clock latency.
 
-The reviewed 64-file fixture under `benchmarks/prepared-traversal-v1` fixes graph, request, result, and cost-evidence identities. It records 20,478 prepared bytes versus an 833,590-byte baseline, saving 813,112 bytes or 9,754 basis points. Run it with:
+The reviewed 64-file fixture under `benchmarks/prepared-traversal-v1` fixes graph, request, result, and cost-evidence identities. With the P1-P5 authority boundary and Product Operating summary fields included in the GraphSnapshot, it records 20,478 prepared bytes versus an 834,638-byte baseline, saving 814,160 bytes or 9,754 basis points. Run it with:
 
 ```text
 npm run benchmark:prepared-traversal -- --iterations 7
