@@ -2,6 +2,7 @@ package arcadedbbridge
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -124,14 +125,31 @@ func writeResponse(output io.Writer, value response) error {
 	return encoder.Encode(value)
 }
 
+func writeBoundedResponse(output io.Writer, value response, wireLimit int64) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if int64(len(encoded)+1) > wireLimit {
+		return errors.New("bridge output exceeds its bounded wire limit")
+	}
+	encoded = append(encoded, '\n')
+	_, err = output.Write(encoded)
+	return err
+}
+
 func errorResponse(output io.Writer, code string, message string) int {
 	_ = writeResponse(output, response{OK: false, Error: &bridgeError{Code: code, Message: message}})
 	return 1
 }
 
 func Run(input io.Reader, output io.Writer, client *http.Client) int {
-	data, err := io.ReadAll(io.LimitReader(input, maximumWireBytes+1))
-	if err != nil || len(data) > maximumWireBytes {
+	return runWithWireLimit(input, output, client, maximumWireBytes)
+}
+
+func runWithWireLimit(input io.Reader, output io.Writer, client *http.Client, wireLimit int64) int {
+	data, err := io.ReadAll(io.LimitReader(input, wireLimit+1))
+	if err != nil || int64(len(data)) > wireLimit {
 		return errorResponse(output, "ARCADEDB_BRIDGE_INVALID_INPUT", "ArcadeDB bridge input exceeds its bounded wire limit.")
 	}
 	var value request
@@ -146,35 +164,47 @@ func Run(input io.Reader, output io.Writer, client *http.Client) int {
 		}})
 		return 2
 	}
-	if client == nil {
-		client = &http.Client{Timeout: time.Duration(value.TimeoutMS) * time.Millisecond}
+	selectedClient := &http.Client{}
+	if client != nil {
+		clone := *client
+		selectedClient = &clone
 	}
+	selectedClient.Timeout = 0
+	selectedClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(value.TimeoutMS)*time.Millisecond)
+	defer cancel()
 	endpoint := strings.TrimRight(value.Endpoint, "/") + "/api/v1/query/" + url.PathEscape(strings.TrimSpace(value.Database))
 	authorization := "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
 	responses := make([]queryResponse, 0, len(value.Queries))
+	var responseBytes int64
 	for index, item := range value.Queries {
 		payload, err := json.Marshal(map[string]any{"language": strings.TrimSpace(item.Language), "command": strings.TrimSpace(item.Command), "params": item.Params})
 		if err != nil {
 			return errorResponse(output, "ARCADEDB_BRIDGE_INVALID_INPUT", "ArcadeDB query batch could not be encoded.")
 		}
-		httpRequest, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 		if err != nil {
 			return errorResponse(output, "ARCADEDB_BRIDGE_INVALID_INPUT", "ArcadeDB request could not be created.")
 		}
 		httpRequest.Header.Set("Accept", "application/json")
 		httpRequest.Header.Set("Content-Type", "application/json")
 		httpRequest.Header.Set("Authorization", authorization)
-		httpResponse, err := client.Do(httpRequest)
+		httpResponse, err := selectedClient.Do(httpRequest)
 		if err != nil {
 			_ = writeResponse(output, response{OK: false, Error: &bridgeError{Code: "ARCADEDB_TRANSPORT_UNAVAILABLE", Message: "ArcadeDB transport is unavailable."}})
 			return 2
 		}
-		bodyBytes, readErr := io.ReadAll(io.LimitReader(httpResponse.Body, maximumWireBytes+1))
+		remaining := wireLimit - responseBytes
+		if remaining < 0 {
+			remaining = 0
+		}
+		bodyBytes, readErr := io.ReadAll(io.LimitReader(httpResponse.Body, remaining+1))
 		closeErr := httpResponse.Body.Close()
-		if readErr != nil || closeErr != nil || len(bodyBytes) > maximumWireBytes {
+		if readErr != nil || closeErr != nil || int64(len(bodyBytes)) > remaining {
 			_ = writeResponse(output, response{OK: false, Error: &bridgeError{Code: "ARCADEDB_REQUEST_FAILED", Message: "ArcadeDB response could not be read."}})
 			return 1
 		}
+		responseBytes += int64(len(bodyBytes))
 		var body any
 		if len(bodyBytes) > 0 && json.Unmarshal(bodyBytes, &body) != nil {
 			message := string(bodyBytes)
@@ -190,7 +220,8 @@ func Run(input io.Reader, output io.Writer, client *http.Client) int {
 		}
 		responses = append(responses, queryResponse{Status: httpResponse.StatusCode, Body: body})
 	}
-	if err := writeResponse(output, response{OK: true, Status: http.StatusOK, Body: successBody{Responses: responses}}); err != nil {
+	if err := writeBoundedResponse(output, response{OK: true, Status: http.StatusOK, Body: successBody{Responses: responses}}, wireLimit); err != nil {
+		_ = writeResponse(output, response{OK: false, Error: &bridgeError{Code: "ARCADEDB_REQUEST_FAILED", Message: "ArcadeDB response exceeds its bounded wire limit."}})
 		fmt.Fprintln(os.Stderr, "write bridge response failed")
 		return 1
 	}

@@ -694,7 +694,13 @@ When a verified native package is installed, prepared reads automatically use
 the content-addressed Go query-batch bridge. The current pointer is still read
 and verified independently, and JavaScript still validates the topology
 manifest, bounded traversal, request binding, and receipt digest. If the native
-bridge is absent, the same batch runs through the JavaScript exact child.
+bridge is absent, the same batch runs through the JavaScript exact child. Set
+`HEAD_AGENT_ARCADEDB_NATIVE_MODE` to `auto` (default), `off`, or `required` to
+choose the runtime policy. `auto` may disclose and use the reference path for an
+unavailable native process, while `required` rejects it. A manifest, selected
+binary, or post-selection digest mismatch always fails closed. Exact children
+receive only the two configured credential-reference variables plus a bounded
+OS, TLS, locale, and proxy environment allowlist.
 
 From a Codex or OpenCode conversation, the bundled onboarding Skill first calls
 `head_graphdb_connection_preflight`. This exact-child check performs no network

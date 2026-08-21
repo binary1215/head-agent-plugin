@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
+import { ArcadeDbHttpTransport } from "./lib/graph-projection-adapter.mjs";
+import { buildStorageSelection } from "./lib/onboarding-contract.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const javascriptBridge = path.join(root, "scripts", "lib", "arcadedb-http-bridge.mjs");
@@ -35,6 +37,12 @@ const environment = {
   HEAD_BENCHMARK_ARCADEDB_USERNAME: "benchmark-reader",
   HEAD_BENCHMARK_ARCADEDB_PASSWORD: "benchmark-secret",
 };
+const previousFixtureEnvironment = {
+  username: process.env.HEAD_BENCHMARK_ARCADEDB_USERNAME,
+  password: process.env.HEAD_BENCHMARK_ARCADEDB_PASSWORD,
+};
+process.env.HEAD_BENCHMARK_ARCADEDB_USERNAME = environment.HEAD_BENCHMARK_ARCADEDB_USERNAME;
+process.env.HEAD_BENCHMARK_ARCADEDB_PASSWORD = environment.HEAD_BENCHMARK_ARCADEDB_PASSWORD;
 const input = JSON.stringify({
   protocol: { name: "head-agent-core-arcadedb-query-batch", version: "0.1.0" },
   endpoint: `http://127.0.0.1:${ready.port}`,
@@ -78,6 +86,7 @@ function canonical(value) {
 
 let cleanupState = "pending";
 let activationEligible = false;
+let installedAdapterSmoke = false;
 try {
   for (let index = 0; index < 3; index += 1) {
     execute(process.execPath, [javascriptBridge]);
@@ -100,6 +109,28 @@ try {
   const nativeMedian = percentile(native, 0.5);
   const speedup = javascriptMedian / nativeMedian;
   activationEligible = nativeMedian <= javascriptMedian * 0.8;
+  const storageSelection = buildStorageSelection({
+    projectId: "head-benchmark",
+    selection: {
+      mode: "graphdb",
+      endpoint: `http://127.0.0.1:${ready.port}`,
+      database: "head-benchmark",
+      secretReferenceNames: { username: "HEAD_BENCHMARK_ARCADEDB_USERNAME", password: "HEAD_BENCHMARK_ARCADEDB_PASSWORD" },
+    },
+  });
+  const transport = new ArcadeDbHttpTransport({
+    storageSelection,
+    timeoutMs: 5000,
+    nativeBatchBridge: {
+      executablePath: nativeBridge,
+      sha256: crypto.createHash("sha256").update(fs.readFileSync(nativeBridge)).digest("hex"),
+    },
+  });
+  const adapterResponse = transport.invokeQueryBatch(JSON.parse(input).queries);
+  if (adapterResponse.length !== 2 || transport.preparedReadBatchDiagnostics().backend !== "go-exact-child") {
+    throw new Error("installed native adapter smoke did not select the verified Go exact child");
+  }
+  installedAdapterSmoke = true;
   process.stdout.write(`${JSON.stringify({
     schemaVersion: 1,
     kind: "ArcadeDbQueryBatchBenchmark",
@@ -117,6 +148,7 @@ try {
     },
     medianSpeedup: Number(speedup.toFixed(3)),
     semanticParity: true,
+    installedAdapterSmoke,
     defaultActivationThreshold: "native-median-at-most-80-percent-of-javascript-median",
     defaultActivationEligible: activationEligible,
     authorityEffect: "none",
@@ -128,6 +160,10 @@ try {
   if (server.exitCode == null && server.signalCode == null) server.kill("SIGTERM");
   await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2000))]);
   cleanupState = server.exitCode != null || server.signalCode != null ? "completed" : "unconfirmed";
+  if (previousFixtureEnvironment.username == null) delete process.env.HEAD_BENCHMARK_ARCADEDB_USERNAME;
+  else process.env.HEAD_BENCHMARK_ARCADEDB_USERNAME = previousFixtureEnvironment.username;
+  if (previousFixtureEnvironment.password == null) delete process.env.HEAD_BENCHMARK_ARCADEDB_PASSWORD;
+  else process.env.HEAD_BENCHMARK_ARCADEDB_PASSWORD = previousFixtureEnvironment.password;
   if (cleanupState !== "completed") throw new Error(`benchmark server cleanup was not confirmed for PID ${server.pid}`);
 }
 if (requireActivationThreshold && !activationEligible) throw new Error("Go bridge did not satisfy the default activation threshold.");

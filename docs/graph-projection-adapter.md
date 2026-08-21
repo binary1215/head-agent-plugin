@@ -160,3 +160,14 @@ After activation, the default adapter mirrors every successful remote snapshot a
 - Obsidian/Notion document adapters.
 
 Automated tests use an in-memory transport and do not require or mutate a user GraphDB. Database initialization and graph activation are the only explicit remote mutation surfaces; neither accepts credential values as arguments.
+
+The optional ArcadeDB native read bridge is a separate exact child, not the Go
+computation worker. `HEAD_AGENT_ARCADEDB_NATIVE_MODE=auto|off|required` selects
+its runtime availability policy. Missing native capability may use the
+JavaScript reference exact child only in `auto`; selected binary or manifest
+integrity drift fails closed in every mode. Both exact children receive only the
+configured username/password reference values and a bounded operational
+environment. The Go bridge rejects redirects, applies one deadline and one
+aggregate wire budget to the complete batch, and exposes only SELECT queries on
+the ArcadeDB query endpoint. Parent-side canonical graph and receipt validation
+is unchanged.

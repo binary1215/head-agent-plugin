@@ -1,14 +1,28 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 
+const MAXIMUM_WIRE_BYTES = 64 * 1024 * 1024;
 const fail = (message, code, exitCode = 1) => {
   fs.writeSync(1, JSON.stringify({ ok: false, error: { code, message } }));
   process.exit(exitCode);
 };
 
+const writeOutput = (value) => {
+  const encoded = JSON.stringify(value);
+  if (Buffer.byteLength(encoded, "utf8") > MAXIMUM_WIRE_BYTES) {
+    fail("ArcadeDB bridge output exceeds its bounded wire limit.", "ARCADEDB_REQUEST_FAILED");
+  }
+  fs.writeSync(1, encoded);
+};
+
 async function readInput() {
   const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
+  let length = 0;
+  for await (const chunk of process.stdin) {
+    length += chunk.length;
+    if (length > MAXIMUM_WIRE_BYTES) fail("ArcadeDB bridge input exceeds its bounded wire limit.", "ARCADEDB_BRIDGE_INVALID_INPUT");
+    chunks.push(chunk);
+  }
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
   catch { fail("ArcadeDB bridge input is invalid JSON.", "ARCADEDB_BRIDGE_INVALID_INPUT"); }
 }
@@ -36,7 +50,7 @@ if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) {
 if (operation === "credential-status") {
   const usernameReferencePresent = typeof username === "string" && username.length > 0;
   const passwordReferencePresent = typeof password === "string" && password.length > 0;
-  fs.writeSync(1, JSON.stringify({
+  writeOutput({
     ok: true,
     status: 200,
     body: {
@@ -46,7 +60,7 @@ if (operation === "credential-status") {
       credentialValuesReturned: false,
       networkRequestPerformed: false,
     },
-  }));
+  });
   process.exit(0);
 }
 if (!username || !password) fail("ArcadeDB credential references are unavailable in the process environment.", "ARCADEDB_CREDENTIALS_UNAVAILABLE", 2);
@@ -71,9 +85,23 @@ const headers = {
   Authorization: `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`,
 };
 const readOnlyGet = operation === "ready" || operation === "exists";
+const operationSignal = AbortSignal.timeout(timeoutMs);
+let responseWireBytes = 0;
+async function readBoundedResponseText(response) {
+  if (!response.body) return "";
+  const chunks = [];
+  for await (const chunk of response.body) {
+    responseWireBytes += chunk.length;
+    if (responseWireBytes > MAXIMUM_WIRE_BYTES) {
+      fail("ArcadeDB response exceeds its bounded wire limit.", "ARCADEDB_REQUEST_FAILED");
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 async function performRequest({ requestPath, requestBody = null, method = "POST" }) {
   const requestHeaders = { ...headers };
-  const request = { method, headers: requestHeaders, signal: AbortSignal.timeout(timeoutMs) };
+  const request = { method, headers: requestHeaders, signal: operationSignal, redirect: "error" };
   if (requestBody != null) {
     requestHeaders["Content-Type"] = "application/json";
     request.body = JSON.stringify(requestBody);
@@ -88,7 +116,7 @@ async function performRequest({ requestPath, requestBody = null, method = "POST"
       unavailable ? 2 : 1,
     );
   }
-  const responseText = await response.text();
+  const responseText = await readBoundedResponseText(response);
   let body = null;
   if (responseText) {
     try { body = JSON.parse(responseText); }
@@ -121,7 +149,7 @@ if (operation === "query-batch") {
     }
     responses.push({ status: response.status, body: response.body });
   }
-  fs.writeSync(1, JSON.stringify(failedResponse || { ok: true, status: 200, body: { responses } }));
+  writeOutput(failedResponse || { ok: true, status: 200, body: { responses } });
   process.exitCode = failedResponse ? 3 : 0;
 } else {
   const requestBody = readOnlyGet
@@ -135,6 +163,6 @@ if (operation === "query-batch") {
         ...(operation === "command" ? { autoCommit: true } : {}),
       };
   const response = await performRequest({ requestPath: path, requestBody, method: readOnlyGet ? "GET" : "POST" });
-  fs.writeSync(1, JSON.stringify(response));
+  writeOutput(response);
   process.exitCode = response.ok ? 0 : 3;
 }

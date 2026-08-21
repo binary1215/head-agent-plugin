@@ -91,9 +91,11 @@ The JavaScript exact child is the reference transport. A separate Go exact
 child implements the same read-only protocol without entering the computation
 worker contract. Installed native artifacts include a content-addressed bridge
 manifest; only a verified platform binary is selected automatically. Missing
-native artifacts use the JavaScript reference path. Startup, invalid-output, or
-post-selection binary-integrity failure uses that reference path with disclosed
-operational diagnostics; an initially invalid installed manifest fails closed.
+native artifacts use the JavaScript reference path in `auto` mode. Startup or
+invalid-output failure may use that path with disclosed operational diagnostics
+in `auto` mode; `required` rejects it. Initial or post-selection manifest/binary
+integrity failure always fails closed. The exact child receives only the
+selected secret references and a bounded operational environment allowlist.
 
 The transport advertises the capability as operational metadata:
 
@@ -176,6 +178,7 @@ key identity changes. Cache state never enters Capsule identity or provenance.
 | --- | --- |
 | optional fast capability absent | use reference path and disclose diagnostics |
 | transport unavailable before a read effect | retain documented read fallback |
+| selected native binary digest changes | fail closed without reference fallback |
 | partial or malformed batch | fail closed |
 | pointer, manifest, request, or digest mismatch | fail closed with existing semantic error |
 | read boundary changes once | discard and retry once |

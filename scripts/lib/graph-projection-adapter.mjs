@@ -25,6 +25,13 @@ export const ARCADEDB_SERVER_TRAVERSAL_VERSION = "0.1.0";
 export const PREPARED_TRAVERSAL_VERSION = "0.1.0";
 export const ARCADEDB_BRIDGE_BATCH_VERSION = "0.1.0";
 
+const ARCADEDB_NATIVE_BATCH_MODES = new Set(["auto", "off", "required"]);
+const ARCADEDB_BRIDGE_ENVIRONMENT_ALLOWLIST = Object.freeze([
+  "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR",
+  "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+]);
+
 const ARCADEDB_SNAPSHOT_TYPE = "HeadAgentGraphSnapshot";
 const ARCADEDB_SNAPSHOT_CHUNK_TYPE = "HeadAgentGraphSnapshotChunk";
 const ARCADEDB_POINTER_TYPE = "HeadAgentGraphPointer";
@@ -380,8 +387,28 @@ function responseRecords(response) {
   return result;
 }
 
+export function buildArcadeDbBridgeEnvironment(input, source = process.env) {
+  const references = input?.secretReferenceNames;
+  if (!references || typeof references !== "object" || Array.isArray(references)) {
+    fail("ArcadeDB bridge secret references are invalid.", "ARCADEDB_BRIDGE_INVALID_INPUT");
+  }
+  const names = [references.username, references.password];
+  if (names.some((name) => typeof name !== "string" || !/^[A-Z][A-Z0-9_]{2,127}$/.test(name))) {
+    fail("ArcadeDB bridge secret references are invalid.", "ARCADEDB_BRIDGE_INVALID_INPUT");
+  }
+  const selected = {};
+  for (const name of [...ARCADEDB_BRIDGE_ENVIRONMENT_ALLOWLIST, ...names]) {
+    if (Object.prototype.hasOwnProperty.call(source, name) && typeof source[name] === "string") selected[name] = source[name];
+  }
+  return selected;
+}
+
 export class ArcadeDbHttpTransport {
-  constructor({ storageSelection, timeoutMs = 15000, nativeBatchBridge = "auto" } = {}) {
+  constructor({
+    storageSelection,
+    timeoutMs = 15000,
+    nativeBatchBridge = process.env.HEAD_AGENT_ARCADEDB_NATIVE_MODE || "auto",
+  } = {}) {
     this.storageSelection = verifyStorageSelection(storageSelection);
     if (this.storageSelection.mode !== "graphdb") fail("ArcadeDB transport requires a GraphDB storage selection.", "ARCADEDB_SELECTION_REQUIRED");
     this.timeoutMs = Number(timeoutMs);
@@ -389,18 +416,24 @@ export class ArcadeDbHttpTransport {
       fail("ArcadeDB timeout must be from 1000 through 120000 milliseconds.", "INVALID_ARCADEDB_TIMEOUT");
     }
     this.nativeBatchBridge = null;
+    const explicitNativeBatchSelection = nativeBatchBridge && typeof nativeBatchBridge === "object";
+    this.nativeBatchMode = explicitNativeBatchSelection ? "required" : (nativeBatchBridge ?? "off");
+    if (!ARCADEDB_NATIVE_BATCH_MODES.has(this.nativeBatchMode)) {
+      fail("Native ArcadeDB batch bridge mode must be auto, off, or required.", "INVALID_ARCADEDB_NATIVE_BRIDGE_MODE");
+    }
     this.batchDiagnostics = {
       backend: "javascript-exact-child",
       fallbackUsed: false,
       fallbackReasonCode: "",
     };
-    let selectedNativeBridge = nativeBatchBridge;
-    if (nativeBatchBridge === "auto") {
+    let selectedNativeBridge = this.nativeBatchMode === "off" ? null : nativeBatchBridge;
+    if (!explicitNativeBatchSelection && (this.nativeBatchMode === "auto" || this.nativeBatchMode === "required")) {
       try {
         const resolved = resolveVerifiedArcadeDbNativeBridge({ pluginRoot: PLUGIN_ROOT });
         selectedNativeBridge = { executablePath: resolved.binaryPath, sha256: resolved.manifest.binary.sha256 };
       } catch (error) {
-        if (!["ARCADEDB_NATIVE_BRIDGE_NOT_AVAILABLE", "ARCADEDB_NATIVE_BRIDGE_TARGET_UNSUPPORTED"].includes(error.code)) throw error;
+        if (this.nativeBatchMode === "required"
+          || !["ARCADEDB_NATIVE_BRIDGE_NOT_AVAILABLE", "ARCADEDB_NATIVE_BRIDGE_TARGET_UNSUPPORTED"].includes(error.code)) throw error;
         selectedNativeBridge = null;
       }
     }
@@ -424,6 +457,7 @@ export class ArcadeDbHttpTransport {
       credentialsPersisted: false,
       secretResolution: "environment-reference-at-request-time",
       preparedReadBatchProtocolVersion: ARCADEDB_BRIDGE_BATCH_VERSION,
+      nativeBatchMode: this.nativeBatchMode,
       nativeBatchCandidateSelected: this.nativeBatchBridge != null,
     };
   }
@@ -448,7 +482,7 @@ export class ArcadeDbHttpTransport {
       windowsHide: true,
       timeout: this.timeoutMs + 2000,
       maxBuffer: 64 * 1024 * 1024,
-      env: process.env,
+      env: buildArcadeDbBridgeEnvironment(input),
     });
     if (result.error || result.status == null || result.status === 2) bridgeError(result);
     let response;
@@ -499,7 +533,8 @@ export class ArcadeDbHttpTransport {
         normalizedResponses = this.normalizeQueryBatchResponse(response, queries.length);
         this.batchDiagnostics = { backend: "go-exact-child", fallbackUsed: false, fallbackReasonCode: "" };
       } catch (error) {
-        if (!["ARCADEDB_BRIDGE_FAILED", "ARCADEDB_INVALID_RESPONSE", "ARCADEDB_NATIVE_BRIDGE_INTEGRITY_MISMATCH"].includes(error.code)) throw error;
+        if (this.nativeBatchMode === "required"
+          || !["ARCADEDB_BRIDGE_FAILED", "ARCADEDB_INVALID_RESPONSE"].includes(error.code)) throw error;
         this.batchDiagnostics = { backend: "javascript-exact-child", fallbackUsed: true, fallbackReasonCode: error.code };
         response = this.runBridge(input);
       }

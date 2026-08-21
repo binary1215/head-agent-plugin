@@ -2,6 +2,7 @@ node_modules/
 /dist/
 test/*
 !test/authority-plane-contract.test.mjs
+!test/arcadedb-native-bridge.test.mjs
 !test/head-core.test.mjs
 !test/product-operating-loop.test.mjs
 !test/session-recovery-integration.test.mjs

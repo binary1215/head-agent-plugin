@@ -109,6 +109,16 @@ function secretReferenceNames(value) {
         "INVALID_ONBOARDING_SECRET_REFERENCE",
       );
     }
+    if (new Set([
+      "NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
+      "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+      "GODEBUG", "GOTRACEBACK",
+    ]).has(name)) {
+      fail(
+        `GraphDB secretReferenceNames.${field} cannot name a child-process control variable.`,
+        "INVALID_ONBOARDING_SECRET_REFERENCE",
+      );
+    }
     result[field] = name;
   }
   if (Object.keys(result).length !== 2) {
