@@ -6,6 +6,7 @@ import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { ONBOARDING_STORAGE_DIRECTORY, verifyOnboardingState, verifyStorageSelection } from "./onboarding-contract.mjs";
 import { queryTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "./temporal-provenance.mjs";
+import { resolveVerifiedArcadeDbNativeBridge } from "./arcadedb-native-bridge.mjs";
 import {
   ARCADEDB_INCREMENTAL_SYNC_VERSION,
   buildArcadeDbIncrementalSyncReceipt,
@@ -22,6 +23,7 @@ export const ARCADEDB_GRAPH_PROJECTION_VERSION = "0.1.0";
 export const ARCADEDB_GRAPH_TOPOLOGY_VERSION = "0.1.0";
 export const ARCADEDB_SERVER_TRAVERSAL_VERSION = "0.1.0";
 export const PREPARED_TRAVERSAL_VERSION = "0.1.0";
+export const ARCADEDB_BRIDGE_BATCH_VERSION = "0.1.0";
 
 const ARCADEDB_SNAPSHOT_TYPE = "HeadAgentGraphSnapshot";
 const ARCADEDB_SNAPSHOT_CHUNK_TYPE = "HeadAgentGraphSnapshotChunk";
@@ -63,6 +65,7 @@ const ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS = 8192;
 const ARCADEDB_SNAPSHOT_CHUNK_BYTES = 8 * 1024;
 const PREPARED_TRAVERSAL_ORDERING = "record-depth-then-semantic-id-ascending";
 const BRIDGE_FILE = fileURLToPath(new URL("./arcadedb-http-bridge.mjs", import.meta.url));
+const PLUGIN_ROOT = path.resolve(path.dirname(BRIDGE_FILE), "..", "..");
 const PREPARED_POINTER_READ_TOKEN = Symbol("head-agent-prepared-pointer-read-token");
 const preparedPointerReads = new WeakMap();
 
@@ -378,12 +381,37 @@ function responseRecords(response) {
 }
 
 export class ArcadeDbHttpTransport {
-  constructor({ storageSelection, timeoutMs = 15000 } = {}) {
+  constructor({ storageSelection, timeoutMs = 15000, nativeBatchBridge = "auto" } = {}) {
     this.storageSelection = verifyStorageSelection(storageSelection);
     if (this.storageSelection.mode !== "graphdb") fail("ArcadeDB transport requires a GraphDB storage selection.", "ARCADEDB_SELECTION_REQUIRED");
     this.timeoutMs = Number(timeoutMs);
     if (!Number.isInteger(this.timeoutMs) || this.timeoutMs < 1000 || this.timeoutMs > 120000) {
       fail("ArcadeDB timeout must be from 1000 through 120000 milliseconds.", "INVALID_ARCADEDB_TIMEOUT");
+    }
+    this.nativeBatchBridge = null;
+    this.batchDiagnostics = {
+      backend: "javascript-exact-child",
+      fallbackUsed: false,
+      fallbackReasonCode: "",
+    };
+    let selectedNativeBridge = nativeBatchBridge;
+    if (nativeBatchBridge === "auto") {
+      try {
+        const resolved = resolveVerifiedArcadeDbNativeBridge({ pluginRoot: PLUGIN_ROOT });
+        selectedNativeBridge = { executablePath: resolved.binaryPath, sha256: resolved.manifest.binary.sha256 };
+      } catch (error) {
+        if (!["ARCADEDB_NATIVE_BRIDGE_NOT_AVAILABLE", "ARCADEDB_NATIVE_BRIDGE_TARGET_UNSUPPORTED"].includes(error.code)) throw error;
+        selectedNativeBridge = null;
+      }
+    }
+    if (selectedNativeBridge != null) {
+      assertFields(selectedNativeBridge, ["executablePath", "sha256"], "Native ArcadeDB batch bridge", "INVALID_ARCADEDB_NATIVE_BRIDGE");
+      const executablePath = path.resolve(selectedNativeBridge.executablePath || "");
+      const sha256 = String(selectedNativeBridge.sha256 || "").toLowerCase();
+      if (!path.isAbsolute(executablePath) || !/^[a-f0-9]{64}$/.test(sha256) || !fs.statSync(executablePath, { throwIfNoEntry: false })?.isFile()) {
+        fail("Native ArcadeDB batch bridge selection is invalid.", "INVALID_ARCADEDB_NATIVE_BRIDGE");
+      }
+      this.nativeBatchBridge = Object.freeze({ executablePath, sha256 });
     }
   }
 
@@ -395,19 +423,26 @@ export class ArcadeDbHttpTransport {
       durable: true,
       credentialsPersisted: false,
       secretResolution: "environment-reference-at-request-time",
+      preparedReadBatchProtocolVersion: ARCADEDB_BRIDGE_BATCH_VERSION,
+      nativeBatchCandidateSelected: this.nativeBatchBridge != null,
     };
   }
 
-  invoke(operation, { language = "sql", command = "", params = {} } = {}) {
-    const input = {
-      endpoint: this.storageSelection.graphdb.endpoint,
-      database: this.storageSelection.graphdb.database,
-      secretReferenceNames: this.storageSelection.graphdb.secretReferenceNames,
-      operation,
-      timeoutMs: this.timeoutMs,
-      ...(operation === "ready" || operation === "credential-status" ? {} : { language, command, params }),
-    };
-    const result = childProcess.spawnSync(process.execPath, [BRIDGE_FILE], {
+  runBridge(input, { native = false } = {}) {
+    let command = process.execPath;
+    let args = [BRIDGE_FILE];
+    if (native) {
+      const selection = this.nativeBatchBridge;
+      let currentDigest = "";
+      try { currentDigest = selection ? digest(fs.readFileSync(selection.executablePath)) : ""; }
+      catch { currentDigest = ""; }
+      if (!selection || currentDigest !== selection.sha256) {
+        fail("Native ArcadeDB batch bridge failed integrity verification.", "ARCADEDB_NATIVE_BRIDGE_INTEGRITY_MISMATCH");
+      }
+      command = selection.executablePath;
+      args = [];
+    }
+    const result = childProcess.spawnSync(command, args, {
       input: JSON.stringify(input),
       encoding: "utf8",
       windowsHide: true,
@@ -429,6 +464,63 @@ export class ArcadeDbHttpTransport {
       fail(`ArcadeDB request was rejected${status ? ` with HTTP ${status}` : ""}.`, code);
     }
     return response;
+  }
+
+  invoke(operation, { language = "sql", command = "", params = {} } = {}) {
+    const input = {
+      endpoint: this.storageSelection.graphdb.endpoint,
+      database: this.storageSelection.graphdb.database,
+      secretReferenceNames: this.storageSelection.graphdb.secretReferenceNames,
+      operation,
+      timeoutMs: this.timeoutMs,
+      ...(operation === "ready" || operation === "credential-status" ? {} : { language, command, params }),
+    };
+    return this.runBridge(input);
+  }
+
+  invokeQueryBatch(queries) {
+    if (!Array.isArray(queries) || queries.length < 1 || queries.length > 8) {
+      fail("ArcadeDB query batch must contain from one through eight queries.", "INVALID_ARCADEDB_QUERY_BATCH");
+    }
+    const input = {
+      protocol: { name: "head-agent-core-arcadedb-query-batch", version: ARCADEDB_BRIDGE_BATCH_VERSION },
+      endpoint: this.storageSelection.graphdb.endpoint,
+      database: this.storageSelection.graphdb.database,
+      secretReferenceNames: this.storageSelection.graphdb.secretReferenceNames,
+      operation: "query-batch",
+      timeoutMs: this.timeoutMs,
+      queries: clone(queries),
+    };
+    let response;
+    let normalizedResponses = null;
+    if (this.nativeBatchBridge) {
+      try {
+        response = this.runBridge(input, { native: true });
+        normalizedResponses = this.normalizeQueryBatchResponse(response, queries.length);
+        this.batchDiagnostics = { backend: "go-exact-child", fallbackUsed: false, fallbackReasonCode: "" };
+      } catch (error) {
+        if (!["ARCADEDB_BRIDGE_FAILED", "ARCADEDB_INVALID_RESPONSE", "ARCADEDB_NATIVE_BRIDGE_INTEGRITY_MISMATCH"].includes(error.code)) throw error;
+        this.batchDiagnostics = { backend: "javascript-exact-child", fallbackUsed: true, fallbackReasonCode: error.code };
+        response = this.runBridge(input);
+      }
+    } else {
+      response = this.runBridge(input);
+      this.batchDiagnostics = { backend: "javascript-exact-child", fallbackUsed: false, fallbackReasonCode: "" };
+    }
+    return normalizedResponses || this.normalizeQueryBatchResponse(response, queries.length);
+  }
+
+  normalizeQueryBatchResponse(response, expectedCount) {
+    const responses = response?.body?.responses;
+    if (!Array.isArray(responses) || responses.length !== expectedCount
+      || responses.some((item) => !item || !Number.isInteger(item.status) || item.status < 200 || item.status > 299 || !("body" in item))) {
+      fail("ArcadeDB query batch response is invalid.", "ARCADEDB_INVALID_RESPONSE");
+    }
+    return responses.map((item) => ({ ok: true, status: item.status, body: item.body }));
+  }
+
+  preparedReadBatchDiagnostics() {
+    return clone(this.batchDiagnostics);
   }
 
   ready() {
@@ -875,6 +967,10 @@ export class ArcadeDbHttpTransport {
       params: { projectId, graphSnapshotId },
     });
     const topologyJson = responseRecords(response)[0]?.topologyJson ?? null;
+    return this.decodeTopologyManifest(projectId, graphSnapshotId, topologyJson);
+  }
+
+  decodeTopologyManifest(projectId, graphSnapshotId, topologyJson) {
     if (topologyJson == null) return null;
     let manifest;
     try { manifest = JSON.parse(topologyJson); }
@@ -907,6 +1003,44 @@ export class ArcadeDbHttpTransport {
       fail("ArcadeDB graph topology chunks failed content verification.", "ARCADEDB_GRAPH_TOPOLOGY_CHUNK_MISMATCH");
     }
     return assembled;
+  }
+
+  readPreparedTraversalBatch(projectId, graphSnapshotId, { anchorIds, maxDepth, maxRecords }) {
+    if (!Array.isArray(anchorIds) || anchorIds.length > 500
+      || anchorIds.some((nodeId) => typeof nodeId !== "string" || !nodeId)
+      || !Number.isInteger(maxDepth) || maxDepth < 0 || maxDepth > 3
+      || !Number.isInteger(maxRecords) || maxRecords < 1 || maxRecords > ARCADEDB_SERVER_TRAVERSAL_MAX_RECORDS) {
+      fail("ArcadeDB prepared read batch request is invalid.", "INVALID_ARCADEDB_PREPARED_READ_BATCH");
+    }
+    const queries = [{
+      language: "sql",
+      command: `SELECT topologyJson FROM ${ARCADEDB_TOPOLOGY_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId LIMIT 1`,
+      params: { projectId, graphSnapshotId },
+    }];
+    if (anchorIds.length > 0) queries.push({
+      language: "sql",
+      command: `SELECT @type AS recordType, nodeJson, edgeJson, $depth AS recordDepth FROM (TRAVERSE bothE('${ARCADEDB_EDGE_TYPE}'), bothV() FROM (SELECT FROM ${ARCADEDB_NODE_TYPE} WHERE projectId = :projectId AND graphSnapshotId = :graphSnapshotId AND nodeId IN :anchorIds) MAXDEPTH ${maxDepth * 2} LIMIT ${maxRecords + 1} STRATEGY BREADTH_FIRST)`,
+      params: { projectId, graphSnapshotId, anchorIds: [...anchorIds] },
+    });
+    const responses = this.invokeQueryBatch(queries);
+    const topologyJson = this.decodeTopologyManifest(
+      projectId,
+      graphSnapshotId,
+      responseRecords(responses[0])[0]?.topologyJson ?? null,
+    );
+    const records = anchorIds.length > 0 ? responseRecords(responses[1]) : [];
+    return {
+      topologyJson,
+      traversal: {
+        protocolVersion: ARCADEDB_SERVER_TRAVERSAL_VERSION,
+        graphSnapshotId,
+        anchorIds: [...anchorIds],
+        maxDepth,
+        maxRecords,
+        truncated: records.length > maxRecords,
+        records: records.slice(0, maxRecords),
+      },
+    };
   }
 
   readTopology(projectId, graphSnapshotId) {
@@ -1541,6 +1675,12 @@ export class ArcadeDbGraphProjectionAdapter {
     };
   }
 
+  diagnostics() {
+    return typeof this.transport.preparedReadBatchDiagnostics === "function"
+      ? { preparedReadBatch: this.transport.preparedReadBatchDiagnostics() }
+      : {};
+  }
+
   ensureSchema() {
     if (!this.schemaReady) {
       this.transport.ensureSchema();
@@ -1752,7 +1892,15 @@ export class ArcadeDbGraphProjectionAdapter {
     if (!pointerEntry) fail("ArcadeDB graph projection pointer is missing.", "GRAPH_PROJECTION_SNAPSHOT_MISSING");
     verifyGraphProjectionPointer(pointerEntry.document, prepared);
     const transport = assertArcadeDbPreparedTraversalTransport(this.transport);
-    const topologyJson = transport.readTopologyManifest(this.projectId, prepared.graphSnapshotId);
+    const maxRecords = Math.max(1, prepared.expansion.recordCount);
+    const batch = typeof transport.readPreparedTraversalBatch === "function"
+      ? transport.readPreparedTraversalBatch(this.projectId, prepared.graphSnapshotId, {
+        anchorIds: [...prepared.traversalQuery.anchorIds],
+        maxDepth: prepared.traversalQuery.maxDepth,
+        maxRecords,
+      })
+      : null;
+    const topologyJson = batch ? batch.topologyJson : transport.readTopologyManifest(this.projectId, prepared.graphSnapshotId);
     if (typeof topologyJson !== "string") fail("ArcadeDB graph topology manifest is missing.", "ARCADEDB_GRAPH_TOPOLOGY_MISSING");
     const topology = verifyArcadeDbGraphTopology(parseRemoteJson(topologyJson, "ArcadeDB graph topology manifest"));
     const graphManifest = prepared.graphManifest;
@@ -1763,8 +1911,7 @@ export class ArcadeDbGraphProjectionAdapter {
       fail("ArcadeDB graph topology manifest is stale or cannot cover the prepared traversal.", "ARCADEDB_GRAPH_TOPOLOGY_MISMATCH");
     }
     if (prepared.traversalQuery.anchorIds.length > 0) {
-      const maxRecords = Math.max(1, prepared.expansion.recordCount);
-      const response = transport.queryTopology(this.projectId, prepared.graphSnapshotId, {
+      const response = batch ? batch.traversal : transport.queryTopology(this.projectId, prepared.graphSnapshotId, {
         anchorIds: [...prepared.traversalQuery.anchorIds],
         maxDepth: prepared.traversalQuery.maxDepth,
         maxRecords,
@@ -1815,7 +1962,13 @@ export class ActivatedArcadeDbGraphProjectionAdapter {
   }
 
   diagnostics() {
-    return { fallbackUsed: this.fallbackUsed, fallbackReasonCode: this.fallbackReasonCode };
+    const remoteDiagnostics = typeof this.remote.diagnostics === "function" ? this.remote.diagnostics() : {};
+    const batchFallback = remoteDiagnostics.preparedReadBatch?.fallbackUsed === true;
+    return {
+      ...remoteDiagnostics,
+      fallbackUsed: this.fallbackUsed || batchFallback,
+      fallbackReasonCode: this.fallbackReasonCode || remoteDiagnostics.preparedReadBatch?.fallbackReasonCode || "",
+    };
   }
 
   callRemote(operation, fallback) {

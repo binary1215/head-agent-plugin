@@ -1,7 +1,8 @@
 # Philosophy-preserving fast path
 
-Status: implementation design; no fast path is authoritative merely because it
-is available or faster.
+Status: the query-only read batch is implemented; remaining components are
+implementation design. No fast path is authoritative merely because it is
+available or faster.
 
 This design reduces duplicate transport, I/O, parsing, and canonicalization
 without creating a second source of truth. Read it together with
@@ -70,24 +71,35 @@ Benchmarks create one explicitly.
 ## Component B: query-only GraphDB read batch
 
 The existing exact child continues to resolve credentials only from configured
-environment-reference names. A new bounded batch accepts at most three
-`query` operations: current pointer, topology manifest, and prepared traversal.
-It rejects commands, database lifecycle operations, duplicate request IDs,
-unsupported fields, oversized input/output, and an excessive aggregate timeout.
+environment-reference names. A bounded batch accepts from one through eight
+`query` operations and no command or database-lifecycle operation. The prepared
+path uses it for topology manifest plus bounded traversal after the already
+verified current-pointer read; keeping pointer inspection separate preserves the
+existing fallback/stale decision and its one-shot pointer token. It rejects an
+incompatible protocol, unsupported operation, oversized input/output, excessive
+query count, and an excessive timeout.
 
-The child returns three untrusted response envelopes and exits. The parent then
-applies the existing independent pointer, manifest, traversal, request-binding,
-and receipt-digest validators. A missing pointer retains the disclosed embedded
+The child returns bounded untrusted response envelopes and exits. The parent
+then applies the existing independent pointer, manifest, traversal,
+request-binding, and receipt-digest validators. A missing pointer retains the disclosed embedded
 fallback. A stale pointer retains the existing stale error. Missing, partial,
 reordered, duplicated, digest-invalid, or graph-mismatched batch output fails
 closed. Transport unavailability follows only the existing documented fallback
 policy; integrity failure never falls back silently.
 
-The adapter advertises this optional capability only after conformance:
+The JavaScript exact child is the reference transport. A separate Go exact
+child implements the same read-only protocol without entering the computation
+worker contract. Installed native artifacts include a content-addressed bridge
+manifest; only a verified platform binary is selected automatically. Missing
+native artifacts use the JavaScript reference path. Startup, invalid-output, or
+post-selection binary-integrity failure uses that reference path with disclosed
+operational diagnostics; an initially invalid installed manifest fails closed.
+
+The transport advertises the capability as operational metadata:
 
 ```json
 {
-  "preparedTraversalBatchProtocolVersion": "0.1.0",
+  "preparedReadBatchProtocolVersion": "0.1.0",
   "preparedTraversalBatchAuthorityEffect": "none"
 }
 ```
@@ -184,8 +196,9 @@ key identity changes. Cache state never enters Capsule identity or provenance.
 6. Run integrated cold/warm, stale, tamper, crash, cancellation, fallback, and
    distribution tests before advertising any capability.
 
-Each slice is independently revertible. Native migration remains separately
-evidence-gated and is not implied by this design.
+Each slice is independently revertible. The Go read bridge alone passed its
+separate evidence gate; this does not imply migration of repository scan,
+canonical verification, graph semantics, or Context compilation.
 
 ## Acceptance evidence
 
@@ -207,6 +220,13 @@ Timing supports activation but never proves semantic correctness. A candidate
 that is equivalent but not materially faster remains available only as test
 evidence and is not advertised. A candidate that is faster but not equivalent is
 rejected.
+
+The current Windows loopback acceptance ran 30 paired batches with equal
+canonical responses. The JavaScript exact child measured 144.722 ms median and
+the Go exact child 34.624 ms median (4.18x). These values are operational and
+host-specific, do not enter any semantic identity, and must be refreshed on
+other release hosts; the activation rule is the durable part: native median no
+greater than 80 percent of the reference median after semantic parity passes.
 
 ## Philosophical fit
 

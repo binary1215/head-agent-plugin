@@ -519,7 +519,7 @@ node .\scripts\head.mjs init C:\path\to\project --runtime codex
 The native compute worker is optional. Installation and upgrade default to
 `--native auto`: the installer selects the current OS/architecture package for
 the exact plugin version, downloads its release checksum and `tar.gz`, rejects
-unsafe archive entries, verifies build metadata plus both native manifests,
+unsafe archive entries, verifies build metadata plus all three native manifests,
 and only then includes the binaries in the immutable release identity. A
 missing release package produces a disclosed JavaScript fallback; a checksum,
 archive, or manifest mismatch fails closed. Use `--native off` for a fully
@@ -534,7 +534,9 @@ node .\scripts\distribution.mjs upgrade --native auto
 OpenAI universal plugin-directory submission remains planned and requires a
 publisher-owned review. Git marketplace installation is already available.
 Native download success never changes Product Canon, graph identity, review
-authority, or execution lineage.
+authority, or execution lineage. The package contains separate binaries for
+authority-free computation, owned process supervision, and read-only ArcadeDB
+query batching; GraphDB network access is never added to the computation worker.
 
 The current installer:
 
@@ -687,6 +689,12 @@ are resolved only from environment-variable references; secret values must not
 be written into project artifacts, graph identities, generated documents, or
 execution receipts. Remote activation must pass local/remote conformance before
 it becomes current.
+
+When a verified native package is installed, prepared reads automatically use
+the content-addressed Go query-batch bridge. The current pointer is still read
+and verified independently, and JavaScript still validates the topology
+manifest, bounded traversal, request binding, and receipt digest. If the native
+bridge is absent, the same batch runs through the JavaScript exact child.
 
 From a Codex or OpenCode conversation, the bundled onboarding Skill first calls
 `head_graphdb_connection_preflight`. This exact-child check performs no network

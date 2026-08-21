@@ -5,6 +5,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { resolveVerifiedGoWorker } from "./go-worker-adapter.mjs";
 import { resolveVerifiedProcessSupervisor } from "./runtime-process-supervisor.mjs";
+import { resolveVerifiedArcadeDbNativeBridge } from "./arcadedb-native-bridge.mjs";
 
 export const NATIVE_ARTIFACT_DELIVERY_VERSION = "0.1.0";
 const DEFAULT_RELEASE_ROOT = "https://github.com/binary1215/head-agent-plugin/releases/download";
@@ -12,11 +13,11 @@ const MAX_CHECKSUM_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 256 * 1024 * 1024;
 const TARGETS = Object.freeze({
-  "darwin-arm64": Object.freeze({ package: "head-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", binaries: ["head-agent-worker", "head-agent-supervisor"] }),
-  "darwin-x64": Object.freeze({ package: "head-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", binaries: ["head-agent-worker", "head-agent-supervisor"] }),
-  "linux-arm64": Object.freeze({ package: "head-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", binaries: ["head-agent-worker", "head-agent-supervisor"] }),
-  "linux-x64": Object.freeze({ package: "head-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", binaries: ["head-agent-worker", "head-agent-supervisor"] }),
-  "win32-x64": Object.freeze({ package: "head-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", binaries: ["head-agent-worker.exe", "head-agent-supervisor.exe"] }),
+  "darwin-arm64": Object.freeze({ package: "head-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", binaries: ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"] }),
+  "darwin-x64": Object.freeze({ package: "head-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", binaries: ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"] }),
+  "linux-arm64": Object.freeze({ package: "head-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", binaries: ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"] }),
+  "linux-x64": Object.freeze({ package: "head-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", binaries: ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"] }),
+  "win32-x64": Object.freeze({ package: "head-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", binaries: ["head-agent-worker.exe", "head-agent-supervisor.exe", "head-agent-arcadedb-bridge.exe"] }),
 });
 
 function fail(code, message) {
@@ -40,7 +41,7 @@ function supportedTarget(platform, arch) {
 }
 
 function releaseUrls(version, target, releaseRoot = DEFAULT_RELEASE_ROOT) {
-  if (!/^(?:0|[1-9][0-9]*)\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?$/u.test(version)) {
+  if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u.test(version)) {
     fail("HEAD_NATIVE_VERSION_INVALID", `Native artifact version is invalid: ${version}`);
   }
   let root;
@@ -135,6 +136,7 @@ function extractTarGz(archive, destination, target) {
     `${target.directory}/BUILD-METADATA.json`,
     `${target.directory}/WORKER-MANIFEST.json`,
     `${target.directory}/SUPERVISOR-MANIFEST.json`,
+    `${target.directory}/ARCADEDB-BRIDGE-MANIFEST.json`,
     ...target.binaries.map((name) => `${target.directory}/${name}`),
   ]);
   const observedFiles = new Set();
@@ -242,6 +244,7 @@ export async function acquireVerifiedNativeArtifact({
     const metadata = verifyBuildMetadata(pluginRoot, target, version);
     const worker = resolveVerifiedGoWorker({ pluginRoot, platform, arch });
     const supervisor = resolveVerifiedProcessSupervisor({ pluginRoot, platform, arch });
+    const arcadedbBridge = resolveVerifiedArcadeDbNativeBridge({ pluginRoot, platform, arch });
     return {
       status: "verified",
       mode: selectedMode,
@@ -252,6 +255,7 @@ export async function acquireVerifiedNativeArtifact({
       buildCommit: metadata.commit,
       workerManifestId: worker.manifest.manifestId,
       supervisorManifestId: supervisor.manifest.manifestId,
+      arcadedbBridgeManifestId: arcadedbBridge.manifest.manifestId,
       cleanup,
     };
   } catch (error) {
@@ -264,7 +268,7 @@ export function verifyNativeOverlay({ pluginRoot, platform = process.platform, a
   const target = supportedTarget(platform, arch);
   if (!target) fail("HEAD_NATIVE_TARGET_UNSUPPORTED", `No native artifact is published for ${platform}-${arch}.`);
   const targetRoot = path.join(path.resolve(pluginRoot), "dist", target.directory);
-  const expectedEntries = ["BUILD-METADATA.json", "SUPERVISOR-MANIFEST.json", "WORKER-MANIFEST.json", ...target.binaries].sort();
+  const expectedEntries = ["ARCADEDB-BRIDGE-MANIFEST.json", "BUILD-METADATA.json", "SUPERVISOR-MANIFEST.json", "WORKER-MANIFEST.json", ...target.binaries].sort();
   let entries;
   try { entries = fs.readdirSync(targetRoot).sort(); }
   catch { fail("HEAD_NATIVE_OVERLAY_INVALID", "Native overlay target directory is unavailable."); }
@@ -278,11 +282,13 @@ export function verifyNativeOverlay({ pluginRoot, platform = process.platform, a
   const metadata = version ? verifyBuildMetadata(pluginRoot, target, version) : null;
   const worker = resolveVerifiedGoWorker({ pluginRoot, platform, arch });
   const supervisor = resolveVerifiedProcessSupervisor({ pluginRoot, platform, arch });
+  const arcadedbBridge = resolveVerifiedArcadeDbNativeBridge({ pluginRoot, platform, arch });
   return {
     targetDirectory: path.basename(path.dirname(worker.manifestPath)),
     buildCommit: metadata?.commit || null,
     workerManifestId: worker.manifest.manifestId,
     supervisorManifestId: supervisor.manifest.manifestId,
+    arcadedbBridgeManifestId: arcadedbBridge.manifest.manifestId,
   };
 }
 

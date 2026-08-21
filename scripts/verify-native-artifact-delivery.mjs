@@ -7,6 +7,7 @@ import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { createGoWorkerManifest } from "./lib/go-worker-adapter.mjs";
 import { createProcessSupervisorManifest } from "./lib/runtime-process-supervisor.mjs";
+import { createArcadeDbNativeBridgeManifest } from "./lib/arcadedb-native-bridge.mjs";
 import { acquireVerifiedNativeArtifact } from "./lib/native-artifact-delivery.mjs";
 import { installDistribution, inspectDistribution, uninstallDistribution } from "./lib/distribution-lifecycle.mjs";
 
@@ -15,11 +16,11 @@ const version = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json")
 const scratchRoot = path.join(sourceRoot, "tmp", `native-delivery-e2e-${process.pid}`);
 const fixtureRoot = path.join(scratchRoot, "fixture");
 const targetMap = {
-  "darwin-arm64": { package: "head-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor" },
-  "darwin-x64": { package: "head-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor" },
-  "linux-arm64": { package: "head-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor" },
-  "linux-x64": { package: "head-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor" },
-  "win32-x64": { package: "head-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", worker: "head-agent-worker.exe", supervisor: "head-agent-supervisor.exe" },
+  "darwin-arm64": { package: "head-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
+  "darwin-x64": { package: "head-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
+  "linux-arm64": { package: "head-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
+  "linux-x64": { package: "head-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
+  "win32-x64": { package: "head-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", worker: "head-agent-worker.exe", supervisor: "head-agent-supervisor.exe", bridge: "head-agent-arcadedb-bridge.exe" },
 };
 const target = targetMap[`${process.platform}-${process.arch}`];
 assert(target, `Native delivery fixture does not support ${process.platform}-${process.arch}.`);
@@ -65,17 +66,22 @@ function fixtureArchive() {
   fs.mkdirSync(directory, { recursive: true });
   const workerFile = path.join(directory, target.worker);
   const supervisorFile = path.join(directory, target.supervisor);
+  const bridgeFile = path.join(directory, target.bridge);
   fs.writeFileSync(workerFile, "fixture worker\n", { mode: 0o755 });
   fs.writeFileSync(supervisorFile, "fixture supervisor\n", { mode: 0o755 });
+  fs.writeFileSync(bridgeFile, "fixture arcadedb bridge\n", { mode: 0o755 });
   const workerManifest = createGoWorkerManifest({ platform: process.platform, arch: process.arch, binaryFile: workerFile, manifestDirectory: directory });
   const supervisorManifest = createProcessSupervisorManifest({ platform: process.platform, arch: process.arch, binaryFile: supervisorFile, manifestDirectory: directory });
+  const bridgeManifest = createArcadeDbNativeBridgeManifest({ platform: process.platform, arch: process.arch, binaryFile: bridgeFile, manifestDirectory: directory });
   const metadata = { version, commit: "a".repeat(40), goos: target.goos, goarch: target.goarch, cgoEnabled: false };
   const files = [
     ["BUILD-METADATA.json", Buffer.from(`${JSON.stringify(metadata, null, 2)}\n`), 0o644],
     ["WORKER-MANIFEST.json", Buffer.from(`${JSON.stringify(workerManifest, null, 2)}\n`), 0o644],
     ["SUPERVISOR-MANIFEST.json", Buffer.from(`${JSON.stringify(supervisorManifest, null, 2)}\n`), 0o644],
+    ["ARCADEDB-BRIDGE-MANIFEST.json", Buffer.from(`${JSON.stringify(bridgeManifest, null, 2)}\n`), 0o644],
     [target.worker, fs.readFileSync(workerFile), 0o755],
     [target.supervisor, fs.readFileSync(supervisorFile), 0o755],
+    [target.bridge, fs.readFileSync(bridgeFile), 0o755],
   ];
   return archive(files.map(([name, bytes, mode]) => ({ name: `${target.directory}/${name}`, bytes, mode })));
 }
@@ -116,6 +122,7 @@ try {
   assert.equal(inspectDistribution({ installRoot, binDirectory }).native, "verified");
   const releaseTarget = path.join(installRoot, "releases", installed.releaseId, "dist", target.directory);
   assert.equal(fs.existsSync(path.join(releaseTarget, target.worker)), true);
+  assert.equal(fs.existsSync(path.join(releaseTarget, target.bridge)), true);
   acquired.cleanup();
 
   const unavailable = await acquireVerifiedNativeArtifact({

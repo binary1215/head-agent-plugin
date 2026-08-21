@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.79+codex.20260821012418",
+  "version": "0.3.0-alpha.79+codex.20260821060720",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
@@ -9,6 +9,7 @@
     "check": "npm test",
     "benchmark:repository-scan": "node scripts/benchmark-repository-scan.mjs",
     "benchmark:prepared-traversal": "node scripts/benchmark-prepared-traversal.mjs",
+    "benchmark:arcadedb-query-batch": "node scripts/benchmark-arcadedb-query-batch.mjs",
     "verify:runtime-adapters": "node scripts/verify-runtime-adapters.mjs",
     "verify:runtime-lifecycle": "node scripts/verify-runtime-invocation-lifecycle.mjs",
     "verify:provider-replacement": "node scripts/verify-provider-replacement-recovery.mjs",

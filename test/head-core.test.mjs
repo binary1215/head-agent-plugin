@@ -1664,6 +1664,21 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   assert.equal(transport.readTopologyManifestCount, 1);
   assert.equal(transport.queryTopologyCount, 1);
 
+  transport.readPreparedTraversalBatchCount = 0;
+  transport.readPreparedTraversalBatch = function readPreparedTraversalBatch(projectId, graphSnapshotId, options) {
+    this.readPreparedTraversalBatchCount += 1;
+    return {
+      topologyJson: this.readTopologyManifest(projectId, graphSnapshotId),
+      traversal: this.queryTopology(projectId, graphSnapshotId, options),
+    };
+  };
+  transport.resetCounters();
+  const batchedRemote = queryWorldTemporalGraph({ root, graphProjectionAdapter: configured, ...query });
+  assert.equal(batchedRemote.resultId, expected.resultId);
+  assert.equal(batchedRemote.resultHash, expected.resultHash);
+  assert.equal(transport.readPreparedTraversalBatchCount, 1);
+  assert.equal(batchedRemote.graphProjection.preparedTraversal.verificationMode, "arcadedb-manifest-bounded-expansion");
+
   for (const [traversalFault, code] of [
     ["missing", "ARCADEDB_SERVER_TRAVERSAL_COVERAGE_MISMATCH"],
     ["forged", "ARCADEDB_SERVER_TRAVERSAL_RESPONSE_MISMATCH"],
