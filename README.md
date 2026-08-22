@@ -2,52 +2,75 @@
 
 # HEAD Agent Core Plugin
 
-**Keep user intent, Product Canon, code, change history, and agent execution<br>
-connected across Codex, OpenCode, and future runtimes.**
+**Keep product meaning, repository evidence, and agent execution connected<br>
+without making a model session, Git host, or GraphDB the hidden source of truth.**
 
 [![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
 
-[Why HEAD](#why-this-architecture-is-different) ·
-[Architecture](#architecture-at-a-glance) ·
-[GraphSnapshot](#what-is-a-graphsnapshot) ·
-[Try the graph](#try-the-graph) ·
-[Installation](#installation) ·
-[Status](#implementation-status)
+[Install](#install) ·
+[First project](#first-project) ·
+[Core model](#core-model) ·
+[Graph](#graph-and-records) ·
+[Capabilities](#capability-status) ·
+[Docs](#documentation)
 
 </div>
 
-> **Design lineage**
->
-> Inspired by [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core)
-> and independently reworked as a provider-neutral plugin. This is not an
-> official upstream release or a drop-in replacement.
-> The adopted principles, structural differences, verified advantages, and
-> remaining gaps are recorded in the
-> [original HEAD Core comparison](docs/original-head-core-comparison.md).
+> [!NOTE]
+> HEAD Agent Core Plugin is inspired by
+> [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core) and
+> independently reworked as a provider-neutral plugin. It is not an official
+> upstream release or a drop-in replacement. See the
+> [source-grounded comparison](docs/original-head-core-comparison.md).
 
-## What is HEAD Agent Core?
+## What HEAD Agent Core does
 
 HEAD Agent Core is a provider-neutral control plane for AI coding agents. It
-turns project meaning, repository structure, change history, and execution
-evidence into one reviewable system without making a chat session, Git host, or
-GraphDB the hidden source of truth.
+keeps four things connected across Codex, OpenCode, and future runtimes:
 
-Instead of asking every new agent session to reconstruct the project from
-conversation history, HEAD preserves user-owned Product Canon, builds an
-immutable evidence graph, compiles task-bounded context, executes through a
-runtime adapter, and requires a fresh review before a result becomes accepted
-lineage.
+- user-owned product meaning;
+- observed repository structure and change evidence;
+- bounded, reproducible task context;
+- execution results, review, and recovery lineage.
 
-The runtime, unified graph, and projections are shown together in
-[Architecture at a glance](#architecture-at-a-glance).
+The project remains usable when a provider session disappears. Inferred product
+concepts remain candidates until the user reviews them. Graphs and documents
+remain rebuildable views instead of silently becoming authority.
 
-## Five-minute local quick start
+## Install
 
-This path needs Node.js and a project directory. It does not require Git inside
-the target project, GraphDB, Go, or an existing Feature catalog.
+Choose one installation path. The Codex marketplace path installs the
+conversation Skill and typed MCP server. The user-scoped path also provides the
+global `head-agent` command for automation and recovery.
+
+### Codex Git marketplace
+
+```powershell
+codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplace
+codex plugin add head-agent-core@head-agent-plugin
+```
+
+Start a new Codex task so the installed Skill and MCP server are loaded, then
+ask:
+
+```text
+Initialize or resume HEAD Agent onboarding for this project.
+```
+
+The marketplace install does not initialize a project, contact GraphDB, choose
+a model, or approve Product Canon. Those transitions still require the typed
+Core boundary and, where consequential, explicit user review.
+
+### User-scoped CLI
+
+Requirements: a current Node.js LTS release and either Git or a downloaded
+source archive. Git inside the target project, Go, GraphDB, and a provider
+runtime are optional.
+
+Windows PowerShell:
 
 ```powershell
 git clone https://github.com/binary1215/head-agent-plugin.git
@@ -56,549 +79,84 @@ Set-Location .\head-agent-plugin
 
 head-agent --version
 head-agent doctor C:\path\to\project
-head-agent onboarding-status C:\path\to\project
-head-agent world-status C:\path\to\project
 ```
 
-On first use, `init` observes the repository and returns either
-`awaiting_onboarding_review` with an immutable candidate-set ID or
-`awaiting_onboarding_evidence` when the selected source scope contains too
-little evidence. It does not silently turn inferred Features into Product
-Canon. Inspect the returned candidate set, prepare an explicit review JSON,
-and apply it through `head-agent onboarding-review ... --input <file>` as shown
-in [Project onboarding](#project-onboarding).
-
-If `native.status` reports `javascript-fallback`, onboarding and graph work are
-still available through the semantic-reference implementation. Re-run install
-or upgrade with `--native required` only when a native package is mandatory.
-No command above writes to a remote GraphDB unless that projection is
-separately configured and explicitly activated.
-
-## Conversation-first onboarding
-
-The preferred interactive path is now the bundled `head-agent-onboarding`
-Skill. In Codex or OpenCode, ask HEAD Agent to initialize or resume the current
-project. The Skill uses the typed MCP/Core boundary to:
-
-1. inspect the current project and onboarding state,
-2. ask only for material choices such as repository scope and storage mode,
-3. initialize or resume the same project and HEAD Session identities,
-4. present bounded, evidence-linked Feature candidates for explicit review,
-5. verify the World Model, graph projection, Context Compiler, and derived
-   Markdown projection.
-
-Inferred Features do not become Product Canon merely because onboarding is
-conversational. Candidate acceptance, rejection, or editing remains an explicit
-user decision. Endpoint values and credentials remain operational inputs and
-are not copied into the project graph or generated documents.
-
-The Git-backed Codex marketplace distribution installs this Skill and MCP
-server together. The CLI quick start above remains the recovery and automation
-interface, not a separate authority model. Submission to OpenAI's universal
-public plugin directory is a separate publisher-owned review step.
-
-## Why this architecture is different
-
-| Common failure mode | HEAD Agent Core response |
-| --- | --- |
-| A provider conversation becomes project memory | Project identity, Canon, graph, and lineage survive provider-session loss. |
-| A code graph cannot explain product meaning | Reviewed Feature-to-code/test relations connect intent to implementation. |
-| Model inference silently becomes authority | Features, mappings, impacts, and document edits remain candidates until explicitly reviewed. |
-| History depends entirely on Git | SourceSnapshot, Revision, and ChangeSet DAGs preserve lineage without requiring Git. |
-| A database backend becomes the real source of truth | The World Model retains a recoverable GraphSnapshot; storage and document backends remain replaceable projections. |
-| More prompt context is treated as better context | The Context Compiler selects bounded, reproducible evidence for one task. |
-| Runtime support forks the core architecture | Provider-neutral HEAD Session and Run identities are executed through runtime adapters. |
-| An agent can claim another role in a message | The trusted host binds the endpoint role; send/read/reply arguments contain neither sender role nor binding token. |
-
-## Product learning without authority drift
-
-The Product Operating Loop keeps one connected, reviewable path without forcing every thought into storage. Everyday observations, hypotheses, and inferred meanings start as non-persisted epistemic notes with no content identity or graph rebuild. They become immutable artifacts only when a handoff, audit, product-state, or cross-Run boundary needs recovery:
-
-```text
-Signal (observed fact)
-  -> Hypothesis
-  -> Initiative candidate
-  -> explicit user ReviewDecision
-  -> reviewed Initiative
-  -> existing Feature, Feature candidate, or explicit mapping gap
-  -> accepted ChangeSet execution
-  -> OutcomeObservation
-```
-
-This is deliberately not one promotion chain. Signals and outcomes are evidence, hypotheses are hypotheses, Feature proposals remain candidates, and a reviewed Initiative is still separate from Product Canon. An OutcomeObservation must bind to an accepted `ResultPacket`/execution `ReviewDecision` through a `ChangeSet`; it does not mark a Feature successful. The resulting Product Graph is a rebuildable local projection and may later be materialized to GraphDB without making the database an orchestrator or authority.
-
-An Initiative may be proposed directly from explicit inline reasoning. Feature resolution can wait until the user accepts it, so the default path creates no `ProductFeatureCandidate` before review. `head operating-lane-recommend` selects the lightest safe advisory lane: Observe for read/reason work, Session for one bounded reversible result, Run for dependent or recovery-sensitive work, and Authority only for Product Canon, Initiative decisions, external writes, credentials, or recovery-canon changes. The recommendation has no authority effect; the selected Core operation still enforces the real boundary.
-
-`head help` shows only the light conversational surface. The lane recommendation
-is optional, not a prerequisite. Use `head help-all` for advanced, compatibility,
-audit, and recovery commands, including the durable Signal/Hypothesis paths.
-
-`head head-continuity <project>` returns an on-demand exact-reference view over current Session, Run, lineage, product, and graph identities. Repeated same-process status/continuity reads may reuse a disclosed snapshot/content-identity cache; writes invalidate it and `--fresh` forces full verification. The view is not persisted and cannot replace Session/Run checkpoints or continuous whole-outcome HEAD judgment. See [Product Operating Loop](docs/product-operating-loop.md).
-
-Intentional context compaction uses an explicit advanced recovery flow. `compact-prepare` first writes a canonical purpose/decision/position/next-result checkpoint, provider compaction happens outside Core, `compact-verify` rejects summary-based or drifted recovery, and `compact-continue` consumes one checkpoint-bound token. A newer real user turn wins and invalidates the pending continuation. No provider session identity, Git object, or GraphDB record is required. See [Compaction recovery](docs/compaction-recovery.md).
-
-Provider loss does not require provider-session resume. `session-restore` rebuilds
-the same deterministic consumer input from the current content-addressed
-Session/Run checkpoint and verified plan/contract/Capsule artifacts. A bounded
-`session-continue` performs that P2 restore first and may then fresh-verify one
-already-running HEAD endpoint through an optional WorkspaceHost adapter. If the
-attachment is absent or stale, it returns a disclosed fresh logical HEAD instead
-of importing a provider transcript or session identity. A bounded worker is
-owned through one P3 dispatch bound to the exact Run authorization; its P5
-lease/wait cursor cannot change WholePlan or create review. The worker result
-remains P3 evidence until Fresh HEAD records an explicit accept
-ReviewDecision; only then can `run-integrate-checkpoint` bind that reviewed result
-once to a P2 recovery checkpoint whose next direction is supplied explicitly by
-HEAD/user input. See [Session restore and reviewed-result integration](docs/session-recovery.md).
-The original mapping remains explicit: HF-007 is compaction, HF-008 is Session
-restore, HF-009 is worker dispatch, and HF-010 is completed-worker integration.
-Run `npm run verify:hostless-session-recovery` to prove the provider-neutral
-resident-consumer outcome, crash convergence, missing-evidence disclosure, and
-inbox non-authority without Git, GraphDB, WorkspaceHost, Herdr, or provider resume.
-
-Provider-neutral role coordination is an advanced host-bound surface. A trusted
-administrator opens one coordination generation and issues a one-time binding
-token for a verified project role. The endpoint then exposes exactly send,
-read-inbox, bounded wait-reply, and reply; role and token are not message arguments. Inboxes,
-idempotency, read markers, immutable replies, and delivery receipts live in the
-external operational root and never mutate `.head` or Product Canon. Messages
-have no instruction, decision, review, execution, promotion, or Canon authority.
-When a dedicated MCP endpoint is started by a trusted workspace host, an active
-`VerifiedWorkspaceHostAdapter` binds its process-injected caller to one fresh,
-unique endpoint and revalidates the exact target before and after delivery. The
-plugin accepts only the provider-neutral `WorkspaceHostDriver` snapshot/send
-contract; host-specific executable, socket, CLI, pane, and TUI knowledge belongs
-in a separately owned optional adapter. The production `host-export` reference
-uses content-addressed snapshots and create-only filesystem request/ack records
-outside the project, with a create-only pre-effect claim preventing automatic
-replay after an uncertain host crash. Each endpoint is uniquely bound to the
-current coordination binding and a host-issued per-process proof whose secret
-never enters project state or receipts. A trusted snapshot may register a current
-recipient binding before its provider process starts, but that registration grants
-reachability only: the new process must still possess its distinct raw proof and
-pass the same fresh binding check on its first tool call. Requests, claims, and
-acknowledgments bind the exact recipient binding. Copied tuples,
-foreign/replaced bindings, forged/old proofs, explicit detach, and duplicate
-ownership fail closed. An actual already-running Codex HEAD waits before an
-OpenCode worker sends its authority question; claim/ack targets the replaced
-current endpoint without spawning a provider, the stale endpoint receives
-nothing, and OpenCode boundedly waits for HEAD's non-authoritative reply without
-creating a `ReviewDecision`. `.head` stays byte-identical, provider sessions and
-control tokens do not persist, and separate real Codex/OpenCode clients prove
-owned-tree one-shot interrupt/close cleanup while resume/stream stay disabled.
-See [Role coordination](docs/role-coordination.md).
-
-## Architecture at a glance
-
-HEAD Agent Core uses one connected architecture for planning, repository
-understanding, execution, review, and human-readable projection. The graph is
-not a separate analytics feature: it is the evidence layer that lets each stage
-refer to the same product, source, revision, decision, and execution identities.
-
-```mermaid
-flowchart TB
-    U[User objective] --> H[Whole-plan HEAD]
-    PC[Product Canon] --> GS[World Model + GraphSnapshot]
-    RE[Repository evidence] --> GS
-    H --> CC[Context Compiler]
-    GS -->|bounded evidence| CC
-    CC --> RA[Runtime Adapter]
-    RA --> FR[Result + Fresh HEAD Review]
-    GS --> P[Local / ArcadeDB / Markdown projections]
-```
-
-An accepted review is recorded as new lineage and can produce the next verified
-World Model and GraphSnapshot. That feedback step is described here instead of
-drawn as a loop so the primary execution path stays easy to read.
-
-### What is a GraphSnapshot?
-
-A `GraphSnapshot` is the immutable, content-addressed evidence graph embedded in
-one verified Repository World Model. It captures the complete graph state HEAD
-can reproduce at a specific indexing, refresh, or reviewed authority-transition
-boundary.
-
-It is not a screenshot of a graph UI, a database backup, or a mutable collection
-of the latest nodes. The snapshot canonically sorts and hashes its inputs,
-nodes, edges, and parent identities. The same verified inputs produce the same
-`graphSnapshotId`; any semantic change produces a new snapshot while prior
-snapshots remain immutable.
-
-The snapshot is a connected topology, not a set of isolated catalogs. Canonical
-edge directions preserve meaning, while bounded traversal can start from either
-endpoint and explore the relationship in either direction.
-
-```mermaid
-flowchart TB
-    UI[User intent] -->|reviewed into| CANON
-
-    subgraph GS["GraphSnapshot: connected project evidence"]
-        CANON[Product Canon]
-        FEATURE[Features]
-        CODE[Code and Tests]
-        HISTORY[Revisions and ChangeSets]
-        EXEC[Execution and Review]
-
-        CANON <-->|product meaning| FEATURE
-        FEATURE <-->|implements and verifies| CODE
-        CODE <-->|changes over time| HISTORY
-        HISTORY <-->|result evidence| EXEC
-        EXEC <-->|reviewed impact| FEATURE
-    end
-```
-
-`User intent` is shown outside the snapshot deliberately. Raw prompts do not
-become graph authority. Only intent captured through reviewed Product Canon
-artifacts such as Requirements, Constraints, Decisions, and Features enters the
-snapshot.
-
-<details>
-<summary><strong>See how this semantic graph is encoded</strong></summary>
-
-The picture stays intentionally semantic. The implementation preserves the
-exact relationship vocabulary underneath it:
-
-| Meaning | Graph relations |
-| --- | --- |
-| Product structure and governance | `CONTAINS`, `REALIZES`, `GOVERNED_BY` |
-| Feature-to-implementation mapping | `IMPLEMENTS`, `VERIFIED_BY` |
-| Immutable state and ancestry | `HAS_REVISION`, `CURRENT_REVISION`, `PARENT_OF` |
-| Change and product impact | `CHANGES`, `SUPERSEDES`, `IMPACTS` |
-| Evidence and review | `SUPPORTED_BY`, `REVIEWED_BY`, `PRODUCES`, `PROMOTED_FROM` |
-
-| Question | GraphSnapshot contract |
-| --- | --- |
-| What is it bound to? | Exact Project, Product Model, SourceSnapshot, protocol, and parent identities. |
-| What does it contain? | Product concepts, code and test entities, immutable revisions, typed relations, reviewed mappings and impacts, ChangeSets, decisions, evidence, and lineage references. |
-| What does every record preserve? | Origin, evidence IDs, freshness, producer, authority class, and instruction/promotion flags. |
-| When does it change? | When verified semantic inputs change through indexing, refresh, accepted review, or accepted execution evidence; no-change rebuilds retain the same identity. |
-| How is history represented? | SourceSnapshots, revisions, and ChangeSets allow zero or more parents, forming DAGs without claiming automatic merge behavior. |
-| Where is it stored? | Recoverably inside the World Model, then optionally materialized through local JSON or ArcadeDB and rendered into documents. |
-| Is it project authority? | No. It is `derived-evidence-only`; Product Canon, observed source, and explicit review records retain their respective authority. |
-
-</details>
-
-### Traverse from any anchor
-
-The graph preserves canonical edge direction in storage and results, but a
-bounded neighborhood traversal can follow incident relationships from either
-endpoint. Product, implementation, history, and provenance therefore remain
-different views of the same verified snapshot.
-
-| Start from | Traverse through | Discover |
-| --- | --- | --- |
-| Requirement or Decision | Feature → reviewed mapping | Implementing code, tests, revisions, and change history. |
-| Feature | Canon relations or reviewed mappings | Originating intent, parent Capability, code, tests, and reviewed impacts. |
-| File or Symbol | Revision and reviewed mapping | Related Features, ChangeSets, tests, and review evidence. |
-| ChangeSet | Changed revisions and reviewed impacts | Exact code changes, affected Features, and Product Canon context. |
-| ReviewDecision | Candidate, Evidence, and produced receipt | Why a Feature, mapping, impact, or Canon revision was accepted or rejected. |
-
-```text
-Reviewed intent → Canon → Feature → Code / Test → Revision → ChangeSet
-ChangeSet → Revision → Code → Feature → Canon → reviewed intent
-Code → Feature → reviewed impact → ChangeSet → Result Packet / ReviewDecision
-```
-
-Git may attach optional VCS evidence, but it does not define ChangeSet or graph
-identity. Inferred Features, mappings, impacts, and document edits stay in
-explicit candidate surfaces until a scoped user review accepts them.
-
-### Try the graph
-
-After project initialization and onboarding, the source CLI exposes the same
-graph through bounded, digest-verified queries. These commands are available in
-the current alpha:
-
-```text
-# Verify that the indexed World Model and GraphSnapshot are current
-node scripts/head.mjs world-status <project>
-
-# Start from a Feature, symbol, file path, ChangeSet, or ReviewDecision
-node scripts/head.mjs world-temporal <project> --query "<anchor>" --depth 3 --limit 100 --edge-limit 200
-
-# Preview the exact bounded evidence an agent would receive for one task
-node scripts/head.mjs context-preview <project> --task "<task>" --budget 4000
-
-# Render the verified graph as a human-readable Markdown projection
-node scripts/head.mjs world-docs-build <project>
-```
-
-`world-temporal` returns the snapshot, query, and result identities together
-with inclusion, exclusion, and truncation reasons. The same semantic result is
-required whether traversal uses the embedded graph, local JSON, or an activated
-ArcadeDB projection.
-
-### Graph, database, and documents have different roles
-
-The authority and projection direction is deliberately one-way:
-
-```text
-User-owned Product Canon + observed source + verified reviews and lineage
-  → Repository World Model containing a recoverable GraphSnapshot
-      → replaceable graph materialization: local JSON / optional ArcadeDB
-      → replaceable human projection: Markdown / future Obsidian or Notion
-```
-
-ArcadeDB record IDs, filesystem paths, provider page IDs, and adapter names do
-not enter semantic identity. A missing projection can be rebuilt from the
-verified World Model; a stale, tampered, or semantically divergent projection
-fails closed instead of redefining the graph.
-
-The Context Compiler also never copies the whole graph into a model prompt. It
-performs task-specific bounded traversal and records selected and excluded
-evidence, stale or missing inputs, truncation, and explicit Unknowns. The same
-canonical inputs, compiler version, traversal policy, and token budget reproduce
-the same Context Capsule.
-
-## Implementation status
-
-Status terms in this README have exact meanings:
-
-- **Available** — implemented and usable through the current source distribution.
-- **Experimental** — implemented behind an explicit or limited activation path.
-- **Planned** — accepted direction, but not shipped in the current alpha.
-- **Deferred** — intentionally outside the current milestone.
-
-| Capability | Status |
-| --- | --- |
-| Source-based CLI execution | **Available** |
-| One-command install, initialize, and onboarding resume | **Available** |
-| Conversation-guided onboarding Skill and typed MCP init/review/docs flow | **Available** |
-| Project initialization and project-scoped HEAD Session | **Available** |
-| Repository Source Scope | **Available** |
-| Review-gated onboarding and Product Canon bootstrap | **Available** |
-| Repository World Model and incremental refresh | **Available** |
-| Context Compiler and reproducible Context Capsules | **Available** |
-| Execution Lineage and Fresh HEAD review | **Available** |
-| Codex Session and Run execution | **Available** |
-| Go worker and native process supervision | **Available** |
-| Local graph and Markdown projections | **Available** |
-| ArcadeDB graph projection | **Experimental** |
-| OpenCode project projection | **Available** |
-| OpenCode one-shot Session and Run execution | **Available** |
-| Artifact-only Codex-to-OpenCode provider replacement recovery | **Available** |
-| P2-first continuation with optional exact live HEAD attachment | **Available** |
-| Bounded worker dispatch/own/wait/ResultPacket/review/integration | **Available** |
-| Host-bound durable role messaging Core/CLI/MCP | **Available** |
-| Exact-endpoint two-process WorkspaceHost delivery | **Available** |
-| Production host-export filesystem bridge | **Available** |
-| Actual Codex/OpenCode provider-client live role round trip | **Available** |
-| Host-specific WorkspaceHost adapters | **Optional external** |
-| Verified Git-backed Codex marketplace distribution | **Available** |
-| OpenAI universal plugin directory publication | **Planned** |
-| `install.ps1` and `install.sh` | **Available** |
-| User-scoped global `head-agent` command | **Available** |
-| `head-agent --version` and project `head-agent doctor` | **Available** |
-| Automatic verified native binary installation | **Available** |
-| Recoverable upgrade, verified rollback, and safe removal | **Available** |
-| General provider-session resume and streaming | **Deferred** |
-| Obsidian and Notion projection adapters | **Deferred** |
-
-## Installation
-
-### Requirements
-
-- a current Node.js LTS release;
-- Git or a downloaded source archive for the initial source distribution;
-- Codex or OpenCode only when using the corresponding live execution adapter;
-- Go only when building native worker and supervisor binaries locally;
-
-OpenCode provider configuration remains owned by OpenCode. HEAD passes the exact
-authorized `provider/model`, adds only its ephemeral permission/privacy overlay,
-and lets OpenCode resolve its global provider definitions and authentication.
-HEAD does not install an OpenAI, LiteLLM, or other provider preset, and it does
-not rewrite a configured endpoint. Project-local OpenCode configuration and
-external plugins remain disabled during the isolated one-shot invocation.
-- ArcadeDB only when explicitly enabling the optional remote graph projection.
-
-Git, Go, GraphDB, and a provider runtime are not prerequisites for HEAD project
-identity, local lineage, installation rollback, or local recovery. The
-JavaScript reference path remains available when native compute is absent.
-
-### User-scoped installation — available now
-
-The installer copies a verified, content-identified release into the current
-user's data directory and writes `head-agent` launchers to `~/.local/bin`. It
-does not edit a Codex cache, shell profile, project `.head` directory, or remote
-GraphDB. Add `~/.local/bin` to `PATH` once if the installer reports
-`pathConfigured: false`.
-
-#### Windows PowerShell
-
-```powershell
-git clone https://github.com/binary1215/head-agent-plugin.git
-Set-Location .\head-agent-plugin
-.\scripts\install.ps1 --project C:\path\to\project --runtime codex,opencode
-
-head-agent --version
-head-agent doctor C:\path\to\project
-```
-
-#### macOS or Linux
+macOS or Linux:
 
 ```bash
 git clone https://github.com/binary1215/head-agent-plugin.git
 cd head-agent-plugin
-./scripts/install.sh --project /path/to/project --runtime codex,opencode
+./scripts/install.sh --native auto --project /path/to/project --runtime codex,opencode
 
 head-agent --version
 head-agent doctor /path/to/project
 ```
 
-Installation defaults can be overridden without changing product canon:
+The installer stages a content-verified release in the current user's data
+directory and writes launchers to `~/.local/bin`. It does not edit a shell
+profile, a Codex cache, remote GraphDB, or an existing project before the
+explicit `--project` initialization step.
 
-```powershell
-.\scripts\install.ps1 --install-root C:\user-data\head-agent --bin-dir C:\user-bin
-```
+## First project
 
-```bash
-./scripts/install.sh --install-root "$HOME/.head-agent" --bin-dir "$HOME/bin"
-```
+### Conversation-first path
 
-These locations are operational configuration only. They never participate in
-project, graph, Context Capsule, or execution-lineage semantic identity.
+The bundled `head-agent-onboarding` Skill is the preferred interactive entry.
+It inspects the current state, asks only for material choices such as repository
+scope or storage mode, presents evidence-linked candidates, and uses explicit
+review before Product Canon changes.
 
-### Codex Git marketplace installation — available now
+### CLI path
 
-The `codex-marketplace` branch is generated only after the integrated test job
-and all five native build targets succeed. It contains a minimal marketplace
-catalog plus a content-verified plugin distribution; development-only trees,
-Git metadata, test fixtures, dependency caches, and local build output are not
-published into the plugin snapshot.
-
-```powershell
-codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplace
-codex plugin add head-agent-core@head-agent-plugin
-```
-
-Start a new Codex task after installation so the bundled
-`head-agent-onboarding` Skill and `head_core` MCP server are loaded. Then ask:
-
-```text
-Initialize or resume HEAD Agent onboarding for this project.
-```
-
-The marketplace installs the conversation layer; it does not initialize a
-project, contact GraphDB, select a model, or promote inferred Product Canon.
-Those transitions still occur through the typed Core boundary and explicit
-review. See [Codex marketplace distribution](docs/codex-marketplace.md) for
-upgrade, removal, generated-branch ownership, and public-directory boundaries.
-
-### Upgrade, status, rollback, and removal
-
-Run lifecycle commands from the newly downloaded source tree. `install` and
-`upgrade` stage and verify an immutable release before replacing the active
-pointer. If staging or verification fails, the previous pointer remains active.
-
-```powershell
-node .\scripts\distribution.mjs upgrade
-node .\scripts\distribution.mjs status
-node .\scripts\distribution.mjs rollback
-node .\scripts\distribution.mjs uninstall
-```
-
-```bash
-node ./scripts/distribution.mjs upgrade
-node ./scripts/distribution.mjs status
-node ./scripts/distribution.mjs rollback
-node ./scripts/distribution.mjs uninstall
-```
-
-Normal removal deletes the active pointer and launchers but preserves immutable
-release files so recovery remains possible. `uninstall --purge` also removes
-the user-scoped release store. Neither form traverses or deletes any project's
-`.head` canon, lineage, document projection, Git repository, or GraphDB data.
-
-The source tree remains directly runnable when a global installation is not
-desired:
-
-```powershell
-node .\scripts\head.mjs init C:\path\to\project --runtime codex
-```
-
-The native compute worker is optional. Installation and upgrade default to
-`--native auto`: the installer selects the current OS/architecture package for
-the exact plugin version, downloads its release checksum and `tar.gz`, rejects
-unsafe archive entries, verifies build metadata plus all three native manifests,
-and only then includes the binaries in the immutable release identity. A
-missing release package produces a disclosed JavaScript fallback; a checksum,
-archive, or manifest mismatch fails closed. Use `--native off` for a fully
-offline JavaScript-only install or `--native required` when fallback is not
-acceptable.
-
-```powershell
-node .\scripts\distribution.mjs install --native required
-node .\scripts\distribution.mjs upgrade --native auto
-```
-
-OpenAI universal plugin-directory submission remains planned and requires a
-publisher-owned review. Git marketplace installation is already available.
-Native download success never changes Product Canon, graph identity, review
-authority, or execution lineage. The package contains separate binaries for
-authority-free computation, owned process supervision, and read-only ArcadeDB
-query batching; GraphDB network access is never added to the computation worker.
-
-The current installer:
-
-1. validates matching plugin/package versions and rejects symlinked input;
-2. hashes every included file into one content-derived release identity;
-3. stages, verifies, and activates the release without in-place source edits;
-4. installs PowerShell/cmd and POSIX-compatible command launchers;
-5. keeps prior verified releases available for explicit rollback;
-6. optionally initializes or resumes one project through the installed release;
-7. automatically acquires and verifies the matching native package when one is
-   published, while preserving a disclosed JavaScript fallback in `auto` mode.
-
-Verify the full isolated lifecycle without touching the real user installation:
-
-```powershell
-npm run verify:distribution
-npm run verify:native-delivery
-npm run verify:codex-marketplace
-```
-
-## Project onboarding
-
-Onboarding initializes HEAD project identity, observes the repository, and
-creates a reviewable product-model candidate batch. It does **not** automatically
-promote inferred Features into Product Canon.
-
-The examples below use the currently available source CLI. Replace
-`C:\path\to\project` with the target project root.
-
-### 1. Initialize or resume the project
-
-`init` is the public composition path. On first use it creates one project and
-HEAD Session identity, indexes the selected source scope, and creates the
-reviewable onboarding candidate batch. Repeating `init` or using its `resume`
-alias verifies and returns the same pending review or ready state without
-duplicating project, Session, candidate, or Product Canon authority.
+Initialize or resume the same project and HEAD Session identities:
 
 ```powershell
 head-agent init C:\path\to\project --runtime codex,opencode
+head-agent onboarding-status C:\path\to\project
+```
+
+First use normally returns an immutable onboarding candidate-set ID. Inspect it
+before review:
+
+```powershell
+$onboarding = head-agent onboarding-status C:\path\to\project | ConvertFrom-Json
+head-agent onboarding-candidates C:\path\to\project `
+  --candidate-set $onboarding.state.candidateSetId
+```
+
+Create `onboarding-review.json` only after reviewing the evidence. This compact
+example accepts the complete bootstrap batch; selection or revision is safer
+when any candidate should be renamed, split, merged, or excluded.
+
+```json
+{
+  "candidateSetId": "onboarding-candidates-<id>",
+  "disposition": "accept-all",
+  "rationale": "I reviewed every evidence-linked candidate and adopt this bootstrap batch."
+}
+```
+
+Apply the decision and verify the resulting views:
+
+```powershell
+head-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
+head-agent world-status C:\path\to\project
+head-agent context-preview C:\path\to\project `
+  --task "Find implementation evidence for one reviewed Feature" --budget 2000
+head-agent world-docs-build C:\path\to\project
 head-agent resume C:\path\to\project --runtime codex,opencode
 ```
 
-When a source boundary or new-project brief is needed, supply it on the first
-command so it is applied before indexing:
+`accept-all` is supported for a fully inspected batch, but it is not the default
+recommendation. Review can instead accept a dependency-complete selection,
+revise or reject the batch, request more evidence, or retain explicit Unknowns.
+See [Onboarding](docs/onboarding.md) for the complete contract.
 
-```powershell
-head-agent init C:\path\to\project --runtime codex,opencode `
-  --input .\onboarding.json
-```
+### Source scope
 
-Initialization creates protected `.head/` project state, a project-scoped HEAD
-Session, onboarding state, an empty user-owned Product Model, and an immutable
-candidate batch. OpenCode uses the same project identity and onboarding state;
-fresh-process provider replacement is verified from HEAD artifacts alone, and
-live OpenCode Session/Run execution is verified through the user's own resolved
-OpenCode provider settings.
-
-### 2. Select the repository source scope before indexing
-
-For repositories containing generated output, vendored dependencies, copied
-projects, model bundles, or large fixtures, record the exact project-relative
-roots that should participate in product inference.
+For repositories with generated output, vendored dependencies, copied projects,
+large fixtures, or model bundles, define a project-relative observation boundary
+before the first index:
 
 ```json
 {
@@ -610,143 +168,282 @@ roots that should participate in product inference.
 }
 ```
 
-Source Scope controls observation only. It cannot define Product Canon, approve
-an inferred Feature, or grant execution authority.
+Pass it with `head-agent init ... --input .\onboarding.json`. Source Scope
+controls observation only; it cannot define Product Canon, approve a candidate,
+or grant execution authority.
 
-### 3. Inspect onboarding
+## Core model
 
-```powershell
-head-agent onboarding-status C:\path\to\project
+HEAD separates meaning, recovery, evidence, views, and effects so that one
+representation cannot inherit another's authority.
+
+| Plane | Owns | Examples | Does not authorize |
+| --- | --- | --- | --- |
+| P1 Normative authority | approved meaning and explicit decisions | Product Canon, ReviewDecision | inference from a graph, result, or message |
+| P2 Recovery and lineage | provider-independent project direction | Session, Run, plan, Capsule, contract, checkpoint | rewriting direction from a summary or result |
+| P3 Evidence | reviewable observations and results | candidates, ResultPacket, ChangeSet, receipts | self-promotion or checkpoint authorship |
+| P4 Derived views | reproducible retrieval and human views | GraphSnapshot, traversal, Markdown, continuity | Canon mutation or unique recovery |
+| P5 Operational effects | host-local execution and delivery | PID, lease, endpoint, inbox, delivery receipt | execution, review, promotion, or recovery authority |
+
+Distribution and host integrations package or execute these contracts; neither
+becomes a sixth source of product meaning. The complete executable boundary is
+documented in [Authority planes](docs/authority-plane-contract.md).
+
+### Architecture at a glance
+
+```mermaid
+flowchart LR
+    U[User objective] --> H[Whole-plan HEAD]
+    PC[Product Canon] --> WM[World Model + GraphSnapshot]
+    RE[Repository evidence] --> WM
+    H --> CC[Context Compiler]
+    WM -->|bounded evidence| CC
+    CC --> RA[Runtime adapter]
+    RA --> RP[ResultPacket]
+    RP --> FR[Fresh HEAD review]
+    WM --> PX[Local / ArcadeDB / Markdown projections]
 ```
 
-For an existing project, HEAD indexes the selected source scope and proposes
-evidence-linked FeatureGroup, Capability, and Feature candidates. Related
-implementation symbols are clustered into bounded behavior concepts while
-generic lifecycle, UI-handler, logging, and serialization helpers are
-deprioritized or excluded. Inferred FeatureGroups are not automatically applied
-to unrelated Features. A new project can instead begin from a structured
-user-authored brief.
+The feedback path is explicit: an accepted result may become reviewed lineage,
+the repository can be re-indexed, and a later graph may project that evidence.
+No result, projection, or runtime effect accepts itself.
 
-### 4. Review inferred product concepts
+### Minimum sufficient context
 
-Inspect the immutable candidate batch before promotion:
+The Context Compiler selects task-relevant evidence under an explicit budget.
+It records what was included, excluded, stale, missing, truncated, or unknown.
+The same canonical inputs, compiler version, traversal policy, and budget
+reproduce the same Context Capsule.
 
-```powershell
-$onboarding = head-agent onboarding-status C:\path\to\project | ConvertFrom-Json
-head-agent onboarding-candidates C:\path\to\project `
-  --candidate-set onboarding-candidates-<id>
+A Capsule is a derived execution input, not a second Canon. Digest or Canon drift
+fails closed; simple read/reason work does not create a Capsule by default.
+
+### Execution and recovery
+
+Non-trivial execution follows a durable, reviewable sequence:
+
+```text
+WholePlanSnapshot
+  → ExecutionContract + ContextCapsule
+  → runtime or bounded worker
+  → ResultPacket
+  → Fresh HEAD ReviewDecision
+  → accepted lineage or a revised plan
 ```
 
-After inspecting every candidate and its evidence, create an explicit review.
-The following bootstrap shortcut accepts the complete batch; replace the
-rationale with your own judgment. Use the selection or revise forms documented
-in [Onboarding](docs/onboarding.md) when any candidate should be excluded,
-renamed, merged, or split.
+Provider loss does not require importing a transcript. `session-restore`
+reconstructs the current input from the exact P2 checkpoint and verified lineage.
+After an accepted result, `run-integrate-checkpoint` can bind that review to a new
+checkpoint only when HEAD or the user explicitly supplies its recovery fields.
 
-```json
-{
-  "candidateSetId": "onboarding-candidates-<id>",
-  "disposition": "accept-all",
-  "rationale": "I reviewed every evidence-linked candidate and adopt this bootstrap batch."
-}
+Intentional context compaction uses the same boundary:
+
+1. `compact-prepare` freezes purpose, approved decisions, current position, and
+   the next expected result;
+2. provider compaction occurs outside Core;
+3. `compact-verify` checks trusted real-user-turn evidence and rejects drift or
+   summary-derived recovery;
+4. `compact-continue` consumes one checkpoint-bound token.
+
+A newer real user turn wins over a pending continuation. See
+[Compaction recovery](docs/compaction-recovery.md) and
+[Session recovery](docs/session-recovery.md).
+
+### Product learning
+
+Everyday observations can remain non-persisted notes. Durable artifacts are
+created only when another Run, audit, product-state transition, or handoff needs
+them:
+
+```text
+Signal → Hypothesis → Initiative candidate → user ReviewDecision
+       → reviewed Initiative → accepted execution → OutcomeObservation
 ```
 
-Save that document as `onboarding-review.json`, then apply it:
+This is not one automatic promotion chain. Evidence remains evidence,
+hypotheses remain hypotheses, and a reviewed Initiative remains distinct from
+Product Canon. `head-agent operating-lane-recommend` can advise the lightest safe lane
+without creating authority:
 
-```powershell
-head-agent onboarding-review C:\path\to\project `
-  --input .\onboarding-review.json
+- Observe for read and reasoning work;
+- Session for one bounded, reversible result;
+- Run for dependent or recovery-sensitive work;
+- Authority for Canon, initiative decisions, external writes, credentials, or
+  recovery-canon changes.
+
+See [Product Operating Loop](docs/product-operating-loop.md).
+
+## Graph and records
+
+A `GraphSnapshot` is the immutable, content-addressed evidence graph embedded in
+one verified Repository World Model. It is not a graph UI screenshot, database
+backup, or mutable latest-node collection. The same verified inputs produce the
+same `graphSnapshotId`; semantic changes create a new snapshot with explicit
+ancestry.
+
+```mermaid
+flowchart LR
+    C[Product Canon] <-->|reviewed meaning| F[Features]
+    F <-->|implements / verifies| S[Code and tests]
+    S <-->|revisions| CH[ChangeSets]
+    CH <-->|results / review| E[Execution lineage]
 ```
 
-A review may accept a dependency-complete selection, revise the candidate set,
-reject it, request additional evidence, or retain unresolved concepts as
-explicit Unknowns. `accept-all` is supported by the contract but is not the
-recommended default onboarding path.
+Raw prompts stay outside this graph. Product meaning enters only through
+reviewed Canon artifacts. Candidate nodes may be inspected explicitly, but are
+excluded from default traversal and Context compilation.
 
-Verify the ready graph and try one bounded task context without persisting a
-Capsule. The document command creates a replaceable Markdown projection under
-the project-owned `.head` state; it does not change Product Canon.
+### Graph versus record
+
+The direction is deliberate:
+
+```text
+P1 Product Canon + observed source + verified P2/P3 records
+  → P4 Repository World Model containing a recoverable GraphSnapshot
+      → replaceable graph materialization: local JSON / optional ArcadeDB
+      → replaceable human projection: Markdown
+```
+
+The graph owns navigation, not meaning or recovery direction. Deleting GraphDB
+or generated Markdown must leave Product Canon, Session/Run recovery, and review
+lineage intact. A stale, tampered, or semantically divergent projection fails
+closed instead of redefining the graph.
+
+### Query the graph
 
 ```powershell
-head-agent onboarding-status C:\path\to\project
 head-agent world-status C:\path\to\project
-head-agent context-preview C:\path\to\project `
-  --task "Find the implementation evidence for one reviewed Feature" --budget 2000
-head-agent world-docs-build C:\path\to\project
-head-agent resume C:\path\to\project --runtime codex,opencode
+head-agent world-temporal C:\path\to\project `
+  --query "<Feature, symbol, path, ChangeSet, or ReviewDecision>" `
+  --depth 3 --limit 100 --edge-limit 200
+head-agent context-preview C:\path\to\project --task "<task>" --budget 4000
 ```
 
-See [Onboarding](docs/onboarding.md) and
-[Product Model](docs/product-model.md) for the complete review contracts.
+Traversal returns snapshot, query, and result identities plus inclusion,
+exclusion, and truncation reasons. Embedded, local JSON, and activated ArcadeDB
+backends must preserve the same semantic result.
 
-## Optional GraphDB configuration
+## Runtime and coordination
 
-Local JSON storage is the safe default. GraphDB is not required to initialize,
-onboard, compile context, or preserve execution lineage.
+Codex and OpenCode are projections over one `.head/` authority. Runtime adapters
+observe capability, consume one exact authorization at most once, supervise the
+owned process tree, validate structured output, and keep operational state
+outside the project.
 
-ArcadeDB can be activated explicitly as a derived graph projection. Credentials
-are resolved only from environment-variable references; secret values must not
-be written into project artifacts, graph identities, generated documents, or
-execution receipts. Remote activation must pass local/remote conformance before
-it becomes current.
+Role coordination is intentionally small: send, read-inbox, bounded wait-reply,
+and immutable reply. A trusted host binds each endpoint to one project role;
+callers cannot assert their own sender role. Messages and delivery receipts are
+evidence only and cannot create a ReviewDecision, widen a contract, mutate
+Product Canon, or rewrite recovery direction.
 
-When a verified native package is installed, prepared reads automatically use
-the content-addressed Go query-batch bridge. The current pointer is still read
-and verified independently, and JavaScript still validates the topology
-manifest, bounded traversal, request binding, and receipt digest. If the native
-bridge is absent, the same batch runs through the JavaScript exact child. Set
-`HEAD_AGENT_ARCADEDB_NATIVE_MODE` to `auto` (default), `off`, or `required` to
-choose the runtime policy. `auto` may disclose and use the reference path for an
-unavailable native process, while `required` rejects it. A manifest, selected
-binary, or post-selection digest mismatch always fails closed. Exact children
-receive only the two configured credential-reference variables plus a bounded
-OS, TLS, locale, and proxy environment allowlist.
+Host-specific pane, socket, CLI, and UI behavior belongs in separately owned
+optional adapters. The Core keeps provider-neutral endpoint, project-root,
+fresh-snapshot, proof, acknowledgment, and cleanup fences. General provider
+resume and streaming remain deferred. See [Runtime adapters](docs/runtime-adapters.md)
+and [Role coordination](docs/role-coordination.md).
 
-From a Codex or OpenCode conversation, the bundled onboarding Skill first calls
-`head_graphdb_connection_preflight`. This exact-child check performs no network
-request and returns only reference names and presence booleans—not credential,
-endpoint, or database values. Once references are available, the Skill calls
-`head_graphdb_database_status`, then asks for explicit confirmation before
-`head_graphdb_database_initialize` and a separate remote-write confirmation
-before `head_graphdb_projection_activate`. These typed operations accept no
-credential values. If the configured environment-variable references are not
-available to the plugin process, inject them outside the conversation and
-restart the host; a local fallback is reported but never presented as remote
-success. The CLI commands documented in [Onboarding](docs/onboarding.md) remain
-the equivalent automation and recovery path.
+## Optional GraphDB
 
-The experimental write path is incremental and resumable: content-derived
-node/edge batches are re-read before immutable checkpoints are accepted,
-snapshot-only identity changes use compact rebase records, the complete graph
-is reconstructed from verified topology, and an exact-predecessor
-compare-and-swap advances the remote pointer only after staged conformance and
-local recovery verification. Re-running an unchanged graph produces a
-zero-batch sync receipt.
+Local storage is the safe default. GraphDB is not required for onboarding,
+context compilation, execution lineage, or recovery.
 
-Prepared traversal performs one verified pointer read, one topology-manifest
-read, and one bounded traversal request per query. A non-serializable one-shot
-binding reuses only the pointer read made by the same adapter in the same
-synchronous query path; direct calls, missing bindings, and reuse fall back to
-normal remote pointer verification.
+ArcadeDB can be explicitly activated as a derived graph projection. Credentials
+are resolved only through environment-variable references and never enter
+project artifacts, graph identities, generated documents, or receipts. Remote
+activation must prove semantic conformance with the recoverable embedded graph.
 
-See [Graph projection adapter](docs/graph-projection-adapter.md) for the current
-activation, recovery, and failure boundaries.
+The JavaScript bridge is the semantic reference. When a verified native package
+is present, read-only prepared queries may use a content-addressed Go query-batch
+bridge; JavaScript still verifies the pointer, topology, traversal, request
+binding, and receipt. Set `HEAD_AGENT_ARCADEDB_NATIVE_MODE` to:
 
-## Design lineage and acknowledgements
+- `auto` — use the verified native bridge when available, otherwise disclose and
+  use the JavaScript reference path;
+- `off` — always use the JavaScript path;
+- `required` — fail when the verified native path is unavailable.
 
-The foundational HEAD model used by this project comes from
-[Won6314/head-agent-core](https://github.com/Won6314/head-agent-core).
+Manifest, binary, and post-selection digest mismatches always fail closed.
+Exact children receive only configured credential-reference variables and a
+bounded OS, TLS, locale, and proxy allowlist. The compute worker itself remains
+network-free and authority-free. See
+[Graph projection adapter](docs/graph-projection-adapter.md).
 
-This plugin adopts and independently reinterprets the following ideas:
+## Installation lifecycle
 
-- HEAD as the owner of the whole outcome;
-- user authority above generated conclusions;
-- minimum sufficient context instead of maximum context;
-- durable canon outside temporary model sessions;
-- bounded delegation without authority drift;
-- completion based on connected evidence;
-- graphs as retrieval indexes rather than unquestioned authority;
-- separation of project meaning from shared runtime mechanisms.
+### Native packages
+
+User-scoped install and upgrade default to `--native auto`. The installer selects
+the exact version and platform package, verifies release checksum, archive paths,
+build metadata, and native manifests, then includes the binaries in the release
+identity. Use `--native off` for JavaScript-only installation or
+`--native required` when fallback is unacceptable.
+
+Native components have separate contracts for authority-free computation, owned
+process supervision, and read-only ArcadeDB batching. Installing one never
+changes Product Canon, graph identity, review authority, or lineage.
+
+### Status, upgrade, rollback, and removal
+
+Run lifecycle commands from the newly downloaded source tree:
+
+```powershell
+node .\scripts\distribution.mjs upgrade
+node .\scripts\distribution.mjs status
+node .\scripts\distribution.mjs rollback
+node .\scripts\distribution.mjs uninstall
+```
+
+Upgrade stages and verifies an immutable release before replacing the active
+pointer. Normal removal deletes launchers and the active pointer but preserves
+verified releases for recovery. `uninstall --purge` also removes the user-scoped
+release store. Neither form traverses or deletes project `.head` state, Git data,
+generated project documents, or GraphDB data.
+
+OpenCode provider configuration remains owned by OpenCode. HEAD passes only the
+exact authorized `provider/model` plus an ephemeral permission/privacy overlay;
+it does not install provider presets, copy credentials, or rewrite endpoints.
+
+## Capability status
+
+Status labels are evidence claims, not roadmap promises:
+
+- **Available** — implemented in the current source distribution;
+- **Experimental** — implemented behind an explicit or limited activation path;
+- **Planned** — accepted direction but not shipped;
+- **Deferred** — intentionally outside the current milestone.
+
+| Area | Capability | Status |
+| --- | --- | --- |
+| Project | initialization, Source Scope, review-gated Product Canon | **Available** |
+| Knowledge | World Model, incremental refresh, Context Capsules | **Available** |
+| Lineage | Runs, ResultPackets, Fresh HEAD review, Session restore, compaction | **Available** |
+| Runtime | Codex and OpenCode one-shot Session/Run execution | **Available** |
+| Workers | bounded dispatch, wait, result, review, integration | **Available** |
+| Coordination | durable role messaging and exact-endpoint host delivery | **Available** |
+| Projection | local graph and Markdown | **Available** |
+| Projection | ArcadeDB | **Experimental** |
+| Distribution | user-scoped install, native delivery, rollback, safe removal | **Available** |
+| Distribution | verified Git-backed Codex marketplace | **Available** |
+| Distribution | OpenAI universal plugin directory | **Planned** |
+| Runtime | general provider-session resume and streaming | **Deferred** |
+| Documents | Obsidian and Notion adapters | **Deferred** |
+
+For exact claims and acceptance evidence, use the subsystem documents and source
+verification rather than inferring capability from this summary.
+
+## Design principles
+
+This implementation retains the foundational HEAD principles while expressing
+them through provider-neutral contracts:
+
+- HEAD owns the connected whole outcome;
+- the user retains consequential authority;
+- minimum sufficient context beats maximum context;
+- durable Canon survives temporary model sessions;
+- delegation stays bounded and non-authoritative;
+- completion requires connected primary evidence;
+- graphs are retrieval indexes, not unquestioned authority;
+- project meaning remains separate from runtime mechanisms.
 
 Read the upstream
 [Foundations](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/FOUNDATIONS.md)
@@ -754,65 +451,57 @@ and
 [Technical Architecture](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/TECHNICAL_ARCHITECTURE.md)
 for the original design context.
 
-This implementation adds its own plugin-native contracts for provider-neutral
-runtime adapters, deterministic Context Capsules, review-gated Product Canon,
-replaceable graph and document projections, and content-derived execution
-lineage.
-
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Authority planes](docs/authority-plane-contract.md)
-- [Philosophy-preserving fast path](docs/performance-fast-path-design.md)
-- [Onboarding](docs/onboarding.md)
+Start with these documents:
+
+- [Architecture](docs/architecture.md) — the provider-neutral composition;
+- [Authority planes](docs/authority-plane-contract.md) — the executable
+  Graph/record and non-amplification contract;
+- [Onboarding](docs/onboarding.md) — candidate inference and explicit review;
+- [Context Compiler](docs/context-compiler.md) — reproducible task context;
+- [Execution Lineage](docs/execution-lineage.md) — plans, contracts, results,
+  review, and recovery;
+- [World Model](docs/world-model.md) — source evidence and graph construction;
+- [Runtime adapters](docs/runtime-adapters.md) — capability, invocation, and
+  process ownership;
+- [Performance fast path](docs/performance-fast-path-design.md) — optimization
+  without semantic or authority shortcuts.
+
+Additional references:
+
 - [Product Model](docs/product-model.md)
-- [Context Compiler](docs/context-compiler.md)
-- [Repository World Model](docs/world-model.md)
+- [Product Operating Loop](docs/product-operating-loop.md)
 - [Incremental refresh](docs/incremental-refresh.md)
-- [Execution Lineage](docs/execution-lineage.md)
-- [Runtime adapters](docs/runtime-adapters.md)
+- [Compaction recovery](docs/compaction-recovery.md)
+- [Session recovery](docs/session-recovery.md)
 - [Role coordination](docs/role-coordination.md)
 - [Graph projection adapter](docs/graph-projection-adapter.md)
 - [Document projection adapter](docs/document-projection-adapter.md)
+- [Codex marketplace distribution](docs/codex-marketplace.md)
 
-Installed plugin behavior is governed by the runtime contracts above and by the
-target project's user-owned Canon. Repository-development history, benchmark
-fixtures, and maintainer milestone notes are not runtime instructions and must
-not enter a Context Capsule, WholePlan, generated project instruction, or
-execution decision merely because they are present in a source checkout.
+Installed behavior is governed by these runtime contracts, the target project's
+user-owned Canon, current Session/Run recovery state, and explicit
+ReviewDecisions. Repository-development history, benchmark fixtures, and
+maintainer milestones are evidence about the plugin; they are not instructions
+for a project using it.
 
-## Verification from source
-
-The repository tracks deterministic verification entry points alongside the
-implementation:
+## Verify from source
 
 ```powershell
-node .\scripts\verify-onboarding.mjs
-node .\scripts\verify-runtime-adapters.mjs
-
-Set-Location .\native\head-agent-worker
-go test ./...
-go vet ./...
+npm test
+npm run verify:newcomer
+npm run verify:distribution
+npm run verify:codex-marketplace
 ```
 
-The JavaScript implementation is the semantic reference. Native backends must
-pass fixture-driven conformance before they are advertised for production use.
+Native sources additionally support `go test ./...` and `go vet ./...` from the
+corresponding module directories. JavaScript remains the semantic reference;
+native backends are advertised only after fixture-driven conformance and
+integrity verification.
 
-## Remaining distribution work
+## Status and licensing
 
-The current alpha has user-scoped cross-platform launchers, version and project
-diagnostics, one-command installation plus onboarding, content-addressed
-upgrades, verified native-artifact selection and download, rollback, and safe
-removal. Remaining distribution work is limited to Codex marketplace
-publication and broader independent newcomer/platform installation E2E beyond
-the current Windows and CI build evidence.
-
-## Project status and licensing
-
-HEAD Agent Core Plugin is an alpha project. Capability labels above describe
-the current implementation boundary and must not be read as a promise of a
-specific release date.
-
-The repository remains `UNLICENSED` until an explicit distribution license is
-selected. Public source availability alone does not grant redistribution or
-derivative-use rights.
+HEAD Agent Core Plugin is alpha software. The repository remains `UNLICENSED`
+until an explicit distribution license is selected. Public source availability
+alone does not grant redistribution or derivative-use rights.
