@@ -87,7 +87,8 @@ async function runGlobal(args, expectedExitCode = 0) {
 
 function assertReadmeContract() {
   const readme = fs.readFileSync(path.join(sourceRoot, "README.md"), "utf8");
-  for (const required of [
+  const koreanReadme = fs.readFileSync(path.join(sourceRoot, "README.ko.md"), "utf8");
+  const sharedRequired = [
     "--native auto",
     "head-agent onboarding-status",
     '"disposition": "accept-all"',
@@ -97,7 +98,17 @@ function assertReadmeContract() {
     "head-agent world-docs-build",
     "head-agent resume",
     "distribution.mjs uninstall",
-  ]) assert(readme.includes(required), `README newcomer contract is missing: ${required}`);
+  ];
+  for (const required of sharedRequired) {
+    assert(readme.includes(required), `README newcomer contract is missing: ${required}`);
+    assert(koreanReadme.includes(required), `Korean README newcomer contract is missing: ${required}`);
+  }
+  for (const required of ["[한국어](README.ko.md)", "## Who it is for", "## Why use it"]) {
+    assert(readme.includes(required), `README audience contract is missing: ${required}`);
+  }
+  for (const required of ["[English](README.md)", "## 누구에게 필요한가", "## 왜 사용해야 하는가"]) {
+    assert(koreanReadme.includes(required), `Korean README audience contract is missing: ${required}`);
+  }
 }
 
 try {

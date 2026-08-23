@@ -12,6 +12,8 @@ without making a model session, Git host, or GraphDB the hidden source of truth.
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
 
+[Who it is for](#who-it-is-for) ·
+[Why use it](#why-use-it) ·
 [Install](#install) ·
 [First project](#first-project) ·
 [Core model](#core-model) ·
@@ -20,13 +22,6 @@ without making a model session, Git host, or GraphDB the hidden source of truth.
 [Docs](#documentation)
 
 </div>
-
-> [!NOTE]
-> HEAD Agent Core Plugin is inspired by
-> [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core) and
-> independently reworked as a provider-neutral plugin. It is not an official
-> upstream release or a drop-in replacement. See the
-> [source-grounded comparison](docs/original-head-core-comparison.md).
 
 ## What HEAD Agent Core does
 
@@ -41,6 +36,45 @@ keeps four things connected across Codex, OpenCode, and future runtimes:
 The project remains usable when a provider session disappears. Inferred product
 concepts remain candidates until the user reviews them. Graphs and documents
 remain rebuildable views instead of silently becoming authority.
+
+## Who it is for
+
+HEAD Agent Core is for people who must keep an AI-assisted product coherent
+across more than one prompt, task, agent, or runtime.
+
+| You are... | HEAD helps you... |
+| --- | --- |
+| A solo developer building a product over many AI sessions | Preserve intent, decisions, current position, and the next expected result without re-explaining the project from scratch. |
+| A technical lead coordinating several agents or bounded workers | Separate HEAD, implementation, and review responsibilities while integrating results into one whole outcome. |
+| A maintainer working in a large or long-lived repository | Select minimum sufficient evidence for one task instead of treating the whole repository as prompt context. |
+| A team that uses Codex, OpenCode, or changing model providers | Keep one provider-independent `.head/` authority rather than separate project truth in each session. |
+| A team that needs auditability, governance, or reliable handoff | Retain the evidence, explicit decisions, execution lineage, and recovery state behind each accepted change. |
+| A product team connecting intent to implementation | Traverse reviewed Requirements and Features through code, tests, revisions, ChangeSets, and review evidence. |
+
+It may be unnecessary for a one-off script, a short experiment with no recovery
+needs, or work where conversation history is sufficient. It is also a poor fit
+when inferred model output should be accepted without review, or when GraphDB is
+expected to become the unquestioned source of project meaning.
+
+## Why use it
+
+The main reason to use HEAD Agent Core is to turn an agent's one-session
+capability into reliable development continuity. It does not primarily make a
+model write better code; it keeps the purpose, authority, evidence, and next
+direction of many coding results from drifting apart.
+
+| Common AI-development problem | What HEAD adds |
+| --- | --- |
+| A new or compacted session loses the actual direction | P2 checkpoints preserve purpose, approved decisions, current position, and the next expected result without trusting a conversation summary. |
+| Model inference silently becomes a product decision | Candidates remain P3 evidence until an exact P1 ReviewDecision authorizes a scoped change. |
+| More context creates more noise and less reproducibility | The Context Compiler selects bounded evidence under an explicit budget and records exclusions and Unknowns. |
+| Agents and runtimes build different interpretations of the project | Codex, OpenCode, HEAD, and bounded workers operate from the same canonical `.head/` identities. |
+| Code changes survive but their rationale disappears | Plans, contracts, ResultPackets, reviews, ChangeSets, and checkpoints form a verifiable execution lineage. |
+| A graph or database gradually becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable P4 views over verified Canon and records. |
+
+> A conventional coding agent optimizes the current task. HEAD Agent Core
+> optimizes for many tasks to accumulate into the same reviewed product
+> direction.
 
 ## Install
 
@@ -434,6 +468,12 @@ For exact claims and acceptance evidence, use the subsystem documents and source
 verification rather than inferring capability from this summary.
 
 ## Design principles
+
+HEAD Agent Core Plugin is inspired by
+[Won6314/head-agent-core](https://github.com/Won6314/head-agent-core) and
+independently reworked as a provider-neutral plugin. It is not an official
+upstream release or a drop-in replacement. See the
+[source-grounded comparison](docs/original-head-core-comparison.md).
 
 This implementation retains the foundational HEAD principles while expressing
 them through provider-neutral contracts:
