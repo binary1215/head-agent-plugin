@@ -10,6 +10,7 @@ const INCLUDE_ENTRIES = [
   ".codex-plugin",
   ".mcp.json",
   "README.md",
+  "README.ko.md",
   "assets",
   "docs",
   "native",

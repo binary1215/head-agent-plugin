@@ -45,7 +45,7 @@ function assertRuntimeSurfaceIsolated(root) {
 
 function copySourceFixture() {
   fs.mkdirSync(upgradedSource, { recursive: true });
-  for (const entry of [".codex-plugin", ".mcp.json", "README.md", "assets", "docs", "native", "package.json", "scripts", "skills"]) {
+  for (const entry of [".codex-plugin", ".mcp.json", "README.md", "README.ko.md", "assets", "docs", "native", "package.json", "scripts", "skills"]) {
     const source = path.join(sourceRoot, entry);
     if (!fs.existsSync(source)) continue;
     fs.cpSync(source, path.join(upgradedSource, entry), {
@@ -111,6 +111,9 @@ try {
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-live-provider-coordination.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-hostless-session-recovery.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "lib", "workspace-host-export-driver.mjs")), true);
+  assert.equal(fs.existsSync(path.join(installedReleaseRoot, "README.ko.md")), true);
+  assert.equal(fs.readFileSync(path.join(installedReleaseRoot, "README.md"), "utf8").includes("[한국어](README.ko.md)"), true);
+  assert.equal(fs.readFileSync(path.join(installedReleaseRoot, "README.ko.md"), "utf8").includes("[English](README.md)"), true);
   assertRuntimeSurfaceIsolated(installedReleaseRoot);
   assert.equal(fs.existsSync(path.join(projectRoot, ".git")), false);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);

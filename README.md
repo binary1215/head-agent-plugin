@@ -2,6 +2,8 @@
 
 # HEAD Agent Core Plugin
 
+[English](README.md) | [한국어](README.ko.md)
+
 **Keep product meaning, repository evidence, and agent execution connected<br>
 without making a model session, Git host, or GraphDB the hidden source of truth.**
 
