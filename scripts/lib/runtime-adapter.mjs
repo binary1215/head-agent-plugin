@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 export const RUNTIME_ADAPTER_CONTRACT_VERSION = "0.1.0";
-export const RUNTIME_ADAPTER_RUNTIMES = Object.freeze(["codex", "opencode"]);
+export const RUNTIME_ADAPTER_RUNTIMES = Object.freeze(["claude", "codex", "opencode"]);
 export const RUNTIME_ADAPTER_PLATFORMS = Object.freeze(["darwin", "linux", "win32"]);
 
 export const AGENT_RUNTIME_CONTROL_OPERATIONS = Object.freeze(["start", "resume", "stream", "interrupt", "close"]);

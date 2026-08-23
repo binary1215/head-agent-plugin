@@ -55,8 +55,8 @@ The primary public command composes project creation or verification,
 installation-projection convergence, and onboarding start or resume:
 
 ```powershell
-node scripts/head.mjs init C:\path\to\project --runtime codex,opencode --input .\onboarding.json
-node scripts/head.mjs resume C:\path\to\project --runtime codex,opencode
+node scripts/head.mjs init C:\path\to\project --runtime claude,codex,opencode --input .\onboarding.json
+node scripts/head.mjs resume C:\path\to\project --runtime claude,codex,opencode
 ```
 
 The first command creates exactly one project-scoped HEAD Session and starts
@@ -69,7 +69,7 @@ verified release path; user-modified or unowned configuration fails closed.
 The same path can be invoked during installation:
 
 ```powershell
-.\scripts\install.ps1 --project C:\path\to\project --runtime codex,opencode --onboarding-input .\onboarding.json
+.\scripts\install.ps1 --project C:\path\to\project --runtime claude,codex,opencode --onboarding-input .\onboarding.json
 ```
 
 ## Low-level onboarding restart

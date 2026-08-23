@@ -1,6 +1,6 @@
 ---
 name: head-agent-onboarding
-description: Guide first-use or resumed HEAD Agent project onboarding inside a Codex or OpenCode conversation, including bounded source/storage choices, evidence-linked Feature review, and graph/context/document readiness. Use when the user asks to initialize, onboard, inspect inferred product concepts, or finish HEAD readiness; use the general head-agent-core skill for post-onboarding execution-lineage work.
+description: Guide first-use or resumed HEAD Agent project onboarding inside a Claude Code, Codex, or OpenCode conversation, including bounded source/storage choices, evidence-linked Feature review, and graph/context/document readiness. Use when the user asks to initialize, onboard, inspect inferred product concepts, or finish HEAD readiness; use the general head-agent-core skill for post-onboarding execution-lineage work.
 ---
 
 # HEAD Agent conversational onboarding
@@ -16,7 +16,7 @@ for the normal path.
 2. If status is `not_initialized`, infer only safe defaults:
    - existing project when repository evidence already exists;
    - local storage unless the user explicitly selects GraphDB;
-   - Codex and OpenCode runtimes when both are desired.
+   - Claude Code, Codex, and OpenCode runtimes when all three are desired.
 3. Ask only for material missing choices. A mixed or copied repository needs a
    user-selected project-relative source scope. A new project needs a structured
    brief. GraphDB selection needs endpoint, database, and environment variable

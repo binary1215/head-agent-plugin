@@ -46,6 +46,12 @@ import {
   extractOpenCodeStructuredResult,
 } from "./lib/runtime-opencode-run.mjs";
 import {
+  buildClaudePrintArguments,
+  classifyClaudeProviderDiagnostics,
+  executeClaudeRuntimeInvocation,
+  extractClaudeStructuredResult,
+} from "./lib/runtime-claude-print.mjs";
+import {
   applyRuntimeRunResult,
   normalizeRuntimeRunResultTextProjection,
   readRuntimeInvocationResult,
@@ -117,9 +123,11 @@ function recordingSpawn(command, args, options) {
 }
 
 function evidenceFixtureOutput(command, args) {
-  const runtime = path.basename(command).toLowerCase().includes("opencode") ? "opencode" : "codex";
+  const basename = path.basename(command).toLowerCase();
+  const runtime = basename.includes("opencode") ? "opencode" : basename.includes("claude") ? "claude" : "codex";
   const key = args.join(" ");
   if (key === "--version") return `${runtime} 1.2.3\n`;
+  if (runtime === "claude" && key === "--help") return "-p, --print\n--output-format stream-json\n--json-schema\n--no-session-persistence\n-r, --resume\n-c, --continue\n--permission-mode\n--tools\n--allowedTools\n--disable-slash-commands\n--setting-sources\n--strict-mcp-config\n--mcp-config\n";
   if (runtime === "codex" && key === "--help") return "exec\nmcp-server\napp-server\n";
   if (runtime === "codex" && key === "exec --help") return "Run Codex non-interactively\n--json\n--output-schema\n--color\n--sandbox\n--skip-git-repo-check\n--cd\n--ephemeral\nresume\n";
   if (runtime === "codex" && key === "app-server --help") return "stdio://\ngenerate-json-schema\n--listen\n";
@@ -131,7 +139,7 @@ function evidenceFixtureOutput(command, args) {
 
 function evidenceFixtureSpawn(command, args, options) {
   const output = evidenceFixtureOutput(command, args);
-  return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", output], {
+  return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", "--", output], {
     ...options,
     cwd: pluginRoot,
   });
@@ -139,7 +147,7 @@ function evidenceFixtureSpawn(command, args, options) {
 
 function codexInvocationDriftFixtureSpawn(command, args, options) {
   const output = evidenceFixtureOutput(command, args).replace("--sandbox\n", "");
-  return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", output], {
+  return recordingSpawn(process.execPath, ["-e", "process.stdout.write(process.argv[1])", "--", output], {
     ...options,
     cwd: pluginRoot,
   });
@@ -207,6 +215,28 @@ process.stdin.on('end', () => {
   write({ type: 'step_start', timestamp: 1, sessionID, part: { type: 'step-start', sessionID } });
   write({ type: 'text', timestamp: 2, sessionID, part: { type: 'text', sessionID, text: JSON.stringify(result), time: { start: 1, end: 2 } } });
   write({ type: 'step_finish', timestamp: 3, sessionID, part: { type: 'step-finish', sessionID, tokens: { input: input.length, output: 1 } } });
+});
+`;
+
+const CLAUDE_PRINT_PROTOCOL_FIXTURE = String.raw`
+let input = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => { input = Buffer.concat([input, chunk]); });
+process.stdin.on('end', () => {
+  const result = {
+    schemaVersion: 1,
+    kind: 'RuntimeStructuredResult',
+    protocolVersion: '0.1.0',
+    outcome: 'Claude protocol fixture completed.',
+    evidence: ['Authorized input reached the exact fixture child.'],
+    planDelta: '',
+    impactRadius: [],
+    verification: ['Claude structured output normalized into the common result.'],
+    unknowns: [],
+  };
+  const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
+  write({ type: 'system', subtype: 'init', session_id: 'claude-protocol-fixture-session' });
+  write({ type: 'assistant', message: { role: 'assistant', content: [] }, session_id: 'claude-protocol-fixture-session' });
+  write({ type: 'result', subtype: 'success', is_error: false, structured_output: result, result: JSON.stringify(result), session_id: 'claude-protocol-fixture-session', input_bytes: input.length });
 });
 `;
 
@@ -337,6 +367,41 @@ async function main() {
       "opencode.rate-limit",
       "opencode.transport",
     ]), "OpenCode provider diagnostics were not classified deterministically.");
+    const normalizedClaudeResult = extractClaudeStructuredResult({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      structured_output: {
+        schemaVersion: 1,
+        kind: "RuntimeStructuredResult",
+        protocolVersion: "0.1.0",
+        outcome: "Claude output normalized.",
+        evidence: ["bounded event"],
+        planDelta: "",
+        impactRadius: [],
+        verification: ["schema verified"],
+        unknowns: [],
+      },
+    }, { scopeKind: "session" });
+    assert(normalizedClaudeResult?.kind === "RuntimeStructuredResult"
+      && normalizedClaudeResult.planDelta === ""
+      && normalizedClaudeResult.impactRadius.length === 0,
+    "Claude result event did not normalize into the provider-neutral Session result contract.");
+    const classifiedClaudeDiagnostics = classifyClaudeProviderDiagnostics({
+      record: { type: "result", subtype: "error", is_error: true, result: "Permission denied while connecting" },
+      stderr: "rate limit 429",
+      exitCode: 1,
+      structuredResultObserved: false,
+      eventTypes: ["error"],
+    });
+    assert(JSON.stringify(classifiedClaudeDiagnostics) === JSON.stringify([
+      "claude.missing-structured-result",
+      "claude.nonzero-exit",
+      "claude.permission",
+      "claude.provider-error",
+      "claude.rate-limit",
+      "claude.transport",
+    ]), "Claude provider diagnostics were not classified deterministically.");
     const normalizedRunText = normalizeRuntimeRunResultTextProjection({
       outcome: "  completed  ",
       planDelta: "  wrote one file  ",
@@ -350,14 +415,14 @@ async function main() {
       unknowns: ["none beyond bounded verification"],
     }), "Runtime Run result text projection diverged from Execution Lineage normalization.");
     fs.writeFileSync(path.join(resolvedRoot, "example.mjs"), "export const answer = 42;\n", "utf8");
-    const initialized = initializeProject({ root: resolvedRoot, pluginRoot, runtimes: ["codex", "opencode"] });
+    const initialized = initializeProject({ root: resolvedRoot, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
     assert(initialized.status === "ready", "Fixture project initialization failed.");
     const initializedProject = inspectProject(resolvedRoot);
     assert(initializedProject.status === "ready", "Fixture project did not remain ready after initialization.");
     assert(resolveRuntimeOperationalStateRoot({ projectRoot: resolvedRoot, create: false }) === fs.realpathSync(resolvedOperationalRoot), "Host-local operational root did not resolve exactly.");
     const runtimeFixtureBin = path.join(resolvedOperationalRoot, "runtime-discovery-fixture");
     fs.mkdirSync(runtimeFixtureBin, { recursive: false });
-    for (const runtime of ["codex", "opencode"]) {
+    for (const runtime of ["claude", "codex", "opencode"]) {
       const executableName = process.platform === "win32" ? `${runtime}.exe` : runtime;
       const executablePath = path.join(runtimeFixtureBin, executableName);
       fs.writeFileSync(executablePath, `head-agent ${runtime} discovery fixture\n`, "utf8");
@@ -404,12 +469,12 @@ async function main() {
       persist: true,
     }).artifact;
     const versionEvidence = await buildRuntimeVersionEvidence({
-      runtimes: ["codex", "opencode"],
+      runtimes: ["claude", "codex", "opencode"],
       environment: evidenceEnvironment,
       spawnImplementation: evidenceFixtureSpawn,
     });
     const protocolEvidence = await buildRuntimeProtocolEvidence({
-      runtimes: ["codex", "opencode"],
+      runtimes: ["claude", "codex", "opencode"],
       versionEvidence,
       environment: evidenceEnvironment,
       spawnImplementation: evidenceFixtureSpawn,
@@ -528,7 +593,7 @@ async function main() {
     }
     assert(invalidRuntimeSelectionRejected, "Unqualified runtime model selection was accepted.");
     const sessionResults = [];
-    for (const runtime of ["codex", "opencode"]) {
+    for (const runtime of ["claude", "codex", "opencode"]) {
       const request = `Inspect the fixture locally through the ${runtime} Session lane without changing Product Canon.`;
       const sessionAuthorization = buildRuntimeInvocationAuthorization({
         root: resolvedRoot,
@@ -694,6 +759,53 @@ async function main() {
       "OpenCode invocation record did not round-trip.");
     assert(!JSON.stringify(recordedOpenCodeProtocolExecution).includes(opencodeProtocolRequest),
       "OpenCode invocation record persisted the raw Session request.");
+    const claudeProtocolRequest = "Return one bounded structured Session result through the Claude print stream-json protocol fixture.";
+    const claudeProtocolAuthorization = buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "claude",
+      scope: { kind: "session", request: claudeProtocolRequest },
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000 },
+      persist: true,
+    }).authorization;
+    const claudeObservation = protocolEvidence.observations.find((item) => item.runtime === "claude");
+    const claudeArguments = buildClaudePrintArguments({ workspaceMode: "workspace-write", model: "anthropic/claude-test" });
+    assert(claudeArguments.includes("--no-session-persistence")
+      && claudeArguments.includes("--strict-mcp-config")
+      && claudeArguments.includes("Read,Glob,Grep,Edit,Write")
+      && !claudeArguments.includes("--dangerously-skip-permissions"),
+    "Claude fixed one-shot arguments weakened the authorization or persistence boundary.");
+    const claudeProtocolExecution = await executeClaudeRuntimeInvocation({
+      root: resolvedRoot,
+      authorization: claudeProtocolAuthorization,
+      sessionRequest: claudeProtocolRequest,
+      protocolEvidence,
+      projectBinding,
+      targetResolver: () => ({ executablePath: process.execPath, observation: claudeObservation.executable }),
+      supervisorSelection,
+      providerArguments: ["-e", CLAUDE_PRINT_PROTOCOL_FIXTURE],
+      evidenceMode: "protocol-fixture",
+      onProcessEvent: recordProcess,
+      persist: true,
+    });
+    assert(claudeProtocolExecution.receipt.status === "completed"
+      && claudeProtocolExecution.actualProviderInvoked === false
+      && claudeProtocolExecution.receipt.providerBoundary.structuredResultObserved === true
+      && claudeProtocolExecution.receipt.processBoundary.descendantTreeOwnershipValidated === true,
+    "Claude print protocol fixture did not complete through native descendant-tree supervision.");
+    assert(claudeProtocolExecution.draft.providerResult?.outcome === "Claude protocol fixture completed."
+      && claudeProtocolExecution.draft.freshHeadReviewRequired === false,
+    "Claude structured Session result did not preserve the common result boundary.");
+    const recordedClaudeProtocolExecution = readRuntimeInvocationResult({
+      root: resolvedRoot,
+      authorizationId: claudeProtocolAuthorization.authorizationId,
+    });
+    assert(recordedClaudeProtocolExecution.application === null
+      && recordedClaudeProtocolExecution.draft.draftHash === claudeProtocolExecution.draft.draftHash
+      && !JSON.stringify(recordedClaudeProtocolExecution).includes(claudeProtocolRequest),
+    "Claude invocation record did not round-trip without raw request persistence.");
     const legacyEventRequest = "Reproduce the historical Codex large-event boundary with the former explicit 128 KiB limit.";
     const legacyEventAuthorization = buildRuntimeInvocationAuthorization({
       root: resolvedRoot,
@@ -784,7 +896,7 @@ async function main() {
     "Low-risk Session workspace-write was not authorized through the lightweight lane.");
     const run = startRun({ root: resolvedRoot, executionContractId: contract.executionContractId }).run;
     const results = [];
-    for (const runtime of ["codex", "opencode"]) {
+    for (const runtime of ["claude", "codex", "opencode"]) {
       const authorization = buildRuntimeInvocationAuthorization({
         root: resolvedRoot,
         runtime,

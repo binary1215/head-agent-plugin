@@ -27,8 +27,8 @@ function parse(argv) {
 function usage() {
   return {
     commands: [
-      "distribution install [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime codex,opencode --onboarding-input <json>]",
-      "distribution upgrade [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime codex,opencode --onboarding-input <json>]",
+      "distribution install [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime claude,codex,opencode --onboarding-input <json>]",
+      "distribution upgrade [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime claude,codex,opencode --onboarding-input <json>]",
       "distribution status [--install-root <directory>] [--bin-dir <directory>]",
       "distribution doctor [--install-root <directory>] [--bin-dir <directory>]",
       "distribution rollback [--install-root <directory>] [--bin-dir <directory>]",

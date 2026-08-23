@@ -24,7 +24,7 @@ const digest = (value) => crypto.createHash("sha256").update(value).digest("hex"
 
 function runtimeName(value) {
   const runtime = String(value || "").trim().toLowerCase();
-  if (!new Set(["codex", "opencode"]).has(runtime)) fail("Runtime continuation requires codex or opencode.", "INVALID_RUNTIME_CONTINUATION_RUNTIME");
+  if (!new Set(["claude", "codex", "opencode"]).has(runtime)) fail("Runtime continuation requires claude, codex, or opencode.", "INVALID_RUNTIME_CONTINUATION_RUNTIME");
   return runtime;
 }
 

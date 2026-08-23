@@ -95,7 +95,7 @@ export function inspectConversationalOnboarding({ root = ".", candidateLimit = 2
     status: "not_initialized",
     nextAction: "initialize_or_resume",
     materialChoicesRequired: choicesFor("not_initialized"),
-    defaults: { projectMode: "existing", storageMode: "local", runtimes: ["codex", "opencode"] },
+    defaults: { projectMode: "existing", storageMode: "local", runtimes: ["claude", "codex", "opencode"] },
     project: { projectId: null, sessionId: null },
     storage: { mode: "unselected", graphdbConfigured: false, credentialValuesPersisted: false },
     review: compactCandidateSet(null, limit),

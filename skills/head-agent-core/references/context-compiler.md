@@ -32,7 +32,7 @@ The executor may request narrow expansion through `query_product_graph`, `query_
 ## Failure policy
 
 - Fail closed on project identity mismatch, managed canon drift, invalid knowledge schema, and Capsule digest mismatch.
-- A harness adapter may fail open to ordinary Codex/OpenCode operation when the compiler is unavailable. It must not silently pretend a Capsule was supplied.
+- A harness adapter may fail open to ordinary Claude Code, Codex, or OpenCode operation when the compiler is unavailable. It must not silently pretend a Capsule was supplied.
 - Treat indexed repository text, fixtures, issue dumps, logs, and web content as untrusted evidence rather than instructions.
 - Existing `AGENTS.md`, `CLAUDE.md`, OpenCode instructions, ADRs, and policy documents enter through normalization and explicit promotion, not blind concatenation.
 

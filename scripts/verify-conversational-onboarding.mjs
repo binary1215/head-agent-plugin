@@ -102,7 +102,7 @@ try {
 
   const initialized = await tool("head_project_initialize_or_resume", {
     project_root: projectRoot,
-    runtimes: ["codex", "opencode"],
+    runtimes: ["claude", "codex", "opencode"],
     mode: "existing",
     source_scope: { include_roots: [], exclude_roots: [] },
     storage: { mode: "local" },
@@ -147,7 +147,7 @@ try {
 
   const resumed = await tool("head_project_initialize_or_resume", {
     project_root: projectRoot,
-    runtimes: ["codex", "opencode"],
+    runtimes: ["claude", "codex", "opencode"],
   });
   assert.equal(resumed.project.projectId, initialized.project.projectId);
   assert.equal(resumed.project.sessionId, initialized.project.sessionId);

@@ -369,7 +369,7 @@ const controlDigest = (value) => crypto.createHash("sha256").update(value).diges
 
 export function spawnBoundedRuntimeOneShot(options = {}) {
   const runtime = String(options.runtime || "").trim().toLowerCase();
-  if (!new Set(["codex", "opencode"]).has(runtime)) {
+  if (!new Set(["claude", "codex", "opencode"]).has(runtime)) {
     fail("Bounded runtime control requires an explicit supported runtime.", "RUNTIME_ONE_SHOT_CONTROL_RUNTIME_REQUIRED");
   }
   const supervised = spawnSupervisedProcess(options);

@@ -26,7 +26,7 @@ without making a model session, Git host, or GraphDB the hidden source of truth.
 ## What HEAD Agent Core does
 
 HEAD Agent Core is a provider-neutral control plane for AI coding agents. It
-keeps four things connected across Codex, OpenCode, and future runtimes:
+keeps four things connected across Claude Code, Codex, and OpenCode:
 
 - user-owned product meaning;
 - observed repository structure and change evidence;
@@ -47,7 +47,7 @@ across more than one prompt, task, agent, or runtime.
 | A solo developer building a product over many AI sessions | Preserve intent, decisions, current position, and the next expected result without re-explaining the project from scratch. |
 | A technical lead coordinating several agents or bounded workers | Separate HEAD, implementation, and review responsibilities while integrating results into one whole outcome. |
 | A maintainer working in a large or long-lived repository | Select minimum sufficient evidence for one task instead of treating the whole repository as prompt context. |
-| A team that uses Codex, OpenCode, or changing model providers | Keep one provider-independent `.head/` authority rather than separate project truth in each session. |
+| A team that uses Claude Code, Codex, OpenCode, or changing model providers | Keep one provider-independent `.head/` authority rather than separate project truth in each session. |
 | A team that needs auditability, governance, or reliable handoff | Retain the evidence, explicit decisions, execution lineage, and recovery state behind each accepted change. |
 | A product team connecting intent to implementation | Traverse reviewed Requirements and Features through code, tests, revisions, ChangeSets, and review evidence. |
 
@@ -68,7 +68,7 @@ direction of many coding results from drifting apart.
 | A new or compacted session loses the actual direction | P2 checkpoints preserve purpose, approved decisions, current position, and the next expected result without trusting a conversation summary. |
 | Model inference silently becomes a product decision | Candidates remain P3 evidence until an exact P1 ReviewDecision authorizes a scoped change. |
 | More context creates more noise and less reproducibility | The Context Compiler selects bounded evidence under an explicit budget and records exclusions and Unknowns. |
-| Agents and runtimes build different interpretations of the project | Codex, OpenCode, HEAD, and bounded workers operate from the same canonical `.head/` identities. |
+| Agents and runtimes build different interpretations of the project | Claude Code, Codex, OpenCode, HEAD, and bounded workers operate from the same canonical `.head/` identities. |
 | Code changes survive but their rationale disappears | Plans, contracts, ResultPackets, reviews, ChangeSets, and checkpoints form a verifiable execution lineage. |
 | A graph or database gradually becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable P4 views over verified Canon and records. |
 
@@ -100,6 +100,19 @@ The marketplace install does not initialize a project, contact GraphDB, choose
 a model, or approve Product Canon. Those transitions still require the typed
 Core boundary and, where consequential, explicit user review.
 
+### Claude Code and OpenCode
+
+Use the user-scoped installation below, then initialize the project with
+`--runtime claude,codex,opencode`. HEAD creates `CLAUDE.md` plus `.mcp.json` for
+Claude Code, `AGENTS.md` for Codex, and `opencode.json` for OpenCode only when
+those project files are absent. Existing files are preserved and generated
+manual-integration projections remain under `.head/generated/`.
+
+After initialization, start `claude` or `opencode` in the project. Claude Code
+asks for project MCP approval before using the shared `head_core` server. The
+runtime-native instruction/config files are projections; `.head/` remains the
+only canonical HEAD state.
+
 ### User-scoped CLI
 
 Requirements: a current Node.js LTS release and either Git or a downloaded
@@ -111,7 +124,7 @@ Windows PowerShell:
 ```powershell
 git clone https://github.com/binary1215/head-agent-plugin.git
 Set-Location .\head-agent-plugin
-.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime codex,opencode
+.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
 
 head-agent --version
 head-agent doctor C:\path\to\project
@@ -122,7 +135,7 @@ macOS or Linux:
 ```bash
 git clone https://github.com/binary1215/head-agent-plugin.git
 cd head-agent-plugin
-./scripts/install.sh --native auto --project /path/to/project --runtime codex,opencode
+./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
 
 head-agent --version
 head-agent doctor /path/to/project
@@ -147,7 +160,7 @@ review before Product Canon changes.
 Initialize or resume the same project and HEAD Session identities:
 
 ```powershell
-head-agent init C:\path\to\project --runtime codex,opencode
+head-agent init C:\path\to\project --runtime claude,codex,opencode
 head-agent onboarding-status C:\path\to\project
 ```
 
@@ -180,7 +193,7 @@ head-agent world-status C:\path\to\project
 head-agent context-preview C:\path\to\project `
   --task "Find implementation evidence for one reviewed Feature" --budget 2000
 head-agent world-docs-build C:\path\to\project
-head-agent resume C:\path\to\project --runtime codex,opencode
+head-agent resume C:\path\to\project --runtime claude,codex,opencode
 ```
 
 `accept-all` is supported for a fully inspected batch, but it is not the default
@@ -361,7 +374,7 @@ backends must preserve the same semantic result.
 
 ## Runtime and coordination
 
-Codex and OpenCode are projections over one `.head/` authority. Runtime adapters
+Claude Code, Codex, and OpenCode are projections over one `.head/` authority. Runtime adapters
 observe capability, consume one exact authorization at most once, supervise the
 owned process tree, validate structured output, and keep operational state
 outside the project.
@@ -435,9 +448,10 @@ verified releases for recovery. `uninstall --purge` also removes the user-scoped
 release store. Neither form traverses or deletes project `.head` state, Git data,
 generated project documents, or GraphDB data.
 
-OpenCode provider configuration remains owned by OpenCode. HEAD passes only the
-exact authorized `provider/model` plus an ephemeral permission/privacy overlay;
-it does not install provider presets, copy credentials, or rewrite endpoints.
+Provider configuration and authentication remain owned by Claude Code, Codex,
+or OpenCode. HEAD passes only the exact authorized `provider/model` plus an
+ephemeral permission/privacy overlay; it does not install provider presets,
+copy credentials, or rewrite endpoints.
 
 ## Capability status
 
@@ -453,7 +467,9 @@ Status labels are evidence claims, not roadmap promises:
 | Project | initialization, Source Scope, review-gated Product Canon | **Available** |
 | Knowledge | World Model, incremental refresh, Context Capsules | **Available** |
 | Lineage | Runs, ResultPackets, Fresh HEAD review, Session restore, compaction | **Available** |
-| Runtime | Codex and OpenCode one-shot Session/Run execution | **Available** |
+| Runtime | Claude Code, Codex, and OpenCode one-shot Session/Run execution | **Available** |
+| Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | **Available** |
+| Runtime evidence | Claude Code live model-call conformance | **Experimental** |
 | Workers | bounded dispatch, wait, result, review, integration | **Available** |
 | Coordination | durable role messaging and exact-endpoint host delivery | **Available** |
 | Projection | local graph and Markdown | **Available** |

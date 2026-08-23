@@ -26,7 +26,7 @@
 ## HEAD Agent Core가 하는 일
 
 HEAD Agent Core는 AI 코딩 에이전트를 위한 공급자 중립적 제어 평면입니다.
-Codex, OpenCode 및 향후 런타임 전반에서 다음 네 가지를 연결된 상태로
+Claude Code, Codex, OpenCode 전반에서 다음 네 가지를 연결된 상태로
 유지합니다.
 
 - 사용자가 소유하는 제품 의미
@@ -48,7 +48,7 @@ AI와 함께 개발하는 제품의 일관성을 유지해야 하는 사람을 �
 | 여러 AI 세션에 걸쳐 제품을 만드는 1인 개발자 | 프로젝트를 처음부터 다시 설명하지 않고도 의도, 결정, 현재 위치, 다음 기대 결과를 보존합니다. |
 | 여러 에이전트나 범위가 제한된 워커를 조율하는 테크 리드 | HEAD, 구현, 검토 책임을 분리하면서 결과를 하나의 전체 성과로 통합합니다. |
 | 크거나 오래 유지된 저장소를 관리하는 유지보수자 | 저장소 전체를 프롬프트로 취급하지 않고 작업 하나에 필요한 최소 충분 증거를 선택합니다. |
-| Codex, OpenCode 또는 여러 모델 공급자를 사용하는 팀 | 세션마다 별도의 프로젝트 진실을 만들지 않고 공급자 독립적인 하나의 `.head/` 권한을 유지합니다. |
+| Claude Code, Codex, OpenCode 또는 여러 모델 공급자를 사용하는 팀 | 세션마다 별도의 프로젝트 진실을 만들지 않고 공급자 독립적인 하나의 `.head/` 권한을 유지합니다. |
 | 감사, 거버넌스 또는 안정적인 인수인계가 필요한 팀 | 승인된 변경마다 근거가 된 증거, 명시적 결정, 실행 계보, 복구 상태를 보존합니다. |
 | 제품 의도와 구현을 연결해야 하는 제품 팀 | 검토된 Requirement와 Feature에서 코드, 테스트, 리비전, ChangeSet, 검토 증거까지 탐색합니다. |
 
@@ -69,7 +69,7 @@ HEAD Agent Core를 사용하는 가장 큰 이유는 에이전트의 일회성 �
 | 새 세션이나 압축된 세션이 실제 방향을 잃음 | 대화 요약을 신뢰하지 않고 P2 체크포인트에 목적, 승인된 결정, 현재 위치, 다음 기대 결과를 보존합니다. |
 | 모델 추론이 암묵적으로 제품 결정이 됨 | 정확한 P1 ReviewDecision이 범위가 지정된 변경을 승인하기 전까지 후보를 P3 증거로 유지합니다. |
 | 더 많은 컨텍스트가 더 많은 잡음과 낮은 재현성을 만듦 | Context Compiler가 명시적인 예산 안에서 제한된 증거를 선택하고 제외 항목과 Unknown을 기록합니다. |
-| 에이전트와 런타임마다 프로젝트를 다르게 해석함 | Codex, OpenCode, HEAD, 범위가 제한된 워커가 동일한 정본 `.head/` 식별자를 기준으로 동작합니다. |
+| 에이전트와 런타임마다 프로젝트를 다르게 해석함 | Claude Code, Codex, OpenCode, HEAD, 범위가 제한된 워커가 동일한 정본 `.head/` 식별자를 기준으로 동작합니다. |
 | 코드 변경은 남지만 변경 이유가 사라짐 | 계획, 계약, ResultPacket, 검토, ChangeSet, 체크포인트가 검증 가능한 실행 계보를 구성합니다. |
 | 그래프나 데이터베이스가 점차 숨은 권한이 됨 | GraphSnapshot, GraphDB, Markdown, 연속성 뷰를 검증된 Canon과 기록에서 재구축 가능한 P4 뷰로 유지합니다. |
 
@@ -101,6 +101,18 @@ codex plugin add head-agent-core@head-agent-plugin
 타입이 지정된 Core 경계를 거치며, 중요한 경우 사용자의 명시적 검토를
 요구합니다.
 
+### Claude Code 및 OpenCode
+
+아래 사용자 범위 설치를 사용한 뒤 프로젝트를
+`--runtime claude,codex,opencode`로 초기화합니다. HEAD는 해당 프로젝트 파일이
+없을 때만 Claude Code용 `CLAUDE.md`와 `.mcp.json`, Codex용 `AGENTS.md`,
+OpenCode용 `opencode.json`을 만듭니다. 기존 파일은 보존하고 수동 통합용 생성
+프로젝션은 `.head/generated/`에 둡니다.
+
+초기화 후 프로젝트에서 `claude` 또는 `opencode`를 시작하세요. Claude Code는
+공유 `head_core` 서버를 처음 사용할 때 프로젝트 MCP 승인을 요청합니다.
+런타임별 지시·설정 파일은 프로젝션일 뿐이며, HEAD 정본은 계속 `.head/`입니다.
+
 ### 사용자 범위 CLI
 
 요구 사항은 최신 Node.js LTS와 Git 또는 다운로드한 소스 아카이브입니다.
@@ -111,7 +123,7 @@ Windows PowerShell:
 ```powershell
 git clone https://github.com/binary1215/head-agent-plugin.git
 Set-Location .\head-agent-plugin
-.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime codex,opencode
+.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
 
 head-agent --version
 head-agent doctor C:\path\to\project
@@ -122,7 +134,7 @@ macOS 또는 Linux:
 ```bash
 git clone https://github.com/binary1215/head-agent-plugin.git
 cd head-agent-plugin
-./scripts/install.sh --native auto --project /path/to/project --runtime codex,opencode
+./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
 
 head-agent --version
 head-agent doctor /path/to/project
@@ -147,7 +159,7 @@ head-agent doctor /path/to/project
 동일한 프로젝트 및 HEAD Session 식별자를 초기화하거나 재개합니다.
 
 ```powershell
-head-agent init C:\path\to\project --runtime codex,opencode
+head-agent init C:\path\to\project --runtime claude,codex,opencode
 head-agent onboarding-status C:\path\to\project
 ```
 
@@ -180,7 +192,7 @@ head-agent world-status C:\path\to\project
 head-agent context-preview C:\path\to\project `
   --task "검토된 Feature 하나의 구현 증거 찾기" --budget 2000
 head-agent world-docs-build C:\path\to\project
-head-agent resume C:\path\to\project --runtime codex,opencode
+head-agent resume C:\path\to\project --runtime claude,codex,opencode
 ```
 
 `accept-all`은 전체 후보를 직접 확인한 경우 사용할 수 있지만 기본 권장
@@ -360,7 +372,7 @@ head-agent context-preview C:\path\to\project --task "<task>" --budget 4000
 
 ## 런타임과 역할 통신
 
-Codex와 OpenCode는 하나의 `.head/` 권한을 공유하는 프로젝션입니다. 런타임
+Claude Code, Codex, OpenCode는 하나의 `.head/` 권한을 공유하는 프로젝션입니다. 런타임
 어댑터는 기능을 관찰하고, 정확한 권한을 최대 한 번 소비하며, 소유한 프로세스
 트리를 감독하고, 구조화된 출력을 검증하고, 운영 상태를 프로젝트 밖에
 보관합니다.
@@ -437,10 +449,10 @@ node .\scripts\distribution.mjs uninstall
 제거합니다. 어느 방식도 프로젝트의 `.head` 상태, Git 데이터, 생성된 프로젝트
 문서 또는 GraphDB 데이터를 순회하거나 삭제하지 않습니다.
 
-OpenCode 공급자 설정은 OpenCode가 계속 소유합니다. HEAD는 정확히 승인된
-`provider/model`과 일시적인 권한·개인정보 오버레이만 전달합니다. 공급자
-프리셋을 설치하거나, 자격 증명을 복사하거나, 엔드포인트를 다시 쓰지
-않습니다.
+공급자 설정과 인증은 Claude Code, Codex 또는 OpenCode가 계속 소유합니다.
+HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정보 오버레이만
+전달합니다. 공급자 프리셋을 설치하거나, 자격 증명을 복사하거나,
+엔드포인트를 다시 쓰지 않습니다.
 
 ## 기능 현황
 
@@ -456,7 +468,9 @@ OpenCode 공급자 설정은 OpenCode가 계속 소유합니다. HEAD는 정확�
 | 프로젝트 | 초기화, Source Scope, 검토를 거치는 Product Canon | **사용 가능** |
 | 지식 | World Model, 증분 갱신, Context Capsule | **사용 가능** |
 | 계보 | Run, ResultPacket, Fresh HEAD 검토, Session 복구, 압축 | **사용 가능** |
-| 런타임 | Codex 및 OpenCode 일회성 Session/Run 실행 | **사용 가능** |
+| 런타임 | Claude Code, Codex, OpenCode 일회성 Session/Run 실행 | **사용 가능** |
+| 런타임 증거 | 세 런타임 결정론적 fixture 및 로컬 CLI 기능 probe | **사용 가능** |
+| 런타임 증거 | Claude Code 실제 모델 호출 적합성 | **실험적** |
 | 워커 | 범위가 제한된 전달, 대기, 결과, 검토, 통합 | **사용 가능** |
 | 역할 통신 | 지속 가능한 역할 메시징과 정확한 엔드포인트 전달 | **사용 가능** |
 | 프로젝션 | 로컬 그래프와 Markdown | **사용 가능** |

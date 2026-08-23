@@ -11,7 +11,7 @@ export const WORKSPACE_HOST_COORDINATION_VERSION = "0.1.0";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ROLE = /^[a-z][a-z0-9-]{0,63}$/;
-const RUNTIMES = new Set(["codex", "opencode"]);
+const RUNTIMES = new Set(["claude", "codex", "opencode"]);
 const TRANSPORT = /^[a-z][a-z0-9-]{0,63}$/;
 const MAX_NOTIFICATION_BYTES = 8192;
 

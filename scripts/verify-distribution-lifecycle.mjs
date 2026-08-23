@@ -96,7 +96,7 @@ try {
     "--bin-dir", binDirectory,
     "--native", "off",
     "--project", projectRoot,
-    "--runtime", "codex,opencode",
+    "--runtime", "claude,codex,opencode",
   ]);
   assert.equal(installed.status, "installed");
   assert.equal(installed.version, sourceVersion);
@@ -129,7 +129,7 @@ try {
   const sessionBeforeResume = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "sessions", "current.json"), "utf8"));
   const onboardingStateFile = path.join(projectRoot, ".head", "onboarding", "current.json");
   const onboardingBeforeResume = fs.readFileSync(onboardingStateFile, "utf8");
-  const resumed = runGlobal(["resume", projectRoot, "--runtime", "codex,opencode"]);
+  const resumed = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode"]);
   assert.equal(resumed.projectAction, "resumed");
   assert.equal(resumed.onboardingAction, "review-required");
   assert.equal(resumed.project.projectId, projectBeforeResume.projectId);
@@ -139,7 +139,7 @@ try {
   const managedOpenCodeFile = path.join(projectRoot, "opencode.json");
   const managedOpenCodeBeforeDrift = fs.readFileSync(managedOpenCodeFile, "utf8");
   fs.writeFileSync(managedOpenCodeFile, `${managedOpenCodeBeforeDrift}\nuser-edit`, "utf8");
-  const driftFailure = runGlobalFailure(["resume", projectRoot, "--runtime", "codex,opencode"]);
+  const driftFailure = runGlobalFailure(["resume", projectRoot, "--runtime", "claude,codex,opencode"]);
   assert.equal(driftFailure.code, "PROJECT_NOT_READY");
   assert.equal(fs.readFileSync(managedOpenCodeFile, "utf8"), `${managedOpenCodeBeforeDrift}\nuser-edit`);
   fs.writeFileSync(managedOpenCodeFile, managedOpenCodeBeforeDrift, "utf8");
@@ -183,7 +183,7 @@ try {
     "--bin-dir", binDirectory,
     "--native", "off",
     "--project", projectRoot,
-    "--runtime", "codex,opencode",
+    "--runtime", "claude,codex,opencode",
   ]);
   assert.equal(upgraded.status, "upgraded");
   assert.notEqual(upgraded.releaseId, installed.releaseId);
@@ -196,7 +196,7 @@ try {
   assert.equal(rolledBack.status, "rolled-back");
   assert.equal(rolledBack.activeReleaseId, installed.releaseId);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).version, sourceVersion);
-  const resumedAfterRollback = runGlobal(["resume", projectRoot, "--runtime", "codex,opencode"]);
+  const resumedAfterRollback = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode"]);
   assert.equal(resumedAfterRollback.installationAction, "converged");
   assert.equal(resumedAfterRollback.project.projectId, projectBeforeResume.projectId);
   assert.equal(fs.readFileSync(path.join(projectRoot, "opencode.json"), "utf8").includes(installed.releaseId), true);

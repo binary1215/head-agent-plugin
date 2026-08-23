@@ -26,7 +26,7 @@ const LEGACY_RUNTIME_LIFECYCLE_RECEIPT_VERSION = "0.5.0";
 const LEGACY_RUNTIME_RESULT_DRAFT_VERSION = "0.4.0";
 const LEGACY_EXECUTION_AUTHORIZATION_VERSION = "0.2.0";
 
-const RUNTIMES = Object.freeze(["codex", "opencode"]);
+const RUNTIMES = Object.freeze(["claude", "codex", "opencode"]);
 const WORKSPACE_MODES = Object.freeze(["read-only", "workspace-write"]);
 const EXECUTION_SCOPE_KINDS = Object.freeze(["session", "run"]);
 const REQUIRED_INVOKE_ACTION = "runtime.invoke";

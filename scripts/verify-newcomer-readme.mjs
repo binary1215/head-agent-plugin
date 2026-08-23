@@ -130,7 +130,7 @@ try {
     "--bin-dir", binDirectory,
     "--native", "off",
     "--project", projectRoot,
-    "--runtime", "codex,opencode",
+    "--runtime", "claude,codex,opencode",
   ]);
   assert.equal(installed.status, "installed");
   assert.equal(installed.native.status, "javascript-fallback");
@@ -176,7 +176,7 @@ try {
   const documents = await runGlobal(["world-docs-build", projectRoot]);
   assert.equal(documents.status, "projected");
 
-  const resumed = await runGlobal(["resume", projectRoot, "--runtime", "codex,opencode"]);
+  const resumed = await runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode"]);
   assert.equal(resumed.status, "ready");
   assert.equal(resumed.project.projectId, installed.project.project.projectId);
   assert.equal(resumed.project.sessionId, installed.project.project.sessionId);

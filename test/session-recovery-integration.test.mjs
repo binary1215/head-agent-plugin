@@ -28,7 +28,7 @@ function temporaryProject(prefix = "head-session-recovery-test-") {
 }
 
 function initialize(root) {
-  initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
   return root;
 }
 

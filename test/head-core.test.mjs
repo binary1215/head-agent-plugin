@@ -215,22 +215,27 @@ function hasOwnKeyDeep(value, key) {
     || Object.values(value).some((item) => hasOwnKeyDeep(item, key));
 }
 
-test("initializes Codex and OpenCode projections and verifies managed canon", (t) => {
+test("initializes Claude, Codex, and OpenCode projections and verifies managed canon", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const result = initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  const result = initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
   assert.equal(result.status, "ready");
+  assert.ok(fs.existsSync(path.join(root, "CLAUDE.md")));
+  assert.ok(fs.existsSync(path.join(root, ".mcp.json")));
   assert.ok(fs.existsSync(path.join(root, "AGENTS.md")));
   assert.ok(fs.existsSync(path.join(root, "opencode.json")));
+  const claudeMcp = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8"));
+  assert.equal(claudeMcp.mcpServers.head_core.command, process.execPath);
+  assert.match(claudeMcp.mcpServers.head_core.args[0], /mcp-server\.mjs$/);
   const inspected = inspectProject(root);
   assert.equal(inspected.status, "ready");
-  assert.equal(inspected.project.runtimes.join(","), "codex,opencode");
+  assert.equal(inspected.project.runtimes.join(","), "claude,codex,opencode");
 });
 
 test("defines deterministic provider-neutral runtime contracts while every control operation stays disabled", async (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  initializeProject({ root, pluginRoot, runtimes: ["opencode", "codex"] });
+  initializeProject({ root, pluginRoot, runtimes: ["opencode", "claude", "codex"] });
   const first = await inspectRuntimeAdapters(root);
   const repeated = await inspectRuntimeAdapters(root);
   assert.deepEqual(first, repeated);
@@ -240,12 +245,12 @@ test("defines deterministic provider-neutral runtime contracts while every contr
   ].includes(first.status));
   assert.equal(first.composition.activationBoundary.runtimeControlEnabled, false);
   assert.equal(first.composition.activationBoundary.machineInterfacesVerified, false);
-  assert.deepEqual(first.composition.selectedRuntimes, ["codex", "opencode"]);
+  assert.deepEqual(first.composition.selectedRuntimes, ["claude", "codex", "opencode"]);
   verifyRuntimeAdapterComposition(first.composition);
   verifyRuntimeAdapterContractMatrix(first.contractMatrix);
   assert.deepEqual(buildRuntimeAdapterContractMatrix(), first.contractMatrix);
   assert.deepEqual(
-    buildRuntimeAdapterComposition({ platform: process.platform, runtimes: ["opencode", "codex"] }),
+    buildRuntimeAdapterComposition({ platform: process.platform, runtimes: ["opencode", "claude", "codex"] }),
     first.composition,
   );
   assert.equal(first.machineInterfaces.status, "read-only-machine-discovery");
@@ -297,6 +302,19 @@ test("preserves existing host files and emits manual projections", (t) => {
   assert.equal(result.status, "ready_with_manual_integration");
   assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "project owned\n");
   assert.ok(fs.existsSync(path.join(root, ".head", "generated", "head-instructions.md")));
+});
+
+test("preserves existing Claude host files and emits generated instruction and MCP projections", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "CLAUDE.md"), "project owned\n");
+  fs.writeFileSync(path.join(root, ".mcp.json"), "{\"mcpServers\":{}}\n");
+  const result = initializeProject({ root, pluginRoot, runtimes: ["claude"] });
+  assert.equal(result.status, "ready_with_manual_integration");
+  assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "project owned\n");
+  assert.equal(fs.readFileSync(path.join(root, ".mcp.json"), "utf8"), "{\"mcpServers\":{}}\n");
+  assert.ok(fs.existsSync(path.join(root, ".head", "generated", "head-instructions.md")));
+  assert.ok(fs.existsSync(path.join(root, ".head", "generated", "claude.mcp.json")));
 });
 
 test("binds a Run to an Execution Contract, Result Packet, and ReviewDecision", (t) => {

@@ -64,8 +64,8 @@ export function parse(argv) {
 
 export function usage({ all = false } = {}) {
   const allCommands = [
-      "head init <project> [--runtime codex,opencode] [--input <onboarding.json>]",
-      "head resume <project> [--runtime codex,opencode] [--input <onboarding.json>]",
+      "head init <project> [--runtime claude,codex,opencode] [--input <onboarding.json>]",
+      "head resume <project> [--runtime claude,codex,opencode] [--input <onboarding.json>]",
       "head --version",
       "head status <project>",
       "head doctor <project>",
@@ -143,7 +143,7 @@ export function usage({ all = false } = {}) {
       "head world-runtime <project> [--query <text>] [--runtime <name>] [--state <state>] [--kind <kind>] [--limit <1-500>]",
       "head checkpoint <project> --summary <text> [--next <text>]",
       "head session-restore <project> [--checkpoint <session-run-checkpoint-id>]",
-      "head session-continue <project> --runtime <codex|opencode> [--checkpoint <session-run-checkpoint-id>] [--binding-env <environment-name>]",
+      "head session-continue <project> --runtime <claude|codex|opencode> [--checkpoint <session-run-checkpoint-id>] [--binding-env <environment-name>]",
       "head compact-prepare <project> --input <recovery.json>",
       "head compact-verify <project> --input <verification.json>",
       "head compact-continue <project> --input <continuation.json>",
@@ -172,8 +172,8 @@ export function usage({ all = false } = {}) {
       "head lineage-read <project> --artifact <lineage-artifact-id>",
     ];
   const defaultCommands = [
-    "head init <project> [--runtime codex,opencode] [--input <onboarding.json>]",
-    "head resume <project> [--runtime codex,opencode] [--input <onboarding.json>]",
+    "head init <project> [--runtime claude,codex,opencode] [--input <onboarding.json>]",
+    "head resume <project> [--runtime claude,codex,opencode] [--input <onboarding.json>]",
     "head status <project>",
     "head product-note <project> --input <note.json>",
     "head operating-lane-recommend <project> --input <risk.json>  # optional advisory",

@@ -105,6 +105,36 @@ function minimalEnvironment(environment) {
 const signal = (name, pattern) => Object.freeze({ name, pattern });
 
 const RUNTIME_PROFILES = Object.freeze({
+  claude: Object.freeze({
+    probes: Object.freeze([
+      Object.freeze({
+        name: "root-help",
+        arguments: Object.freeze(["--help"]),
+        signals: Object.freeze([
+          signal("execution:non-interactive", /-p, --print\b|--print, -p\b/i),
+          signal("events:format-option", /--output-format\b/i),
+          signal("events:stream-json", /stream-json/i),
+          signal("output:schema", /--json-schema\b/i),
+          signal("session:ephemeral", /--no-session-persistence\b/i),
+          signal("session:resume", /(?:^|\s)-r, --resume|--resume\b/m),
+          signal("session:continue", /(?:^|\s)-c, --continue|--continue\b/m),
+          signal("execution:permission-mode", /--permission-mode\b/i),
+          signal("execution:tools-option", /--tools\b/i),
+          signal("execution:disable-skills", /--disable-slash-commands\b/i),
+          signal("execution:setting-sources", /--setting-sources\b/i),
+          signal("execution:strict-mcp", /--strict-mcp-config\b/i),
+          signal("execution:mcp-config", /--mcp-config\b/i),
+        ]),
+      }),
+    ]),
+    capabilities: Object.freeze([
+      Object.freeze({ name: "non-interactive-execution", requirements: Object.freeze(["execution:non-interactive", "events:format-option", "events:stream-json", "output:schema", "session:ephemeral"]) }),
+      Object.freeze({ name: "structured-event-stream", requirements: Object.freeze(["events:format-option", "events:stream-json"]) }),
+      Object.freeze({ name: "one-shot-invocation-surface", requirements: Object.freeze(["execution:non-interactive", "events:stream-json", "output:schema", "session:ephemeral", "execution:permission-mode", "execution:tools-option", "execution:disable-skills", "execution:setting-sources", "execution:strict-mcp", "execution:mcp-config"]) }),
+      Object.freeze({ name: "provider-session-resume-surface", requirements: Object.freeze(["session:resume", "session:continue"]) }),
+    ]),
+    requiredForNegotiation: Object.freeze(["non-interactive-execution", "structured-event-stream"]),
+  }),
   codex: Object.freeze({
     probes: Object.freeze([
       Object.freeze({

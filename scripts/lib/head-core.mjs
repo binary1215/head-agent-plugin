@@ -17,7 +17,7 @@ import {
 } from "./runtime-protocol-evidence.mjs";
 
 export const SCHEMA_VERSION = 1;
-export const SUPPORTED_RUNTIMES = Object.freeze(["codex", "opencode"]);
+export const SUPPORTED_RUNTIMES = Object.freeze(["claude", "codex", "opencode"]);
 
 const fail = (message, code = "HEAD_CORE_ERROR") => {
   const error = new Error(message);
@@ -119,8 +119,32 @@ function opencodeProjection(pluginRoot) {
   };
 }
 
+function claudeMcpProjection(pluginRoot) {
+  return {
+    mcpServers: {
+      head_core: {
+        command: process.execPath,
+        args: [path.join(pluginRoot, "scripts", "mcp-server.mjs")],
+        env: {},
+      },
+    },
+  };
+}
+
 function integrationPlan(root, runtimes) {
   const integrations = {};
+  if (runtimes.includes("claude")) {
+    const instructionFile = path.join(root, "CLAUDE.md");
+    const mcpFile = path.join(root, ".mcp.json");
+    integrations.claude = fs.existsSync(instructionFile) || fs.existsSync(mcpFile)
+      ? {
+        status: "manual",
+        reason: "Existing project-owned CLAUDE.md or .mcp.json was preserved.",
+        instructionProjection: ".head/generated/head-instructions.md",
+        mcpProjection: ".head/generated/claude.mcp.json",
+      }
+      : { status: "managed", paths: ["CLAUDE.md", ".mcp.json"] };
+  }
   if (runtimes.includes("codex")) {
     const file = path.join(root, "AGENTS.md");
     integrations.codex = fs.existsSync(file)
@@ -178,6 +202,7 @@ function projectFiles(root, pluginRoot, runtimes, integrations) {
     [".head/project.json", json(project)],
     [".head/instructions/project.md", "# Project-specific HEAD context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n"],
     [".head/generated/head-instructions.md", headInstructions()],
+    [".head/generated/claude.mcp.json", json(claudeMcpProjection(pluginRoot))],
     [".head/generated/opencode.json", json(opencodeProjection(pluginRoot))],
     [".head/roles/head.md", roleInstruction("head")],
     [".head/roles/developer.md", roleInstruction("developer")],
@@ -202,6 +227,10 @@ function projectFiles(root, pluginRoot, runtimes, integrations) {
     [`${ONBOARDING_STORAGE_DIRECTORY}/${onboarding.storageSelection.storageSelectionId}.json`, json(onboarding.storageSelection)],
     [ONBOARDING_STATE_RELATIVE_PATH, json(onboarding.state)],
   ]);
+  if (integrations.claude?.status === "managed") {
+    files.set("CLAUDE.md", headInstructions());
+    files.set(".mcp.json", json(claudeMcpProjection(pluginRoot)));
+  }
   if (integrations.codex?.status === "managed") files.set("AGENTS.md", headInstructions());
   if (integrations.opencode?.status === "managed") files.set("opencode.json", json(opencodeProjection(pluginRoot)));
   return { files, project };
@@ -295,6 +324,11 @@ export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes =
   }
 
   const replacements = new Map();
+  if (inspected.project.runtimes.includes("claude")) {
+    const projection = json(claudeMcpProjection(canonicalPluginRoot));
+    replacements.set(".head/generated/claude.mcp.json", projection);
+    if (inspected.project.integrations.claude?.status === "managed") replacements.set(".mcp.json", projection);
+  }
   if (inspected.project.runtimes.includes("opencode")) {
     const projection = json(opencodeProjection(canonicalPluginRoot));
     replacements.set(".head/generated/opencode.json", projection);
@@ -388,7 +422,7 @@ export async function inspectRuntimeAdapters(root = ".") {
     protocolEvidence,
     projectBinding,
     runtimeControlEnabled: false,
-    nextGate: "bounded-live-codex-session-run-event-normalization-cancellation-result-and-fresh-head-conformance",
+    nextGate: "explicit-opt-in-live-conformance-for-each-selected-runtime-without-broadening-provider-control",
   };
 }
 
@@ -407,7 +441,7 @@ export function coreContract() {
     schemaVersion: SCHEMA_VERSION,
     roles: ["head", "developer", "coder", "reviewer"],
     runtimes: SUPPORTED_RUNTIMES,
-    activeCapabilities: ["project-init", "projection", "session-canon", "project-scoped-session-record", "onboarding-state-machine", "privacy-safe-storage-selection", "evidence-linked-onboarding-candidates", "onboarding-batch-review", "review-gated-product-canon-bootstrap", "post-promotion-graph-verification", "feature-code-mapping-candidates", "explicit-feature-mapping-review", "reviewed-implements-and-verified-by-promotion", "provider-neutral-changeset", "multiple-parent-changeset-dag", "change-impact-candidates", "explicit-change-impact-review", "reviewed-impacts-promotion", "optional-vcs-evidence-attachment", "vcs-evidence-temporal-projection", "contract-bound-run", "result-packet", "fresh-head-review-projection", "review-gate", "review-linked-plan-generation", "knowledge-promotion-proposals", "product-model-canon-contract", "repository-world-model-alpha", "incremental-observed-state-refresh-contract", "changed-file-analysis-reuse", "immutable-refresh-request-and-receipt", "active-run-refresh-drift-disclosure", "debounced-refresh-trigger-contract", "filesystem-refresh-watcher", "structured-ci-refresh-ingestion", "single-writer-refresh-lease", "immutable-trigger-batch-and-delivery-receipt", "replaceable-world-model-store-contract", "local-json-world-model-store", "graph-projection-adapter-contract", "local-json-graph-projection", "in-memory-graph-projection-conformance", "arcadedb-database-compatibility-audit", "arcadedb-exact-target-database-initialization", "arcadedb-conformance-gated-graph-projection", "arcadedb-snapshot-scoped-vertex-edge-topology", "arcadedb-server-side-bounded-traversal", "provider-neutral-prepared-traversal-verification", "arcadedb-manifest-bounded-query", "prepared-traversal-cost-evidence", "read-only-arcadedb-prepared-traversal-benchmark", "adapter-neutral-temporal-traversal", "document-projection-adapter-contract", "deterministic-markdown-projection", "in-memory-document-projection-conformance", "document-change-candidate-capture", "explicit-document-change-review", "review-gated-document-to-canon-application", "immutable-document-change-application-receipt", "post-refresh-markdown-policy", "opt-in-automatic-markdown-refresh", "immutable-post-refresh-projection-receipt", "heuristic-semantic-call-graph", "bounded-semantic-graph-query", "product-canon-graph-projection", "temporal-product-revisions", "product-context-compilation", "compute-adapter-contract", "worker-protocol-contract", "javascript-reference-compute-adapter", "go-worker-stdio-transport", "go-worker-distribution-manifest", "native-worker-integrity-verification", "native-worker-bounded-process-lifecycle", "native-worker-javascript-fallback", "compute-backend-conformance", "repository-scan-compute-operation", "go-repository-scan-conformance-candidate", "repository-scan-conformance-corpus", "repository-scan-benchmark", "git-history-adapter-contract", "all-reachable-git-decision-evidence", "runtime-state-adapter-contract", "host-exported-runtime-state-evidence", "runtime-adapter-contracts", "codex-opencode-projection-only-runtime-adapters", "platform-contract-matrix", "workspace-host-adapter-contract", "read-only-runtime-machine-discovery", "privacy-preserving-runtime-executable-observation", "bounded-non-session-runtime-version-evidence", "bounded-provider-protocol-capability-evidence", "head-project-session-runtime-capability-binding", "session-run-execution-authorization", "durable-at-most-once-runtime-execution-lease", "bounded-runtime-event-envelope", "runtime-result-packet-draft", "provider-neutral-runtime-invocation-record", "provider-neutral-runtime-run-result-application", "exact-child-runtime-lifecycle-conformance", "history-and-runtime-aware-context-compilation", "freshness-gated-repository-context", "checkpoint", "context-compiler", "execution-lineage-contracts", "typed-mcp-core-operations"],
+    activeCapabilities: ["project-init", "projection", "session-canon", "project-scoped-session-record", "onboarding-state-machine", "privacy-safe-storage-selection", "evidence-linked-onboarding-candidates", "onboarding-batch-review", "review-gated-product-canon-bootstrap", "post-promotion-graph-verification", "feature-code-mapping-candidates", "explicit-feature-mapping-review", "reviewed-implements-and-verified-by-promotion", "provider-neutral-changeset", "multiple-parent-changeset-dag", "change-impact-candidates", "explicit-change-impact-review", "reviewed-impacts-promotion", "optional-vcs-evidence-attachment", "vcs-evidence-temporal-projection", "contract-bound-run", "result-packet", "fresh-head-review-projection", "review-gate", "review-linked-plan-generation", "knowledge-promotion-proposals", "product-model-canon-contract", "repository-world-model-alpha", "incremental-observed-state-refresh-contract", "changed-file-analysis-reuse", "immutable-refresh-request-and-receipt", "active-run-refresh-drift-disclosure", "debounced-refresh-trigger-contract", "filesystem-refresh-watcher", "structured-ci-refresh-ingestion", "single-writer-refresh-lease", "immutable-trigger-batch-and-delivery-receipt", "replaceable-world-model-store-contract", "local-json-world-model-store", "graph-projection-adapter-contract", "local-json-graph-projection", "in-memory-graph-projection-conformance", "arcadedb-database-compatibility-audit", "arcadedb-exact-target-database-initialization", "arcadedb-conformance-gated-graph-projection", "arcadedb-snapshot-scoped-vertex-edge-topology", "arcadedb-server-side-bounded-traversal", "provider-neutral-prepared-traversal-verification", "arcadedb-manifest-bounded-query", "prepared-traversal-cost-evidence", "read-only-arcadedb-prepared-traversal-benchmark", "adapter-neutral-temporal-traversal", "document-projection-adapter-contract", "deterministic-markdown-projection", "in-memory-document-projection-conformance", "document-change-candidate-capture", "explicit-document-change-review", "review-gated-document-to-canon-application", "immutable-document-change-application-receipt", "post-refresh-markdown-policy", "opt-in-automatic-markdown-refresh", "immutable-post-refresh-projection-receipt", "heuristic-semantic-call-graph", "bounded-semantic-graph-query", "product-canon-graph-projection", "temporal-product-revisions", "product-context-compilation", "compute-adapter-contract", "worker-protocol-contract", "javascript-reference-compute-adapter", "go-worker-stdio-transport", "go-worker-distribution-manifest", "native-worker-integrity-verification", "native-worker-bounded-process-lifecycle", "native-worker-javascript-fallback", "compute-backend-conformance", "repository-scan-compute-operation", "go-repository-scan-conformance-candidate", "repository-scan-conformance-corpus", "repository-scan-benchmark", "git-history-adapter-contract", "all-reachable-git-decision-evidence", "runtime-state-adapter-contract", "host-exported-runtime-state-evidence", "runtime-adapter-contracts", "claude-codex-opencode-projection-only-runtime-adapters", "platform-contract-matrix", "workspace-host-adapter-contract", "read-only-runtime-machine-discovery", "privacy-preserving-runtime-executable-observation", "bounded-non-session-runtime-version-evidence", "bounded-provider-protocol-capability-evidence", "head-project-session-runtime-capability-binding", "session-run-execution-authorization", "durable-at-most-once-runtime-execution-lease", "bounded-runtime-event-envelope", "runtime-result-packet-draft", "provider-neutral-runtime-invocation-record", "provider-neutral-runtime-run-result-application", "exact-child-runtime-lifecycle-conformance", "history-and-runtime-aware-context-compilation", "freshness-gated-repository-context", "checkpoint", "context-compiler", "execution-lineage-contracts", "typed-mcp-core-operations"],
     deferredCapabilities: ["arcadedb-live-prepared-query-performance-evidence", "arcadedb-compare-and-swap-publication", "non-arcadedb-graph-projection-transport", "obsidian-vault-projection-adapter", "notion-projection-adapter", "imported-backlog-adapter", "automatic-changeset-ancestry-inference", "general-authorized-relationship-promotion", "compute-backed-graph-and-context-operations", "go-repository-scan-production-selection", "native-worker-descendant-tree-supervision", "ast-accurate-semantic-call-graph", "live-runtime-state-probe", "provider-session-runtime-control", "actual-provider-session-project-binding", "runtime-start-resume-stream", "workspace-host-process-control", "actual-provider-runtime-event-normalization", "structured-git-decision-inference", "provider-runtime-fresh-head-hydration", "authorized-knowledge-promotion", "service-host", "host-specific-workspace-adapter"],
   };
   contract.activeCapabilities = [
@@ -416,6 +450,8 @@ export function coreContract() {
     "clustered-product-behavior-candidate-inference",
     "bounded-large-project-context-retrieval",
     "runtime-structured-result-contract",
+    "claude-print-one-shot-composition",
+    "claude-print-protocol-fixture",
     "codex-exec-one-shot-composition",
     "codex-exec-protocol-fixture",
     "opencode-run-one-shot-composition",

@@ -61,7 +61,7 @@ function requireAuthorizationShape(authorization) {
     || authorization.scope.kind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(authorization.scope.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(authorization.scope.executionContractId || ""))
     || authorization.scope.kind === "session" && (authorization.scope.runId !== null || authorization.scope.executionContractId !== null)
-    || !new Set(["codex", "opencode"]).has(authorization.runtime)
+    || !new Set(["claude", "codex", "opencode"]).has(authorization.runtime)
     || !Number.isSafeInteger(authorization.limits?.timeoutMs)
     || !Number.isSafeInteger(authorization.limits?.terminationGraceMs)) {
     fail("Runtime execution lease requires a verified invocation authorization.", "INVALID_RUNTIME_EXECUTION_LEASE_AUTHORIZATION");
@@ -265,7 +265,7 @@ function verifyOwner(owner, { authorization, token = "" } = {}) {
     || owner.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(owner.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(owner.executionContractId || ""))
     || owner.scopeKind === "session" && (owner.runId !== null || owner.executionContractId !== null)
-    || !new Set(["codex", "opencode"]).has(owner.runtime)
+    || !new Set(["claude", "codex", "opencode"]).has(owner.runtime)
     || !Number.isInteger(owner.pid) || owner.pid <= 0
     || !/^[a-f0-9]{32}$/.test(owner.token || "")
     || !/^[a-f0-9]{64}$/.test(owner.ownerFenceDigest || "")
@@ -447,7 +447,7 @@ export function verifyRuntimeExecutionLeaseConsumption(document) {
     || document.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || ""))
     || document.scopeKind === "session" && (document.runId !== null || document.executionContractId !== null)
-    || !new Set(["codex", "opencode"]).has(document.runtime)
+    || !new Set(["claude", "codex", "opencode"]).has(document.runtime)
     || !/^[a-f0-9]{64}$/.test(document.ownerFenceDigest || "")
     || Number.isNaN(claimedAt) || Number.isNaN(consumedAt) || Number.isNaN(deadline)
     || consumedAt < claimedAt || deadline <= claimedAt
@@ -530,7 +530,7 @@ export function verifyRuntimeExecutionLeaseRelease(document) {
     || document.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || ""))
     || document.scopeKind === "session" && (document.runId !== null || document.executionContractId !== null)
-    || !new Set(["codex", "opencode"]).has(document.runtime)
+    || !new Set(["claude", "codex", "opencode"]).has(document.runtime)
     || !statuses.has(document.operationStatus)
     || document.lifecycleReceiptId !== null && !/^runtime-lifecycle-receipt-[a-f0-9]{24}$/.test(document.lifecycleReceiptId || "")
     || document.errorCodeDigest !== null && !/^[a-f0-9]{64}$/.test(document.errorCodeDigest || "")

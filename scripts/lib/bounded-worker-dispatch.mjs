@@ -100,7 +100,7 @@ export function verifyBoundedWorkerDispatch(document) {
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
     || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^[a-f0-9]{64}$/.test(document.authorizationHash || "")
-    || !new Set(["codex", "opencode"]).has(document.runtime)
+    || !new Set(["claude", "codex", "opencode"]).has(document.runtime)
     || document.workerRole === "head" || typeof document.workerRole !== "string" || !document.workerRole
     || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
     || !/^whole-plan-[a-f0-9]{24}$/.test(document.wholePlanId || "")

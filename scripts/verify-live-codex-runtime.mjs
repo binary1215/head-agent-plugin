@@ -26,7 +26,7 @@ import { integrateReviewedRunCheckpoint } from "./lib/session-recovery.mjs";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const nonce = `${process.pid}-${Date.now()}`;
 const providerRuntime = String(process.env.HEAD_AGENT_LIVE_RUNTIME || "codex").trim().toLowerCase();
-const providerName = providerRuntime === "opencode" ? "OpenCode" : "Codex";
+const providerName = providerRuntime === "opencode" ? "OpenCode" : providerRuntime === "claude" ? "Claude Code" : "Codex";
 const runtimeModel = String(process.env.HEAD_AGENT_LIVE_RUNTIME_MODEL || "").trim() || null;
 const projectRoot = path.join(pluginRoot, `.qa-live-${providerRuntime}-${nonce}`);
 const operationalRoot = path.join(pluginRoot, `.qa-live-${providerRuntime}-operational-${nonce}`);
@@ -128,7 +128,7 @@ async function buildActualRuntimeEvidence(root) {
 }
 
 async function main() {
-  assert(new Set(["codex", "opencode"]).has(providerRuntime), "HEAD_AGENT_LIVE_RUNTIME must be codex or opencode.");
+  assert(new Set(["claude", "codex", "opencode"]).has(providerRuntime), "HEAD_AGENT_LIVE_RUNTIME must be claude, codex, or opencode.");
   assert(providerRuntime !== "opencode" || runtimeModel !== null,
     "HEAD_AGENT_LIVE_RUNTIME_MODEL=provider/model is required for live OpenCode so execution cannot drift to a user-global default.");
   activeLivePlan = resolveLivePlan();

@@ -75,7 +75,7 @@ export const tools = [
         project_root: { type: "string", minLength: 1 },
         runtimes: {
           type: "array", minItems: 1, maxItems: 2, uniqueItems: true,
-          items: { type: "string", enum: ["codex", "opencode"] },
+          items: { type: "string", enum: ["claude", "codex", "opencode"] },
         },
         mode: { type: "string", enum: ["existing", "new"], default: "existing" },
         source_scope: {
@@ -336,7 +336,7 @@ export const tools = [
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
-        runtime: { type: "string", enum: ["codex", "opencode"] },
+        runtime: { type: "string", enum: ["claude", "codex", "opencode"] },
         checkpoint_id: { type: "string", pattern: "^checkpoint-[a-f0-9]{24}$" },
       },
       required: ["project_root", "runtime"],
@@ -754,7 +754,7 @@ export const tools = [
     name: "head_compact_prepare",
     description: "Create the canonical Session/Run recovery checkpoint and one bounded compaction epoch. This does not invoke a provider or treat a provider summary as recovery authority.",
     inputSchema: { type: "object", properties: {
-      project_root: { type: "string", minLength: 1 }, runtime: { type: "string", enum: ["manual", "codex", "opencode"], default: "manual" }, user_turn_id_at_prepare: { type: "integer", minimum: 0 }, purpose: { type: "string", minLength: 1 }, approved_decisions: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, current_position: { type: "string", minLength: 1 }, next_expected_result: { type: "string", minLength: 1 }, open_review_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+      project_root: { type: "string", minLength: 1 }, runtime: { type: "string", enum: ["manual", "claude", "codex", "opencode"], default: "manual" }, user_turn_id_at_prepare: { type: "integer", minimum: 0 }, purpose: { type: "string", minLength: 1 }, approved_decisions: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, current_position: { type: "string", minLength: 1 }, next_expected_result: { type: "string", minLength: 1 }, open_review_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
     }, required: ["project_root", "user_turn_id_at_prepare", "purpose", "approved_decisions", "current_position", "next_expected_result"], additionalProperties: false },
   },
   {

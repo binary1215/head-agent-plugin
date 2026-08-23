@@ -107,7 +107,7 @@ has stronger portable semantics than the original runtime composition:
 
 - project, product, graph, change, execution, and recovery identities do not
   depend on one provider session or one host daemon;
-- two provider adapters share one semantic Core instead of forking authority;
+- three provider adapters share one semantic Core instead of forking authority;
 - Windows, macOS, and Linux installation and exact descendant cleanup are part
   of the tested distribution;
 - Product Canon, candidate review, temporal provenance, Context compilation,
@@ -136,10 +136,13 @@ claim.
 
 The original author directly audited the earlier caller-fencing and recovery
 slices and reported no blocking correction. The later actual provider-client and
-hostless recovery evidence closed those prior scenario gaps. The current
-portable continuation and independently ownable worker slice still requires one
-new direct audit of the exact pushed source before the three unconditional final
-superiority verdicts may be claimed.
+hostless recovery evidence closed those prior scenario gaps. Claude Code now has
+the same deterministic one-shot authorization, lease, supervisor, result,
+compaction, and projection contracts. Its live model-call and already-running
+host round trips remain separate opt-in evidence gates. The current portable
+continuation, independently ownable worker, and Claude Code adapter slices still
+require one new direct audit of the exact pushed source before the three
+unconditional final superiority verdicts may be claimed.
 
 ## Claim boundary for author review
 

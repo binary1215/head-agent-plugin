@@ -8,7 +8,7 @@ export const WORKSPACE_HOST_EXPORT_VERSION = "0.3.0";
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const PROOF = /^[A-Za-z0-9_-]{43,512}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
-const RUNTIMES = new Set(["codex", "opencode"]);
+const RUNTIMES = new Set(["claude", "codex", "opencode"]);
 const MAX_JSON_BYTES = 128 * 1024;
 const MAX_NOTIFICATION_BYTES = 8192;
 

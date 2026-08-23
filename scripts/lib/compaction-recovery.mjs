@@ -450,7 +450,7 @@ function writeRecoveryReceipt(root, epoch, { verifiedDigest = null, continuation
 
 export function prepareCompaction({ root = ".", runtime = "manual", userTurnIdAtPrepare, purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] } = {}) {
   const inspected = readyProject(root, "compaction is prepared");
-  if (!new Set(["manual", "codex", "opencode"]).has(runtime)) fail("Compaction runtime is invalid.", "INVALID_COMPACTION_RUNTIME");
+  if (!new Set(["manual", "claude", "codex", "opencode"]).has(runtime)) fail("Compaction runtime is invalid.", "INVALID_COMPACTION_RUNTIME");
   const previous = currentEpoch(inspected.project.projectRoot);
   if (previous && OPEN_STATES.has(previous.state)) fail(`Compaction epoch is already open: ${previous.epochId}`, "COMPACTION_EPOCH_ALREADY_OPEN");
   const checkpointResult = createRecoveryCheckpoint({ root: inspected.project.projectRoot, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });

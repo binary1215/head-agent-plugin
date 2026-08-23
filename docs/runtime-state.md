@@ -81,10 +81,12 @@ Stale observations and their metadata are excluded. A Capsule can request expans
 
 ## Boundary and deferred controls
 
-`RuntimeStateAdapter` remains observation-only. Live Codex/OpenCode one-shot
-Session and Run execution, caller fencing, at-most-once leases, and native
-descendant ownership are active through the separate Runtime Adapter contracts;
-they do not widen this import adapter into a control plane.
+`RuntimeStateAdapter` remains observation-only. Claude Code, Codex, and OpenCode
+one-shot Session and Run execution, caller fencing, at-most-once leases, and
+native descendant ownership are active through the separate Runtime Adapter
+contracts; all three have deterministic protocol fixtures, while only Codex and
+OpenCode currently retain live model-call evidence. These capabilities do not
+widen this import adapter into a control plane.
 
 Provider-session hydration or hidden-session restoration, general resume/stream,
 provider-session messaging, and subscription remain deferred optional Runtime
