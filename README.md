@@ -4,16 +4,19 @@
 
 [English](README.md) | [한국어](README.ko.md)
 
-**Keep product meaning, repository evidence, and agent execution connected<br>
-without making a model session, Git host, or GraphDB the hidden source of truth.**
+**Keep long-running AI development on one reviewed product direction<br>
+even when the tool, agent, or conversation changes.**
+
+Recover safely after compaction. Give each task only the context it needs.
+Keep the reason behind every accepted change.
 
 [![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
 
-[Who it is for](#who-it-is-for) ·
 [Why use it](#why-use-it) ·
+[Who it is for](#who-it-is-for) ·
 [Install](#install) ·
 [First project](#first-project) ·
 [Core model](#core-model) ·
@@ -25,17 +28,102 @@ without making a model session, Git host, or GraphDB the hidden source of truth.
 
 ## What HEAD Agent Core does
 
-HEAD Agent Core is a provider-neutral control plane for AI coding agents. It
-keeps four things connected across Claude Code, Codex, and OpenCode:
+HEAD Agent Core keeps the direction and evidence of AI-assisted development with
+the project instead of trapping them inside one model conversation. Across
+Claude Code, Codex, and OpenCode, it connects:
 
-- user-owned product meaning;
-- observed repository structure and change evidence;
-- bounded, reproducible task context;
-- execution results, review, and recovery lineage.
+- what the user has approved about the product;
+- what the repository and tests currently show;
+- what one task actually needs to know;
+- what an agent changed, how it was checked, and what happens next.
 
-The project remains usable when a provider session disappears. Inferred product
-concepts remain candidates until the user reviews them. Graphs and documents
-remain rebuildable views instead of silently becoming authority.
+It does not primarily make a model write better code. It helps many AI-assisted
+changes accumulate into the same reviewed product direction without making a
+model session, Git host, generated document, or GraphDB the hidden source of
+truth.
+
+## Why use it
+
+The benefits become more valuable as a project outlives one conversation.
+
+### Continue after compaction or session loss
+
+Conversation compaction is lossy, and provider summaries can omit a constraint
+or quietly change the next step. For recovery-sensitive work, HEAD checkpoints
+the exact purpose, approved decisions, current position, and next expected
+result. After compaction it verifies that the project direction did not drift
+before continuing. A newer real user request always wins over an older prepared
+continuation.
+
+This restores the work direction, not a transcript or a model persona. See
+[Compaction recovery](docs/compaction-recovery.md) and
+[Session recovery](docs/session-recovery.md).
+
+### Give each task minimum sufficient context
+
+More context is not always better. The Context Compiler asks what one executor
+must know for one task and why each item belongs. It selects current product
+decisions, repository evidence, tests, relevant history, and explicit Unknowns
+under a fixed budget, while recording exclusions and stale coverage.
+
+The resulting Context Capsule is content-derived and reproducible. The same
+verified inputs, compiler version, task, and budget produce the same identity;
+Canon or digest drift stops reuse. This reduces noise, makes delegation easier to
+review, and avoids treating the whole repository as prompt context. See
+[Context Compiler](docs/context-compiler.md).
+
+### Review why a change happened
+
+Git can show which bytes changed. HEAD also preserves the reviewed reasoning
+around the change:
+
+```text
+whole plan
+  -> execution scope + task context
+  -> agent result + verification evidence
+  -> Fresh HEAD review + explicit decision
+  -> ChangeSet + next checkpoint
+```
+
+A result cannot approve itself, and the next non-trivial Run waits for review.
+Later, a maintainer can inspect the intended outcome, allowed scope, evidence,
+decision, affected revisions, and next direction without reconstructing them
+from a transcript or commit message. See
+[Execution Lineage](docs/execution-lineage.md) and
+[ChangeSets](docs/change-sets.md).
+
+### Connect product intent to code and tests
+
+HEAD can propose evidence-linked relationships from reviewed Features and
+Capabilities to Files, Symbols, and Tests. It can then derive reviewable change-
+impact candidates from exact before/after revisions. Inference remains a
+candidate until explicit review, so a heuristic match never silently becomes a
+product decision. See [Feature mapping](docs/feature-mapping.md).
+
+### Additional benefits
+
+| Common AI-development problem | What HEAD provides |
+| --- | --- |
+| Agents and runtimes build different interpretations | Claude Code, Codex, OpenCode, HEAD, and bounded workers use the same project-scoped `.head/` identities. |
+| Model inference quietly becomes a decision | Inferred concepts and impacts remain reviewable candidates until an explicit user decision accepts them. |
+| A handoff loses the current position | Provider-independent checkpoints preserve the exact work direction for another session, tool, or teammate. |
+| A graph or generated document becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable views over verified records. |
+| A large repository overwhelms the prompt | Source Scope and bounded compilation keep unrelated generated, vendored, or copied material out of normal task context. |
+| Several agents blur responsibility | Bounded execution, result evidence, and independent review stay distinct while HEAD integrates them into one outcome. |
+
+> A conventional coding agent optimizes the current task. HEAD Agent Core
+> optimizes for many tasks to accumulate into the same reviewed product
+> direction.
+
+These benefits reinforce one another:
+
+```text
+reviewed direction + current repository evidence
+  -> minimum sufficient Context Capsule
+  -> bounded execution and explicit review
+  -> decision and change history
+  -> exact checkpoint for handoff, session loss, or compaction
+```
 
 ## Who it is for
 
@@ -44,37 +132,17 @@ across more than one prompt, task, agent, or runtime.
 
 | You are... | HEAD helps you... |
 | --- | --- |
-| A solo developer building a product over many AI sessions | Preserve intent, decisions, current position, and the next expected result without re-explaining the project from scratch. |
-| A technical lead coordinating several agents or bounded workers | Separate HEAD, implementation, and review responsibilities while integrating results into one whole outcome. |
-| A maintainer working in a large or long-lived repository | Select minimum sufficient evidence for one task instead of treating the whole repository as prompt context. |
-| A team that uses Claude Code, Codex, OpenCode, or changing model providers | Keep one provider-independent `.head/` authority rather than separate project truth in each session. |
-| A team that needs auditability, governance, or reliable handoff | Retain the evidence, explicit decisions, execution lineage, and recovery state behind each accepted change. |
-| A product team connecting intent to implementation | Traverse reviewed Requirements and Features through code, tests, revisions, ChangeSets, and review evidence. |
+| A solo developer building a product over many AI sessions | Continue from the approved direction without re-explaining the project from scratch. |
+| A technical lead coordinating several agents or bounded workers | Separate planning, implementation, and review while integrating results into one whole outcome. |
+| A maintainer working in a large or long-lived repository | Give each task only the current repository evidence and history it actually needs. |
+| A team using Claude Code, Codex, OpenCode, or changing providers | Keep one provider-independent project state instead of separate truth in every conversation. |
+| A team that needs auditability or reliable handoff | Retain the purpose, evidence, explicit decision, impact, and recovery state behind an accepted change. |
+| A product team connecting intent to implementation | Follow reviewed Features through code, tests, revisions, ChangeSets, and review evidence. |
 
 It may be unnecessary for a one-off script, a short experiment with no recovery
 needs, or work where conversation history is sufficient. It is also a poor fit
 when inferred model output should be accepted without review, or when GraphDB is
 expected to become the unquestioned source of project meaning.
-
-## Why use it
-
-The main reason to use HEAD Agent Core is to turn an agent's one-session
-capability into reliable development continuity. It does not primarily make a
-model write better code; it keeps the purpose, authority, evidence, and next
-direction of many coding results from drifting apart.
-
-| Common AI-development problem | What HEAD adds |
-| --- | --- |
-| A new or compacted session loses the actual direction | P2 checkpoints preserve purpose, approved decisions, current position, and the next expected result without trusting a conversation summary. |
-| Model inference silently becomes a product decision | Candidates remain P3 evidence until an exact P1 ReviewDecision authorizes a scoped change. |
-| More context creates more noise and less reproducibility | The Context Compiler selects bounded evidence under an explicit budget and records exclusions and Unknowns. |
-| Agents and runtimes build different interpretations of the project | Claude Code, Codex, OpenCode, HEAD, and bounded workers operate from the same canonical `.head/` identities. |
-| Code changes survive but their rationale disappears | Plans, contracts, ResultPackets, reviews, ChangeSets, and checkpoints form a verifiable execution lineage. |
-| A graph or database gradually becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable P4 views over verified Canon and records. |
-
-> A conventional coding agent optimizes the current task. HEAD Agent Core
-> optimizes for many tasks to accumulate into the same reviewed product
-> direction.
 
 ## Install
 
