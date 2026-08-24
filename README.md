@@ -78,9 +78,9 @@ direction of many coding results from drifting apart.
 
 ## Install
 
-Choose one installation path. The Codex marketplace path installs the
-conversation Skill and typed MCP server. The user-scoped path also provides the
-global `head-agent` command for automation and recovery.
+Choose one installation path. The Codex and Claude Code marketplace paths
+install the conversation Skill and typed MCP server. The user-scoped path also
+provides the global `head-agent` command for automation and recovery.
 
 ### Codex Git marketplace
 
@@ -100,13 +100,35 @@ The marketplace install does not initialize a project, contact GraphDB, choose
 a model, or approve Product Canon. Those transitions still require the typed
 Core boundary and, where consequential, explicit user review.
 
-### Claude Code and OpenCode
+### Claude Code Git marketplace
 
-Use the user-scoped installation below, then initialize the project with
-`--runtime claude,codex,opencode`. HEAD creates `CLAUDE.md` plus `.mcp.json` for
-Claude Code, `AGENTS.md` for Codex, and `opencode.json` for OpenCode only when
-those project files are absent. Existing files are preserved and generated
-manual-integration projections remain under `.head/generated/`.
+```powershell
+claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
+claude plugin install head-agent-core@head-agent-plugin
+```
+
+Start a new Claude Code session so the installed Skill and `head_core` MCP
+server are loaded, then ask:
+
+```text
+Initialize or resume HEAD Agent onboarding for this project.
+```
+
+Claude Code copies the plugin into its versioned cache. The generated Claude
+distribution therefore projects its MCP entry through `${CLAUDE_PLUGIN_ROOT}`;
+the source Core and `.head/` identities remain unchanged. Installation does not
+authorize project mutation, Product Canon review, GraphDB access, or a model
+choice.
+
+### Claude Code and OpenCode project projections
+
+When using the user-scoped installation below, initialize the project with
+`--runtime claude,codex,opencode`. Marketplace-installed Claude Code users can
+request the same initialization through the bundled Skill. HEAD creates
+`CLAUDE.md` plus `.mcp.json` for Claude Code, `AGENTS.md` for Codex, and
+`opencode.json` for OpenCode only when those project files are absent. Existing
+files are preserved and generated manual-integration projections remain under
+`.head/generated/`.
 
 After initialization, start `claude` or `opencode` in the project. Claude Code
 asks for project MCP approval before using the shared `head_core` server. The
@@ -482,6 +504,7 @@ Status labels are evidence claims, not roadmap promises:
 | Projection | ArcadeDB | **Experimental** |
 | Distribution | user-scoped install, native delivery, rollback, safe removal | **Available** |
 | Distribution | verified Git-backed Codex marketplace | **Available** |
+| Distribution | verified Git-backed Claude Code marketplace | **Available** |
 | Distribution | OpenAI universal plugin directory | **Planned** |
 | Runtime | general provider-session resume and streaming | **Deferred** |
 | Documents | Obsidian and Notion adapters | **Deferred** |
@@ -543,6 +566,7 @@ Additional references:
 - [Graph projection adapter](docs/graph-projection-adapter.md)
 - [Document projection adapter](docs/document-projection-adapter.md)
 - [Codex marketplace distribution](docs/codex-marketplace.md)
+- [Claude Code marketplace distribution](docs/claude-marketplace.md)
 
 Installed behavior is governed by these runtime contracts, the target project's
 user-owned Canon, current Session/Run recovery state, and explicit
@@ -557,6 +581,7 @@ npm test
 npm run verify:newcomer
 npm run verify:distribution
 npm run verify:codex-marketplace
+npm run verify:claude-marketplace
 ```
 
 Native sources additionally support `go test ./...` and `go vet ./...` from the

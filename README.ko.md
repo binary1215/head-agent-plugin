@@ -78,9 +78,9 @@ HEAD Agent Core를 사용하는 가장 큰 이유는 에이전트의 일회성 �
 
 ## 설치
 
-두 설치 경로 중 하나를 선택하세요. Codex 마켓플레이스 경로는 대화형 Skill과
-타입이 지정된 MCP 서버를 설치합니다. 사용자 범위 경로는 자동화와 복구에
-사용할 전역 `head-agent` 명령도 제공합니다.
+설치 경로 중 하나를 선택하세요. Codex 및 Claude Code 마켓플레이스 경로는
+대화형 Skill과 타입이 지정된 MCP 서버를 설치합니다. 사용자 범위 경로는
+자동화와 복구에 사용할 전역 `head-agent` 명령도 제공합니다.
 
 ### Codex Git 마켓플레이스
 
@@ -101,13 +101,33 @@ codex plugin add head-agent-core@head-agent-plugin
 타입이 지정된 Core 경계를 거치며, 중요한 경우 사용자의 명시적 검토를
 요구합니다.
 
-### Claude Code 및 OpenCode
+### Claude Code Git 마켓플레이스
 
-아래 사용자 범위 설치를 사용한 뒤 프로젝트를
-`--runtime claude,codex,opencode`로 초기화합니다. HEAD는 해당 프로젝트 파일이
-없을 때만 Claude Code용 `CLAUDE.md`와 `.mcp.json`, Codex용 `AGENTS.md`,
-OpenCode용 `opencode.json`을 만듭니다. 기존 파일은 보존하고 수동 통합용 생성
-프로젝션은 `.head/generated/`에 둡니다.
+```powershell
+claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
+claude plugin install head-agent-core@head-agent-plugin
+```
+
+설치된 Skill과 `head_core` MCP 서버를 불러오도록 새 Claude Code 세션을 시작한
+뒤 다음과 같이 요청하세요.
+
+```text
+이 프로젝트의 HEAD Agent 온보딩을 초기화하거나 재개해 줘.
+```
+
+Claude Code는 플러그인을 버전별 캐시에 복사합니다. 따라서 생성된 Claude
+배포판은 MCP 진입점을 `${CLAUDE_PLUGIN_ROOT}`를 통해 프로젝션하지만, 소스
+Core와 `.head/` 식별자는 바꾸지 않습니다. 설치만으로 프로젝트 변경,
+Product Canon 검토, GraphDB 접속 또는 모델 선택이 승인되지는 않습니다.
+
+### Claude Code 및 OpenCode 프로젝트 프로젝션
+
+아래 사용자 범위 설치를 사용하는 경우 프로젝트를
+`--runtime claude,codex,opencode`로 초기화합니다. 마켓플레이스로 설치한 Claude
+Code 사용자는 번들 Skill을 통해 같은 초기화를 요청할 수 있습니다. HEAD는
+해당 프로젝트 파일이 없을 때만 Claude Code용 `CLAUDE.md`와 `.mcp.json`,
+Codex용 `AGENTS.md`, OpenCode용 `opencode.json`을 만듭니다. 기존 파일은
+보존하고 수동 통합용 생성 프로젝션은 `.head/generated/`에 둡니다.
 
 초기화 후 프로젝트에서 `claude` 또는 `opencode`를 시작하세요. Claude Code는
 공유 `head_core` 서버를 처음 사용할 때 프로젝트 MCP 승인을 요청합니다.
@@ -483,6 +503,7 @@ HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정�
 | 프로젝션 | ArcadeDB | **실험적** |
 | 배포 | 사용자 범위 설치, 네이티브 전달, 롤백, 안전한 제거 | **사용 가능** |
 | 배포 | 검증된 Git 기반 Codex 마켓플레이스 | **사용 가능** |
+| 배포 | 검증된 Git 기반 Claude Code 마켓플레이스 | **사용 가능** |
 | 배포 | OpenAI 범용 플러그인 디렉터리 | **계획됨** |
 | 런타임 | 일반 공급자 세션 resume과 stream | **보류됨** |
 | 문서 | Obsidian 및 Notion 어댑터 | **보류됨** |
@@ -541,6 +562,7 @@ HEAD Agent Core Plugin은
 - [그래프 프로젝션 어댑터](docs/graph-projection-adapter.md)
 - [문서 프로젝션 어댑터](docs/document-projection-adapter.md)
 - [Codex 마켓플레이스 배포](docs/codex-marketplace.md)
+- [Claude Code 마켓플레이스 배포](docs/claude-marketplace.md)
 
 설치된 동작은 이 런타임 계약, 대상 프로젝트의 사용자 소유 Canon, 현재
 Session/Run 복구 상태, 명시적인 ReviewDecision의 지배를 받습니다. 저장소
@@ -554,6 +576,7 @@ npm test
 npm run verify:newcomer
 npm run verify:distribution
 npm run verify:codex-marketplace
+npm run verify:claude-marketplace
 ```
 
 네이티브 소스는 해당 모듈 디렉터리에서 `go test ./...`와 `go vet ./...`도

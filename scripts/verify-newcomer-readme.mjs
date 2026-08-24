@@ -98,6 +98,8 @@ function assertReadmeContract() {
     "head-agent world-docs-build",
     "head-agent resume",
     "distribution.mjs uninstall",
+    "head-agent-core@head-agent-plugin",
+    "verify:claude-marketplace",
   ];
   for (const required of sharedRequired) {
     assert(readme.includes(required), `README newcomer contract is missing: ${required}`);
@@ -109,6 +111,8 @@ function assertReadmeContract() {
   for (const required of ["[English](README.md)", "## 누구에게 필요한가", "## 왜 사용해야 하는가"]) {
     assert(koreanReadme.includes(required), `Korean README audience contract is missing: ${required}`);
   }
+  assert(readme.includes("binary1215/head-agent-plugin@claude-marketplace"), "README Claude marketplace install contract is missing.");
+  assert(koreanReadme.includes("binary1215/head-agent-plugin@claude-marketplace"), "Korean README Claude marketplace install contract is missing.");
 }
 
 try {

@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.79+codex.20260824021628",
+  "version": "0.3.0-alpha.79+codex.20260824044033",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
@@ -28,6 +28,8 @@
     "verify:graphdb-sync": "node scripts/verify-arcadedb-incremental-sync.mjs",
     "build:codex-marketplace": "node scripts/build-codex-marketplace.mjs",
     "verify:codex-marketplace": "node scripts/verify-codex-marketplace.mjs",
+    "build:claude-marketplace": "node scripts/build-claude-marketplace.mjs",
+    "verify:claude-marketplace": "node scripts/verify-claude-marketplace.mjs",
     "distribution:status": "node scripts/distribution.mjs status"
   }
 }

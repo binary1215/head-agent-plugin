@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.79+codex.20260824021628",
+  "version": "0.3.0-alpha.79+codex.20260824044033",
   "description": "Provider-neutral HEAD coordination for Claude Code, Codex, and OpenCode with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -26,6 +26,7 @@
       "Skills",
       "MCP Tools",
       "Verified Git-backed Codex Marketplace Distribution",
+      "Verified Git-backed Claude Code Marketplace Distribution",
       "Project Initialization",
       "Idempotent Project Initialize and Resume",
       "Managed Installation Projection Convergence",

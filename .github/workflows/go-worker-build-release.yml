@@ -45,10 +45,13 @@ on:
       - "scripts/lib/runtime-supervised-one-shot.mjs"
       - "scripts/lib/distribution-lifecycle.mjs"
       - "scripts/lib/codex-marketplace.mjs"
+      - "scripts/lib/claude-marketplace.mjs"
       - "scripts/lib/native-artifact-delivery.mjs"
       - "scripts/distribution.mjs"
       - "scripts/build-codex-marketplace.mjs"
       - "scripts/verify-codex-marketplace.mjs"
+      - "scripts/build-claude-marketplace.mjs"
+      - "scripts/verify-claude-marketplace.mjs"
       - "scripts/verify-distribution-lifecycle.mjs"
       - "scripts/verify-native-artifact-delivery.mjs"
       - "scripts/verify-newcomer-readme.mjs"
@@ -69,6 +72,7 @@ on:
       - "skills/**"
       - ".mcp.json"
       - "README.md"
+      - "README.ko.md"
       - "assets/**"
       - "docs/**"
       - "package.json"
@@ -117,10 +121,13 @@ on:
       - "scripts/lib/runtime-supervised-one-shot.mjs"
       - "scripts/lib/distribution-lifecycle.mjs"
       - "scripts/lib/codex-marketplace.mjs"
+      - "scripts/lib/claude-marketplace.mjs"
       - "scripts/lib/native-artifact-delivery.mjs"
       - "scripts/distribution.mjs"
       - "scripts/build-codex-marketplace.mjs"
       - "scripts/verify-codex-marketplace.mjs"
+      - "scripts/build-claude-marketplace.mjs"
+      - "scripts/verify-claude-marketplace.mjs"
       - "scripts/verify-distribution-lifecycle.mjs"
       - "scripts/verify-native-artifact-delivery.mjs"
       - "scripts/verify-newcomer-readme.mjs"
@@ -139,6 +146,7 @@ on:
       - "skills/**"
       - ".mcp.json"
       - "README.md"
+      - "README.ko.md"
       - "assets/**"
       - "docs/**"
       - "package.json"
@@ -269,6 +277,9 @@ jobs:
 
       - name: Verify Codex marketplace snapshot packaging
         run: node scripts/verify-codex-marketplace.mjs
+
+      - name: Verify Claude Code marketplace snapshot packaging
+        run: node scripts/verify-claude-marketplace.mjs
 
       - name: Verify automatic native artifact delivery contract
         run: node scripts/verify-native-artifact-delivery.mjs
@@ -601,6 +612,78 @@ jobs:
           cp -a "${MARKETPLACE_ROOT}/." .
           git add -A
           git commit -m "chore: publish Codex marketplace from ${GITHUB_SHA}"
+          if [[ -n "${EXPECTED_SHA}" ]]; then
+            git push \
+              --force-with-lease="refs/heads/${MARKETPLACE_BRANCH}:${EXPECTED_SHA}" \
+              origin "HEAD:refs/heads/${MARKETPLACE_BRANCH}"
+          else
+            git push origin "HEAD:refs/heads/${MARKETPLACE_BRANCH}"
+          fi
+
+  claude_marketplace:
+    name: Publish verified Claude Code marketplace snapshot
+    needs:
+      - prepare
+      - test
+      - build
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.enabled == 'true' && needs.test.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      MARKETPLACE_BRANCH: claude-marketplace
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Build content-verified Claude Code marketplace snapshot
+        shell: bash
+        run: |
+          marketplace_root="${RUNNER_TEMP}/head-agent-claude-marketplace"
+          echo "MARKETPLACE_ROOT=${marketplace_root}" >> "${GITHUB_ENV}"
+          node scripts/build-claude-marketplace.mjs \
+            --output "${marketplace_root}" \
+            --source-repository "${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}"
+          node scripts/verify-claude-marketplace.mjs \
+            --root "${marketplace_root}" \
+            --expected-repository "${GITHUB_REPOSITORY}" \
+            --expected-marketplace-name "head-agent-plugin" \
+            --expected-commit "${GITHUB_SHA}"
+
+      - name: Refuse to replace an unowned Claude Code marketplace branch
+        id: ownership
+        shell: bash
+        run: |
+          expected_sha=""
+          if git ls-remote --exit-code --heads origin "${MARKETPLACE_BRANCH}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/heads/${MARKETPLACE_BRANCH}"
+            expected_sha="$(git rev-parse FETCH_HEAD)"
+            previous_root="${RUNNER_TEMP}/previous-head-agent-claude-marketplace"
+            mkdir -p "${previous_root}"
+            git archive FETCH_HEAD | tar -x -C "${previous_root}"
+            node scripts/verify-claude-marketplace.mjs \
+              --root "${previous_root}" \
+              --expected-repository "${GITHUB_REPOSITORY}" \
+              --expected-marketplace-name "head-agent-plugin"
+          fi
+          echo "expected_sha=${expected_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish one generated Claude Code marketplace branch
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.ownership.outputs.expected_sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan claude-marketplace-publish
+          git rm -rf .
+          cp -a "${MARKETPLACE_ROOT}/." .
+          git add -A
+          git commit -m "chore: publish Claude Code marketplace from ${GITHUB_SHA}"
           if [[ -n "${EXPECTED_SHA}" ]]; then
             git push \
               --force-with-lease="refs/heads/${MARKETPLACE_BRANCH}:${EXPECTED_SHA}" \

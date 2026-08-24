@@ -2,7 +2,7 @@
 
 ## Adopted shape
 
-The plugin is organized as a thin Codex distribution around a provider-neutral core:
+The plugin is organized as thin provider distributions around a provider-neutral core:
 
 ```text
 .codex-plugin/plugin.json
@@ -29,6 +29,15 @@ The plugin is organized as a thin Codex distribution around a provider-neutral c
 ```
 
 Claude Code, Codex, and OpenCode are projections of the same `.head/` authority. They do not own separate project truth.
+
+The source tree remains the directly runnable Core. CI creates independent,
+content-verified `codex-marketplace` and `claude-marketplace` branches from the
+same allowlisted distribution. Claude's generated branch adds only the catalog,
+plugin manifest, and `${CLAUDE_PLUGIN_ROOT}` MCP cache-path projection required
+by Claude Code. Distribution metadata and cache paths cannot alter Core identity,
+Product Canon, Session/Run recovery, or any authority plane. See
+[`codex-marketplace.md`](codex-marketplace.md) and
+[`claude-marketplace.md`](claude-marketplace.md).
 
 ## Onboarding authority plane
 
