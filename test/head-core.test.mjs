@@ -43,7 +43,7 @@ import {
   readLineageArtifact,
 } from "../scripts/lib/execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
-import { buildWorldModel, captureWorldMarkdownChanges, inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet, readWorldModel } from "../scripts/lib/world-model.mjs";
+import { WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES, buildWorldModel, buildWorldModelStatusProjection, captureWorldMarkdownChanges, inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet, readWorldModel } from "../scripts/lib/world-model.mjs";
 import { buildTemporalProvenanceGraph, queryTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
 import { ActivatedArcadeDbGraphProjectionAdapter, ArcadeDbGraphProjectionAdapter, GRAPH_PROJECTION_ADAPTER_VERSION, InMemoryGraphProjectionAdapter, LocalJsonGraphProjectionAdapter, buildGraphProjectionPointer, buildPreparedTraversalRequest, createActivatedArcadeDbGraphProjectionAdapter, inspectArcadeDbGraphProjectionActivation, inspectArcadeDbGraphTopologyActivation, inspectArcadeDbIncrementalSyncReceipt, materializeGraphProjection, queryGraphProjection, verifyGraphProjectionAdapterConformance } from "../scripts/lib/graph-projection-adapter.mjs";
 import { buildPreparedTraversalCostEvidence, verifyPreparedTraversalCostEvidence } from "../scripts/lib/prepared-traversal-benchmark.mjs";
@@ -61,7 +61,7 @@ import {
   verifyRuntimeAdapterComposition,
   verifyRuntimeAdapterContractMatrix,
 } from "../scripts/lib/runtime-adapter.mjs";
-import { dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { WORLD_MODEL_STATUS_MCP_MAX_BYTES, dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel, verifyIncrementalRefreshReceipt, verifyIncrementalRefreshRequest } from "../scripts/lib/incremental-refresh.mjs";
 import {
@@ -206,6 +206,19 @@ function temporaryProject() {
   const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
   return fs.mkdtempSync(path.join(parent, "head-agent-core-test-"));
+}
+
+function directoryFileDigests(root) {
+  const files = {};
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile()) files[path.relative(root, absolute).replaceAll("\\", "/")] = crypto.createHash("sha256").update(fs.readFileSync(absolute)).digest("hex");
+    }
+  };
+  visit(root);
+  return files;
 }
 
 function hasOwnKeyDeep(value, key) {
@@ -571,7 +584,39 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.equal(graphNodes.get(call.to).name, "double");
   assert.equal(call.evidence.path, "src/service.mjs");
   assert.equal(call.confidence, "heuristic");
-  assert.equal(inspectWorldModel({ root }).status, "current");
+  const fullInspection = inspectWorldModel({ root });
+  assert.equal(fullInspection.status, "current");
+  const headBeforeStatus = directoryFileDigests(path.join(root, ".head"));
+  const statusProjection = inspectWorldModelStatus({ root });
+  assert.equal(statusProjection.kind, "WorldModelStatusProjection");
+  assert.equal(statusProjection.status, "current");
+  assert.equal(statusProjection.identities.worldModelId, first.snapshot.worldModelId);
+  assert.equal(statusProjection.identities.worldModelHash, first.snapshot.worldModelHash);
+  assert.equal(statusProjection.verification.completeSnapshotDigestVerified, true);
+  assert.equal(statusProjection.verification.completeRepositoryFreshnessChecked, true);
+  assert.equal(statusProjection.fullSnapshot.omitted, true);
+  assert.equal(statusProjection.fullSnapshot.serializedByteLength, Buffer.byteLength(JSON.stringify(first.snapshot), "utf8"));
+  assert.equal(Object.hasOwn(statusProjection, "snapshot"), false);
+  assert.ok(Buffer.byteLength(JSON.stringify(statusProjection), "utf8") < WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES);
+
+  const mcpStatus = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "head_world_model", arguments: { project_root: root } },
+  });
+  assert.equal(mcpStatus.result.structuredContent.statusProjectionId, statusProjection.statusProjectionId);
+  assert.equal(Object.hasOwn(mcpStatus.result.structuredContent, "snapshot"), false);
+  assert.ok(Buffer.byteLength(JSON.stringify(mcpStatus), "utf8") < WORLD_MODEL_STATUS_MCP_MAX_BYTES);
+  assert.deepEqual(directoryFileDigests(path.join(root, ".head")), headBeforeStatus);
+
+  {
+    const oversizedSnapshot = { ...fullInspection.snapshot, transportLimitFixture: "x".repeat((64 * 1024 * 1024) + 1) };
+    const oversizedProjection = buildWorldModelStatusProjection({ ...fullInspection, snapshot: oversizedSnapshot });
+    assert.ok(oversizedProjection.fullSnapshot.serializedByteLength > 64 * 1024 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(oversizedProjection), "utf8") < WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES);
+    assert.equal(Object.hasOwn(oversizedProjection, "transportLimitFixture"), false);
+  }
 
   const memoryStore = new MemoryWorldModelStoreAdapter();
   const memoryMaterialization = await buildWorldModel({ root, storeAdapter: memoryStore, gitHistoryAdapter });

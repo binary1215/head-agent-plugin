@@ -69,6 +69,11 @@ import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
 export const WORLD_MODEL_VERSION = "0.12.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
+export const WORLD_MODEL_STATUS_PROJECTION_VERSION = "0.1.0";
+export const WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES = 512 * 1024;
+
+const WORLD_MODEL_STATUS_SAMPLE_LIMIT = 20;
+const verifiedSnapshotByteLengths = new WeakMap();
 
 const fail = (message, code = "WORLD_MODEL_ERROR") => {
   const error = new Error(message);
@@ -238,7 +243,8 @@ function verifiedSnapshot(snapshot, expectedId = "") {
   const payload = { ...snapshot };
   delete payload.worldModelId;
   delete payload.worldModelHash;
-  const actualHash = digest(canonicalJson(payload));
+  const canonicalPayload = canonicalJson(payload);
+  const actualHash = digest(canonicalPayload);
   if (recordedHash !== actualHash || recordedId !== `world-model-${actualHash.slice(0, 24)}` || (expectedId && recordedId !== expectedId)) {
     fail("World Model snapshot digest verification failed.", "WORLD_MODEL_DIGEST_MISMATCH");
   }
@@ -335,6 +341,8 @@ function verifiedSnapshot(snapshot, expectedId = "") {
   }
   if (snapshot.gitDecisionHistory) verifyGitDecisionHistory(snapshot.gitDecisionHistory);
   if (snapshot.externalRuntimeState) verifyExternalRuntimeState(snapshot.externalRuntimeState);
+  const identityBytes = Buffer.byteLength(`,"worldModelHash":${JSON.stringify(recordedHash)},"worldModelId":${JSON.stringify(recordedId)}`, "utf8");
+  verifiedSnapshotByteLengths.set(snapshot, Buffer.byteLength(canonicalPayload, "utf8") + identityBytes);
   return snapshot;
 }
 
@@ -615,6 +623,135 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     sourceAdapters: { runtimeState: externalRuntimeResult.adapter },
     sourceDiagnostics: { runtimeState: externalRuntimeResult.diagnostics },
   };
+}
+
+function boundedPathSummary(items, limit) {
+  const values = [...new Set((Array.isArray(items) ? items : []).filter((item) => typeof item === "string"))]
+    .sort((left, right) => left.localeCompare(right));
+  return {
+    count: values.length,
+    sample: values.slice(0, limit),
+    omittedCount: Math.max(0, values.length - limit),
+  };
+}
+
+function snapshotSerializedByteLength(snapshot) {
+  const verifiedLength = verifiedSnapshotByteLengths.get(snapshot);
+  return Number.isSafeInteger(verifiedLength)
+    ? verifiedLength
+    : Buffer.byteLength(JSON.stringify(snapshot), "utf8");
+}
+
+export function buildWorldModelStatusProjection(inspection, { sampleLimit = WORLD_MODEL_STATUS_SAMPLE_LIMIT } = {}) {
+  if (!inspection?.snapshot || !inspection?.pointer || !new Set(["current", "stale"]).has(inspection.status)) {
+    fail("A verified World Model inspection is required for status projection.", "INVALID_WORLD_MODEL_STATUS_INPUT");
+  }
+  if (!Number.isInteger(sampleLimit) || sampleLimit < 0 || sampleLimit > WORLD_MODEL_STATUS_SAMPLE_LIMIT) {
+    fail(`World Model status sample limit must be between 0 and ${WORLD_MODEL_STATUS_SAMPLE_LIMIT}.`, "INVALID_WORLD_MODEL_STATUS_SAMPLE_LIMIT");
+  }
+
+  const snapshot = inspection.snapshot;
+  const freshnessCounts = { active: 0, stale: 0, removed: 0, unindexed: 0 };
+  const nonActiveFiles = [];
+  for (const item of inspection.fileFreshness || []) {
+    if (Object.hasOwn(freshnessCounts, item.status)) freshnessCounts[item.status] += 1;
+    if (item.status !== "active") nonActiveFiles.push({ path: item.path, status: item.status });
+  }
+  nonActiveFiles.sort((left, right) => left.path.localeCompare(right.path) || left.status.localeCompare(right.status));
+
+  const changeFlags = Object.fromEntries(Object.entries(inspection.changes || {})
+    .filter(([, value]) => typeof value === "boolean")
+    .sort(([left], [right]) => left.localeCompare(right)));
+  const counts = Object.fromEntries(Object.entries(snapshot.summary || {})
+    .filter(([, value]) => Number.isSafeInteger(value) && value >= 0)
+    .sort(([left], [right]) => left.localeCompare(right)));
+  const skippedCounts = Object.fromEntries(Object.entries(snapshot.skipped || {})
+    .filter(([, value]) => Number.isSafeInteger(value) && value >= 0)
+    .sort(([left], [right]) => left.localeCompare(right)));
+  const storage = inspection.storeAdapter || {};
+  const temporalGraph = snapshot.temporalProvenanceGraph || {};
+
+  const payload = {
+    schemaVersion: 1,
+    kind: "WorldModelStatusProjection",
+    protocol: { name: "head-agent-core-world-model-status", version: WORLD_MODEL_STATUS_PROJECTION_VERSION },
+    status: inspection.status,
+    verification: {
+      completeSnapshotDigestVerified: true,
+      completeSnapshotStructureVerified: true,
+      completeRepositoryFreshnessChecked: true,
+    },
+    authority: "derived-read-only-status-projection",
+    authorityPlane: "P4-derived-relation-view",
+    instructionAuthority: false,
+    promotionAuthority: false,
+    mutationAuthority: false,
+    identities: {
+      projectId: snapshot.projectId,
+      worldModelId: snapshot.worldModelId,
+      worldModelHash: snapshot.worldModelHash,
+      storedSourceDigest: snapshot.sourceDigest,
+      currentSourceDigest: inspection.currentSourceDigest,
+      sourceSnapshotId: temporalGraph.sourceSnapshotId || snapshot.summary?.sourceSnapshotId || null,
+      graphSnapshotId: temporalGraph.graphSnapshotId || null,
+      graphSnapshotHash: temporalGraph.graphSnapshotHash || null,
+      semanticGraphId: snapshot.semanticGraph?.semanticGraphId || null,
+      semanticGraphHash: snapshot.semanticGraph?.semanticGraphHash || null,
+      productModelId: snapshot.productModel?.productModelId || null,
+      productModelHash: snapshot.productModel?.productModelHash || null,
+    },
+    counts,
+    freshness: {
+      files: {
+        counts: freshnessCounts,
+        nonActiveSample: nonActiveFiles.slice(0, sampleLimit),
+        omittedNonActiveCount: Math.max(0, nonActiveFiles.length - sampleLimit),
+      },
+      changes: {
+        added: boundedPathSummary(inspection.changes?.added, sampleLimit),
+        changed: boundedPathSummary(inspection.changes?.changed, sampleLimit),
+        removed: boundedPathSummary(inspection.changes?.removed, sampleLimit),
+        flags: changeFlags,
+      },
+    },
+    skipped: {
+      counts: skippedCounts,
+      totalCount: Object.values(skippedCounts).reduce((total, count) => total + count, 0),
+    },
+    storage: {
+      contract: storage.contract || null,
+      adapterKind: storage.adapterKind || null,
+      adapterVersion: storage.adapterVersion || null,
+      authority: storage.authority || null,
+      rebuildable: storage.rebuildable === true,
+      uniqueAuthority: storage.uniqueAuthority === true,
+      remote: storage.remote === true,
+      durable: storage.durable === true,
+    },
+    fullSnapshot: {
+      omitted: true,
+      serializedByteLength: snapshotSerializedByteLength(snapshot),
+      worldModelId: snapshot.worldModelId,
+      worldModelHash: snapshot.worldModelHash,
+      localInspectionCommand: "head-agent world-status <project>",
+      boundedDetailTools: ["head_world_query", "head_temporal_graph", "head_git_history", "head_runtime_state"],
+    },
+  };
+  const statusProjectionHash = digest(canonicalJson(payload));
+  const projection = {
+    ...payload,
+    statusProjectionId: `world-model-status-${statusProjectionHash.slice(0, 24)}`,
+    statusProjectionHash,
+  };
+  const byteLength = Buffer.byteLength(JSON.stringify(projection), "utf8");
+  if (byteLength > WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES) {
+    fail(`World Model status projection exceeds ${WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES} bytes.`, "WORLD_MODEL_STATUS_PROJECTION_TOO_LARGE");
+  }
+  return projection;
+}
+
+export function inspectWorldModelStatus({ root = ".", storeAdapter = null, runtimeStateAdapter = null } = {}) {
+  return buildWorldModelStatusProjection(inspectWorldModel({ root, storeAdapter, runtimeStateAdapter }));
 }
 
 async function buildWorldModelLocked({

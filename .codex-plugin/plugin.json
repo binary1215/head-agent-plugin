@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.79+codex.20260823152225",
+  "version": "0.3.0-alpha.79+codex.20260824021628",
   "description": "Provider-neutral HEAD coordination for Claude Code, Codex, and OpenCode with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -69,6 +69,7 @@
       "Fresh HEAD Review Projection",
       "Review-driven Plan Generations",
       "Repository World Model",
+      "Bounded Fully-verified World Model Status Projection",
       "Incremental Observed-state Refresh Receipts",
       "Changed-file Analysis Reuse",
       "Debounced Filesystem and CI Refresh Triggers",

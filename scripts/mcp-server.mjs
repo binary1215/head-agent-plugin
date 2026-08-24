@@ -6,7 +6,7 @@ import { coreContract, inspectProject, inspectRuntimeAdapters } from "./lib/head
 import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
-import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
+import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
 import { inspectOnboarding, reviewOnboarding } from "./lib/onboarding.mjs";
 import { inspectConversationalOnboarding } from "./lib/onboarding-conversation.mjs";
 import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
@@ -438,13 +438,14 @@ export const tools = [
   },
   {
     name: "head_world_model",
-    description: "Read, freshness-check, and digest-verify the current Repository World Model through its replaceable storage adapter.",
+    description: "Completely freshness-check and digest-verify the current Repository World Model, then return a bounded read-only status projection with identities, counts, samples, and omission metadata.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
       required: ["project_root"],
       additionalProperties: false
-    }
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_incremental_refresh_status",
@@ -829,6 +830,7 @@ export const tools = [
 
 const success = (id, result) => ({ jsonrpc: "2.0", id, result });
 const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, message } });
+export const WORLD_MODEL_STATUS_MCP_MAX_BYTES = 4 * 1024 * 1024;
 
 function onboardingInputFromMcp(args) {
   const onboarding = {};
@@ -1058,7 +1060,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                     : name === "head_run_integration"
                       ? readRunResultIntegration({ root: args.project_root, reviewDecisionId: args.review_decision_id })
                 : name === "head_world_model"
-                  ? inspectWorldModel({ root: args.project_root })
+                  ? inspectWorldModelStatus({ root: args.project_root })
                   : name === "head_incremental_refresh_status"
                     ? inspectIncrementalRefresh({ root: args.project_root })
                     : name === "head_incremental_refresh_receipt"
@@ -1164,7 +1166,11 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                           : name === "head_continuity_snapshot"
                             ? buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());
-    return success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+    const response = success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+    if (name === "head_world_model" && Buffer.byteLength(JSON.stringify(response), "utf8") > WORLD_MODEL_STATUS_MCP_MAX_BYTES) {
+      throw new Error(`head_world_model response exceeds ${WORLD_MODEL_STATUS_MCP_MAX_BYTES} bytes.`);
+    }
+    return response;
   } catch (error) {
     return failure(id, error.message);
   }

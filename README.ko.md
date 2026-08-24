@@ -328,6 +328,12 @@ Signal → Hypothesis → Initiative 후보 → 사용자 ReviewDecision
 `graphSnapshotId`를 생성하고, 의미가 달라지면 명시적인 계보를 가진 새
 스냅샷이 생성됩니다.
 
+`head_world_model`은 전체 모델과 현재 저장소를 빠짐없이 검증한 뒤, 전체
+스냅샷 대신 크기가 제한된 상태 프로젝션을 반환합니다. 카운트, ID, digest,
+표본, 생략 정보는 유지하며 더 자세한 내용은 범위가 제한된 그래프·히스토리·
+런타임·시맨틱 질의 도구로 확인합니다. 따라서 freshness나 digest 계산을
+생략하지 않고 MCP 응답만 작게 유지합니다.
+
 ```mermaid
 flowchart LR
     C[Product Canon] <-->|검토된 의미| F[Features]

@@ -81,7 +81,8 @@ active/pending Run; do not reinterpret a failed mutation as success.
 
 After a ready review:
 
-1. call `head_world_model` and `head_graph_projection_status`;
+1. call `head_world_model` for its bounded, fully verified status projection and
+   `head_graph_projection_status`; never request the complete World Model through MCP;
 2. call `head_context_preview` with a concrete user task and a bounded budget;
 3. call `head_markdown_projection_build`, then
    `head_markdown_projection_status`;

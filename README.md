@@ -330,6 +330,12 @@ backup, or mutable latest-node collection. The same verified inputs produce the
 same `graphSnapshotId`; semantic changes create a new snapshot with explicit
 ancestry.
 
+`head_world_model` verifies that complete model and current repository, then
+returns a bounded status projection instead of transporting the full snapshot.
+Counts, IDs, digests, samples, and omission metadata stay available; deeper
+inspection uses the bounded graph, history, runtime, and semantic query tools.
+This keeps MCP responses small without skipping any freshness or digest check.
+
 ```mermaid
 flowchart LR
     C[Product Canon] <-->|reviewed meaning| F[Features]
