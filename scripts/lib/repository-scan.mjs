@@ -41,7 +41,7 @@ export const REPOSITORY_SCAN_DEFAULTS = Object.freeze({
 
 export const REPOSITORY_SCAN_EXCLUDED_DIRECTORIES = Object.freeze([
   ".cache", ".git", ".head", ".hg", ".mypy_cache", ".next", ".nox", ".nuxt",
-  ".pytest_cache", ".ruff_cache", ".svn", ".tox", ".uv-python", ".venv",
+  ".omo", ".pytest_cache", ".ruff_cache", ".svn", ".tox", ".uv-cache", ".uv-python", ".venv",
   "__pycache__", "build", "coverage", "dist", "node_modules", "out", "target",
   "vendor", "venv",
 ].sort());

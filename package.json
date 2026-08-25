@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.79+codex.20260825114844",
+  "version": "0.3.0-alpha.79+codex.20260825115713",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",

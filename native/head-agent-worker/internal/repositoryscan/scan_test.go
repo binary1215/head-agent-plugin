@@ -56,14 +56,14 @@ func TestTrackedCorpusHonorsExplicitSourceScope(t *testing.T) {
 	}
 }
 
-func TestRepositoryScanExcludesPythonRuntimeAndCacheDirectories(t *testing.T) {
+func TestRepositoryScanExcludesTechnicalRuntimeCacheAndEvidenceDirectories(t *testing.T) {
 	root := t.TempDir()
-	for _, relative := range []string{"src", ".uv-python/lib", ".pytest_cache/state"} {
+	for _, relative := range []string{"src", ".uv-python/lib", ".uv-cache/archive", ".pytest_cache/state", ".omo/evidence"} {
 		if err := os.MkdirAll(filepath.Join(root, relative), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, relative := range []string{"src/app.py", ".uv-python/lib/runtime.py", ".pytest_cache/state/cache.py"} {
+	for _, relative := range []string{"src/app.py", ".uv-python/lib/runtime.py", ".uv-cache/archive/runtime.py", ".pytest_cache/state/cache.py", ".omo/evidence/copy.py"} {
 		if err := os.WriteFile(filepath.Join(root, relative), []byte("value = 1\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -77,7 +77,7 @@ func TestRepositoryScanExcludesPythonRuntimeAndCacheDirectories(t *testing.T) {
 	document := result.(map[string]any)
 	summary := document["summary"].(map[string]any)
 	skipped := document["skipped"].(map[string]any)
-	if summary["fileCount"] != 1 || skipped["excludedDirectory"] != 2 {
-		t.Fatalf("technical Python directories entered product evidence: summary=%#v skipped=%#v", summary, skipped)
+	if summary["fileCount"] != 1 || skipped["excludedDirectory"] != 4 {
+		t.Fatalf("technical runtime, cache, or evidence directories entered product evidence: summary=%#v skipped=%#v", summary, skipped)
 	}
 }
