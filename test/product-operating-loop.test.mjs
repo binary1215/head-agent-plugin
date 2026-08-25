@@ -94,7 +94,7 @@ test("connects the minimal Product Operating Loop while keeping Product Canon an
   assert.equal(graph.edges.some((edge) => edge.type === "SUPPORTED_BY" && edge.from === hypothesis.hypothesis.hypothesisId && edge.to === signal.signal.signalId), true);
   assert.equal(graph.edges.some((edge) => edge.type === "PRODUCES" && edge.from === reviewed.reviewDecision.reviewDecisionId && edge.to === reviewed.reviewedInitiative.initiativeId), true);
 
-  const capsule = compileContext({ root, task: "Implement the reviewed continuity initiative", budget: 12000, persist: true });
+  const capsule = compileContext({ root, task: "Implement the reviewed continuity initiative", budget: 32_768, persist: true });
   const plan = createWholePlanSnapshot({ root, objective: "Implement continuity with reviewed execution lineage", plan: [{ id: "implement", outcome: "Verified continuity implementation" }] });
   const contract = createExecutionContract({ root, wholePlanId: plan.artifact.wholePlanId, capsuleId: capsule.capsule.capsuleId, scope: "Change the fixture implementation", acceptanceCriteria: ["Return implementation evidence"] });
   startRun({ root, executionContractId: contract.artifact.executionContractId });

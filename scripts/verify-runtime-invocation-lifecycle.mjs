@@ -447,7 +447,7 @@ async function main() {
     const capsule = compileContext({
       root: resolvedRoot,
       task: "Prove bounded provider-neutral runtime lifecycle conformance without changing project files.",
-      budget: 1_024,
+      budget: 32_768,
       persist: true,
     }).capsule;
     const plan = createWholePlanSnapshot({

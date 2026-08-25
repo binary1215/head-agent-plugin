@@ -33,7 +33,7 @@ function initialize(root) {
 }
 
 function startFixtureRun(root, suffix = "artifact-only recovery") {
-  const capsule = compileContext({ root, task: `Verify ${suffix}`, budget: 2000, persist: true }).capsule;
+  const capsule = compileContext({ root, task: `Verify ${suffix}`, budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({
     root,
     objective: `Complete ${suffix}`,

@@ -209,7 +209,7 @@ async function main() {
     const capsule = compileContext({
       root: projectRoot,
       task: "Create run-output.txt with the exact required marker and verify it without external effects.",
-      budget: 2_048,
+      budget: 32_768,
       persist: true,
     }).capsule;
     const plan = createWholePlanSnapshot({

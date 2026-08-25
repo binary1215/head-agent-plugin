@@ -132,7 +132,7 @@ try {
   const context = await tool("head_context_preview", {
     project_root: projectRoot,
     task: "Locate camera capture and calibration evidence",
-    budget: 2000,
+    budget: 32_768,
   });
   assert.equal(context.status, "preview");
   assert.match(context.capsule.capsuleId, /^capsule-[a-f0-9]{24}$/);

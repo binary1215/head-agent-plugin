@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
-import { readContextCapsule } from "./context-compiler.mjs";
+import { readContextCapsule, requireCoveredContextCapsule } from "./context-compiler.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
 export const EXECUTION_LINEAGE_VERSION = "0.4.0";
@@ -325,13 +325,20 @@ export function createExecutionContract({ root = ".", wholePlanId, capsuleId, sc
   const planId = requiredText(wholePlanId, "Whole-plan id");
   const contextId = requiredText(capsuleId, "Context Capsule id");
   requireArtifact(project.projectRoot, planId, "WholePlanSnapshot");
-  readContextCapsule({ root: project.projectRoot, capsuleId: contextId });
+  const contextCapsule = requireCoveredContextCapsule({ root: project.projectRoot, capsuleId: contextId }).capsule;
   const artifact = buildArtifact({
     project,
     kind: "ExecutionContract",
     body: {
       wholePlanId: planId,
       capsuleId: contextId,
+      contextAcceptance: {
+        authority: "HEAD",
+        disposition: "accepted-for-this-execution-contract",
+        evidenceNeedSetDigest: contextCapsule.evidenceNeedContract?.evidenceNeedSetDigest || null,
+        coverageProofDigest: contextCapsule.coverageAssessment?.proofDigest || null,
+        semanticJudgmentSource: "HEAD-not-context-compiler",
+      },
       scope: requiredText(scope, "Execution scope"),
       acceptanceCriteria: stringList(acceptanceCriteria, "Acceptance criteria", { required: true }),
       constraints: stringList(constraints, "Execution constraints"),

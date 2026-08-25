@@ -81,7 +81,7 @@ function fixture(name, disposition = "accept") {
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, "fixture.mjs"), `export const fixture = ${JSON.stringify(name)};\n`, "utf8");
   initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
-  const capsule = compileContext({ root, task: `Verify ${name}`, budget: 2000, persist: true }).capsule;
+  const capsule = compileContext({ root, task: `Verify ${name}`, budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({
     root,
     objective: `Complete hostless recovery scenario ${name}`,

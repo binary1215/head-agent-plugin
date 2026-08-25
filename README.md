@@ -281,7 +281,7 @@ Apply the decision and verify the resulting views:
 head-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
 head-agent world-status C:\path\to\project
 head-agent context-preview C:\path\to\project `
-  --task "Find implementation evidence for one reviewed Feature" --budget 2000
+  --task "Find implementation evidence for one reviewed Feature" --budget 32768
 head-agent world-docs-build C:\path\to\project
 head-agent resume C:\path\to\project --runtime claude,codex,opencode
 ```
@@ -353,6 +353,20 @@ The Context Compiler selects task-relevant evidence under an explicit budget.
 It records what was included, excluded, stale, missing, truncated, or unknown.
 The same canonical inputs, compiler version, traversal policy, and budget
 reproduce the same Context Capsule.
+
+Budgets use five deterministic approximate-token tiers: `32768` (default),
+`65536`, `131072`, `262144`, and `524288` (hard maximum). Start at 32K and let
+HEAD explicitly select a larger tier only when the task needs more evidence.
+These are compiler estimates, currently calculated as UTF-16 code units divided
+by four; the runtime adapter must still check the provider's actual tokenizer,
+context window, and output reserve before invocation.
+
+HEAD decides which evidence kinds the current task actually requires. It can
+pass task-local `EvidenceNeed[]` entries for source, test, Product Context, or
+specific graph relations; the Compiler does not invent a universal test rule.
+It emits a reproducible `coverageAssessment` proving only whether matching
+evidence was included. The later ExecutionContract records HEAD's separate
+semantic acceptance with the exact need-set and coverage-proof digests.
 
 A Capsule is a derived execution input, not a second Canon. Digest or Canon drift
 fails closed; simple read/reason work does not create a Capsule by default.
@@ -461,7 +475,7 @@ head-agent world-status C:\path\to\project
 head-agent world-temporal C:\path\to\project `
   --query "<Feature, symbol, path, ChangeSet, or ReviewDecision>" `
   --depth 3 --limit 100 --edge-limit 200
-head-agent context-preview C:\path\to\project --task "<task>" --budget 4000
+head-agent context-preview C:\path\to\project --task "<task>" --budget 32768
 ```
 
 Traversal returns snapshot, query, and result identities plus inclusion,

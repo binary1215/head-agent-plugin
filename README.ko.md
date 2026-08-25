@@ -277,7 +277,7 @@ head-agent onboarding-candidates C:\path\to\project `
 head-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
 head-agent world-status C:\path\to\project
 head-agent context-preview C:\path\to\project `
-  --task "검토된 Feature 하나의 구현 증거 찾기" --budget 2000
+  --task "검토된 Feature 하나의 구현 증거 찾기" --budget 32768
 head-agent world-docs-build C:\path\to\project
 head-agent resume C:\path\to\project --runtime claude,codex,opencode
 ```
@@ -348,6 +348,21 @@ flowchart LR
 Context Compiler는 명시적인 예산 안에서 작업과 관련된 증거를 선택합니다.
 포함·제외·오래됨·누락·잘림·미확인 항목을 기록합니다. 동일한 정본 입력,
 컴파일러 버전, 탐색 정책, 예산은 동일한 Context Capsule을 재현합니다.
+
+예산은 결정론적인 근사 토큰 계층 다섯 개만 사용합니다. `32768`(기본값),
+`65536`, `131072`, `262144`, `524288`(하드 상한)입니다. 32K에서 시작하고
+작업에 더 많은 증거가 필요할 때만 HEAD가 더 큰 계층을 명시적으로
+선택합니다. 현재 값은 UTF-16 코드 단위 수를 4로 나눈 근사치이므로,
+실제 호출 전에는 런타임 어댑터가 제공자의 토크나이저, 컨텍스트 창,
+출력 예약분을 별도로 확인해야 합니다.
+
+현재 작업에 실제로 필요한 증거 종류는 HEAD가 정합니다. HEAD는 source,
+test, Product Context 또는 특정 그래프 관계를 task-local `EvidenceNeed[]`로
+지정할 수 있으며, Compiler가 모든 작업에 테스트를 일률적으로 요구하지
+않습니다. Compiler는 일치하는 증거가 실제 Capsule에 포함됐는지만
+`coverageAssessment`로 재현 가능하게 증명합니다. 이후 ExecutionContract가
+정확한 need-set 및 coverage-proof digest와 함께 HEAD의 별도 의미적 수용을
+기록합니다.
 
 Capsule은 파생된 실행 입력이지 두 번째 Canon이 아닙니다. 다이제스트 또는
 Canon 드리프트는 실패 폐쇄되며, 단순한 읽기·추론 작업은 기본적으로
@@ -456,7 +471,7 @@ head-agent world-status C:\path\to\project
 head-agent world-temporal C:\path\to\project `
   --query "<Feature, symbol, path, ChangeSet, or ReviewDecision>" `
   --depth 3 --limit 100 --edge-limit 200
-head-agent context-preview C:\path\to\project --task "<task>" --budget 4000
+head-agent context-preview C:\path\to\project --task "<task>" --budget 32768
 ```
 
 탐색 결과는 스냅샷, 질의, 결과 식별자와 포함·제외·잘림 이유를 함께

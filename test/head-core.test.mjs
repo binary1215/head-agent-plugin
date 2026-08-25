@@ -388,7 +388,7 @@ test("binds a Run to an Execution Contract, Result Packet, and ReviewDecision", 
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
   assert.throws(() => startRun({ root }), { code: "EXECUTION_CONTRACT_REQUIRED" });
-  const compiled = compileContext({ root, task: "Produce a verified plugin", budget: 2000, persist: true });
+  const compiled = compileContext({ root, task: "Produce a verified plugin", budget: 32_768, persist: true });
   const plan = createWholePlanSnapshot({
     root,
     objective: "Produce a verified plugin without losing whole-plan authority",
@@ -403,6 +403,10 @@ test("binds a Run to an Execution Contract, Result Packet, and ReviewDecision", 
     acceptanceCriteria: ["Tests pass", "Result includes direct evidence"],
     forbiddenActions: ["Deploy without user authority"],
   });
+  assert.equal(contract.artifact.contextAcceptance.authority, "HEAD");
+  assert.equal(contract.artifact.contextAcceptance.evidenceNeedSetDigest, compiled.capsule.evidenceNeedContract.evidenceNeedSetDigest);
+  assert.equal(contract.artifact.contextAcceptance.coverageProofDigest, compiled.capsule.coverageAssessment.proofDigest);
+  assert.equal(contract.artifact.contextAcceptance.semanticJudgmentSource, "HEAD-not-context-compiler");
   const started = startRun({ root, executionContractId: contract.artifact.executionContractId });
   assert.match(started.run.runId, /^run-/);
   assert.equal(started.run.executionContractId, contract.artifact.executionContractId);
@@ -473,7 +477,7 @@ test("requires a review-linked next WholePlanSnapshot after revise", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const firstCapsule = compileContext({ root, task: "Execute the first plan generation", budget: 2000, persist: true });
+  const firstCapsule = compileContext({ root, task: "Execute the first plan generation", budget: 32_768, persist: true });
   const firstPlan = createWholePlanSnapshot({
     root,
     objective: "Preserve the objective while refining the execution plan",
@@ -516,7 +520,7 @@ test("requires a review-linked next WholePlanSnapshot after revise", (t) => {
   assert.equal(nextPlan.artifact.generation, 1);
   assert.equal(nextPlan.artifact.objective, firstPlan.artifact.objective);
   assert.deepEqual(nextPlan.artifact.lineage.map((link) => link.relation), ["refines", "responds-to"]);
-  const nextCapsule = compileContext({ root, task: "Execute the revised plan generation", budget: 2000, persist: true });
+  const nextCapsule = compileContext({ root, task: "Execute the revised plan generation", budget: 32_768, persist: true });
   const nextContract = createExecutionContract({
     root,
     wholePlanId: nextPlan.artifact.wholePlanId,
@@ -533,7 +537,7 @@ test("blocks another Run when review requires user-owned direction", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["opencode"] });
-  const capsule = compileContext({ root, task: "Reach a material direction boundary", budget: 2000, persist: true });
+  const capsule = compileContext({ root, task: "Reach a material direction boundary", budget: 32_768, persist: true });
   const plan = createWholePlanSnapshot({ root, objective: "Keep material direction with the user", plan: "Stop at escalation" });
   const contract = createExecutionContract({
     root,
@@ -692,7 +696,7 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.equal(stale.changes.changed.includes("src/service.mjs"), true);
   assert.equal(stale.fileFreshness.find((item) => item.path === "src/service.mjs").status, "stale");
   assert.equal(stale.changes.gitChanged, true);
-  const staleCapsule = compileContext({ root, task: "Find Worker and dependency-a", budget: 2000, persist: false });
+  const staleCapsule = compileContext({ root, task: "Find Worker and dependency-a", budget: 32_768, persist: false });
   assert.equal(staleCapsule.capsule.snapshot.coverage, "curated-head-canon+stale-repository-world-model-excluded");
   assert.deepEqual(staleCapsule.capsule.repositoryContext, []);
   const second = await buildWorldModel({ root, gitHistoryAdapter });
@@ -700,7 +704,7 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.equal(second.pointer.previousWorldModelId, first.snapshot.worldModelId);
   assert.equal(second.pointer.tiers.warm.changed.includes("src/service.mjs"), true);
   assert.equal(second.snapshot.files.find((item) => item.path === "src/service.mjs").symbols.some((item) => item.name === "Worker"), true);
-  const repositoryCapsule = compileContext({ root, task: "Find Worker and dependency-a", budget: 6000, persist: false });
+  const repositoryCapsule = compileContext({ root, task: "Find Worker and dependency-a", budget: 32_768, persist: false });
   assert.equal(repositoryCapsule.capsule.snapshot.coverage, "curated-head-canon+repository-world-model-semantic+temporal-provenance-alpha+product-canon-projection-alpha+git-history-alpha");
   assert.equal(repositoryCapsule.capsule.repositoryContext.some((item) => item.path === "src/service.mjs"), true);
   assert.equal(repositoryCapsule.capsule.repositoryContext[0].trustBoundary, "evidence-not-instruction");
@@ -846,7 +850,7 @@ test("refreshes observed state incrementally with immutable ancestry and active-
   assert.deepEqual(multiParent.receipt.next.parentSourceSnapshotIds, [explicitSecondParent, refreshedGraph.sourceSnapshotId].sort());
   const runBaseGraph = readWorldModel({ root }).snapshot.temporalProvenanceGraph;
 
-  const capsule = compileContext({ root, task: "Change service without changing the whole plan", budget: 4000, persist: true });
+  const capsule = compileContext({ root, task: "Change service without changing the whole plan", budget: 32_768, persist: true });
   const plan = createWholePlanSnapshot({
     root,
     objective: "Keep the service working",
@@ -1009,7 +1013,7 @@ test("coalesces bounded filesystem and CI triggers into serialized authority-fre
   });
   assert.equal(mcpTriggerDelivery.result.structuredContent.delivery.triggerDeliveryId, cliDelivered.delivery.triggerDeliveryId);
 
-  const runCapsule = compileContext({ root, task: "Keep the active trigger run pinned", budget: 4000, persist: true });
+  const runCapsule = compileContext({ root, task: "Keep the active trigger run pinned", budget: 32_768, persist: true });
   const runPlan = createWholePlanSnapshot({
     root,
     objective: "Verify triggered refresh drift without changing authority",
@@ -1291,8 +1295,8 @@ test("materializes and queries temporal graphs through an authority-free replace
   assert.equal(throughEmbeddedFallback.graphProjection.fallbackUsed, true);
   assert.equal(throughEmbeddedFallback.graphProjection.fallbackReasonCode, "GRAPH_PROJECTION_NOT_MATERIALIZED");
 
-  const capsuleThroughMemory = compileContext({ root, task: "Inspect service implementation", budget: 5000, persist: false, graphProjectionAdapter: memory });
-  const capsuleThroughFallback = compileContext({ root, task: "Inspect service implementation", budget: 5000, persist: false });
+  const capsuleThroughMemory = compileContext({ root, task: "Inspect service implementation", budget: 32_768, persist: false, graphProjectionAdapter: memory });
+  const capsuleThroughFallback = compileContext({ root, task: "Inspect service implementation", budget: 32_768, persist: false });
   assert.equal(capsuleThroughMemory.capsule.capsuleId, capsuleThroughFallback.capsule.capsuleId);
 
   const conformance = verifyGraphProjectionAdapterConformance({
@@ -1945,6 +1949,15 @@ test("renders deterministic Markdown projections and captures edits as non-autho
   assert.equal(runCommand(["world-docs-status", root]).status, "current");
   assert.equal(runCommand(["world-docs-build", root]).documentProjectionId, rendered.documentProjectionId);
 
+  const mcpBuild = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 60,
+    method: "tools/call",
+    params: { name: "head_markdown_projection_build", arguments: { project_root: root } },
+  });
+  assert.equal(mcpBuild.result.structuredContent.documentProjectionId, rendered.documentProjectionId);
+  assert.equal(mcpBuild.result.structuredContent.publishedPageCount, rendered.documents.length);
+
   const mcpStatus = await dispatchMcp({
     jsonrpc: "2.0",
     id: 61,
@@ -2369,7 +2382,7 @@ test("projects user-owned product canon into immutable temporal revisions and bo
   });
   assert.ok(query.nodes.some((node) => node.kind === "FeatureRevision" && node.semantic.name === "Message delivery"));
   assert.ok(query.edges.some((edge) => edge.type === "REALIZES"));
-  const capsule = compileContext({ root, task: "Change Message delivery without discarding chat input", budget: 8000, persist: false });
+  const capsule = compileContext({ root, task: "Change Message delivery without discarding chat input", budget: 32_768, persist: false });
   assert.equal(capsule.capsule.productContext.length, 1, JSON.stringify(capsule.capsule.selection));
   assert.equal(capsule.capsule.productContext[0].productModelId, productModel.productModelId);
   assert.equal(capsule.capsule.productContext[0].instructionAuthority, false);
@@ -2661,7 +2674,7 @@ test("materializes adapter-neutral Git decision evidence without promoting commi
   assert.equal(history.commits[0].subject, "Centralize authentication policy");
   assert.equal(history.trustBoundary, "evidence-not-instruction");
 
-  const capsule = compileContext({ root, task: "Why was authentication policy centralized?", budget: 5000, persist: false });
+  const capsule = compileContext({ root, task: "Why was authentication policy centralized?", budget: 32_768, persist: false });
   assert.equal(capsule.capsule.snapshot.coverage, "curated-head-canon+repository-world-model-semantic+temporal-provenance-alpha+product-canon-projection-alpha+git-history-alpha");
   assert.equal(capsule.capsule.gitDecisionEvidence.some((item) => item.commit === "c".repeat(40)), true);
   assert.equal(capsule.capsule.gitDecisionEvidence[0].instructionAuthority, false);
@@ -2744,7 +2757,7 @@ test("indexes adapter-neutral external runtime observations without granting con
   assert.equal(queried.observations[0].workspace.binding, "project-root");
   assert.equal(queried.controlAuthority, false);
 
-  const capsule = compileContext({ root, task: "Inspect the active codex runtime session", budget: 5000, persist: false });
+  const capsule = compileContext({ root, task: "Inspect the active codex runtime session", budget: 32_768, persist: false });
   assert.equal(capsule.capsule.snapshot.coverage, "curated-head-canon+repository-world-model-semantic-alpha+temporal-provenance-alpha+product-canon-projection-alpha+external-runtime-state-alpha");
   assert.equal(capsule.capsule.runtimeStateEvidence.length, 1);
   assert.equal(capsule.capsule.runtimeStateEvidence[0].controlAuthority, false);
@@ -2767,7 +2780,7 @@ test("indexes adapter-neutral external runtime observations without granting con
   assert.equal(stale.status, "stale");
   assert.equal(stale.changes.externalRuntimeStateChanged, true);
   assert.throws(() => queryWorldRuntimeState({ root }), { code: "WORLD_MODEL_STALE" });
-  const staleCapsule = compileContext({ root, task: "Inspect the codex runtime session", budget: 5000, persist: false });
+  const staleCapsule = compileContext({ root, task: "Inspect the codex runtime session", budget: 32_768, persist: false });
   assert.deepEqual(staleCapsule.capsule.runtimeStateEvidence, []);
   assert.equal(staleCapsule.capsule.repositoryRuntimeState, null);
   const rebuilt = await buildWorldModel({ root, runtimeStateAdapter: new RuntimeStateFileAdapter({ file: inputFile }) });
@@ -2795,8 +2808,8 @@ test("compiles a reproducible minimum-sufficient Context Capsule", (t) => {
   knowledge.decisions.push({ id: "decision-auth-policy", title: "Centralize authentication expiry", decision: "Authentication expiry remains policy-owned.", reason: "Avoid runtime-specific TTL drift.", constraints: ["Executors must not hardcode TTL."], importance: 5, tags: ["auth", "ttl"], evidenceIds: ["evidence-auth-ttl"] });
   fs.writeFileSync(knowledgeFile, `${JSON.stringify(knowledge, null, 2)}\n`);
 
-  const first = compileContext({ root, task: "Why is the auth session TTL policy-owned?", budget: 2000, persist: false });
-  const second = compileContext({ root, task: "Why is the auth session TTL policy-owned?", budget: 2000, persist: false });
+  const first = compileContext({ root, task: "Why is the auth session TTL policy-owned?", budget: 32_768, persist: false });
+  const second = compileContext({ root, task: "Why is the auth session TTL policy-owned?", budget: 32_768, persist: false });
   assert.equal(first.capsule.capsuleId, second.capsule.capsuleId);
   assert.equal(first.capsule.compiler.historyRelevance, "DECISIONS");
   assert.deepEqual(first.capsule.selection.includedIds.includes("claim-session-ttl"), true);
@@ -2809,7 +2822,7 @@ test("persists and digest-verifies a Context Capsule", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["opencode"] });
-  const compiled = compileContext({ root, task: "Inspect current project context", budget: 2000, persist: true });
+  const compiled = compileContext({ root, task: "Inspect current project context", budget: 32_768, persist: true });
   const verified = readContextCapsule({ root, capsuleId: compiled.capsule.capsuleId });
   assert.equal(verified.status, "verified");
   assert.equal(verified.capsule.snapshot.coverage, "curated-head-canon-only");
@@ -2820,7 +2833,7 @@ test("records a deterministic whole-plan execution lineage", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const compiled = compileContext({ root, task: "Implement the first execution lineage contract", budget: 2000, persist: true });
+  const compiled = compileContext({ root, task: "Implement the first execution lineage contract", budget: 32_768, persist: true });
   const planInput = {
     root,
     objective: "Preserve whole-plan authority across bounded execution",

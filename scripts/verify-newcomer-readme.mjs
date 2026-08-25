@@ -173,7 +173,7 @@ try {
   const world = await runGlobal(["world-status", projectRoot]);
   assert.equal(world.status, "current");
   assert.equal(world.snapshot.temporalProvenanceGraph.summary.featureCount > 0, true);
-  const context = await runGlobal(["context-preview", projectRoot, "--task", "Find camera capture and calibration evidence", "--budget", "2000"]);
+  const context = await runGlobal(["context-preview", projectRoot, "--task", "Find camera capture and calibration evidence", "--budget", "32768"]);
   assert.equal(context.status, "preview");
   assert.equal("file" in context, false);
   assert.equal(context.capsule.productContext.length > 0, true);

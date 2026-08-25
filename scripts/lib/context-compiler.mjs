@@ -5,8 +5,39 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.9.0";
+export const CONTEXT_COMPILER_VERSION = "0.12.0";
+export const CONTEXT_COVERAGE_VERSION = "1.0.0";
+export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
+export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
+export const DEFAULT_CONTEXT_BUDGET = CONTEXT_BUDGET_TIERS[0];
+export const EVIDENCE_NEED_KINDS = Object.freeze([
+  "claim",
+  "decision",
+  "git-decision",
+  "product-context",
+  "repository-file",
+  "repository-source",
+  "repository-test",
+  "runtime-state",
+  "semantic-relation",
+  "temporal-relation",
+  "unknown",
+]);
 const MAX_REPOSITORY_GRAPH_EXPANSIONS = 32;
+const MAX_CONTEXT_SYMBOLS_PER_FILE = 12;
+const MAX_CONTEXT_DEPENDENCIES_PER_FILE = 12;
+const MAX_CONTEXT_RELATIONSHIPS_PER_FILE = 4;
+const MAX_REPOSITORY_TEMPORAL_ENTITIES = 4;
+const MAX_REPOSITORY_TEMPORAL_RELATIONSHIPS = 6;
+const MAX_PRODUCT_CONTEXT_ENTITIES = 24;
+const MAX_PRODUCT_CONTEXT_RELATIONSHIPS = 48;
+
+const STOP_WORDS = new Set([
+  "the", "is", "are", "was", "were", "a", "an", "and", "or", "for", "from", "with", "into", "this", "that",
+  "what", "why", "how", "when", "where", "will", "would", "should", "could", "task", "current",
+  "현재", "이번", "관련", "위한", "무엇", "어떻게", "왜", "언제", "에서", "으로", "이다", "있다",
+]);
+const KOREAN_PARTICLES = ["으로", "에서", "에게", "까지", "부터", "처럼", "하고", "하며", "하면", "한다", "하고자", "만들고자", "을", "를", "은", "는", "이", "가", "과", "와", "의", "로", "도", "만"];
 
 const fail = (message, code = "CONTEXT_COMPILER_ERROR") => {
   const error = new Error(message);
@@ -17,6 +48,17 @@ const fail = (message, code = "CONTEXT_COMPILER_ERROR") => {
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const approxTokens = (value) => Math.ceil(String(value).length / 4);
+
+function normalizeContextBudget(value) {
+  const maxApproxTokens = Number(value);
+  if (!Number.isInteger(maxApproxTokens) || !CONTEXT_BUDGET_TIERS.includes(maxApproxTokens)) {
+    fail(`Context budget must be one of: ${CONTEXT_BUDGET_TIERS.join(", ")}.`, "INVALID_CONTEXT_BUDGET");
+  }
+  return {
+    maxApproxTokens,
+    tier: `approx-${maxApproxTokens / 1024}k`,
+  };
+}
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -46,19 +88,99 @@ function atomicWrite(file, content) {
   }
 }
 
+function normalizedLexicalText(value) {
+  return String(value)
+    .normalize("NFKC")
+    .replace(/https?:\/\/[^\s)>\]}]+/giu, " ")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([\p{Ll}\p{N}])([\p{Lu}])/gu, "$1 $2")
+    .replace(/[_./\\:@-]+/g, " ")
+    .toLocaleLowerCase();
+}
+
 function terms(value) {
-  const stopWords = new Set([
-    "the", "is", "are", "was", "were", "a", "an", "and", "or", "for", "from", "with", "into", "this", "that",
-    "what", "why", "how", "when", "where", "will", "would", "should", "could", "task", "current",
-    "현재", "이번", "관련", "위한", "무엇", "어떻게", "왜", "언제", "에서", "으로", "이다", "있다"
-  ]);
-  return new Set((String(value).toLocaleLowerCase().match(/[\p{L}\p{N}_]{2,}/gu) || []).filter((term) => !stopWords.has(term)));
+  const result = new Set();
+  for (const token of normalizedLexicalText(value).match(/[\p{L}\p{N}]{2,}/gu) || []) {
+    if (!STOP_WORDS.has(token)) result.add(token);
+    if (!/[\p{Script=Hangul}]/u.test(token)) continue;
+    for (const particle of KOREAN_PARTICLES) {
+      if (token.length > particle.length + 1 && token.endsWith(particle)) {
+        const stem = token.slice(0, -particle.length);
+        if (!STOP_WORDS.has(stem)) result.add(stem);
+        break;
+      }
+    }
+  }
+  return result;
 }
 
 function overlap(left, right) {
   let count = 0;
   for (const item of left) if (right.has(item)) count += 1;
   return count;
+}
+
+function matchedTerms(left, right) {
+  return [...left].filter((item) => right.has(item)).sort();
+}
+
+function rankBounded(items, taskTerms, body, limit) {
+  return items.map((item, index) => ({
+    item,
+    index,
+    relevance: overlap(taskTerms, terms(body(item))),
+  })).sort((left, right) => right.relevance - left.relevance || left.index - right.index)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
+function compactList(values, limit = 12) {
+  const items = Array.isArray(values) ? values : [];
+  return {
+    count: items.length,
+    sample: items.slice(0, limit),
+    omitted: Math.max(0, items.length - limit),
+    digest: digest(canonicalJson(items)),
+  };
+}
+
+function compactTraversalMetadata(traversal) {
+  if (!traversal) return null;
+  const query = traversal.traversalQuery || {};
+  const inclusion = Array.isArray(traversal.inclusion) ? traversal.inclusion : [];
+  const inclusionReasons = {};
+  for (const item of inclusion) inclusionReasons[item.reason || "included"] = (inclusionReasons[item.reason || "included"] || 0) + 1;
+  return {
+    graphSnapshotId: traversal.graphSnapshotId,
+    graphSnapshotHash: traversal.graphSnapshotHash,
+    sourceSnapshotId: traversal.sourceSnapshotId,
+    queryId: traversal.queryId,
+    queryHash: traversal.queryHash,
+    resultId: traversal.resultId,
+    resultHash: traversal.resultHash,
+    traversalQuerySummary: {
+      normalizedQuery: query.normalizedQuery,
+      anchorIds: compactList(query.anchorIds),
+      allowedKinds: compactList(query.allowedKinds),
+      allowedRelations: query.allowedRelations || [],
+      allowedAuthorityClasses: query.allowedAuthorityClasses || [],
+      allowedFreshness: query.allowedFreshness || [],
+      minConfidence: query.minConfidence,
+      includeUnreviewedCandidates: query.includeUnreviewedCandidates,
+      maxDepth: query.maxDepth,
+      maxNodes: query.maxNodes,
+      maxEdges: query.maxEdges,
+      ordering: query.ordering,
+    },
+    inclusionSummary: {
+      count: inclusion.length,
+      reasons: Object.fromEntries(Object.entries(inclusionReasons).sort()),
+      sample: inclusion.slice(0, 8),
+      digest: digest(canonicalJson(inclusion)),
+    },
+    exclusion: traversal.exclusion,
+    truncated: traversal.truncated,
+  };
 }
 
 function historyRelevance(task) {
@@ -163,7 +285,9 @@ function itemCandidate(kind, item, taskTerms, evidenceById, historyClass) {
       ? [item.title, item.decision, item.reason, ...(item.constraints || [])].filter(Boolean).join(" ")
       : item.statement;
   const tags = Array.isArray(item.tags) ? item.tags.map(String) : [];
-  const relevance = overlap(taskTerms, terms(`${body} ${tags.join(" ")}`));
+  const candidateTerms = terms(`${body} ${tags.join(" ")}`);
+  const matches = matchedTerms(taskTerms, candidateTerms);
+  const relevance = matches.length;
   const importance = Number.isFinite(Number(item.importance)) ? Math.max(0, Math.min(5, Number(item.importance))) : 1;
   const historyBoost = kind === "Decision" && ["DECISIONS", "DEEP"].includes(historyClass) ? 20 : 0;
   const unknownBoost = kind === "Unknown" && importance >= 5 ? 12 : 0;
@@ -175,7 +299,7 @@ function itemCandidate(kind, item, taskTerms, evidenceById, historyClass) {
     evidence,
     trustBoundary: kind === "Decision" ? "promoted-project-decision" : "evidence-not-instruction",
   };
-  return { id: item.id, kind, score, relevance, importance, approxTokens: approxTokens(canonicalJson(record)), record };
+  return { id: item.id, kind, score, relevance, matchedTerms: matches, importance, approxTokens: approxTokens(canonicalJson(record)), record };
 }
 
 function activeCandidates(knowledge, task, historyClass) {
@@ -203,7 +327,7 @@ function queryTemporalProjection(worldModel, graphProjectionAdapter, query) {
   }).result;
 }
 
-function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, budget = 4000) {
+function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, budget = DEFAULT_CONTEXT_BUDGET) {
   if (!worldModel || worldModel.status !== "current") return [];
   const taskTerms = terms(task);
   const graph = worldModel.snapshot.semanticGraph || null;
@@ -234,12 +358,37 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
       ...file.symbols.map((item) => `${item.kind} ${item.name}`),
       ...file.dependencies.map((item) => `${item.kind} ${item.specifier}`),
     ].join(" ");
-    const relevance = overlap(taskTerms, terms(lightweightBody));
-    const importance = file.classification === "source" ? 2 : 1;
-    return { file, relevance, importance, score: relevance * 25 + importance * 4 };
+    const matches = matchedTerms(taskTerms, terms(lightweightBody));
+    const pathMatches = matchedTerms(taskTerms, terms(file.path));
+    const relevance = matches.length;
+    const importance = ["source", "test"].includes(file.classification) ? 3 : 1;
+    return {
+      file,
+      relevance,
+      matchedTerms: matches,
+      pathMatchedTerms: pathMatches,
+      importance,
+      score: relevance * 25 + pathMatches.length * 10 + importance * 4,
+    };
   }).sort((left, right) => right.score - left.score || left.file.path.localeCompare(right.file.path));
   const expansionLimit = Math.min(MAX_REPOSITORY_GRAPH_EXPANSIONS, Math.max(8, Math.ceil(Number(budget) / 4000) * 8));
-  const expandedPaths = new Set(ranked.filter((item) => item.relevance > 0).slice(0, expansionLimit).map((item) => item.file.path));
+  const relevantRanked = ranked.filter((item) => item.relevance > 0);
+  const seedLimit = Math.max(4, Math.ceil(expansionLimit / 2));
+  const expandedPaths = new Set(relevantRanked.slice(0, seedLimit).map((item) => item.file.path));
+  for (const seed of relevantRanked.slice(0, seedLimit)) {
+    if (expandedPaths.size >= expansionLimit) break;
+    const neighbors = (relationshipEdgesByPath.get(seed.file.path) || []).flatMap((edge) => [nodes.get(edge.from)?.path, nodes.get(edge.to)?.path])
+      .filter((filePath) => filePath && filePath !== seed.file.path)
+      .sort();
+    for (const filePath of neighbors) {
+      expandedPaths.add(filePath);
+      if (expandedPaths.size >= expansionLimit) break;
+    }
+  }
+  for (const item of relevantRanked) {
+    if (expandedPaths.size >= expansionLimit) break;
+    expandedPaths.add(item.file.path);
+  }
   const temporalAnchorPath = ranked.find((item) => item.relevance > 0)?.file.path || "";
   const sharedTemporalTraversal = temporalGraph && temporalAnchorPath ? queryTemporalProjection(worldModel, graphProjectionAdapter, {
     query: temporalAnchorPath,
@@ -252,10 +401,10 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
     maxNodes: 50,
     maxEdges: 100,
   }) : null;
-  return ranked.map(({ file, relevance: lightweightRelevance, importance, score: lightweightScore }) => {
+  return ranked.map(({ file, relevance: lightweightRelevance, matchedTerms: lightweightMatches, pathMatchedTerms, importance, score: lightweightScore }) => {
     const expanded = expandedPaths.has(file.path);
     const temporalTraversal = file.path === temporalAnchorPath ? sharedTemporalTraversal : null;
-    const relationships = (expanded ? relationshipEdgesByPath.get(file.path) || [] : []).slice(0, 50).map((edge) => ({
+    const allRelationships = (expanded ? relationshipEdgesByPath.get(file.path) || [] : []).map((edge) => ({
       id: edge.id,
       type: edge.type,
       from: nodeReference(nodes.get(edge.from)),
@@ -266,6 +415,14 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
       callee: edge.callee,
       trustBoundary: "evidence-not-instruction",
     }));
+    const relationships = rankBounded(allRelationships, taskTerms, (item) => [
+      item.type,
+      item.from?.path,
+      item.from?.name,
+      item.to?.path,
+      item.to?.name,
+      item.to?.specifier,
+    ].filter(Boolean).join(" "), MAX_CONTEXT_RELATIONSHIPS_PER_FILE);
     const body = [
       file.path,
       file.classification,
@@ -275,8 +432,23 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
       ...relationships.flatMap((item) => [item.type, item.from?.path, item.from?.name, item.to?.path, item.to?.name, item.to?.specifier]).filter(Boolean),
       ...(temporalTraversal?.nodes || []).flatMap((item) => [item.kind, item.path, item.name, item.symbolKind]).filter(Boolean),
     ].join(" ");
-    const relevance = expanded ? overlap(taskTerms, terms(body)) : lightweightRelevance;
-    const score = expanded ? relevance * 25 + importance * 4 : lightweightScore;
+    const matches = expanded ? matchedTerms(taskTerms, terms(body)) : lightweightMatches;
+    const relevance = matches.length;
+    const score = expanded ? relevance * 25 + pathMatchedTerms.length * 10 + importance * 4 : lightweightScore;
+    const symbols = rankBounded(file.symbols, taskTerms, (item) => `${item.kind} ${item.name}`, MAX_CONTEXT_SYMBOLS_PER_FILE);
+    const dependencies = rankBounded(file.dependencies, taskTerms, (item) => `${item.kind} ${item.specifier}`, MAX_CONTEXT_DEPENDENCIES_PER_FILE);
+    const allTemporalEntities = temporalTraversal?.nodes || [];
+    const temporalEntities = rankBounded(allTemporalEntities, taskTerms, (item) => [
+      item.kind,
+      item.key,
+      item.path,
+      item.name,
+      item.symbolKind,
+    ].filter(Boolean).join(" "), MAX_REPOSITORY_TEMPORAL_ENTITIES);
+    const temporalEntityIds = new Set(temporalEntities.map((item) => item.nodeId || item.id));
+    const allTemporalRelationships = temporalTraversal?.edges || [];
+    const temporalRelationships = allTemporalRelationships.filter((edge) => temporalEntityIds.has(edge.from) || temporalEntityIds.has(edge.to))
+      .slice(0, MAX_REPOSITORY_TEMPORAL_RELATIONSHIPS);
     const record = {
       kind: "RepositoryFile",
       path: file.path,
@@ -284,25 +456,20 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
       freshness: file.freshness,
       classification: file.classification,
       language: file.language,
-      symbols: file.symbols,
-      dependencies: file.dependencies,
+      symbols,
+      dependencies,
       semanticRelationships: relationships,
+      evidenceOmissions: {
+        symbols: Math.max(0, file.symbols.length - symbols.length),
+        dependencies: Math.max(0, file.dependencies.length - dependencies.length),
+        semanticRelationships: Math.max(0, allRelationships.length - relationships.length),
+        temporalEntities: Math.max(0, allTemporalEntities.length - temporalEntities.length),
+        temporalRelationships: Math.max(0, allTemporalRelationships.length - temporalRelationships.length),
+      },
       semanticGraphId: graph?.semanticGraphId || null,
-      temporalEntities: temporalTraversal?.nodes || [],
-      temporalRelationships: temporalTraversal?.edges || [],
-      temporalTraversal: temporalTraversal ? {
-        graphSnapshotId: temporalTraversal.graphSnapshotId,
-        graphSnapshotHash: temporalTraversal.graphSnapshotHash,
-        sourceSnapshotId: temporalTraversal.sourceSnapshotId,
-        queryId: temporalTraversal.queryId,
-        queryHash: temporalTraversal.queryHash,
-        resultId: temporalTraversal.resultId,
-        resultHash: temporalTraversal.resultHash,
-        traversalQuery: temporalTraversal.traversalQuery,
-        inclusion: temporalTraversal.inclusion,
-        exclusion: temporalTraversal.exclusion,
-        truncated: temporalTraversal.truncated,
-      } : null,
+      temporalEntities,
+      temporalRelationships,
+      temporalTraversal: compactTraversalMetadata(temporalTraversal),
       graphExpansion: temporalTraversal
         ? "bounded-temporal-anchor"
         : expanded ? "bounded-semantic-adjacency" : "not-expanded-by-relevance-bound",
@@ -314,6 +481,9 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
       kind: "RepositoryFile",
       score,
       relevance,
+      matchedTerms: matches,
+      directMatchedTerms: lightweightMatches,
+      pathMatchedTerms,
       importance,
       approxTokens: approxTokens(canonicalJson(record)),
       record,
@@ -350,8 +520,14 @@ function productContextCandidates(worldModel, task, graphProjectionAdapter = nul
   });
   if (traversal.traversalQuery.anchorIds.length === 0) return [];
   const body = traversal.nodes.map((node) => canonicalJson(node.semantic || { kind: node.kind, key: node.key })).join(" ");
-  const relevance = overlap(taskTerms, terms(body));
-  const compactEntities = traversal.nodes.map((node) => ({
+  const matches = matchedTerms(taskTerms, terms(body));
+  const relevance = matches.length;
+  const compactEntities = rankBounded(traversal.nodes, taskTerms, (node) => canonicalJson(node.semantic || {
+    kind: node.kind,
+    key: node.key,
+    path: node.path,
+    name: node.name,
+  }), MAX_PRODUCT_CONTEXT_ENTITIES).map((node) => ({
     nodeId: node.nodeId,
     kind: node.kind,
     logicalEntityId: node.logicalEntityId || null,
@@ -370,7 +546,9 @@ function productContextCandidates(worldModel, task, graphProjectionAdapter = nul
     evidenceIds: node.evidenceIds,
     freshness: node.freshness,
   }));
-  const compactRelationships = traversal.edges.map((edge) => ({
+  const selectedProductNodeIds = new Set(compactEntities.map((item) => item.nodeId));
+  const compactRelationships = traversal.edges.filter((edge) => selectedProductNodeIds.has(edge.from) || selectedProductNodeIds.has(edge.to))
+    .slice(0, MAX_PRODUCT_CONTEXT_RELATIONSHIPS).map((edge) => ({
     edgeId: edge.edgeId,
     type: edge.type,
     from: edge.from,
@@ -386,19 +564,11 @@ function productContextCandidates(worldModel, task, graphProjectionAdapter = nul
     taskAnchor: { selectedTerm: anchorTerm, matchingTerms },
     entities: compactEntities,
     relationships: compactRelationships,
-    temporalTraversal: {
-      graphSnapshotId: traversal.graphSnapshotId,
-      graphSnapshotHash: traversal.graphSnapshotHash,
-      sourceSnapshotId: traversal.sourceSnapshotId,
-      queryId: traversal.queryId,
-      queryHash: traversal.queryHash,
-      resultId: traversal.resultId,
-      resultHash: traversal.resultHash,
-      traversalQuery: traversal.traversalQuery,
-      inclusion: traversal.inclusion,
-      exclusion: traversal.exclusion,
-      truncated: traversal.truncated,
+    projectionOmissions: {
+      entities: Math.max(0, traversal.nodes.length - compactEntities.length),
+      relationships: Math.max(0, traversal.edges.length - compactRelationships.length),
     },
+    temporalTraversal: compactTraversalMetadata(traversal),
     worldModelId: worldModel.snapshot.worldModelId,
     instructionAuthority: false,
     promotionAuthority: false,
@@ -409,6 +579,7 @@ function productContextCandidates(worldModel, task, graphProjectionAdapter = nul
     kind: "ProductContext",
     score: relevance * 25 + 20,
     relevance,
+    matchedTerms: matches,
     importance: 5,
     approxTokens: approxTokens(canonicalJson(record)),
     record,
@@ -422,7 +593,8 @@ function gitDecisionCandidates(worldModel, task, historyClass) {
   const taskTerms = terms(task);
   return history.commits.map((commit, index) => {
     const body = [commit.subject, commit.body, commit.author.name, ...commit.refs].join(" ");
-    const relevance = overlap(taskTerms, terms(body));
+    const matches = matchedTerms(taskTerms, terms(body));
+    const relevance = matches.length;
     const importance = commit.parents.length > 1 ? 3 : 2;
     const historyBoost = historyClass === "DEEP" ? 12 : historyClass === "DECISIONS" ? 8 : 0;
     const recencyBoost = historyClass === "RECENT" ? Math.max(0, 20 - index * 4) : 0;
@@ -447,6 +619,7 @@ function gitDecisionCandidates(worldModel, task, historyClass) {
       kind: "GitDecisionEvidence",
       score,
       relevance,
+      matchedTerms: matches,
       importance,
       approxTokens: approxTokens(canonicalJson(record)),
       record,
@@ -477,7 +650,8 @@ function runtimeStateCandidates(worldModel, task) {
       observation.providerVersion,
       ...observation.capabilities,
     ].join(" ");
-    const relevance = overlap(taskTerms, terms(body));
+    const matches = matchedTerms(taskTerms, terms(body));
+    const relevance = matches.length;
     const importance = ["failed", "blocked", "active"].includes(observation.state) ? 3 : 2;
     const score = relevance * 25 + importance * 4;
     const record = {
@@ -493,6 +667,7 @@ function runtimeStateCandidates(worldModel, task) {
       kind: "RuntimeStateEvidence",
       score,
       relevance,
+      matchedTerms: matches,
       importance,
       approxTokens: approxTokens(canonicalJson(record)),
       record,
@@ -500,32 +675,279 @@ function runtimeStateCandidates(worldModel, task) {
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
-function selectCandidates(candidates, budget, baseTokens) {
+function normalizeEvidenceNeeds(evidenceNeeds) {
+  if (evidenceNeeds == null) return [];
+  if (!Array.isArray(evidenceNeeds)) fail("HEAD evidence needs must be an array.", "INVALID_EVIDENCE_NEEDS");
+  if (evidenceNeeds.length > 32) fail("HEAD evidence needs may contain at most 32 items.", "INVALID_EVIDENCE_NEEDS");
+  const allowedKeys = new Set(["id", "kind", "facets", "relationTypes", "minimumItems", "rationale"]);
+  const knownKinds = new Set(EVIDENCE_NEED_KINDS);
+  const seen = new Set();
+  const normalized = evidenceNeeds.map((value, index) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) fail(`Evidence need ${index} must be an object.`, "INVALID_EVIDENCE_NEEDS");
+    const unknownKeys = Object.keys(value).filter((key) => !allowedKeys.has(key));
+    if (unknownKeys.length) fail(`Evidence need ${index} has unsupported fields: ${unknownKeys.sort().join(", ")}.`, "INVALID_EVIDENCE_NEEDS");
+    const id = String(value.id || "").trim().toLocaleLowerCase();
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(id)) fail(`Evidence need ${index} has an invalid id.`, "INVALID_EVIDENCE_NEEDS");
+    if (seen.has(id)) fail(`Evidence need id is duplicated: ${id}.`, "INVALID_EVIDENCE_NEEDS");
+    seen.add(id);
+    const kind = String(value.kind || "").trim().toLocaleLowerCase();
+    if (!knownKinds.has(kind)) fail(`Evidence need ${id} has an unsupported kind: ${kind || "(empty)"}.`, "INVALID_EVIDENCE_NEEDS");
+    const rawFacets = value.facets == null ? [] : value.facets;
+    if (!Array.isArray(rawFacets) || rawFacets.length > 16 || rawFacets.some((item) => typeof item !== "string" || !item.trim())) {
+      fail(`Evidence need ${id} facets must be an array of at most 16 non-empty strings.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    const facets = [...new Set(rawFacets.flatMap((item) => [...terms(item)]))].sort();
+    const rawRelations = value.relationTypes == null ? [] : value.relationTypes;
+    if (!Array.isArray(rawRelations) || rawRelations.length > 16) fail(`Evidence need ${id} relationTypes must be an array of at most 16 values.`, "INVALID_EVIDENCE_NEEDS");
+    const relationTypes = [...new Set(rawRelations.map((item) => String(item).trim().toUpperCase()))].sort();
+    if (relationTypes.some((item) => !/^[A-Z][A-Z0-9_]{0,63}$/.test(item))) fail(`Evidence need ${id} has an invalid relation type.`, "INVALID_EVIDENCE_NEEDS");
+    if (relationTypes.length && !["semantic-relation", "temporal-relation"].includes(kind)) {
+      fail(`Evidence need ${id} may use relationTypes only with a relation kind.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    const minimumItems = value.minimumItems == null ? 1 : Number(value.minimumItems);
+    if (!Number.isInteger(minimumItems) || minimumItems < 1 || minimumItems > 20) fail(`Evidence need ${id} minimumItems must be an integer from 1 to 20.`, "INVALID_EVIDENCE_NEEDS");
+    const rationale = value.rationale == null ? "" : String(value.rationale).trim();
+    if (rationale.length > 500) fail(`Evidence need ${id} rationale must be at most 500 characters.`, "INVALID_EVIDENCE_NEEDS");
+    return { id, kind, facets, relationTypes, minimumItems, rationale };
+  });
+  return normalized.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function evidenceNeedContract(task, evidenceNeeds) {
+  const needs = normalizeEvidenceNeeds(evidenceNeeds);
+  const contract = {
+    owner: "HEAD",
+    scope: "task-local-context-compilation",
+    taskDigest: digest(task.trim()),
+    needs,
+    productCanonAuthority: false,
+  };
+  return {
+    ...contract,
+    evidenceNeedSetDigest: digest(canonicalJson(contract)),
+  };
+}
+
+function facetMatch(value, facets) {
+  if (!facets.length) return true;
+  const available = terms(value);
+  return facets.every((facet) => available.has(facet));
+}
+
+function evidenceItem(candidate, { id = candidate.id, kind, path = null, relationType = null, value = candidate.record } = {}) {
+  return {
+    id,
+    carrierCandidateId: candidate.id,
+    kind,
+    path,
+    relationType,
+    digest: digest(canonicalJson(value)),
+  };
+}
+
+function candidateEvidenceMatches(candidate, need) {
+  const record = candidate.record;
+  const candidateBody = canonicalJson(record);
+  if (!["semantic-relation", "temporal-relation"].includes(need.kind) && !facetMatch(candidateBody, need.facets)) return [];
+  const simpleKinds = {
+    claim: "Claim",
+    decision: "Decision",
+    "git-decision": "GitDecisionEvidence",
+    "product-context": "ProductContext",
+    "runtime-state": "RuntimeStateEvidence",
+    unknown: "Unknown",
+  };
+  if (simpleKinds[need.kind]) {
+    return candidate.kind === simpleKinds[need.kind]
+      ? [evidenceItem(candidate, { kind: need.kind, path: record.path || null })]
+      : [];
+  }
+  if (need.kind.startsWith("repository-")) {
+    if (candidate.kind !== "RepositoryFile") return [];
+    if (need.kind === "repository-source" && record.classification !== "source") return [];
+    if (need.kind === "repository-test" && record.classification !== "test") return [];
+    return [evidenceItem(candidate, { kind: need.kind, path: record.path })];
+  }
+  const relationValues = need.kind === "semantic-relation"
+    ? (candidate.kind === "RepositoryFile" ? record.semanticRelationships || [] : [])
+    : candidate.kind === "RepositoryFile"
+      ? record.temporalRelationships || []
+      : candidate.kind === "ProductContext" ? record.relationships || [] : [];
+  return relationValues.filter((relation) => {
+    const relationType = String(relation.type || "").toUpperCase();
+    if (need.relationTypes.length && !need.relationTypes.includes(relationType)) return false;
+    return facetMatch(`${record.path || ""} ${canonicalJson(relation)}`, need.facets);
+  }).map((relation, index) => {
+    const relationType = String(relation.type || "").toUpperCase();
+    const relationId = relation.id || relation.edgeId || `${candidate.id}:${relationType}:${index}`;
+    return evidenceItem(candidate, {
+      id: relationId,
+      kind: need.kind,
+      path: record.path || null,
+      relationType,
+      value: relation,
+    });
+  });
+}
+
+function bindEvidenceNeeds(candidates, needs) {
+  for (const candidate of candidates) {
+    candidate.evidenceNeedMatches = Object.fromEntries(needs.map((need) => [need.id, candidateEvidenceMatches(candidate, need)]));
+  }
+}
+
+function uniqueEvidence(items) {
+  const byId = new Map();
+  for (const item of items) if (!byId.has(item.id)) byId.set(item.id, item);
+  return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function selectedEvidenceCount(selected, needId) {
+  return uniqueEvidence(selected.flatMap((candidate) => candidate.evidenceNeedMatches[needId] || [])).length;
+}
+
+function coverageGain(candidate, selected, needs) {
+  return needs.reduce((gain, need) => {
+    const remaining = Math.max(0, need.minimumItems - selectedEvidenceCount(selected, need.id));
+    if (!remaining) return gain;
+    return gain + Math.min(remaining, (candidate.evidenceNeedMatches[need.id] || []).length);
+  }, 0);
+}
+
+function selectCandidates(candidates, budget, baseTokens, needs) {
   if (baseTokens > budget) fail("Context budget cannot hold the required task, authority, and current-state envelope.", "CONTEXT_BUDGET_TOO_SMALL");
   let used = baseTokens;
   const included = [];
-  const excluded = [];
-  for (const candidate of candidates) {
-    if (candidate.relevance === 0 && candidate.importance < 4 && candidate.score < 20) {
-      excluded.push({ id: candidate.id, kind: candidate.kind, reason: "low-relevance", score: candidate.score });
-      continue;
-    }
-    if (used + candidate.approxTokens > budget) {
-      excluded.push({ id: candidate.id, kind: candidate.kind, reason: "context-budget", score: candidate.score });
-      continue;
-    }
+  const includedIds = new Set();
+  const hasNeedMatch = (candidate) => Object.values(candidate.evidenceNeedMatches).some((items) => items.length);
+  const eligible = candidates.filter((candidate) => hasNeedMatch(candidate) || !(candidate.relevance === 0 && candidate.importance < 4 && candidate.score < 20));
+  while (needs.some((need) => selectedEvidenceCount(included, need.id) < need.minimumItems)) {
+    const fitting = eligible.filter((candidate) => !includedIds.has(candidate.id) && used + candidate.approxTokens <= budget)
+      .map((candidate) => ({ candidate, gain: coverageGain(candidate, included, needs) }))
+      .filter((item) => item.gain > 0)
+      .sort((left, right) => right.gain - left.gain
+        || right.candidate.score - left.candidate.score
+        || left.candidate.approxTokens - right.candidate.approxTokens
+        || left.candidate.id.localeCompare(right.candidate.id));
+    if (!fitting.length) break;
+    const selected = fitting[0].candidate;
+    included.push(selected);
+    includedIds.add(selected.id);
+    used += selected.approxTokens;
+  }
+  for (const candidate of eligible) {
+    if (includedIds.has(candidate.id) || used + candidate.approxTokens > budget) continue;
     included.push(candidate);
+    includedIds.add(candidate.id);
     used += candidate.approxTokens;
   }
+  const excluded = candidates.filter((candidate) => !includedIds.has(candidate.id)).map((candidate) => ({
+    id: candidate.id,
+    kind: candidate.kind,
+    reason: !hasNeedMatch(candidate) && candidate.relevance === 0 && candidate.importance < 4 && candidate.score < 20 ? "low-relevance" : "context-budget",
+    score: candidate.score,
+    classification: candidate.record.classification || null,
+    recordDigest: digest(canonicalJson(candidate.record)),
+    freshness: candidate.record.freshness || null,
+    trustBoundary: candidate.record.trustBoundary || null,
+    evidenceNeedIds: Object.entries(candidate.evidenceNeedMatches).filter(([, items]) => items.length).map(([needId]) => needId).sort(),
+    expansionPath: "recompile-with-an-explicit-budget-or-use-bounded-expansion",
+  }));
   return { included, excluded, used };
 }
 
-export function compileContext({ root = ".", task, budget = 4000, persist = false, graphProjectionAdapter = null } = {}) {
-  if (typeof task !== "string" || !task.trim()) fail("Context compilation requires a task.", "TASK_REQUIRED");
-  const maxApproxTokens = Number(budget);
-  if (!Number.isInteger(maxApproxTokens) || maxApproxTokens < 256 || maxApproxTokens > 50_000) {
-    fail("Context budget must be an integer from 256 to 50000.", "INVALID_CONTEXT_BUDGET");
+function evaluateCoverage(candidates, contract, selection, budget) {
+  const needs = contract.needs;
+  const excludedReasonById = new Map(selection.excluded.map((item) => [item.id, item.reason]));
+  const proofs = needs.map((need) => {
+    const includedEvidence = uniqueEvidence(selection.included.flatMap((candidate) => candidate.evidenceNeedMatches[need.id] || []));
+    const availableEvidence = uniqueEvidence(candidates.flatMap((candidate) => candidate.evidenceNeedMatches[need.id] || []));
+    const availableCandidateIds = [...new Set(availableEvidence.map((item) => item.carrierCandidateId))].sort();
+    return {
+      evidenceNeedId: need.id,
+      requiredMinimumItems: need.minimumItems,
+      includedMatchCount: includedEvidence.length,
+      availableMatchCount: availableEvidence.length,
+      covered: includedEvidence.length >= need.minimumItems,
+      includedEvidence,
+      availableCandidateIds,
+      exclusionReasons: [...new Set(availableCandidateIds.map((id) => excludedReasonById.get(id)).filter(Boolean))].sort(),
+    };
+  });
+  const unmet = proofs.filter((proof) => !proof.covered);
+  const additionalSelected = [];
+  let minimumAdditionalApproxTokens = 0;
+  while (needs.some((need) => selectedEvidenceCount([...selection.included, ...additionalSelected], need.id) < need.minimumItems)) {
+    const options = candidates.filter((candidate) => !selection.included.includes(candidate) && !additionalSelected.includes(candidate))
+      .map((candidate) => ({
+        candidate,
+        gain: coverageGain(candidate, [...selection.included, ...additionalSelected], needs),
+      }))
+      .filter((item) => item.gain > 0)
+      .sort((left, right) => right.gain - left.gain
+        || right.candidate.score - left.candidate.score
+        || left.candidate.approxTokens - right.candidate.approxTokens
+        || left.candidate.id.localeCompare(right.candidate.id));
+    if (!options.length) break;
+    const selected = options[0].candidate;
+    additionalSelected.push(selected);
+    minimumAdditionalApproxTokens += selected.approxTokens;
   }
+  const canCoverAfterExpansion = needs.every((need) => selectedEvidenceCount([...selection.included, ...additionalSelected], need.id) >= need.minimumItems);
+  const recommendedMinimum = unmet.length && canCoverAfterExpansion
+    ? selection.used + minimumAdditionalApproxTokens
+    : null;
+  const status = !needs.length ? "not-requested" : unmet.length ? "coverage-incomplete" : "coverage-complete";
+  const result = {
+    protocol: { name: "head-agent-core-context-coverage", version: CONTEXT_COVERAGE_VERSION },
+    status,
+    mechanicalCoverageSatisfied: unmet.length === 0,
+    evidenceNeedsSpecified: needs.length > 0,
+    evidenceNeedSetDigest: contract.evidenceNeedSetDigest,
+    bounded: true,
+    hardLimitApproxTokens: budget,
+    proofs,
+    satisfiedEvidenceNeedIds: proofs.filter((proof) => proof.covered).map((proof) => proof.evidenceNeedId),
+    unmetEvidenceNeeds: unmet.map((proof) => ({
+      evidenceNeed: needs.find((need) => need.id === proof.evidenceNeedId),
+      includedMatchCount: proof.includedMatchCount,
+      availableMatchCount: proof.availableMatchCount,
+      shortfall: proof.requiredMinimumItems - proof.includedMatchCount,
+      availableCandidateIds: proof.availableCandidateIds,
+      exclusionReasons: proof.exclusionReasons,
+    })),
+    recommendedMinimumApproxTokens: recommendedMinimum == null || recommendedMinimum > CONTEXT_BUDGET_TIERS.at(-1) ? null : recommendedMinimum,
+    nextAction: !needs.length
+      ? "HEAD-may-define-task-evidence-needs-before-consequential-execution"
+      : unmet.length ? "expand-query-or-recompile-with-a-larger-explicit-budget" : "HEAD-evaluates-semantic-sufficiency",
+    semanticAcceptance: "not-assessed-HEAD-owned",
+    authorityEffect: "none",
+  };
+  return {
+    ...result,
+    proofDigest: digest(canonicalJson({
+      evidenceNeedSetDigest: result.evidenceNeedSetDigest,
+      includedCandidateIds: selection.included.map((candidate) => candidate.id),
+      proofs: result.proofs,
+    })),
+  };
+}
+
+function compatibilitySufficiency(coverageAssessment) {
+  return {
+    deprecated: true,
+    replacedBy: "coverageAssessment",
+    status: coverageAssessment.status === "not-requested" ? "unassessed" : coverageAssessment.status,
+    executionEligible: coverageAssessment.mechanicalCoverageSatisfied,
+    semanticAcceptance: coverageAssessment.semanticAcceptance,
+    authorityEffect: "none",
+  };
+}
+
+export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDGET, evidenceNeeds = [], persist = false, graphProjectionAdapter = null } = {}) {
+  if (typeof task !== "string" || !task.trim()) fail("Context compilation requires a task.", "TASK_REQUIRED");
+  const normalizedBudget = normalizeContextBudget(budget);
+  const { maxApproxTokens } = normalizedBudget;
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail(`Project must be ready to compile context; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   const projectRoot = inspected.project.projectRoot;
@@ -533,11 +955,13 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
   const snapshot = contextSnapshot(inspected, sources);
   const projectContext = sources.raw.projectContext.trim();
   const historyClass = historyRelevance(task);
+  const needContract = evidenceNeedContract(task, evidenceNeeds);
   const base = {
     objective: task.trim(),
     currentState: projectContext,
     authority: inspected.project.authority,
     coverage: snapshot.coverage,
+    evidenceNeedContract: needContract,
   };
   const candidates = [
     ...activeCandidates(sources.knowledge, task, historyClass),
@@ -546,7 +970,9 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
   ].sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
-  const selection = selectCandidates(candidates, maxApproxTokens, approxTokens(canonicalJson(base)));
+  bindEvidenceNeeds(candidates, needContract.needs);
+  const selection = selectCandidates(candidates, maxApproxTokens, approxTokens(canonicalJson(base)), needContract.needs);
+  const coverageAssessment = evaluateCoverage(candidates, needContract, selection, maxApproxTokens);
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ContextCapsule",
@@ -555,10 +981,25 @@ export function compileContext({ root = ".", task, budget = 4000, persist = fals
     compiler: {
       name: "head-agent-core-context-compiler",
       version: CONTEXT_COMPILER_VERSION,
-      strategy: "deterministic-minimum-sufficient-context",
+      strategy: "deterministic-coverage-aware-minimum-sufficient-context",
       historyRelevance: historyClass,
+      lexicalNormalization: "nfkc+url-elision+camel-snake-path+bounded-korean-particle-variants",
     },
-    budget: { maxApproxTokens, usedApproxTokens: selection.used },
+    budget: {
+      protocol: { name: "head-agent-core-context-budget-tiers", version: CONTEXT_BUDGET_PROTOCOL_VERSION },
+      tier: normalizedBudget.tier,
+      maxApproxTokens,
+      usedApproxTokens: selection.used,
+      metric: {
+        name: "utf16-code-units-divided-by-4-ceil",
+        version: "1.0.0",
+        exact: false,
+        providerFit: "must-be-validated-at-runtime-adapter-boundary",
+      },
+    },
+    evidenceNeedContract: needContract,
+    coverageAssessment,
+    sufficiency: compatibilitySufficiency(coverageAssessment),
     authority: inspected.project.authority,
     currentState: projectContext,
     claims: selection.included.filter((item) => item.kind === "Claim").map((item) => item.record),
@@ -646,3 +1087,26 @@ export function readContextCapsule({ root = ".", capsuleId } = {}) {
   if (recordedHash !== actualHash || capsuleId !== `capsule-${actualHash.slice(0, 24)}`) fail("Context Capsule digest verification failed.", "CAPSULE_DIGEST_MISMATCH");
   return { status: "verified", file, capsule };
 }
+
+export function requireCoveredContextCapsule({ root = ".", capsuleId } = {}) {
+  const verified = readContextCapsule({ root, capsuleId });
+  const coverage = verified.capsule.coverageAssessment;
+  if (coverage?.mechanicalCoverageSatisfied === false) {
+    const missing = coverage.unmetEvidenceNeeds.map((item) => item.evidenceNeed.id);
+    const error = new Error(`Context Capsule does not cover the HEAD-defined evidence needs: ${missing.join(", ")}`);
+    error.code = "CONTEXT_CAPSULE_COVERAGE_INCOMPLETE";
+    error.coverageAssessment = coverage;
+    throw error;
+  }
+  if (!coverage && verified.capsule.sufficiency?.executionEligible === false) {
+    const error = new Error("Legacy Context Capsule is not eligible for execution.");
+    error.code = "CONTEXT_CAPSULE_INSUFFICIENT";
+    error.sufficiency = verified.capsule.sufficiency;
+    throw error;
+  }
+  return verified;
+}
+
+// Compatibility export. The Compiler now verifies mechanical coverage only;
+// semantic sufficiency remains a HEAD judgment at the ExecutionContract boundary.
+export const requireSufficientContextCapsule = requireCoveredContextCapsule;

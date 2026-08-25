@@ -184,7 +184,7 @@ async function verifyExistingProjectPromotion() {
   });
   assert.equal(reviewTraversal.nodes.some((node) => node.kind === "OnboardingReviewDecision"), true);
   assert.equal(reviewTraversal.nodes.some((node) => node.kind === "ProductModelRevision"), true);
-  const capsule = compileContext({ root, task: "Explain the accepted product capability.", budget: 5000, persist: false }).capsule;
+  const capsule = compileContext({ root, task: "Explain the accepted product capability.", budget: 32_768, persist: false }).capsule;
   assert.equal(capsule.productContext.length > 0, true);
   assert.equal(capsule.productContext.every((item) => item.trustBoundary === "derived-projection-of-user-owned-product-canon"), true);
   const previousRevision = JSON.parse(fs.readFileSync(path.join(

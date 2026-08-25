@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
-import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
+import { compileContext, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
 import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSnapshot, readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
@@ -166,8 +166,8 @@ export function usage({ all = false } = {}) {
       "head run-review <project> --input <review.json>",
       "head run-integrate-checkpoint <project> --input <integration.json>",
       "head run-integration-read <project> --review <review-decision-id>",
-      "head context-preview <project> --task <text> [--budget <tokens>]",
-      "head context-compile <project> --task <text> [--budget <tokens>]",
+      "head context-preview <project> --task <text> [--budget <tokens>] [--evidence-needs <json-file>]",
+      "head context-compile <project> --task <text> [--budget <tokens>] [--evidence-needs <json-file>]",
       "head context-read <project> --capsule <capsule-id>",
       "head lineage-read <project> --artifact <lineage-artifact-id>",
     ];
@@ -218,6 +218,12 @@ function coordinationBindingToken(options, { required = true } = {}) {
 function readJsonFile(file, label) {
   try { return JSON.parse(fs.readFileSync(path.resolve(file), "utf8")); }
   catch (error) { throw new Error(`${label} is invalid JSON: ${error.message}`); }
+}
+
+function evidenceNeedsInput(options) {
+  if (!options["evidence-needs"]) return [];
+  const value = readJsonFile(options["evidence-needs"], "HEAD evidence needs");
+  return Array.isArray(value) ? value : value?.evidenceNeeds ?? value;
 }
 
 export function runCommand(argv = process.argv.slice(2)) {
@@ -474,8 +480,8 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "run-review") return reviewRun({ ...inputJson(options, "ReviewDecision"), root });
   if (command === "run-integrate-checkpoint") return integrateReviewedRunCheckpoint({ ...inputJson(options, "Run result integration"), root });
   if (command === "run-integration-read") return readRunResultIntegration({ root, reviewDecisionId: options.review });
-  if (command === "context-preview") return compileContext({ root, task: options.task, budget: options.budget == null ? 4000 : Number(options.budget), persist: false });
-  if (command === "context-compile") return compileContext({ root, task: options.task, budget: options.budget == null ? 4000 : Number(options.budget), persist: true });
+  if (command === "context-preview") return compileContext({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options), persist: false });
+  if (command === "context-compile") return compileContext({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options), persist: true });
   if (command === "context-read") return readContextCapsule({ root, capsuleId: options.capsule });
   if (command === "lineage-read") return readLineageArtifact({ root, artifactId: options.artifact });
   throw new Error(`Unknown command: ${command}`);

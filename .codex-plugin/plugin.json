@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.79+codex.20260825115713",
+  "version": "0.3.0-alpha.79+codex.20260825165803",
   "description": "Provider-neutral HEAD coordination for Claude Code, Codex, and OpenCode with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -65,6 +65,7 @@
       "MATERIALIZED_AS and REFERENCES Relations",
       "Context Continuity",
       "Context Compilation",
+      "HEAD-defined Evidence Needs with Reproducible Inclusion Proof",
       "Bounded Large-project Context Retrieval",
       "Execution Lineage Contracts",
       "Fresh HEAD Review Projection",
@@ -147,7 +148,7 @@
       "Index this project and prepare an evidence-linked onboarding candidate batch without changing Product Canon.",
       "Configure a project-relative source scope before onboarding so generated copies, bundled third-party code, and other user-selected roots remain outside product inference.",
       "Review the current onboarding candidate batch before promoting any product concepts.",
-      "Compile the minimum sufficient context for this task.",
+      "Define this task's required evidence kinds as HEAD, then compile a Capsule and verify only their reproducible inclusion coverage.",
       "Create a verifiable whole-plan execution lineage.",
       "Run one accepted Execution Contract and review its Result Packet.",
       "Inspect task-relevant Git decision evidence without promoting it to canon.",

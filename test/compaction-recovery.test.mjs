@@ -167,7 +167,7 @@ test("provider failure and checkpoint tamper abort instead of guessing recovery"
 test("an active Run checkpoint pins verified plan, contract, and capsule identities", (t) => {
   const root = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const capsule = compileContext({ root, task: "Preserve the active Run across compaction", budget: 2000, persist: true }).capsule;
+  const capsule = compileContext({ root, task: "Preserve the active Run across compaction", budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({
     root,
     objective: "Complete the provider-neutral compaction recovery vertical",
@@ -222,7 +222,7 @@ test("compaction verification rejects Session pointer drift beyond the active Ru
 test("checkpoint recovery remains sufficient after ResultPacket evidence is deleted", (t) => {
   const root = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const capsule = compileContext({ root, task: "Prove checkpoint-only recovery", budget: 2000, persist: true }).capsule;
+  const capsule = compileContext({ root, task: "Prove checkpoint-only recovery", budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({
     root,
     objective: "Keep the next expected result recoverable without ResultPacket evidence",

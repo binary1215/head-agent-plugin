@@ -15,7 +15,7 @@ Session
   -> Session
 ```
 
-A Run cannot start from a free-form goal. It requires a persisted and digest-verified `ExecutionContract`, which already binds one `WholePlanSnapshot` and one persisted `ContextCapsule`.
+A Run cannot start from a free-form goal. It requires a persisted and digest-verified `ExecutionContract`, which already binds one `WholePlanSnapshot` and one persisted `ContextCapsule`. The contract also records HEAD's task-local context acceptance with the exact EvidenceNeed-set digest and Compiler coverage-proof digest. This is the semantic acceptance boundary: the Compiler proves inclusion but cannot accept its own context.
 
 A Run cannot finish with only a success string. Completion creates a `ResultPacket` containing evidence and verification. The project enters Review mode and blocks the next Run until HEAD records a `ReviewDecision`.
 
@@ -53,7 +53,7 @@ node scripts/head.mjs lineage-plan <project> --input <whole-plan.json>
 Compile and persist the task Context Capsule, then create an Execution Contract:
 
 ```text
-node scripts/head.mjs context-compile <project> --task "bounded task" --budget 4000
+node scripts/head.mjs context-compile <project> --task "bounded task" --budget 32768
 node scripts/head.mjs lineage-contract <project> --input <execution-contract.json>
 ```
 

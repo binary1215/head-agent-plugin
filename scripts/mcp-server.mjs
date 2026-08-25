@@ -3,7 +3,7 @@ import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { coreContract, inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
-import { compileContext, readContextCapsule } from "./lib/context-compiler.mjs";
+import { compileContext, CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
 import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
@@ -267,13 +267,31 @@ export const tools = [
   },
   {
     name: "head_context_preview",
-    description: "Compile a deterministic minimum-sufficient Context Capsule without writing project state.",
+    description: "Compile a deterministic Context Capsule and mechanically prove coverage of any HEAD-defined task evidence needs without writing project state.",
     inputSchema: {
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
         task: { type: "string", minLength: 1 },
-        budget: { type: "integer", minimum: 256, maximum: 50000, default: 4000 }
+        budget: { type: "integer", enum: CONTEXT_BUDGET_TIERS, default: DEFAULT_CONTEXT_BUDGET, description: "Approximate-token hard-bound tier. Start at 32768 and let HEAD explicitly choose a larger tier only when the task needs it." },
+        evidence_needs: {
+          type: "array",
+          maxItems: 32,
+          description: "Task-local evidence requirements chosen by HEAD. The Compiler checks actual inclusion only; it does not infer requirements or judge semantic sufficiency.",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" },
+              kind: { type: "string", enum: ["claim", "decision", "git-decision", "product-context", "repository-file", "repository-source", "repository-test", "runtime-state", "semantic-relation", "temporal-relation", "unknown"] },
+              facets: { type: "array", maxItems: 16, items: { type: "string", minLength: 1 } },
+              relationTypes: { type: "array", maxItems: 16, items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,63}$" } },
+              minimumItems: { type: "integer", minimum: 1, maximum: 20, default: 1 },
+              rationale: { type: "string", maxLength: 500 }
+            },
+            required: ["id", "kind"],
+            additionalProperties: false
+          }
+        }
       },
       required: ["project_root", "task"],
       additionalProperties: false
@@ -893,7 +911,7 @@ function compactMarkdownBuild(result) {
     worldModelId: result.worldModelId,
     graphSnapshotId: result.graphSnapshotId,
     documentProjectionId: result.documentProjectionId,
-    publishedPageCount: result.projection?.projection?.pages?.length || 0,
+    publishedPageCount: result.projection?.projection?.documents?.length || 0,
     authority: result.authority,
   };
 }
@@ -1027,7 +1045,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
         : name === "head_vcs_evidence"
           ? readVcsEvidence({ root: args.project_root, vcsEvidenceId: args.vcs_evidence_id })
         : name === "head_context_preview"
-          ? compileContext({ root: args.project_root, task: args.task, budget: args.budget ?? 4000, persist: false })
+          ? compileContext({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET, evidenceNeeds: args.evidence_needs || [], persist: false })
           : name === "head_context_capsule"
             ? readContextCapsule({ root: args.project_root, capsuleId: args.capsule_id })
             : name === "head_lineage_artifact"

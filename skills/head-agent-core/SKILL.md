@@ -33,11 +33,13 @@ For product learning, label an everyday statement with `head_product_note` or `p
 
 Read `references/context-compiler.md` before compiling or consuming a Capsule.
 
-The compiler has six semantic types: `Snapshot`, `Evidence`, `Claim`, `Decision`, `Unknown`, and `ContextCapsule`. It selects task-relevant curated knowledge under an explicit budget and records included, excluded, and unknown context. It does not create product or architecture authority.
+The compiler has six semantic types: `Snapshot`, `Evidence`, `Claim`, `Decision`, `Unknown`, and `ContextCapsule`. It selects task-relevant curated knowledge under an explicit hard budget and records included, excluded, and unknown context. HEAD, not the Compiler, defines any task-specific `EvidenceNeed[]` contract. The Compiler binds that contract into Capsule identity and emits a reproducible `coverageAssessment` proving only whether matching evidence was actually included; it must not infer universal source, test, ProductContext, or graph requirements. `not-requested` is not a sufficiency judgment. For declared needs, consequential execution requires `coverage-complete`, followed by separate HEAD semantic acceptance. Use bounded expansion or an explicit recompile for `coverage-incomplete`. The legacy `sufficiency` field is a deprecated compatibility projection.
+
+Budget must be one of `32768` (default), `65536`, `131072`, `262144`, or `524288` approximate tokens. Treat 512K as a hard maximum, not a target. HEAD must explicitly choose a larger tier; the Compiler never auto-escalates. The current estimate is not provider-token truth, so the runtime adapter must check actual provider fit and output reserve.
 
 ```text
-node <plugin-root>/scripts/head.mjs context-preview <project> --task "task" --budget 4000
-node <plugin-root>/scripts/head.mjs context-compile <project> --task "task" --budget 4000
+node <plugin-root>/scripts/head.mjs context-preview <project> --task "task" --budget 32768 [--evidence-needs <json-file>]
+node <plugin-root>/scripts/head.mjs context-compile <project> --task "task" --budget 32768 [--evidence-needs <json-file>]
 node <plugin-root>/scripts/head.mjs context-read <project> --capsule <capsule-id>
 ```
 

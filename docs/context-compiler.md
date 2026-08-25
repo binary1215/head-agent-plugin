@@ -29,7 +29,35 @@ Sources and promoted canon
   -> ContextCapsule + digest
 ```
 
-Context Compiler protocol `0.9.0` uses a deterministic lexical ranker so a Capsule can be reproduced without a model call. Repository retrieval first ranks lightweight file/symbol/dependency evidence, expands semantic adjacency only for a budget-derived bounded set, and performs at most one deterministic temporal anchor traversal for repository-file context. ProductContext remains a separate single bounded traversal. Model-assisted compilation can be added later behind the same data contracts.
+Context Compiler protocol `0.12.0` uses a deterministic, coverage-aware lexical ranker so a Capsule can be reproduced without a model call. It normalizes Unicode, camelCase, snake_case, repository paths, and a bounded set of Korean particle variants while excluding URL payloads from retrieval terms. Repository retrieval first ranks lightweight file/symbol/dependency evidence, expands semantic adjacency from a budget-derived set of lexical seeds and their direct graph neighbors, and performs at most one deterministic temporal anchor traversal for repository-file context. ProductContext remains a separate single bounded traversal. Model-assisted compilation can be added later behind the same data contracts.
+
+The explicit budget is a hard upper bound, not a claim of sufficiency. HEAD may provide a task-local `EvidenceNeed[]` contract naming the evidence kinds, facets, relation types, and minimum item counts needed for the current task. The Compiler never invents those needs from candidate availability and never imposes a universal source, test, ProductContext, or graph-neighborhood requirement. It only reserves budget for the supplied needs and proves whether matching evidence is actually present in the selected Capsule.
+
+Budget protocol `1.0.0` accepts only `32768`, `65536`, `131072`, `262144`, or `524288` approximate tokens. The 32K tier is the default and 512K is the hard maximum, not a target. Tier choice is explicit HEAD input and therefore participates in Capsule identity; the Compiler does not escalate itself. The current approximation is `ceil(UTF-16 code units / 4)`, so Capsule metadata labels it as inexact and requires the runtime adapter to validate actual provider-token fit and output reserve before invocation.
+
+The content-addressed `evidenceNeedContract` and `coverageAssessment` bind that proof into Capsule identity. `coverageAssessment.status` is `not-requested`, `coverage-complete`, or `coverage-incomplete`; every proof names its included evidence carrier, evidence digest, available-match count, and exclusion reason. This is a mechanical inclusion result, not semantic acceptance. HEAD still decides whether the evidence kinds and their contents are adequate before creating an ExecutionContract. An incomplete Capsule remains auditable but cannot bind consequential execution; HEAD may expand the query, change its own EvidenceNeed contract, or recompile with an explicit larger budget. The legacy `sufficiency` field remains only as a deprecated compatibility projection and must not be read as Compiler-owned judgment.
+
+Example HEAD-owned input:
+
+```json
+[
+  {
+    "id": "implementation",
+    "kind": "repository-source",
+    "facets": ["context compiler"],
+    "minimumItems": 1,
+    "rationale": "The implementation changed by this task must be present."
+  },
+  {
+    "id": "call-boundary",
+    "kind": "semantic-relation",
+    "relationTypes": ["CALLS", "IMPORTS"],
+    "minimumItems": 1
+  }
+]
+```
+
+Tests are requested only when HEAD adds a `repository-test` need for the task. A document cannot satisfy a `repository-source` need, and a relationship need is covered only by a relationship record actually included through an included carrier candidate.
 
 ## Trust and authority
 
@@ -57,7 +85,7 @@ The Capsule ID is content-derived. The same task, input digests, compiler versio
 
 Without an index, compilation remains limited to curated `.head/` sources. When the Repository World Model is current, task-relevant files, a bounded derived `ProductContext`, heuristic symbols, dependencies, pre-indexed semantic adjacency, one deterministic repository temporal anchor, history-class-eligible Git commit evidence, and point-in-time runtime observations compete under the same Capsule budget. Temporal expansion runs through `GraphProjectionAdapter`; local JSON, in-memory conformance, explicitly activated ArcadeDB prepared expansion, and disclosed embedded-graph fallback must return the identical semantic traversal, so adapter identity, prepared verification receipts, and diagnostics never enter Capsule identity. ProductContext is selected only when task terms match validated Product Canon semantics; it records the Product Model, GraphSnapshot, TraversalQuery, and result identities and traverses only `canon-projected` Product nodes through an explicit product relation allowlist. Explicit runtime, kind, and state terms narrow runtime candidates. The Capsule records semantic and temporal GraphSnapshot metadata, each included temporal TraversalQuery and result digest, Git and runtime coverage, included evidence, explicit trust boundaries, and exclusions. Temporal expansion fixes relation/authority/freshness allowlists, confidence policy, depth, node and edge limits, deterministic ordering, and candidate exclusion. When the index is stale, all product, repository, temporal, Git, and runtime candidates plus their metadata are excluded and coverage records the stale condition.
 
-The bounded retrieval strategy changes cost, not authority. An isolated
+The bounded retrieval strategy changes cost, not authority. Retrieval-quality conformance additionally requires that identifier normalization, HEAD-defined EvidenceNeed coverage, and coverage-incomplete behavior remain stable; a latency improvement is not semantics-preserving when it removes required evidence. An isolated
 291-file large-project validation fixture compiled the same 4,000-token task
 Capsule twice in 6.5–7.2 seconds; the previous per-file traversal path did not
 finish in roughly three minutes. Fixture identity and latency remain operational
