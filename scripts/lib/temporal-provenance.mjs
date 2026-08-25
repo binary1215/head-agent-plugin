@@ -617,7 +617,7 @@ function appendOnboardingProjection({ projectId, sourceSnapshotId, projection, n
 
   return {
     onboardingCandidateSetCount: projection.candidateSets.length,
-    onboardingCandidateCount: projection.candidateSets.reduce((count, item) => count + item.candidates.length, 0),
+    onboardingCandidateCount: new Set(projection.candidateSets.flatMap((item) => item.candidates.map((candidate) => candidate.candidateId))).size,
     onboardingEvidenceCount: new Set(projection.candidateSets.flatMap((item) => item.evidence.map((evidence) => evidence.evidenceId))).size,
     onboardingUnknownCount: new Set(projection.candidateSets.flatMap((item) => item.unknowns.map((unknown) => unknown.unknownId))).size,
     onboardingReviewDecisionCount: projection.reviewDecisions.length,
@@ -2874,7 +2874,9 @@ export function verifyTemporalProvenanceGraph(graph) {
     productFeatureCandidateCount: operatingFeatureCandidates.length,
     outcomeObservationCount: operatingOutcomes.length,
   });
-  if (canonicalJson(summary) !== canonicalJson(graph.summary)) fail("Temporal graph summary does not match its contents.", "TEMPORAL_SUMMARY_MISMATCH");
+  if (canonicalJson(summary) !== canonicalJson(graph.summary)) {
+    fail(`Temporal graph summary does not match its contents: expected ${canonicalJson(summary)}, received ${canonicalJson(graph.summary)}.`, "TEMPORAL_SUMMARY_MISMATCH");
+  }
   return graph;
 }
 

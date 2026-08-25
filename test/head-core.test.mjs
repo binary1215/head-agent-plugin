@@ -48,7 +48,7 @@ import { buildTemporalProvenanceGraph, deduplicateTemporalEdgesInPlace, queryTem
 import { ActivatedArcadeDbGraphProjectionAdapter, ArcadeDbGraphProjectionAdapter, GRAPH_PROJECTION_ADAPTER_VERSION, InMemoryGraphProjectionAdapter, LocalJsonGraphProjectionAdapter, buildGraphProjectionPointer, buildPreparedTraversalRequest, createActivatedArcadeDbGraphProjectionAdapter, inspectArcadeDbGraphProjectionActivation, inspectArcadeDbGraphTopologyActivation, inspectArcadeDbIncrementalSyncReceipt, materializeGraphProjection, queryGraphProjection, verifyGraphProjectionAdapterConformance } from "../scripts/lib/graph-projection-adapter.mjs";
 import { buildPreparedTraversalCostEvidence, verifyPreparedTraversalCostEvidence } from "../scripts/lib/prepared-traversal-benchmark.mjs";
 import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "../scripts/lib/graphdb-projection-activation.mjs";
-import { startOnboarding } from "../scripts/lib/onboarding.mjs";
+import { inspectOnboarding, readOnboardingCandidateSet, startOnboarding } from "../scripts/lib/onboarding.mjs";
 import { DOCUMENT_PROJECTION_ADAPTER_VERSION, InMemoryMarkdownProjectionAdapter, LocalMarkdownProjectionAdapter, buildMarkdownDocumentProjection, inspectMarkdownProjection, materializeMarkdownProjection, verifyDocumentProjectionAdapterConformance } from "../scripts/lib/document-projection-adapter.mjs";
 import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
 import { WORLD_MODEL_STORE_ADAPTER_VERSION } from "../scripts/lib/world-model-store.mjs";
@@ -265,6 +265,37 @@ test("rejects invalid source scope before project initialization mutates the tar
     { code: "INVALID_REPOSITORY_SOURCE_SCOPE_PATH" },
   );
   assert.equal(fs.existsSync(path.join(root, ".head")), false);
+});
+
+test("resume refreshes stale non-authoritative onboarding candidates without changing Project or Session identity", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "capture.py"), "def capture_frame():\n    return True\n");
+  const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], onboarding: { mode: "existing" } });
+  assert.equal(first.onboarding.status, "awaiting_review");
+  const firstSetId = first.onboarding.candidateSetId;
+  const firstSourceSnapshotId = first.onboarding.sourceSnapshotId;
+  fs.writeFileSync(path.join(root, "src", "calibration.py"), "def calibrate_camera():\n    return True\n");
+
+  const resumed = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  assert.equal(resumed.project.projectId, first.project.projectId);
+  assert.equal(resumed.project.sessionId, first.project.sessionId);
+  assert.equal(resumed.onboardingAction, "refreshed-stale-candidates");
+  assert.equal(resumed.previousCandidateSetId, firstSetId);
+  assert.notEqual(resumed.onboarding.candidateSetId, firstSetId);
+  assert.notEqual(resumed.onboarding.sourceSnapshotId, firstSourceSnapshotId);
+  const successor = readOnboardingCandidateSet({ root, candidateSetId: resumed.onboarding.candidateSetId }).candidateSet;
+  assert.deepEqual(successor.parentCandidateSetIds, [firstSetId]);
+  assert.equal(inspectOnboarding({ root }).state.stateRevision, first.onboarding.stateRevision + 1);
+
+  fs.rmSync(path.join(root, "src", "calibration.py"));
+  const returnedToFirstSource = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  assert.equal(returnedToFirstSource.onboardingAction, "refreshed-stale-candidates");
+  assert.equal(returnedToFirstSource.previousCandidateSetId, successor.candidateSetId);
+  const returnedWorld = readWorldModel({ root }).snapshot;
+  const candidateNodeCount = returnedWorld.temporalProvenanceGraph.nodes.filter((node) => node.kind === "OnboardingProductCandidate").length;
+  assert.equal(returnedWorld.temporalProvenanceGraph.summary.onboardingCandidateCount, candidateNodeCount);
 });
 
 test("defines deterministic provider-neutral runtime contracts while every control operation stays disabled", async (t) => {

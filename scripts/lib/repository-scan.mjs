@@ -26,7 +26,7 @@ import {
   verifyRepositorySourceScope,
 } from "./repository-source-scope.mjs";
 
-export const REPOSITORY_SCAN_VERSION = "0.3.0";
+export const REPOSITORY_SCAN_VERSION = "0.4.0";
 export const REPOSITORY_SCAN_OPERATION = "repository.scan.v1";
 export const REPOSITORY_SCAN_SEMANTIC_PRODUCER = Object.freeze({
   name: "head-agent-core-repository-scan",
@@ -405,15 +405,16 @@ function validateLineRecord(record, fields, label) {
 
 export function validateRepositoryScanResult(result) {
   const currentProtocol = result?.protocol?.version === REPOSITORY_SCAN_VERSION;
-  const legacyProtocol = result?.protocol?.version === "0.2.0";
-  assertFields(result, ["schemaVersion", "kind", "protocol", "sourceAnalysisVersion", "authority", "instructionAuthority", "promotionAuthority", ...(currentProtocol ? ["sourceScope"] : []), "files", "skipped", "summary", "scanId", "scanHash"], "Repository scan result");
+  const scopedProtocol = currentProtocol || result?.protocol?.version === "0.3.0";
+  const legacyProtocol = new Set(["0.2.0", "0.3.0"]).has(result?.protocol?.version);
+  assertFields(result, ["schemaVersion", "kind", "protocol", "sourceAnalysisVersion", "authority", "instructionAuthority", "promotionAuthority", ...(scopedProtocol ? ["sourceScope"] : []), "files", "skipped", "summary", "scanId", "scanHash"], "Repository scan result");
   if (result.schemaVersion !== 1 || result.kind !== "RepositoryScanResult"
     || result.protocol?.name !== "head-agent-core-repository-scan" || (!currentProtocol && !legacyProtocol)
     || result.sourceAnalysisVersion !== SOURCE_ANALYSIS_VERSION || result.authority !== "derived-evidence-only"
     || result.instructionAuthority !== false || result.promotionAuthority !== false || !Array.isArray(result.files)) {
     fail("Repository scan result contract is invalid.", "INVALID_REPOSITORY_SCAN_RESULT");
   }
-  if (currentProtocol) verifyRepositorySourceScope(result.sourceScope);
+  if (scopedProtocol) verifyRepositorySourceScope(result.sourceScope);
   assertOrderedUnique(result.files, (file) => file.path, "Repository scan files");
   for (const [index, file] of result.files.entries()) {
     const label = `files[${index}]`;

@@ -20,7 +20,7 @@ func TestTrackedCorpusMatchesReviewedIdentity(t *testing.T) {
 		t.Fatal(operationFailure)
 	}
 	document := result.(map[string]any)
-	if document["scanId"] != "repository-scan-395c9ccab8f6a2f424e47e8a" {
+	if document["scanId"] != "repository-scan-13e0ce69d2a574c1ac81639e" {
 		t.Fatalf("unexpected scan identity: %v", document["scanId"])
 	}
 	summary := document["summary"].(map[string]any)

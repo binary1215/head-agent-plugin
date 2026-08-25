@@ -24,7 +24,7 @@ import (
 const (
 	Operation             = "repository.scan.v1"
 	ProducerName          = "head-agent-core-repository-scan"
-	ProducerVersion       = "0.3.0"
+	ProducerVersion       = "0.4.0"
 	SourceAnalysisVersion = "0.2.0"
 	maximumSymbolsPerFile = 200
 )

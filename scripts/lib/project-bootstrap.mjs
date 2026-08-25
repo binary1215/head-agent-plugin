@@ -1,5 +1,5 @@
 import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
-import { inspectOnboarding, startOnboarding } from "./onboarding.mjs";
+import { inspectOnboarding, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 
 export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.1.0";
@@ -61,7 +61,7 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     installation = convergeProjectInstallation({ root, pluginRoot, runtimes });
   }
 
-  const current = inspectOnboarding({ root });
+  let current = inspectOnboarding({ root });
   let onboardingAction;
   if (["initialized", "migration_required", "awaiting_evidence", "rejected"].includes(current.status)) {
     const started = await startOnboarding({ root, ...onboardingInput });
@@ -81,6 +81,28 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
       },
       onboarding: onboardingSummary(inspected),
     };
+  }
+
+  if (current.status === "awaiting_review" || current.status === "revision_required") {
+    const refresh = await refreshOnboardingCandidates({ root });
+    if (refresh.refreshed) {
+      current = inspectOnboarding({ root });
+      return {
+        status: current.status,
+        protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+        projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
+        installationAction: installation.status,
+        onboardingAction: "refreshed-stale-candidates",
+        inputDisposition: Object.keys(onboardingInput).length ? "not-reapplied-to-existing-authority-state" : "not-required",
+        project: {
+          projectId: current.sessionRecord.projectId,
+          sessionId: current.sessionRecord.sessionId,
+          runtimes: inspectProject(root).project.runtimes,
+        },
+        onboarding: onboardingSummary(current),
+        previousCandidateSetId: refresh.previousCandidateSetId,
+      };
+    }
   }
 
   const resumableWithoutMutation = new Set(["awaiting_review", "revision_required", "ready", "ready_world_changed"]);

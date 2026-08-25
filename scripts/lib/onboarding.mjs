@@ -819,6 +819,71 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
   };
 }
 
+export async function refreshOnboardingCandidates({ root = "." } = {}) {
+  const inspected = readyProject(root, "onboarding candidate refresh");
+  if (inspected.state.activeRunId || inspected.state.pendingReview) {
+    fail("Onboarding candidate refresh cannot run while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
+  }
+  const projectRoot = inspected.project.projectRoot;
+  const state = ensureOnboardingState(inspected);
+  if (!new Set(["awaiting-review", "revision-required"]).has(state.phase)) {
+    fail("Onboarding candidate refresh requires a review-pending candidate set.", "ONBOARDING_REFRESH_NOT_AVAILABLE");
+  }
+  const previousSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
+  if (previousSet.inputMode !== "existing" || previousSet.briefEvidenceId) {
+    return { status: "onboarding_candidates_current", refreshed: false, reason: "user-brief-requires-explicit-review", state, candidateSet: previousSet };
+  }
+  const productCanon = readProductModelCanon({ projectRoot });
+  if (productCanon.model.productModelId !== state.productModelId || productCanon.model.productModelId !== previousSet.productModelId) {
+    fail("Product Canon changed after candidate inference; candidate evidence cannot refresh automatically.", "ONBOARDING_PRODUCT_CANON_DRIFT");
+  }
+  const world = await buildWorldModel({ root: projectRoot, persist: true });
+  if (world.snapshot.temporalProvenanceGraph.sourceSnapshotId === previousSet.sourceSnapshotId) {
+    return { status: "onboarding_candidates_current", refreshed: false, reason: "source-snapshot-current", state, candidateSet: previousSet };
+  }
+  const inferred = inferRepositoryCandidates(world.snapshot);
+  const candidateSet = buildCandidateSet({
+    projectId: inspected.project.projectId,
+    sessionId: inspected.state.sessionId,
+    inputMode: previousSet.inputMode,
+    storageSelectionId: previousSet.storageSelectionId,
+    worldModel: world.snapshot,
+    candidates: inferred.candidates,
+    evidence: inferred.evidence,
+    unknowns: inferred.unknowns,
+    parentCandidateSetIds: [previousSet.candidateSetId],
+  });
+  const projectedWorld = await rebuildWithOnboardingProjection({
+    projectRoot,
+    projectId: inspected.project.projectId,
+    currentProductModelId: productCanon.model.productModelId,
+    sourceWorld: world,
+    additionalCandidateSets: [candidateSet],
+  });
+  persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId), candidateSet, "Onboarding candidate set");
+  const phase = candidateSet.candidates.length ? "awaiting-review" : "awaiting-evidence";
+  const nextState = writeState(projectRoot, state, {
+    phase,
+    candidateSetId: candidateSet.candidateSetId,
+    reviewDecisionId: null,
+    worldModelId: projectedWorld.snapshot.worldModelId,
+    sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+  });
+  return {
+    status: "onboarding_candidates_refreshed",
+    refreshed: true,
+    reason: "source-snapshot-changed",
+    state: nextState,
+    candidateSet,
+    previousCandidateSetId: previousSet.candidateSetId,
+    worldModel: {
+      worldModelId: projectedWorld.snapshot.worldModelId,
+      sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+      graphSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
+    },
+  };
+}
+
 function editedCandidates(candidateSet, userEdits, addedEntities = [], removedCandidateIds = []) {
   const edits = new Map();
   for (const [index, edit] of recordList(userEdits, "userEdits").entries()) {
