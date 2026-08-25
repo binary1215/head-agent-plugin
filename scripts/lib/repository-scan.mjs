@@ -40,8 +40,10 @@ export const REPOSITORY_SCAN_DEFAULTS = Object.freeze({
 });
 
 export const REPOSITORY_SCAN_EXCLUDED_DIRECTORIES = Object.freeze([
-  ".git", ".head", ".hg", ".svn", ".venv", "venv", "node_modules", "vendor",
-  "dist", "build", "coverage", ".next", ".nuxt", ".cache", "target", "out",
+  ".cache", ".git", ".head", ".hg", ".mypy_cache", ".next", ".nox", ".nuxt",
+  ".pytest_cache", ".ruff_cache", ".svn", ".tox", ".uv-python", ".venv",
+  "__pycache__", "build", "coverage", "dist", "node_modules", "out", "target",
+  "vendor", "venv",
 ].sort());
 const EXCLUDED_DIRECTORIES = new Set(REPOSITORY_SCAN_EXCLUDED_DIRECTORIES);
 const TEXT_EXTENSIONS = new Set([

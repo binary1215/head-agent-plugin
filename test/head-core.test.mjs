@@ -2483,6 +2483,16 @@ test("routes deterministic repository scan v1 through a replaceable compute adap
   assert.throws(() => scanRepositoryReference(input, { limits: { maxTotalBytes: 1 } }), { code: "REPOSITORY_SCAN_TOTAL_BYTES_LIMIT" });
   assert.equal(scanRepositoryReference(input, { limits: { maxFileBytes: 1 } }).summary.fileCount, 0);
 
+  const technicalRoot = temporaryProject();
+  t.after(() => fs.rmSync(technicalRoot, { recursive: true, force: true }));
+  for (const relative of ["src", ".uv-python/lib", ".pytest_cache/state"]) fs.mkdirSync(path.join(technicalRoot, relative), { recursive: true });
+  fs.writeFileSync(path.join(technicalRoot, "src", "app.py"), "value = 1\n");
+  fs.writeFileSync(path.join(technicalRoot, ".uv-python", "lib", "runtime.py"), "value = 1\n");
+  fs.writeFileSync(path.join(technicalRoot, ".pytest_cache", "state", "cache.py"), "value = 1\n");
+  const technicalScan = scanRepositoryReference(buildRepositoryScanInput({ projectRoot: technicalRoot }));
+  assert.deepEqual(technicalScan.files.map((file) => file.path), ["src/app.py"]);
+  assert.equal(technicalScan.skipped.excludedDirectory, 2);
+
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(corpus, root, { recursive: true });

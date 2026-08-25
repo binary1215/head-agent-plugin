@@ -75,10 +75,12 @@ var (
 )
 
 var excludedDirectories = map[string]bool{
-	".git": true, ".head": true, ".hg": true, ".svn": true, ".venv": true,
-	"venv": true, "node_modules": true, "vendor": true, "dist": true,
-	"build": true, "coverage": true, ".next": true, ".nuxt": true,
-	".cache": true, "target": true, "out": true,
+	".cache": true, ".git": true, ".head": true, ".hg": true, ".mypy_cache": true,
+	".next": true, ".nox": true, ".nuxt": true, ".pytest_cache": true,
+	".ruff_cache": true, ".svn": true, ".tox": true, ".uv-python": true,
+	".venv": true, "__pycache__": true, "build": true, "coverage": true,
+	"dist": true, "node_modules": true, "out": true, "target": true,
+	"vendor": true, "venv": true,
 }
 
 var textExtensions = map[string]bool{
