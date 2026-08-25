@@ -448,7 +448,7 @@ export function validateRepositoryScanResult(result) {
     }
     assertOrdered(file.semanticFacts.calls, (left, right) => left.line - right.line || compareText(left.callee, right.callee), `${label}.semanticFacts.calls`);
   }
-  const skippedFields = currentProtocol ? SKIPPED_FIELDS : LEGACY_SKIPPED_FIELDS;
+  const skippedFields = scopedProtocol ? SKIPPED_FIELDS : LEGACY_SKIPPED_FIELDS;
   assertFields(result.skipped, skippedFields, "Repository scan skipped counts");
   if (skippedFields.some((field) => !Number.isInteger(result.skipped[field]) || result.skipped[field] < 0)) fail("Repository scan skipped counts are invalid.", "INVALID_REPOSITORY_SCAN_RESULT");
   assertFields(result.summary, ["fileCount", "totalBytes", "symbolCount", "dependencyCount", "bindingCount", "callCount"], "Repository scan summary");

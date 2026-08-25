@@ -2482,6 +2482,12 @@ test("routes deterministic repository scan v1 through a replaceable compute adap
   assert.equal(first.scanId, repeated.scanId);
   assert.equal(first.scanHash, repeated.scanHash);
   assert.equal(first.scanId, expected.scanId);
+  const legacyV03 = reidentify({ ...clone(first), protocol: { ...first.protocol, version: "0.3.0" } }, {
+    prefix: "repository-scan",
+    idKey: "scanId",
+    hashKey: "scanHash",
+  });
+  assert.doesNotThrow(() => validateRepositoryScanResult(legacyV03));
   assert.equal(first.summary.fileCount, 10);
   assert.equal(first.files.find((file) => file.path === "fixtures/duplicate-symbols.mjs").symbols.length, 1);
   assert.equal(JSON.stringify(first).includes(corpus), false);
