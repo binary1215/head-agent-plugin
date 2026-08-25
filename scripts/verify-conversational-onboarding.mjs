@@ -144,6 +144,7 @@ try {
   assert.equal(ready.readiness.world, "current");
   assert.equal(ready.readiness.graph, "current");
   assert.equal(ready.readiness.documents, "current");
+  assert.equal(ready.readiness.documentProjectionId, documents.documentProjectionId);
 
   const resumed = await tool("head_project_initialize_or_resume", {
     project_root: projectRoot,

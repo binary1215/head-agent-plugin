@@ -156,7 +156,7 @@ export function inspectConversationalOnboarding({ root = ".", candidateLimit = 2
       graph: graph?.status || "missing",
       graphSnapshotId: onboarding.worldModel?.graphSnapshotId || null,
       documents: documents?.status || "missing",
-      documentProjectionId: documents?.projection?.projection?.documentProjectionId || null,
+      documentProjectionId: documents?.projection?.documentProjectionId || null,
     },
     reviewPolicy: {
       allowedDispositions: ["accept-all", "accept-selection", "revise", "reject"],
