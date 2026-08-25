@@ -18,9 +18,10 @@ for the normal path.
    - local storage unless the user explicitly selects GraphDB;
    - Claude Code, Codex, and OpenCode runtimes when all three are desired.
 3. Ask only for material missing choices. A mixed or copied repository needs a
-   user-selected project-relative source scope. A new project needs a structured
-   brief. GraphDB selection needs endpoint, database, and environment variable
-   reference names—never credential values.
+   user-selected project-relative source scope. The whole eligible repository is
+   represented by empty `include_roots`; never use `"."` as a root alias. A new
+   project needs a structured brief. GraphDB selection needs endpoint, database,
+   and environment variable reference names—never credential values.
 4. Call `head_project_initialize_or_resume`. Re-entry must resume the same HEAD
    Project and Session rather than inventing new identities.
 5. Call `head_onboarding_guide` again and follow its `nextAction`.

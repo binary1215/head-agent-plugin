@@ -1,5 +1,6 @@
 import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
 import { inspectOnboarding, startOnboarding } from "./onboarding.mjs";
+import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 
 export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.1.0";
 
@@ -18,6 +19,7 @@ function validateOnboardingInput(value) {
   }
   const unexpected = Object.keys(source).filter((field) => !ALLOWED_ONBOARDING_FIELDS.has(field));
   if (unexpected.length) fail("PROJECT_BOOTSTRAP_INPUT_INVALID", `Onboarding input contains unsupported fields: ${unexpected.sort().join(", ")}`);
+  if (source.sourceScope != null) buildRepositorySourceScope(source.sourceScope);
   return source;
 }
 

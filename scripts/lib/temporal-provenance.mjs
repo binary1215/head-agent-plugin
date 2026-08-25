@@ -162,6 +162,21 @@ function canonicalJson(value) {
   return JSON.stringify(canonical(value));
 }
 
+export function deduplicateTemporalEdgesInPlace(edges) {
+  if (!Array.isArray(edges)) fail("Temporal edges must be an array.", "TEMPORAL_EDGES_REQUIRED");
+  const uniqueEdges = new Map();
+  for (const edge of edges) {
+    const existing = uniqueEdges.get(edge.edgeId);
+    if (existing && canonicalJson(existing) !== canonicalJson(edge)) {
+      fail(`Temporal edge identity collision: ${edge.edgeId}`, "TEMPORAL_EDGE_IDENTITY_COLLISION");
+    }
+    uniqueEdges.set(edge.edgeId, edge);
+  }
+  edges.length = 0;
+  for (const edge of uniqueEdges.values()) edges.push(edge);
+  return edges;
+}
+
 function identity(prefix, value) {
   return `${prefix}-${digest(canonicalJson(value)).slice(0, 24)}`;
 }
@@ -1818,16 +1833,7 @@ export function buildTemporalProvenanceGraph({
     edges,
   });
 
-  const uniqueEdges = new Map();
-  for (const edge of edges) {
-    const existing = uniqueEdges.get(edge.edgeId);
-    if (existing && canonicalJson(existing) !== canonicalJson(edge)) {
-      fail(`Temporal edge identity collision: ${edge.edgeId}`, "TEMPORAL_EDGE_IDENTITY_COLLISION");
-    }
-    uniqueEdges.set(edge.edgeId, edge);
-  }
-  edges.length = 0;
-  edges.push(...uniqueEdges.values());
+  deduplicateTemporalEdgesInPlace(edges);
 
   nodes.sort((left, right) => left.nodeId.localeCompare(right.nodeId));
   edges.sort((left, right) => left.edgeId.localeCompare(right.edgeId));
@@ -2245,7 +2251,8 @@ export function verifyTemporalProvenanceGraph(graph) {
     if (identity("temporal-edge", payloadForId) !== edge.edgeId) fail(`Temporal edge identity mismatch: ${edge.edgeId}`, "TEMPORAL_EDGE_IDENTITY_MISMATCH");
     edgeIds.add(edge.edgeId);
   }
-  const hasEdge = (type, from, to) => graph.edges.some((edge) => edge.type === type && edge.from === from && edge.to === to);
+  const edgeLookup = new Set(graph.edges.map((edge) => canonicalJson([edge.type, edge.from, edge.to])));
+  const hasEdge = (type, from, to) => edgeLookup.has(canonicalJson([type, from, to]));
   for (const parentSnapshotId of graph.parentSourceSnapshotIds) {
     if (nodes.get(parentSnapshotId)?.kind !== "SourceSnapshotReference" || !hasEdge("PARENT_OF", parentSnapshotId, graph.sourceSnapshotId)) {
       fail(`SourceSnapshot parent projection is incomplete: ${parentSnapshotId}`, "SOURCE_SNAPSHOT_PARENT_MISSING");

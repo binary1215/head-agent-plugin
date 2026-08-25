@@ -44,7 +44,7 @@ import {
 } from "../scripts/lib/execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
 import { WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES, buildWorldModel, buildWorldModelStatusProjection, captureWorldMarkdownChanges, inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet, readWorldModel } from "../scripts/lib/world-model.mjs";
-import { buildTemporalProvenanceGraph, queryTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
+import { buildTemporalProvenanceGraph, deduplicateTemporalEdgesInPlace, queryTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
 import { ActivatedArcadeDbGraphProjectionAdapter, ArcadeDbGraphProjectionAdapter, GRAPH_PROJECTION_ADAPTER_VERSION, InMemoryGraphProjectionAdapter, LocalJsonGraphProjectionAdapter, buildGraphProjectionPointer, buildPreparedTraversalRequest, createActivatedArcadeDbGraphProjectionAdapter, inspectArcadeDbGraphProjectionActivation, inspectArcadeDbGraphTopologyActivation, inspectArcadeDbIncrementalSyncReceipt, materializeGraphProjection, queryGraphProjection, verifyGraphProjectionAdapterConformance } from "../scripts/lib/graph-projection-adapter.mjs";
 import { buildPreparedTraversalCostEvidence, verifyPreparedTraversalCostEvidence } from "../scripts/lib/prepared-traversal-benchmark.mjs";
 import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "../scripts/lib/graphdb-projection-activation.mjs";
@@ -76,6 +76,7 @@ import {
 } from "../scripts/lib/refresh-trigger.mjs";
 import { withRefreshWriterLease } from "../scripts/lib/refresh-writer-lease.mjs";
 import { inspectPostRefreshProjectionPolicy } from "../scripts/lib/post-refresh-projection.mjs";
+import { initializeOrResumeProject } from "../scripts/lib/project-bootstrap.mjs";
 import {
   applyDocumentChangeReview,
   inspectDocumentChangeReviewStatus,
@@ -243,6 +244,27 @@ test("initializes Claude, Codex, and OpenCode projections and verifies managed c
   const inspected = inspectProject(root);
   assert.equal(inspected.status, "ready");
   assert.equal(inspected.project.runtimes.join(","), "claude,codex,opencode");
+});
+
+test("rejects invalid source scope before project initialization mutates the target", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "index.mjs"), "export const ready = true;\n");
+
+  await assert.rejects(
+    () => initializeOrResumeProject({
+      root,
+      pluginRoot,
+      runtimes: ["codex"],
+      onboarding: {
+        mode: "existing",
+        sourceScope: { includeRoots: ["."], excludeRoots: [] },
+      },
+    }),
+    { code: "INVALID_REPOSITORY_SOURCE_SCOPE_PATH" },
+  );
+  assert.equal(fs.existsSync(path.join(root, ".head")), false);
 });
 
 test("defines deterministic provider-neutral runtime contracts while every control operation stays disabled", async (t) => {
@@ -1090,6 +1112,28 @@ test("watches filesystem changes through the bounded debounced refresh adapter",
   assert.deepEqual(result.refresh.request.trigger.evidenceIds, [result.batch.triggerBatchId]);
   const closed = await watcher.close({ flush: false });
   assert.equal(closed.closed, true);
+});
+
+test("deduplicates large temporal edge sets without variadic stack growth", () => {
+  const edgeCount = 150_000;
+  const edges = Array.from({ length: edgeCount }, (_, index) => ({
+    edgeId: `edge-${String(index).padStart(6, "0")}`,
+    ordinal: index,
+  }));
+  edges.push(edges[0]);
+
+  const returned = deduplicateTemporalEdgesInPlace(edges);
+  assert.equal(returned, edges);
+  assert.equal(edges.length, edgeCount);
+  assert.equal(edges[0].ordinal, 0);
+  assert.equal(edges.at(-1).ordinal, edgeCount - 1);
+  assert.throws(
+    () => deduplicateTemporalEdgesInPlace([
+      { edgeId: "collision", value: 1 },
+      { edgeId: "collision", value: 2 },
+    ]),
+    { code: "TEMPORAL_EDGE_IDENTITY_COLLISION" },
+  );
 });
 
 test("builds deterministic Git-independent temporal provenance with multiple parents", async (t) => {
