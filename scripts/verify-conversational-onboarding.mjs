@@ -116,14 +116,36 @@ try {
   assert.equal(reviewGuide.review.truncated, false);
   assert.equal(reviewGuide.review.candidates.every((candidate) => candidate.authority === "candidate-only-until-explicit-review"), true);
 
-  const reviewed = await tool("head_onboarding_review", {
+  const revised = await tool("head_onboarding_review", {
     project_root: projectRoot,
     candidate_set_id: reviewGuide.review.candidateSetId,
+    disposition: "revise",
+    added_entities: [{
+      kind: "Capability",
+      entity: {
+        key: "capability:reviewed-continuity",
+        name: "Reviewed continuity",
+        description: "Preserve explicit successor review lineage.",
+      },
+    }],
+    rationale: "Add one user-authored concept through the required two-review path.",
+  });
+  assert.equal(revised.status, "onboarding_revision_awaiting_review");
+  assert.equal(revised.state.latestReviewDecisionId, revised.reviewDecision.reviewDecisionId);
+
+  const successorGuide = await tool("head_onboarding_guide", { project_root: projectRoot, candidate_limit: 200 });
+  assert.equal(successorGuide.status, "awaiting_review");
+  assert.notEqual(successorGuide.review.candidateSetId, reviewGuide.review.candidateSetId);
+
+  const reviewed = await tool("head_onboarding_review", {
+    project_root: projectRoot,
+    candidate_set_id: successorGuide.review.candidateSetId,
     disposition: "accept-all",
-    rationale: "Fixture reviewer inspected every bounded evidence-linked candidate.",
+    rationale: "Fixture reviewer inspected every candidate in the immutable successor batch.",
   });
   assert.equal(reviewed.status, "onboarding_ready");
   assert.equal(reviewed.authorityEffect, "explicit-product-canon-transition");
+  assert.notEqual(reviewed.state.latestReviewDecisionId, revised.reviewDecision.reviewDecisionId);
 
   const documents = await tool("head_markdown_projection_build", { project_root: projectRoot });
   assert.equal(documents.status, "projected");

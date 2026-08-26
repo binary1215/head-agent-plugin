@@ -17,6 +17,13 @@ Initialization now creates:
 
 The HEAD Session identity is independent from Codex, OpenCode, and other provider conversation IDs. Older initialized projects report `migration_required` through read-only inspection. The next mutating onboarding command creates the missing Session record, local storage selection, and state pointer while preserving the existing Session ID and Product Model identity.
 
+State-pointer protocol `0.2.0` names the most recent decision as
+`latestReviewDecisionId`. Digest-valid `0.1.0` pointers whose compatibility field
+is `reviewDecisionId` remain readable and are rewritten only by a later explicit
+state transition. A successor candidate separately names the `revise` decision
+that produced it as `producerReviewDecisionId`; the producer and latest review
+are intentionally different after that successor is accepted or rejected.
+
 The state machine is:
 
 ```text
@@ -33,7 +40,7 @@ initialized
 
 Repository and brief analysis creates `OnboardingCandidateSet` evidence with `instructionAuthority: false` and `promotionAuthority: false`. Only an explicit `ReviewDecision` with `decisionScope: "product-canon-bootstrap"` may write Product Canon. A candidate is never mutated or relabeled: revision creates a successor candidate with a new identity, and acceptance creates separate canon plus an immutable decision receipt.
 
-Candidate protocol `0.2.0` derives candidate-set identity from project, Session, mode, exact SourceSnapshot, Product Model input, candidates, Evidence, Unknowns, ancestry, and producer policy. It deliberately excludes the derived World Model ID so rebuilding the same evidence after rejection produces the same candidate identity instead of coupling authority review to a materialized-view pointer.
+Candidate protocol `0.3.0` derives candidate-set identity from project, Session, mode, exact SourceSnapshot, Product Model input, candidates, Evidence, Unknowns, ancestry, producer ReviewDecision, and producer policy. It deliberately excludes the derived World Model ID so rebuilding the same evidence after rejection produces the same candidate identity instead of coupling authority review to a materialized-view pointer. Digest-valid `0.1.0` and `0.2.0` candidate sets remain readable; their legacy `reviewDecisionId` is interpreted only as the successor-producing review, never as the latest review of that successor.
 
 ## Public initialize and resume path
 
@@ -222,7 +229,12 @@ Revise candidates without changing canon:
 }
 ```
 
-`revise` produces a new immutable candidate set linked to the prior set and ReviewDecision. Additions and removals require this two-review path; they cannot be introduced and promoted in the same decision. `reject` records all candidates as rejected and leaves Product Canon unchanged.
+`revise` produces a new immutable candidate set linked to the prior set and its
+producer ReviewDecision. A later acceptance or rejection records a separate
+latest ReviewDecision over that successor; the two identities are not required
+to match. Additions and removals require this two-review path; they cannot be
+introduced and promoted in the same decision. `reject` records all candidates as
+rejected and leaves Product Canon unchanged.
 
 ```powershell
 node scripts/head.mjs onboarding-review C:\path\to\project --input .\onboarding-review.json
@@ -235,11 +247,11 @@ Acceptance validates stable keys and references, rejects conflicts, records prev
 
 Later source changes do not erase the historical onboarding decision. Read-only status reports `ready_world_changed` when the current World Model is stale or has advanced beyond the snapshot that completed onboarding; normal World Model refresh and HEAD drift handling must then decide how execution context advances.
 
-The read-only MCP tool `head_onboarding_status` verifies the state pointer, Session record, storage selection, current candidate set, linked ReviewDecision, Product Model revisions, Product Canon identity, and World Model freshness. The separate `head_onboarding_review` transaction accepts only an explicit user-authored disposition against the exact current candidate-set identity and delegates every promotion check to Core.
+The read-only MCP tool `head_onboarding_status` verifies the state pointer, Session record, storage selection, current candidate set, successor-producing ReviewDecision, latest phase-appropriate ReviewDecision, Product Model revisions, Product Canon identity, and World Model freshness. For a review-pending successor the producer is also the latest decision; for `ready` or `rejected`, the latest decision must directly review the current successor and carry the matching acceptance or rejection disposition. The separate `head_onboarding_review` transaction accepts only an explicit user-authored disposition against the exact current candidate-set identity and delegates every promotion check to Core.
 
 ## Temporal graph projection
 
-World Model `0.12.0` continues to load bounded immutable onboarding artifacts and verify every nested content identity before projecting them through onboarding projection protocol `0.1.0` into P4 temporal provenance protocol `0.9.0`. Candidate sets connect to exact source evidence, candidates connect to Evidence and separate proposed product-concept references, and ReviewDecisions preserve accepted, rejected, revised, and promotion outcomes. Accepted decisions connect to immutable previous/resulting ProductModelRevision receipts; the resulting receipt links back to the promoted candidate identities.
+World Model `0.12.0` continues to load bounded immutable onboarding artifacts and verify every nested content identity before projecting them through onboarding projection protocol `0.1.0` into P4 temporal provenance protocol `0.10.0`. Candidate sets connect to exact source evidence, candidates connect to Evidence and separate proposed product-concept references, and ReviewDecisions preserve accepted, rejected, revised, and promotion outcomes. A revise decision has an explicit `PRODUCES` edge to its successor candidate set; a later accepted decision separately connects to immutable previous/resulting ProductModelRevision receipts, and the resulting receipt links back to the promoted candidate identities.
 
 This graph is an audit and traversal projection, not the decision source. All projected node and edge instruction/promotion flags are false, even when the source ReviewDecision records the user's promotion authority. Normal traversal hides CandidateSet, candidate, Evidence, Unknown, and proposed-concept nodes. A user can explicitly inspect them with `world-temporal --include-candidates true` or MCP `include_unreviewed_candidates: true`; the Context Compiler never enables that option. Reviewed decision and ProductModelRevision receipts remain available in normal reviewed traversal.
 
@@ -249,7 +261,7 @@ Run the dependency-free verifier with:
 npm run verify:onboarding
 ```
 
-It covers existing code, a new-project brief, empty evidence, revision, rejection, selection, deterministic restart, candidate/review/promotion graph projection, default candidate exclusion, explicit candidate traversal, graph and artifact tampering, pre-existing canon, stale source, secret rejection, legacy migration, read-only status MCP, and operation without Git, GraphDB, or a Go binary. `npm run verify:conversational-onboarding` separately proves the typed conversation-native vertical.
+It covers existing code, a new-project brief, empty evidence, revision followed by acceptance, selection, or rejection, phase-aware producer/latest review lineage, deterministic restart, candidate/review/promotion graph projection, default candidate exclusion, explicit candidate traversal, graph and artifact tampering, pre-existing canon, stale source, secret rejection, legacy migration, read-only status MCP, and operation without Git, GraphDB, or a Go binary. `npm run verify:conversational-onboarding` separately proves the typed conversation-native `revise -> guide -> accept -> guide` vertical.
 
 ## Explicitly deferred
 

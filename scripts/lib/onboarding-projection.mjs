@@ -25,7 +25,7 @@ const CANDIDATE_SET_LIMITS = Object.freeze({
   maxEvidenceRecords: 250,
   maxUnknowns: 100,
 });
-const CANDIDATE_PROTOCOL_VERSIONS = new Set(["0.1.0", "0.2.0"]);
+const CANDIDATE_PROTOCOL_VERSIONS = new Set(["0.1.0", "0.2.0", "0.3.0"]);
 const KIND_ORDER = new Map(PRODUCT_ENTITY_KINDS.map((kind, index) => [kind, index]));
 const ARRAY_BY_KIND = Object.freeze({
   FeatureGroup: "featureGroups",
@@ -147,7 +147,7 @@ export function verifyOnboardingCandidateSetForProjection(document, projectId = 
     || !["existing", "new"].includes(document.inputMode)
     || !/^onboarding-storage-[a-f0-9]{24}$/.test(document.storageSelectionId || "")
     || (candidateProtocolVersion === "0.1.0" && !/^world-model-[a-f0-9]{24}$/.test(document.worldModelId || ""))
-    || (candidateProtocolVersion === "0.2.0" && document.worldModelId != null)
+    || (["0.2.0", "0.3.0"].includes(candidateProtocolVersion) && document.worldModelId != null)
     || !/^source-snapshot-[a-f0-9]{24}$/.test(document.sourceSnapshotId || "")
     || !/^product-model-[a-f0-9]{24}$/.test(document.productModelId || "")
     || document.authorityClass !== "candidate-set" || document.instructionAuthority !== false || document.promotionAuthority !== false) {
@@ -212,10 +212,24 @@ export function verifyOnboardingCandidateSetForProjection(document, projectId = 
   for (const parentId of sortedUnique(document.parentCandidateSetIds || [], "parentCandidateSetIds")) {
     if (!/^onboarding-candidates-[a-f0-9]{24}$/.test(parentId)) fail("Candidate-set parent identity is invalid.", "INVALID_ONBOARDING_PROJECTION_PARENT");
   }
-  if (document.reviewDecisionId != null && !/^onboarding-review-decision-[a-f0-9]{24}$/.test(document.reviewDecisionId)) {
-    fail("Candidate-set review identity is invalid.", "INVALID_ONBOARDING_PROJECTION_REVIEW");
+  const producerReviewDecisionId = onboardingCandidateProducerReviewDecisionId(document);
+  if (producerReviewDecisionId != null && !/^onboarding-review-decision-[a-f0-9]{24}$/.test(producerReviewDecisionId)) {
+    fail("Candidate-set producer ReviewDecision identity is invalid.", "INVALID_ONBOARDING_PROJECTION_REVIEW");
+  }
+  if ((candidateProtocolVersion === "0.3.0" && Object.hasOwn(document, "reviewDecisionId"))
+    || (candidateProtocolVersion !== "0.3.0" && Object.hasOwn(document, "producerReviewDecisionId"))) {
+    fail("Candidate-set producer ReviewDecision field does not match its protocol.", "INVALID_ONBOARDING_PROJECTION_REVIEW");
   }
   return document;
+}
+
+export function onboardingCandidateProducerReviewDecisionId(document = {}) {
+  const current = document.producerReviewDecisionId ?? null;
+  const legacy = document.reviewDecisionId ?? null;
+  if (current && legacy && current !== legacy) {
+    fail("Candidate set contains conflicting producer ReviewDecision identities.", "ONBOARDING_PROJECTION_REVIEW_CONFLICT");
+  }
+  return current || legacy;
 }
 
 export function verifyOnboardingReviewDecisionForProjection(document, candidateSet, projectId = "") {
@@ -388,8 +402,9 @@ export function loadOnboardingGraphProjection({
     for (const parentId of candidateSet.parentCandidateSetIds) if (!candidateById.has(parentId)) {
       fail(`Candidate set references a missing parent: ${parentId}`, "ONBOARDING_PROJECTION_DANGLING_PARENT");
     }
-    if (candidateSet.reviewDecisionId) {
-      const review = reviewDecisions.find((item) => item.reviewDecisionId === candidateSet.reviewDecisionId);
+    const producerReviewDecisionId = onboardingCandidateProducerReviewDecisionId(candidateSet);
+    if (producerReviewDecisionId) {
+      const review = reviewDecisions.find((item) => item.reviewDecisionId === producerReviewDecisionId);
       if (!review || review.disposition !== "revise" || !candidateSet.parentCandidateSetIds.includes(review.candidateSetId)) {
         fail(`Successor candidate set has an invalid revision ReviewDecision: ${candidateSet.candidateSetId}`, "ONBOARDING_PROJECTION_REVIEW_CONFLICT");
       }

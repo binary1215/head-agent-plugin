@@ -301,7 +301,7 @@ Large-project source scoping, bounded Context compilation, live topology
 activation, and prepared traversal have fixture evidence, but fixture-specific
 product candidates and review proposals are never reusable project input. Build
 and review candidates only from the active target project's exact source scope,
-Product Canon, and current candidate-set identity; never `accept-all`. General provider resume/stream, broader process-host control,
+Product Canon, and current candidate-set identity; never `accept-all` a fixture-derived or foreign candidate batch. Explicit `accept-all` remains available only for the exact current-project candidate set after the user reviews that complete bounded batch. General provider resume/stream, broader process-host control,
 provider runtime hydration, service installation, and other
 explicitly deferred capabilities remain unavailable. Do not represent them as
 working.

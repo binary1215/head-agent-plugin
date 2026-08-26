@@ -9,8 +9,8 @@ import {
   ONBOARDING_CANDIDATE_DIRECTORY,
   onboardingCanonicalJson,
   onboardingDigest,
+  onboardingStateLatestReviewDecisionId,
   ONBOARDING_PRODUCT_REVISION_DIRECTORY,
-  ONBOARDING_PROTOCOL_VERSION,
   ONBOARDING_REVIEW_DIRECTORY,
   ONBOARDING_STATE_RELATIVE_PATH,
   ONBOARDING_STORAGE_DIRECTORY,
@@ -21,6 +21,7 @@ import {
 } from "./onboarding-contract.mjs";
 import {
   loadOnboardingGraphProjection,
+  onboardingCandidateProducerReviewDecisionId,
   verifyOnboardingCandidateSetForProjection,
   verifyOnboardingReviewDecisionForProjection,
   verifyProductModelRevisionForProjection,
@@ -35,7 +36,7 @@ import {
 import { buildWorldModel, inspectWorldModel, readWorldModel } from "./world-model.mjs";
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./repository-source-scope.mjs";
 
-export const ONBOARDING_CANDIDATE_VERSION = "0.2.0";
+export const ONBOARDING_CANDIDATE_VERSION = "0.3.0";
 export const ONBOARDING_REVIEW_VERSION = "0.1.0";
 export const ONBOARDING_INFERENCE_VERSION = "0.3.0";
 
@@ -188,9 +189,13 @@ function productModelHasEntities(model) {
 }
 
 function writeState(projectRoot, previous, changes) {
+  const latestReviewDecisionId = Object.hasOwn(changes, "latestReviewDecisionId")
+    ? changes.latestReviewDecisionId
+    : onboardingStateLatestReviewDecisionId(previous);
   const state = buildOnboardingState({
     ...previous,
     ...changes,
+    latestReviewDecisionId,
     stateRevision: previous.stateRevision + 1,
     updatedAt: now(),
   });
@@ -301,7 +306,7 @@ function modelFromCandidateEntities(candidates) {
   return normalizeProductModelDocument(document);
 }
 
-function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId, worldModel, candidates, evidence, unknowns, parentCandidateSetIds = [], reviewDecisionId = null, briefEvidenceId = null }) {
+function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId, worldModel, candidates, evidence, unknowns, parentCandidateSetIds = [], producerReviewDecisionId = null, briefEvidenceId = null }) {
   if (candidates.length > MAX_CANDIDATES || evidence.length > MAX_EVIDENCE_RECORDS || unknowns.length > MAX_UNKNOWNS) {
     fail("Onboarding candidate set exceeds its deterministic size bounds.", "ONBOARDING_CANDIDATE_SET_LIMIT");
   }
@@ -329,7 +334,7 @@ function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId
     evidence: orderedEvidence,
     unknowns: [...unknowns].sort((left, right) => compareText(left.unknownId, right.unknownId)),
     parentCandidateSetIds: [...new Set(parentCandidateSetIds)].sort(),
-    reviewDecisionId,
+    producerReviewDecisionId,
     reviewProtocol: {
       decisionScope: "product-canon-bootstrap",
       allowedDispositions: ["accept-all", "accept-selection", "revise", "reject"],
@@ -755,7 +760,7 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
       worldModelId: world.snapshot.worldModelId,
       sourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
       candidateSetId: null,
-      reviewDecisionId: null,
+      latestReviewDecisionId: null,
       productModelId: productCanon.model.productModelId,
       previousProductModelId: productCanon.model.productModelId,
     });
@@ -799,7 +804,7 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
     worldModelId: projectedWorld.snapshot.worldModelId,
     sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
     candidateSetId: candidateSet.candidateSetId,
-    reviewDecisionId: null,
+    latestReviewDecisionId: null,
     productModelId: productCanon.model.productModelId,
     previousProductModelId: productCanon.model.productModelId,
   });
@@ -865,7 +870,7 @@ export async function refreshOnboardingCandidates({ root = "." } = {}) {
   const nextState = writeState(projectRoot, state, {
     phase,
     candidateSetId: candidateSet.candidateSetId,
-    reviewDecisionId: null,
+    latestReviewDecisionId: null,
     worldModelId: projectedWorld.snapshot.worldModelId,
     sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
   });
@@ -952,7 +957,7 @@ function revisionCandidateSet({ candidateSet, revisionItems, reviewDecision, wor
     evidence,
     unknowns: candidateSet.unknowns,
     parentCandidateSetIds: [candidateSet.candidateSetId],
-    reviewDecisionId: reviewDecision.reviewDecisionId,
+    producerReviewDecisionId: reviewDecision.reviewDecisionId,
     briefEvidenceId: candidateSet.briefEvidenceId,
   });
 }
@@ -1170,7 +1175,7 @@ export async function reviewOnboarding({
     const nextState = writeState(projectRoot, state, {
       phase: nextSet.candidates.length ? "awaiting-review" : "awaiting-evidence",
       candidateSetId: nextSet.candidateSetId,
-      reviewDecisionId: review.reviewDecisionId,
+      latestReviewDecisionId: review.reviewDecisionId,
       worldModelId: projectedWorld.snapshot.worldModelId,
       sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
     });
@@ -1213,7 +1218,7 @@ export async function reviewOnboarding({
     persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
     const nextState = writeState(projectRoot, state, {
       phase: "rejected",
-      reviewDecisionId: review.reviewDecisionId,
+      latestReviewDecisionId: review.reviewDecisionId,
       worldModelId: projectedWorld.snapshot.worldModelId,
       sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
     });
@@ -1297,7 +1302,7 @@ export async function reviewOnboarding({
       phase: "ready",
       worldModelId: rebuilt.snapshot.worldModelId,
       sourceSnapshotId: rebuilt.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-      reviewDecisionId: review.reviewDecisionId,
+      latestReviewDecisionId: review.reviewDecisionId,
       productModelId: nextModel.productModelId,
       previousProductModelId: currentCanon.model.productModelId,
     });
@@ -1316,6 +1321,61 @@ export async function reviewOnboarding({
     if (promoted) restoreAfterPromotionFailure({ projectRoot, previousCanonExisted, previousCanonBytes, previousPointer: previousWorld });
     throw error;
   }
+}
+
+function verifyCurrentOnboardingReviewLineage({ projectRoot, state, candidateSet, latestReviewDecision }) {
+  const latestReviewDecisionId = onboardingStateLatestReviewDecisionId(state);
+  const producerReviewDecisionId = candidateSet
+    ? onboardingCandidateProducerReviewDecisionId(candidateSet)
+    : null;
+  let producerReviewDecision = null;
+
+  if (producerReviewDecisionId) {
+    producerReviewDecision = readOnboardingReviewDecision({
+      root: projectRoot,
+      reviewDecisionId: producerReviewDecisionId,
+    }).reviewDecision;
+    const producerEvidence = candidateSet.evidence.find((evidence) => (
+      evidence.sourceKind === "onboarding-review-input"
+      && evidence.sourceId === producerReviewDecisionId
+      && evidence.contentDigest === producerReviewDecision.reviewDecisionHash
+    ));
+    if (producerReviewDecision.disposition !== "revise"
+      || producerReviewDecision.projectId !== candidateSet.projectId
+      || producerReviewDecision.sessionId !== candidateSet.sessionId
+      || !candidateSet.parentCandidateSetIds.includes(producerReviewDecision.candidateSetId)
+      || !producerEvidence) {
+      fail("Onboarding successor candidate set has invalid producer ReviewDecision lineage.", "ONBOARDING_REVIEW_CONFLICT");
+    }
+  }
+
+  if ((latestReviewDecision?.reviewDecisionId || null) !== latestReviewDecisionId) {
+    fail("Onboarding state latest ReviewDecision could not be verified.", "ONBOARDING_REVIEW_CONFLICT");
+  }
+
+  if (["awaiting-review", "awaiting-evidence", "revision-required"].includes(state.phase)) {
+    if (latestReviewDecisionId !== producerReviewDecisionId) {
+      fail("Review-pending onboarding state does not match its successor-producing ReviewDecision.", "ONBOARDING_REVIEW_CONFLICT");
+    }
+  } else if (state.phase === "ready" && candidateSet) {
+    if (!latestReviewDecision?.disposition.startsWith("accept")
+      || latestReviewDecision.candidateSetId !== candidateSet.candidateSetId) {
+      fail("Ready onboarding state does not name the acceptance ReviewDecision for its current candidate set.", "ONBOARDING_REVIEW_CONFLICT");
+    }
+  } else if (state.phase === "rejected") {
+    if (!candidateSet || latestReviewDecision?.disposition !== "reject"
+      || latestReviewDecision.candidateSetId !== candidateSet.candidateSetId) {
+      fail("Rejected onboarding state does not name the rejection ReviewDecision for its current candidate set.", "ONBOARDING_REVIEW_CONFLICT");
+    }
+  } else if (!candidateSet && latestReviewDecisionId) {
+    fail("Onboarding state names a ReviewDecision without a current candidate set.", "ONBOARDING_REVIEW_CONFLICT");
+  }
+
+  return {
+    producerReviewDecisionId,
+    latestReviewDecisionId,
+    producerReviewDecision,
+  };
 }
 
 export function inspectOnboarding({ root = "." } = {}) {
@@ -1355,13 +1415,17 @@ export function inspectOnboarding({ root = "." } = {}) {
   const candidateSet = state.candidateSetId
     ? readOnboardingCandidateSet({ root: projectRoot, candidateSetId: state.candidateSetId }).candidateSet
     : null;
-  const reviewDecision = state.reviewDecisionId
-    ? readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: state.reviewDecisionId }).reviewDecision
+  const latestReviewDecisionId = onboardingStateLatestReviewDecisionId(state);
+  const reviewDecision = latestReviewDecisionId
+    ? readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: latestReviewDecisionId }).reviewDecision
     : null;
   const productCanon = readProductModelCanon({ projectRoot });
-  if (candidateSet?.reviewDecisionId && candidateSet.reviewDecisionId !== state.reviewDecisionId) {
-    fail("Onboarding successor candidate set does not match its recorded ReviewDecision.", "ONBOARDING_REVIEW_CONFLICT");
-  }
+  const reviewLineage = verifyCurrentOnboardingReviewLineage({
+    projectRoot,
+    state,
+    candidateSet,
+    latestReviewDecision: reviewDecision,
+  });
   if (productCanon.model.productModelId !== state.productModelId) {
     fail("Onboarding state Product Model identity does not match current canon.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
@@ -1391,6 +1455,10 @@ export function inspectOnboarding({ root = "." } = {}) {
     storageSelection,
     candidateSet,
     reviewDecision,
+    reviewLineage: {
+      producerReviewDecisionId: reviewLineage.producerReviewDecisionId,
+      latestReviewDecisionId: reviewLineage.latestReviewDecisionId,
+    },
     productModel: productCanon.model,
     productModelRevisions,
     worldModel: world,

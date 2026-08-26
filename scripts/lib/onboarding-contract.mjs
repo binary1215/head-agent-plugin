@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 export const ONBOARDING_PROTOCOL_VERSION = "0.1.0";
+export const ONBOARDING_STATE_PROTOCOL_VERSION = "0.2.0";
 export const ONBOARDING_STATE_RELATIVE_PATH = ".head/onboarding/current.json";
 export const ONBOARDING_CANDIDATE_DIRECTORY = ".head/onboarding/candidate-sets";
 export const ONBOARDING_REVIEW_DIRECTORY = ".head/onboarding/review-decisions";
@@ -245,7 +246,7 @@ export function verifySessionRecord(document, { projectId = "", sessionId = "" }
   return verified;
 }
 
-export function buildOnboardingState({
+function buildOnboardingStateDocument({
   projectId,
   sessionId,
   phase = "initialized",
@@ -254,19 +255,19 @@ export function buildOnboardingState({
   worldModelId = null,
   sourceSnapshotId = null,
   candidateSetId = null,
-  reviewDecisionId = null,
+  latestReviewDecisionId = null,
   productModelId = null,
   previousProductModelId = null,
   migration = "native",
   updatedAt,
-} = {}) {
+} = {}, { protocolVersion, reviewField }) {
   const normalizedPhase = requiredText(phase, "Onboarding phase");
   if (!PHASES.has(normalizedPhase)) fail("Onboarding phase is invalid.", "INVALID_ONBOARDING_PHASE");
   if (!Number.isInteger(stateRevision) || stateRevision < 0) fail("Onboarding stateRevision is invalid.", "INVALID_ONBOARDING_STATE");
   const payload = {
     schemaVersion: 1,
     kind: "OnboardingStatePointer",
-    protocol: { name: "head-agent-core-onboarding", version: ONBOARDING_PROTOCOL_VERSION },
+    protocol: { name: "head-agent-core-onboarding", version: protocolVersion },
     projectId: requiredIdentity(projectId, /^head-[a-f0-9]{20}$/, "projectId"),
     sessionId: requiredIdentity(sessionId, /^session-[A-Fa-f0-9-]{36}$/, "sessionId"),
     phase: normalizedPhase,
@@ -275,7 +276,7 @@ export function buildOnboardingState({
     worldModelId: optionalIdentity(worldModelId, /^world-model-[a-f0-9]{24}$/, "worldModelId"),
     sourceSnapshotId: optionalIdentity(sourceSnapshotId, /^source-snapshot-[a-f0-9]{24}$/, "sourceSnapshotId"),
     candidateSetId: optionalIdentity(candidateSetId, /^onboarding-candidates-[a-f0-9]{24}$/, "candidateSetId"),
-    reviewDecisionId: optionalIdentity(reviewDecisionId, /^onboarding-review-decision-[a-f0-9]{24}$/, "reviewDecisionId"),
+    [reviewField]: optionalIdentity(latestReviewDecisionId, /^onboarding-review-decision-[a-f0-9]{24}$/, reviewField),
     productModelId: optionalIdentity(productModelId, /^product-model-[a-f0-9]{24}$/, "productModelId"),
     previousProductModelId: optionalIdentity(previousProductModelId, /^product-model-[a-f0-9]{24}$/, "previousProductModelId"),
     migration: requiredText(migration, "migration"),
@@ -283,6 +284,22 @@ export function buildOnboardingState({
   };
   const pointerHash = onboardingDigest(onboardingCanonicalJson(payload));
   return { ...payload, pointerHash };
+}
+
+export function buildOnboardingState(input = {}) {
+  return buildOnboardingStateDocument(input, {
+    protocolVersion: ONBOARDING_STATE_PROTOCOL_VERSION,
+    reviewField: "latestReviewDecisionId",
+  });
+}
+
+export function onboardingStateLatestReviewDecisionId(document = {}) {
+  const current = document.latestReviewDecisionId ?? null;
+  const legacy = document.reviewDecisionId ?? null;
+  if (current && legacy && current !== legacy) {
+    fail("Onboarding state contains conflicting latest ReviewDecision identities.", "ONBOARDING_REVIEW_CONFLICT");
+  }
+  return current || legacy;
 }
 
 export function verifyOnboardingState(document, { projectId = "", sessionId = "" } = {}) {
@@ -300,7 +317,11 @@ export function verifyOnboardingState(document, { projectId = "", sessionId = ""
   if ((projectId && document.projectId !== projectId) || (sessionId && document.sessionId !== sessionId)) {
     fail("Onboarding state pointer identity does not match current project state.", "ONBOARDING_STATE_IDENTITY_MISMATCH");
   }
-  const rebuilt = buildOnboardingState({
+  const stateVersion = document.protocol?.name === "head-agent-core-onboarding" ? document.protocol.version : "";
+  if (!new Set([ONBOARDING_PROTOCOL_VERSION, ONBOARDING_STATE_PROTOCOL_VERSION]).has(stateVersion)) {
+    fail("Onboarding state pointer protocol is invalid.", "INVALID_ONBOARDING_STATE");
+  }
+  const stateInput = {
     projectId: document.projectId,
     sessionId: document.sessionId,
     phase: document.phase,
@@ -309,12 +330,15 @@ export function verifyOnboardingState(document, { projectId = "", sessionId = ""
     worldModelId: document.worldModelId,
     sourceSnapshotId: document.sourceSnapshotId,
     candidateSetId: document.candidateSetId,
-    reviewDecisionId: document.reviewDecisionId,
+    latestReviewDecisionId: onboardingStateLatestReviewDecisionId(document),
     productModelId: document.productModelId,
     previousProductModelId: document.previousProductModelId,
     migration: document.migration,
     updatedAt: document.updatedAt,
-  });
+  };
+  const rebuilt = stateVersion === ONBOARDING_PROTOCOL_VERSION
+    ? buildOnboardingStateDocument(stateInput, { protocolVersion: ONBOARDING_PROTOCOL_VERSION, reviewField: "reviewDecisionId" })
+    : buildOnboardingState(stateInput);
   if (onboardingCanonicalJson(rebuilt) !== onboardingCanonicalJson(document)) {
     fail("Onboarding state pointer fields are invalid.", "INVALID_ONBOARDING_STATE");
   }

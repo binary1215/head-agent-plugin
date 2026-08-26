@@ -877,13 +877,15 @@ function productFeatureResolutionFromMcp(value) {
 }
 
 function compactReviewResult(result) {
+  const latestReviewDecisionId = result.state.latestReviewDecisionId ?? result.state.reviewDecisionId ?? null;
   return {
     status: result.status,
     state: {
       phase: result.state.phase,
       stateRevision: result.state.stateRevision,
       candidateSetId: result.state.candidateSetId,
-      reviewDecisionId: result.state.reviewDecisionId,
+      latestReviewDecisionId,
+      reviewDecisionId: latestReviewDecisionId,
       productModelId: result.state.productModelId,
       worldModelId: result.state.worldModelId,
       sourceSnapshotId: result.state.sourceSnapshotId,

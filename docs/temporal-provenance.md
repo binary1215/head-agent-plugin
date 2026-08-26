@@ -21,7 +21,7 @@ Git commits, branches, tags, GraphDB record IDs, provider session IDs, document-
 
 ## Logical entities and immutable revisions
 
-Temporal provenance protocol `0.9.0` materializes a P4 rebuildable relation and retrieval index under the [`AuthorityPlaneContract`](authority-plane-contract.md):
+Temporal provenance protocol `0.10.0` materializes a P4 rebuildable relation and retrieval index under the [`AuthorityPlaneContract`](authority-plane-contract.md). Digest-valid `0.9.0` graphs remain readable; new graphs rename the successor creator property to `producerReviewDecisionId` and project the creator as an explicit relation:
 
 - stable product logical entities: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`;
 - immutable product states: the corresponding `*Revision` kinds;
@@ -57,7 +57,7 @@ Every edge records the same authority and provenance surface plus `edgeId`, type
 - `REFERENCES`;
 - `PROPOSES_FROM`, `PROPOSES_TO`, and `SUPPORTED_BY`;
 - `REVIEWED_BY`, `ACCEPTED_BY`, and `REJECTED_BY`;
-- `PRODUCES` and `PROMOTED_FROM`.
+- `PRODUCES` and `PROMOTED_FROM`. For onboarding, `revise ReviewDecision -[:PRODUCES]-> successor CandidateSet` is distinct from `accept ReviewDecision -[:PRODUCES]-> ProductModelRevision`.
 - reviewed canonical `IMPLEMENTS` and `VERIFIED_BY` edges.
 - provider-neutral `CHANGES` and `SUPERSEDES` lineage plus explicitly reviewed `IMPACTS` edges.
 - optional `ChangeSet -[:MATERIALIZED_AS]-> VcsEvidence -[:REFERENCES]-> GitCommit` evidence links.

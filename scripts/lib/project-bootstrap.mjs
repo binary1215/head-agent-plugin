@@ -24,6 +24,7 @@ function validateOnboardingInput(value) {
 }
 
 function onboardingSummary(inspected) {
+  const latestReviewDecisionId = inspected.state.latestReviewDecisionId ?? inspected.state.reviewDecisionId ?? null;
   return {
     status: inspected.status,
     phase: inspected.state.phase,
@@ -31,7 +32,8 @@ function onboardingSummary(inspected) {
     storageMode: inspected.storageSelection.mode,
     candidateSetId: inspected.state.candidateSetId,
     candidateCount: inspected.candidateSet?.candidates.length || 0,
-    reviewDecisionId: inspected.state.reviewDecisionId,
+    latestReviewDecisionId,
+    reviewDecisionId: latestReviewDecisionId,
     productModelId: inspected.state.productModelId,
     worldModelId: inspected.state.worldModelId,
     sourceSnapshotId: inspected.state.sourceSnapshotId,

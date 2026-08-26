@@ -6,7 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initializeProject } from "./lib/head-core.mjs";
 import { compileContext } from "./lib/context-compiler.mjs";
+import { onboardingCanonicalJson, onboardingDigest, verifyOnboardingState } from "./lib/onboarding-contract.mjs";
 import { inspectOnboarding, readOnboardingCandidateSet, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
+import { verifyOnboardingCandidateSetForProjection } from "./lib/onboarding-projection.mjs";
 import { normalizeProductModelDocument } from "./lib/product-model.mjs";
 import { verifyTemporalProvenanceGraph } from "./lib/temporal-provenance.mjs";
 import { inspectWorldModel, queryWorldTemporalGraph } from "./lib/world-model.mjs";
@@ -246,6 +248,20 @@ async function verifyNewProjectBriefAndRevision() {
   assert.equal(revised.status, "onboarding_revision_awaiting_review");
   assert.notEqual(revised.candidateSet.candidateSetId, started.candidateSet.candidateSetId);
   assert.equal(revised.candidateSet.parentCandidateSetIds.includes(started.candidateSet.candidateSetId), true);
+  assert.equal(revised.candidateSet.producerReviewDecisionId, revised.reviewDecision.reviewDecisionId);
+  const legacySuccessor = structuredClone(revised.candidateSet);
+  legacySuccessor.protocol.version = "0.2.0";
+  legacySuccessor.reviewDecisionId = legacySuccessor.producerReviewDecisionId;
+  delete legacySuccessor.producerReviewDecisionId;
+  delete legacySuccessor.candidateSetId;
+  delete legacySuccessor.candidateSetHash;
+  legacySuccessor.candidateSetHash = onboardingDigest(onboardingCanonicalJson(legacySuccessor));
+  legacySuccessor.candidateSetId = `onboarding-candidates-${legacySuccessor.candidateSetHash.slice(0, 24)}`;
+  assert.equal(verifyOnboardingCandidateSetForProjection(legacySuccessor).protocol.version, "0.2.0");
+  const awaitingReview = inspectOnboarding({ root });
+  assert.equal(awaitingReview.status, "awaiting_review");
+  assert.equal(awaitingReview.reviewLineage.producerReviewDecisionId, revised.reviewDecision.reviewDecisionId);
+  assert.equal(awaitingReview.reviewLineage.latestReviewDecisionId, revised.reviewDecision.reviewDecisionId);
   assert.equal(revised.candidateSet.candidates.find((candidate) => candidate.productKind === "Capability").name, undefined);
   assert.equal(revised.candidateSet.candidates.find((candidate) => candidate.productKind === "Capability").proposedEntity.name, "Serve Reviewed Request");
   const accepted = await reviewOnboarding({
@@ -255,6 +271,35 @@ async function verifyNewProjectBriefAndRevision() {
     rationale: "Accept the revised brief batch.",
   });
   assert.equal(accepted.productModel.capabilities[0].name, "Serve Reviewed Request");
+  const ready = inspectOnboarding({ root });
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.reviewLineage.producerReviewDecisionId, revised.reviewDecision.reviewDecisionId);
+  assert.equal(ready.reviewLineage.latestReviewDecisionId, accepted.reviewDecision.reviewDecisionId);
+  assert.notEqual(ready.reviewLineage.producerReviewDecisionId, ready.reviewLineage.latestReviewDecisionId);
+  const legacyState = structuredClone(ready.state);
+  legacyState.protocol.version = "0.1.0";
+  legacyState.reviewDecisionId = legacyState.latestReviewDecisionId;
+  delete legacyState.latestReviewDecisionId;
+  delete legacyState.pointerHash;
+  legacyState.pointerHash = onboardingDigest(onboardingCanonicalJson(legacyState));
+  assert.equal(verifyOnboardingState(legacyState).reviewDecisionId, accepted.reviewDecision.reviewDecisionId);
+  const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.equal(graph.edges.some((edge) => edge.type === "PRODUCES"
+    && edge.from === revised.reviewDecision.reviewDecisionId
+    && edge.to === revised.candidateSet.candidateSetId), true);
+  const guide = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 8,
+    method: "tools/call",
+    params: { name: "head_onboarding_guide", arguments: { project_root: root } },
+  });
+  assert.equal(guide.result.structuredContent.status, "ready");
+  const producerFile = path.join(root, ".head", "onboarding", "review-decisions", `${revised.reviewDecision.reviewDecisionId}.json`);
+  const producerBytes = fs.readFileSync(producerFile, "utf8");
+  fs.rmSync(producerFile);
+  assert.throws(() => inspectOnboarding({ root }), { code: "ONBOARDING_REVIEW_NOT_FOUND" });
+  fs.writeFileSync(producerFile, producerBytes);
+  assert.equal(inspectOnboarding({ root }).status, "ready");
   return { initialCandidateSetId: started.candidateSet.candidateSetId, revisedCandidateSetId: revised.candidateSet.candidateSetId };
 }
 
@@ -297,6 +342,63 @@ async function verifyEmptyEvidenceAndAddition() {
     rationale: "Adopt the explicitly reviewed seed.",
   });
   assert.equal(accepted.productModel.features[0].key, "feature:user-seeded");
+  assert.equal(inspectOnboarding({ root }).status, "ready");
+}
+
+async function verifySuccessorSelectionAndRejection() {
+  const selectionRoot = temporaryProject("successor-selection");
+  initializeProject({ root: selectionRoot, pluginRoot, runtimes: ["codex"] });
+  const selectionStarted = await startOnboarding({ root: selectionRoot, mode: "new", brief: {
+    schemaVersion: 1,
+    name: "Successor Selection",
+    summary: "Exercise phase-aware successor review lineage.",
+    ...productDocument({ suffix: "-successor-selection" }),
+  } });
+  const selectionCapability = selectionStarted.candidateSet.candidates.find((candidate) => candidate.productKind === "Capability");
+  const selectionRevised = await reviewOnboarding({
+    root: selectionRoot,
+    candidateSetId: selectionStarted.candidateSet.candidateSetId,
+    disposition: "revise",
+    userEdits: [{ candidateId: selectionCapability.candidateId, entity: { ...selectionCapability.proposedEntity, name: "Reviewed Selection Capability" } }],
+    rationale: "Create a successor before selecting one reviewed concept.",
+  });
+  const revisedCapability = selectionRevised.candidateSet.candidates.find((candidate) => candidate.productKind === "Capability");
+  const selected = await reviewOnboarding({
+    root: selectionRoot,
+    candidateSetId: selectionRevised.candidateSet.candidateSetId,
+    disposition: "accept-selection",
+    acceptedCandidateIds: [revisedCapability.candidateId],
+    rationale: "Accept only the reviewed successor capability.",
+  });
+  assert.equal(selected.productModel.capabilities[0].name, "Reviewed Selection Capability");
+  assert.equal(inspectOnboarding({ root: selectionRoot }).status, "ready");
+
+  const rejectionRoot = temporaryProject("successor-rejection");
+  initializeProject({ root: rejectionRoot, pluginRoot, runtimes: ["codex"] });
+  const rejectionStarted = await startOnboarding({ root: rejectionRoot, mode: "new", brief: {
+    schemaVersion: 1,
+    name: "Successor Rejection",
+    summary: "Exercise rejection after revision.",
+    ...productDocument({ suffix: "-successor-rejection" }),
+  } });
+  const rejectionCapability = rejectionStarted.candidateSet.candidates.find((candidate) => candidate.productKind === "Capability");
+  const rejectionRevised = await reviewOnboarding({
+    root: rejectionRoot,
+    candidateSetId: rejectionStarted.candidateSet.candidateSetId,
+    disposition: "revise",
+    userEdits: [{ candidateId: rejectionCapability.candidateId, entity: { ...rejectionCapability.proposedEntity, name: "Still Not Canon" } }],
+    rationale: "Create a successor that will be rejected separately.",
+  });
+  await reviewOnboarding({
+    root: rejectionRoot,
+    candidateSetId: rejectionRevised.candidateSet.candidateSetId,
+    disposition: "reject",
+    rationale: "Reject the reviewed successor without mutating Product Canon.",
+  });
+  const rejected = inspectOnboarding({ root: rejectionRoot });
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.reviewLineage.producerReviewDecisionId, rejectionRevised.reviewDecision.reviewDecisionId);
+  assert.notEqual(rejected.reviewLineage.producerReviewDecisionId, rejected.reviewLineage.latestReviewDecisionId);
 }
 
 async function verifyRejection() {
@@ -450,6 +552,7 @@ try {
   const existing = await verifyExistingProjectPromotion();
   const brief = await verifyNewProjectBriefAndRevision();
   await verifyEmptyEvidenceAndAddition();
+  await verifySuccessorSelectionAndRejection();
   await verifyRejection();
   await verifyExistingCanonSkip();
   await verifyCandidateBounds();
@@ -462,6 +565,9 @@ try {
       "post-ready-world-drift-disclosure",
       "new-project-brief-revision-and-promotion",
       "empty-evidence-user-seed",
+      "successor-selection-and-phase-aware-ready-status",
+      "successor-rejection-and-phase-aware-rejected-status",
+      "successor-producer-review-missing-fail-closed",
       "candidate-rejection",
       "deterministic-restart-and-selection-acceptance",
       "candidate-review-promotion-temporal-projection",
