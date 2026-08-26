@@ -3,12 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-export const GIT_HISTORY_ADAPTER_VERSION = "0.1.0";
-export const GIT_DECISION_HISTORY_VERSION = "0.1.0";
+export const GIT_HISTORY_ADAPTER_VERSION = "0.2.0";
+export const GIT_DECISION_HISTORY_VERSION = "0.2.0";
+
+export const HOST_OPERATIONAL_GIT_REF_PREFIXES = Object.freeze([
+  "refs/codex/turn-diffs",
+]);
 
 const MAX_HISTORY_BYTES = 64 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const REQUIRED_METHODS = ["describe", "readHistory"];
+const READABLE_GIT_HISTORY_ADAPTER_VERSIONS = new Set(["0.1.0", GIT_HISTORY_ADAPTER_VERSION]);
 
 const fail = (message, code = "GIT_HISTORY_ERROR") => {
   const error = new Error(message);
@@ -28,6 +33,61 @@ function canonical(value) {
 
 function canonicalJson(value) {
   return JSON.stringify(canonical(value));
+}
+
+function normalizedGitReference(value) {
+  const ref = String(value || "").trim().replaceAll("\\", "/");
+  if (!ref.startsWith("refs/") || ref.length > 1024 || /[\x00-\x20\x7f]/.test(ref)) return "";
+  if (["~", "^", ":", "?", "*", "["].some((character) => ref.includes(character))) return "";
+  if (ref.includes("..") || ref.includes("@{") || ref.includes("//") || ref.endsWith("/") || ref.endsWith(".")) return "";
+  if (ref.split("/").some((part) => !part || part === "." || part === ".." || part.endsWith(".lock"))) return "";
+  return ref;
+}
+
+export function classifyGitReference(value) {
+  const ref = normalizedGitReference(value);
+  if (!ref) return "invalid";
+  if (HOST_OPERATIONAL_GIT_REF_PREFIXES.some((prefix) => ref === prefix || ref.startsWith(`${prefix}/`))) {
+    return "host-operational";
+  }
+  if (/^refs\/(?:heads|remotes|tags)\//.test(ref)) return "product";
+  return "unsupported";
+}
+
+function isLegacyShortHostDecoration(value) {
+  const normalized = String(value || "").trim().replaceAll("\\", "/");
+  return normalized === "codex/turn-diffs" || normalized.startsWith("codex/turn-diffs/");
+}
+
+function normalizedGitDecoration(value) {
+  const decoration = String(value || "").trim();
+  if (!decoration) return "";
+  if (decoration === "HEAD") return decoration;
+  if (decoration.startsWith("tag: ")) {
+    const target = decoration.slice(5).trim();
+    if (target.startsWith("refs/")) return classifyGitReference(target) === "product" && target.startsWith("refs/tags/") ? `tag: ${target}` : "";
+    return isLegacyShortHostDecoration(target) ? "" : decoration;
+  }
+  const arrow = decoration.indexOf(" -> ");
+  if (arrow >= 0) {
+    const left = decoration.slice(0, arrow).trim();
+    const right = decoration.slice(arrow + 4).trim();
+    const allowed = (part) => part === "HEAD"
+      || (part.startsWith("refs/") ? classifyGitReference(part) === "product" : !isLegacyShortHostDecoration(part));
+    return allowed(left) && allowed(right) ? decoration : "";
+  }
+  if (decoration.startsWith("refs/")) return classifyGitReference(decoration) === "product" ? decoration : "";
+  return isLegacyShortHostDecoration(decoration) ? "" : decoration;
+}
+
+export function filterGitDecorations(values) {
+  return [...new Set((values || []).map(normalizedGitDecoration).filter(Boolean))].sort();
+}
+
+function tagNameFromDecoration(value) {
+  if (!String(value).startsWith("tag: ")) return "";
+  const target = String(value).slice(5);
+  return target.startsWith("refs/tags/") ? target.slice("refs/tags/".length) : target;
 }
 
 function stableReason(result) {
@@ -108,7 +168,7 @@ export function parseGitLog(stdout) {
       committedAt: values[index + 3].trim(),
       author: { name: values[index + 4].trim() },
       authorEmailDigest: digest(values[index + 5].trim().toLocaleLowerCase()),
-      refs: values[index + 6].split(",").map((item) => item.trim()).filter(Boolean).sort(),
+      refs: filterGitDecorations(values[index + 6].split(",")),
       subject: subject.trim(),
       body: bodyLines.join("\n").trim(),
     });
@@ -150,7 +210,7 @@ function normalizeCommit(value) {
   const authorName = String(value.author?.name || value.authorName || "").trim();
   const emailDigest = String(value.authorEmailDigest || "").toLocaleLowerCase();
   if (emailDigest && !/^[a-f0-9]{64}$/.test(emailDigest)) fail("Git author email digest is invalid.", "INVALID_GIT_HISTORY_COMMIT");
-  const refs = [...new Set((value.refs || []).map((item) => String(item).trim()).filter(Boolean))].sort();
+  const refs = filterGitDecorations(value.refs || []);
   return {
     commit,
     parents,
@@ -173,8 +233,8 @@ function normalizeCommit(value) {
 
 export function assertGitHistoryAdapter(adapter) {
   if (!adapter || typeof adapter !== "object") fail("A GitHistoryAdapter object is required.", "INVALID_GIT_HISTORY_ADAPTER");
-  if (adapter.adapterVersion !== GIT_HISTORY_ADAPTER_VERSION) {
-    fail(`GitHistoryAdapter version must be ${GIT_HISTORY_ADAPTER_VERSION}.`, "INCOMPATIBLE_GIT_HISTORY_ADAPTER");
+  if (!READABLE_GIT_HISTORY_ADAPTER_VERSIONS.has(adapter.adapterVersion)) {
+    fail(`GitHistoryAdapter version must be readable by ${GIT_HISTORY_ADAPTER_VERSION}.`, "INCOMPATIBLE_GIT_HISTORY_ADAPTER");
   }
   for (const method of REQUIRED_METHODS) if (typeof adapter[method] !== "function") {
     fail(`GitHistoryAdapter is missing ${method}().`, "INVALID_GIT_HISTORY_ADAPTER");
@@ -209,7 +269,7 @@ export class GitCliHistoryAdapter {
     };
   }
 
-  async readHistory({ projectRoot }) {
+  async readHistory({ projectRoot, referenceCommits = [], referenceTags = [] }) {
     const gitDirectory = path.join(projectRoot, ".git");
     if (!fs.existsSync(gitDirectory)) return {
       status: "not-a-git-repository",
@@ -223,12 +283,23 @@ export class GitCliHistoryAdapter {
       reasonCode: "external-gitdir-not-followed",
       commits: [],
     };
+    const roots = [...new Set(referenceCommits.map((item) => String(item).toLocaleLowerCase()))].sort();
+    const includeTags = referenceTags.length > 0;
+    if (!roots.length && !includeTags) return {
+      status: "empty",
+      coverage: "empty-repository",
+      reasonCode: "",
+      commits: [],
+    };
     const result = await runProcess(this.command, [
       "-C", projectRoot,
       "-c", "i18n.logOutputEncoding=UTF-8",
       "--no-pager",
-      "log", "--all", "--topo-order", "--date-order", "--no-show-signature",
+      "log", "--topo-order", "--date-order", "--no-show-signature", "--decorate=full",
+      "--decorate-refs-exclude=refs/codex/turn-diffs/**",
       "--format=%H%x00%P%x00%aI%x00%cI%x00%an%x00%ae%x00%D%x00%B%x00",
+      ...roots,
+      ...(includeTags ? ["--tags"] : []),
     ], { cwd: projectRoot, timeoutMs: this.timeoutMs, maxBufferBytes: this.maxBufferBytes });
     if (result.error || result.status !== 0) return {
       status: "unavailable",
@@ -289,7 +360,10 @@ export function createGitHistoryAdapter(adapter = null) {
 
 export async function buildGitDecisionHistory({ projectRoot, adapter = null, referenceCommits = [], referenceTags = [] } = {}) {
   const selected = createGitHistoryAdapter(adapter);
-  const observed = await selected.readHistory({ projectRoot });
+  const references = [...new Set(referenceCommits.map((item) => String(item).toLocaleLowerCase()))].sort();
+  if (references.some((item) => !/^[a-f0-9]{40,64}$/.test(item))) fail("Git history reference commit is invalid.", "INVALID_GIT_HISTORY_REFERENCE");
+  const tags = [...new Set(referenceTags.map((item) => String(item).trim()).filter(Boolean))].sort();
+  const observed = await selected.readHistory({ projectRoot, referenceCommits: references, referenceTags: tags });
   const allowedStatuses = new Set(["available", "empty", "unavailable", "not-a-git-repository"]);
   const status = String(observed?.status || "unavailable");
   if (!allowedStatuses.has(status)) fail("GitHistoryAdapter returned an invalid status.", "INVALID_GIT_HISTORY_ADAPTER_OUTPUT");
@@ -300,11 +374,8 @@ export async function buildGitDecisionHistory({ projectRoot, adapter = null, ref
     if (existing && canonicalJson(existing) !== canonicalJson(commit)) fail("GitHistoryAdapter returned conflicting duplicate commits.", "CONFLICTING_GIT_HISTORY_COMMIT");
     byId.set(commit.commit, commit);
   }
-  const references = [...new Set(referenceCommits.map((item) => String(item).toLocaleLowerCase()))].sort();
-  if (references.some((item) => !/^[a-f0-9]{40,64}$/.test(item))) fail("Git history reference commit is invalid.", "INVALID_GIT_HISTORY_REFERENCE");
-  const tags = [...new Set(referenceTags.map((item) => String(item).trim()).filter(Boolean))].sort();
   const tagRoots = status === "available" ? [...byId.values()]
-    .filter((commit) => commit.refs.some((ref) => ref.startsWith("tag: ") && tags.includes(ref.slice(5))))
+    .filter((commit) => commit.refs.some((ref) => tags.includes(tagNameFromDecoration(ref))))
     .map((commit) => commit.commit) : [];
   const roots = [...new Set([...references, ...tagRoots])].sort();
   const commits = reachableCommits([...byId.values()], status === "available" ? roots : [])

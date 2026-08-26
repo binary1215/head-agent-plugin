@@ -4,6 +4,7 @@ import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import {
   buildGitDecisionHistory,
+  classifyGitReference,
   GIT_DECISION_HISTORY_VERSION,
   GIT_HISTORY_ADAPTER_VERSION,
   queryGitDecisionHistory,
@@ -67,7 +68,7 @@ import {
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
-export const WORLD_MODEL_VERSION = "0.12.0";
+export const WORLD_MODEL_VERSION = "0.13.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 export const WORLD_MODEL_STATUS_PROJECTION_VERSION = "0.1.0";
 export const WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES = 512 * 1024;
@@ -139,29 +140,61 @@ function readyProject(root) {
   return inspected;
 }
 
-function gitReferenceState(gitPath) {
-  const files = [];
-  const references = new Map();
-  const tagNames = new Set();
-  const add = (file, relative) => {
-    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return;
-    const normalized = relative.replaceAll("\\", "/");
-    const content = fs.readFileSync(file, "utf8");
-    files.push({ path: normalized, digest: digest(content) });
-    if (/^refs\/(?:heads|remotes)\//.test(normalized)) {
-      const value = content.trim().toLocaleLowerCase();
-      if (/^[a-f0-9]{40,64}$/.test(value)) references.set(normalized, value);
-    }
-    if (normalized.startsWith("refs/tags/")) tagNames.add(normalized.slice("refs/tags/".length));
+function productReferenceKind(ref) {
+  if (ref.startsWith("refs/heads/")) return "branch";
+  if (ref.startsWith("refs/remotes/")) return "remote";
+  if (ref.startsWith("refs/tags/")) return "tag";
+  return "";
+}
+
+function referenceRecord(ref, content, peeled = "") {
+  const value = String(content || "").trim();
+  if (/^[a-f0-9]{40,64}$/i.test(value)) return {
+    ref,
+    kind: productReferenceKind(ref),
+    targetType: "direct",
+    target: value.toLocaleLowerCase(),
+    peeled: /^[a-f0-9]{40,64}$/i.test(peeled) ? peeled.toLocaleLowerCase() : "",
+    commit: value.toLocaleLowerCase(),
   };
-  add(path.join(gitPath, "HEAD"), "HEAD");
-  add(path.join(gitPath, "packed-refs"), "packed-refs");
+  if (!value.startsWith("ref: ")) return null;
+  const target = value.slice(5).trim().replaceAll("\\", "/");
+  if (classifyGitReference(target) === "invalid") return null;
+  return {
+    ref,
+    kind: productReferenceKind(ref),
+    targetType: "symbolic",
+    target,
+    peeled: "",
+    commit: "",
+  };
+}
+
+function gitReferenceState(gitPath) {
+  const packedReferences = new Map();
+  const productReferences = new Map();
   const packedRefs = path.join(gitPath, "packed-refs");
-  if (fs.existsSync(packedRefs)) for (const line of fs.readFileSync(packedRefs, "utf8").split(/\r?\n/)) {
-    const match = line.match(/^([a-f0-9]{40,64})\s+(refs\/(?:heads|remotes)\/[A-Za-z0-9._\/-]+)$/i);
-    if (match) references.set(match[2], match[1].toLocaleLowerCase());
-    const tag = line.match(/^[a-f0-9]{40,64}\s+refs\/tags\/(.+)$/i);
-    if (tag) tagNames.add(tag[1]);
+  if (fs.existsSync(packedRefs) && fs.statSync(packedRefs).isFile()) {
+    let previousRef = "";
+    for (const line of fs.readFileSync(packedRefs, "utf8").split(/\r?\n/)) {
+      const direct = line.match(/^([a-f0-9]{40,64})\s+(refs\/\S+)$/i);
+      if (direct && classifyGitReference(direct[2]) !== "invalid") {
+        previousRef = direct[2];
+        const record = referenceRecord(previousRef, direct[1]);
+        packedReferences.set(previousRef, record);
+        if (classifyGitReference(previousRef) === "product") productReferences.set(previousRef, record);
+        continue;
+      }
+      const peeled = line.match(/^\^([a-f0-9]{40,64})$/i);
+      if (peeled && previousRef) {
+        const current = packedReferences.get(previousRef);
+        const record = referenceRecord(previousRef, current?.target || "", peeled[1]);
+        packedReferences.set(previousRef, record);
+        if (classifyGitReference(previousRef) === "product") productReferences.set(previousRef, record);
+        continue;
+      }
+      previousRef = "";
+    }
   }
   const refsRoot = path.join(gitPath, "refs");
   const stack = fs.existsSync(refsRoot) ? [refsRoot] : [];
@@ -170,16 +203,51 @@ function gitReferenceState(gitPath) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
       const absolute = path.join(directory, entry.name);
       if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) stack.push(absolute);
-      else if (entry.isFile()) add(absolute, path.relative(gitPath, absolute));
+      if (entry.isDirectory()) {
+        stack.push(absolute);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const ref = path.relative(gitPath, absolute).replaceAll("\\", "/");
+      if (classifyGitReference(ref) !== "product") continue;
+      const content = fs.readFileSync(absolute, "utf8");
+      const record = referenceRecord(ref, content) || {
+        ref,
+        kind: productReferenceKind(ref),
+        targetType: "invalid",
+        target: "",
+        peeled: "",
+        commit: "",
+        invalidContentDigest: digest(content),
+      };
+      productReferences.set(ref, record);
     }
   }
-  files.sort((left, right) => left.path.localeCompare(right.path));
+  const references = [...productReferences.values()].sort((left, right) => left.ref.localeCompare(right.ref));
   return {
-    referencesDigest: digest(canonicalJson(files)),
-    references: [...references.entries()].map(([ref, commit]) => ({ ref, commit })).sort((left, right) => left.ref.localeCompare(right.ref)),
-    tagNames: [...tagNames].sort(),
+    referencesDigest: digest(canonicalJson(references)),
+    references,
+    tagNames: references.filter((item) => item.kind === "tag").map((item) => item.ref.slice("refs/tags/".length)).sort(),
+    packedReferences,
   };
+}
+
+function looseReferenceRecord(gitPath, ref) {
+  if (classifyGitReference(ref) === "invalid") return null;
+  const file = path.join(gitPath, ...ref.split("/"));
+  if (!fs.existsSync(file)) return null;
+  const stat = fs.lstatSync(file);
+  if (stat.isSymbolicLink() || !stat.isFile()) return null;
+  return referenceRecord(ref, fs.readFileSync(file, "utf8"));
+}
+
+function resolvedReferenceCommit(gitPath, references, packedReferences, ref, visited = new Set()) {
+  if (!ref || visited.has(ref)) return "";
+  visited.add(ref);
+  const record = references.get(ref) || looseReferenceRecord(gitPath, ref) || packedReferences.get(ref);
+  if (!record) return "";
+  if (record.targetType === "symbolic") return resolvedReferenceCommit(gitPath, references, packedReferences, record.target, visited);
+  return record.kind === "tag" && record.peeled ? record.peeled : record.target;
 }
 
 function gitHeadState(root) {
@@ -187,8 +255,12 @@ function gitHeadState(root) {
   if (!fs.existsSync(gitPath)) return { status: "not-a-git-repository", ref: "", commit: "", referencesDigest: "" };
   if (!fs.statSync(gitPath).isDirectory()) return { status: "external-gitdir-not-followed", ref: "", commit: "", referencesDigest: "" };
   const referenceState = gitReferenceState(gitPath);
-  const { referencesDigest, references, tagNames } = referenceState;
-  const referencedCommits = () => [...new Set(references.map((item) => item.commit))].sort();
+  const { referencesDigest, references, tagNames, packedReferences } = referenceState;
+  const referencesByName = new Map(references.map((item) => [item.ref, item]));
+  const referencedCommits = () => [...new Set(references
+    .filter((item) => item.kind === "branch" || item.kind === "remote")
+    .map((item) => resolvedReferenceCommit(gitPath, referencesByName, packedReferences, item.ref))
+    .filter(Boolean))].sort();
   const headFile = path.join(gitPath, "HEAD");
   if (!fs.existsSync(headFile)) return { status: "head-missing", ref: "", commit: "", referencesDigest, references, referenceCommits: referencedCommits(), referenceTags: tagNames };
   const head = fs.readFileSync(headFile, "utf8").trim();
@@ -202,14 +274,8 @@ function gitHeadState(root) {
     referenceTags: tagNames,
   };
   const ref = head.slice(5).trim().replaceAll("\\", "/");
-  if (!/^refs\/[A-Za-z0-9._\/-]+$/.test(ref) || ref.includes("../")) return { status: "invalid-ref", ref, commit: "", referencesDigest, references, referenceCommits: referencedCommits(), referenceTags: tagNames };
-  const refFile = path.join(gitPath, ...ref.split("/"));
-  let commit = "";
-  if (fs.existsSync(refFile)) {
-    const value = fs.readFileSync(refFile, "utf8").trim();
-    if (/^[a-f0-9]{40,64}$/i.test(value)) commit = value.toLowerCase();
-  }
-  if (!commit) commit = references.find((item) => item.ref === ref)?.commit || "";
+  if (classifyGitReference(ref) === "invalid") return { status: "invalid-ref", ref, commit: "", referencesDigest, references, referenceCommits: referencedCommits(), referenceTags: tagNames };
+  const commit = resolvedReferenceCommit(gitPath, referencesByName, packedReferences, ref);
   return {
     status: commit ? "head-and-local-refs" : "unresolved-ref",
     ref,
@@ -272,7 +338,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
     }
   }
   if (snapshot.temporalProvenanceGraph) verifyTemporalProvenanceGraph(snapshot.temporalProvenanceGraph);
-  if (new Set(["0.11.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
+  if (new Set(["0.11.0", "0.12.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
     const projection = snapshot.onboardingProjection;
     const graphProjection = snapshot.temporalProvenanceGraph?.onboardingProjection;
     if (!projection || projection.authority !== "derived-projection-manifest-not-project-canon"

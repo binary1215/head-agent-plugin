@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { initializeProject, inspectProject, inspectRuntimeAdapters } from "../scripts/lib/head-core.mjs";
 import { createRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
@@ -52,7 +53,7 @@ import { inspectOnboarding, readOnboardingCandidateSet, startOnboarding } from "
 import { DOCUMENT_PROJECTION_ADAPTER_VERSION, InMemoryMarkdownProjectionAdapter, LocalMarkdownProjectionAdapter, buildMarkdownDocumentProjection, inspectMarkdownProjection, materializeMarkdownProjection, verifyDocumentProjectionAdapterConformance } from "../scripts/lib/document-projection-adapter.mjs";
 import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
 import { WORLD_MODEL_STORE_ADAPTER_VERSION } from "../scripts/lib/world-model-store.mjs";
-import { GIT_HISTORY_ADAPTER_VERSION } from "../scripts/lib/git-history.mjs";
+import { GIT_HISTORY_ADAPTER_VERSION, GitCliHistoryAdapter } from "../scripts/lib/git-history.mjs";
 import { RUNTIME_STATE_ADAPTER_VERSION, RuntimeStateFileAdapter } from "../scripts/lib/runtime-state.mjs";
 import {
   ProjectionOnlyAgentRuntimeAdapter,
@@ -734,6 +735,124 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   stored.summary.fileCount += 1;
   fs.writeFileSync(second.file, `${JSON.stringify(stored, null, 2)}\n`);
   assert.throws(() => readWorldModel({ root }), { code: "WORLD_MODEL_DIGEST_MISMATCH" });
+});
+
+test("separates Host operational refs from product Git freshness while preserving branch, remote, and tag drift", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, ".git", "refs", "heads"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+  fs.writeFileSync(path.join(root, ".git", "refs", "heads", "main"), `${"a".repeat(40)}\n`);
+  fs.writeFileSync(path.join(root, "service.mjs"), "export const service = true;\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const gitHistoryAdapter = new MemoryGitHistoryAdapter({
+    adapterKind: "git-ref-boundary-fixture",
+    commits: [
+      { commit: "a".repeat(40), parents: [], authoredAt: "2026-08-20T00:00:00Z", committedAt: "2026-08-20T00:00:00Z", author: { name: "Fixture" }, refs: [], subject: "a", body: "" },
+      { commit: "b".repeat(40), parents: ["a".repeat(40)], authoredAt: "2026-08-20T00:01:00Z", committedAt: "2026-08-20T00:01:00Z", author: { name: "Fixture" }, refs: [], subject: "b", body: "" },
+      { commit: "c".repeat(40), parents: ["b".repeat(40)], authoredAt: "2026-08-20T00:02:00Z", committedAt: "2026-08-20T00:02:00Z", author: { name: "Fixture" }, refs: [], subject: "c", body: "" },
+      { commit: "d".repeat(40), parents: ["c".repeat(40)], authoredAt: "2026-08-20T00:03:00Z", committedAt: "2026-08-20T00:03:00Z", author: { name: "Fixture" }, refs: ["tag: release"], subject: "d", body: "" },
+    ],
+  });
+
+  const baseline = await buildWorldModel({ root, gitHistoryAdapter });
+  const baselineReferenceDigest = baseline.snapshot.git.referencesDigest;
+  const hostRef = path.join(root, ".git", "refs", "codex", "turn-diffs", "turn-1");
+  fs.mkdirSync(path.dirname(hostRef), { recursive: true });
+  fs.writeFileSync(hostRef, `${"b".repeat(40)}\n`);
+  let status = inspectWorldModel({ root });
+  assert.equal(status.status, "current");
+  assert.equal(status.changes.gitChanged, false);
+  assert.equal(status.changes.gitHistoryChanged, false);
+  fs.writeFileSync(hostRef, `${"c".repeat(40)}\n`);
+  fs.writeFileSync(path.join(root, ".git", "packed-refs"), `# pack-refs with: peeled fully-peeled sorted\n${"d".repeat(40)} refs/codex/turn-diffs/packed-turn\n`);
+  status = inspectWorldModel({ root });
+  assert.equal(status.status, "current");
+  assert.equal(status.currentSourceDigest, baseline.snapshot.sourceDigest);
+  const hostOnlyRebuild = await buildWorldModel({ root, gitHistoryAdapter });
+  assert.equal(hostOnlyRebuild.status, "unchanged");
+  assert.equal(hostOnlyRebuild.snapshot.worldModelId, baseline.snapshot.worldModelId);
+  assert.equal(hostOnlyRebuild.snapshot.git.referencesDigest, baselineReferenceDigest);
+
+  fs.writeFileSync(path.join(root, ".git", "refs", "heads", "main"), `${"b".repeat(40)}\n`);
+  status = inspectWorldModel({ root });
+  assert.equal(status.status, "stale");
+  assert.equal(status.changes.gitChanged, true);
+  assert.equal(status.changes.gitHistoryChanged, true);
+  const branchRefresh = await buildWorldModel({ root, gitHistoryAdapter });
+  assert.equal(inspectWorldModel({ root }).status, "current");
+
+  const remoteRef = path.join(root, ".git", "refs", "remotes", "origin", "main");
+  fs.mkdirSync(path.dirname(remoteRef), { recursive: true });
+  fs.writeFileSync(remoteRef, `${"c".repeat(40)}\n`);
+  status = inspectWorldModel({ root });
+  assert.equal(status.status, "stale");
+  assert.equal(status.changes.gitHistoryChanged, true);
+  const remoteRefresh = await buildWorldModel({ root, gitHistoryAdapter });
+  assert.notEqual(remoteRefresh.snapshot.worldModelId, branchRefresh.snapshot.worldModelId);
+  assert.equal(inspectWorldModel({ root }).status, "current");
+
+  const tagRef = path.join(root, ".git", "refs", "tags", "release");
+  fs.mkdirSync(path.dirname(tagRef), { recursive: true });
+  fs.writeFileSync(tagRef, `${"d".repeat(40)}\n`);
+  status = inspectWorldModel({ root });
+  assert.equal(status.status, "stale");
+  assert.equal(status.changes.gitHistoryChanged, true);
+  const tagRefresh = await buildWorldModel({ root, gitHistoryAdapter });
+  assert.equal(inspectWorldModel({ root }).status, "current");
+  fs.writeFileSync(tagRef, `${"c".repeat(40)}\n`);
+  assert.equal(inspectWorldModel({ root }).status, "stale");
+  const movedTagRefresh = await buildWorldModel({ root, gitHistoryAdapter });
+  assert.notEqual(movedTagRefresh.snapshot.worldModelId, tagRefresh.snapshot.worldModelId);
+  assert.equal(inspectWorldModel({ root }).status, "current");
+  fs.rmSync(tagRef);
+  assert.equal(inspectWorldModel({ root }).status, "stale");
+  await buildWorldModel({ root, gitHistoryAdapter });
+  assert.equal(inspectWorldModel({ root }).status, "current");
+});
+
+test("Git CLI history excludes Host-only commits and decorations while retaining product refs", async (t) => {
+  const available = spawnSync("git", ["--version"], { encoding: "utf8", windowsHide: true });
+  if (available.status !== 0) return t.skip("Git CLI is unavailable on this host.");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "head-git-history-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return result.stdout.trim();
+  };
+  git("init");
+  git("config", "user.name", "HEAD Fixture");
+  git("config", "user.email", "head-fixture@example.invalid");
+  fs.writeFileSync(path.join(root, "product.txt"), "product\n");
+  git("add", "product.txt");
+  git("commit", "-m", "product base");
+  git("branch", "-M", "main");
+  const productCommit = git("rev-parse", "HEAD").toLocaleLowerCase();
+  git("update-ref", "refs/remotes/origin/main", productCommit);
+  git("tag", "v1", productCommit);
+  git("update-ref", "refs/codex/turn-diffs/product-decoration", productCommit);
+  git("checkout", "--detach", productCommit);
+  fs.writeFileSync(path.join(root, "host-only.txt"), "host\n");
+  git("add", "host-only.txt");
+  git("commit", "-m", "host-only turn diff");
+  const hostOnlyCommit = git("rev-parse", "HEAD").toLocaleLowerCase();
+  git("update-ref", "refs/codex/turn-diffs/host-only", hostOnlyCommit);
+  git("checkout", "main");
+
+  const observed = await new GitCliHistoryAdapter().readHistory({
+    projectRoot: root,
+    referenceCommits: [productCommit],
+    referenceTags: ["v1"],
+  });
+  assert.equal(observed.status, "available");
+  assert.equal(observed.commits.some((commit) => commit.commit === hostOnlyCommit), false);
+  const product = observed.commits.find((commit) => commit.commit === productCommit);
+  assert.ok(product);
+  assert.equal(product.refs.some((ref) => ref.includes("codex/turn-diffs")), false);
+  assert.equal(product.refs.some((ref) => ref.includes("refs/heads/main")), true);
+  assert.equal(product.refs.some((ref) => ref.includes("refs/remotes/origin/main")), true);
+  assert.equal(product.refs.some((ref) => ref.includes("refs/tags/v1")), true);
 });
 
 test("refreshes observed state incrementally with immutable ancestry and active-Run drift disclosure", async (t) => {
