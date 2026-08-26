@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.79+codex.20260826030436",
+  "version": "0.3.0-alpha.79+codex.20260826141239",
   "description": "Provider-neutral HEAD coordination for Claude Code, Codex, and OpenCode with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
