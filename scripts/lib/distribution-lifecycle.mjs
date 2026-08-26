@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { verifyNativeOverlay } from "./native-artifact-delivery.mjs";
+import { verifyNativeBundleOverlay, verifyNativeOverlay } from "./native-artifact-delivery.mjs";
 
 const DISTRIBUTION_PROTOCOL = "0.1.0";
 const INCLUDE_ENTRIES = [
@@ -217,6 +217,29 @@ function copyVerifiedNativeOverlay(nativeOverlayRoot, stageRoot, platform, arch,
   return verified;
 }
 
+function copyVerifiedNativeBundleOverlay(nativeOverlayRoot, stageRoot, version) {
+  const overlay = path.resolve(nativeOverlayRoot);
+  const verified = verifyNativeBundleOverlay({ pluginRoot: overlay, version });
+  const source = path.join(overlay, "dist");
+  const destination = path.join(stageRoot, "dist");
+  if (fs.existsSync(destination)) fail("HEAD_DISTRIBUTION_NATIVE_CONFLICT", "Native bundle conflicts with the staged distribution.");
+  fs.cpSync(source, destination, {
+    recursive: true,
+    dereference: false,
+    errorOnExist: true,
+    filter: (candidate) => {
+      const stat = fs.lstatSync(candidate);
+      if (stat.isSymbolicLink()) fail("HEAD_DISTRIBUTION_SYMLINK", "Native distribution bundle cannot contain symlinks.");
+      return true;
+    },
+  });
+  const staged = verifyNativeBundleOverlay({ pluginRoot: stageRoot, version, commit: verified.buildCommit });
+  if (staged.nativeBundleId !== verified.nativeBundleId) {
+    fail("HEAD_DISTRIBUTION_NATIVE_DRIFT", "Staged native bundle identity does not match its verified source.");
+  }
+  return staged;
+}
+
 function verifyRelease(releaseRoot, expectedReleaseId = null) {
   const manifestFile = path.join(releaseRoot, "distribution-manifest.json");
   const manifest = readJson(manifestFile, "HEAD_DISTRIBUTION_RELEASE_INVALID");
@@ -243,7 +266,7 @@ function verifyRelease(releaseRoot, expectedReleaseId = null) {
   return manifest;
 }
 
-export function stageDistributionRelease({ sourceRoot, destinationRoot, includeNativeDist = false } = {}) {
+export function stageDistributionRelease({ sourceRoot, destinationRoot, includeNativeDist = false, nativeOverlayRoot = null } = {}) {
   if (!sourceRoot || !destinationRoot) {
     fail("HEAD_DISTRIBUTION_STAGE_ARGUMENTS", "Source and destination roots are required.");
   }
@@ -257,12 +280,18 @@ export function stageDistributionRelease({ sourceRoot, destinationRoot, includeN
   if (fs.existsSync(destination)) {
     fail("HEAD_DISTRIBUTION_STAGE_EXISTS", "Distribution destination already exists.");
   }
+  if (includeNativeDist && nativeOverlayRoot) {
+    fail("HEAD_DISTRIBUTION_NATIVE_CONFLICT", "Select either source native dist or one verified native bundle overlay.");
+  }
 
   ensureDirectory(path.dirname(destination));
   const temporary = fs.mkdtempSync(`${destination}.stage-`);
   try {
-    const manifest = buildManifest(source, { includeNativeDist });
-    copyManifestFiles(source, temporary, manifest);
+    const sourceManifest = buildManifest(source, { includeNativeDist });
+    copyManifestFiles(source, temporary, sourceManifest);
+    if (nativeOverlayRoot) copyVerifiedNativeBundleOverlay(nativeOverlayRoot, temporary, sourceManifest.version);
+    const manifest = nativeOverlayRoot ? buildManifest(temporary, { includeNativeDist: true }) : sourceManifest;
+    if (nativeOverlayRoot) atomicWriteJson(path.join(temporary, "distribution-manifest.json"), manifest);
     verifyRelease(temporary, manifest.releaseId);
     fs.renameSync(temporary, destination);
     return manifest;

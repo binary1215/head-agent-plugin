@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { stageDistributionRelease } from "./distribution-lifecycle.mjs";
+import { verifyNativeBundleOverlay } from "./native-artifact-delivery.mjs";
 
 const CLAUDE_MARKETPLACE_PROTOCOL = "0.1.0";
 const DEFAULT_MARKETPLACE_NAME = "head-agent-plugin";
@@ -221,6 +222,7 @@ export function buildClaudeMarketplaceSnapshot({
   name = DEFAULT_MARKETPLACE_NAME,
   repository = "local",
   commit = "local",
+  nativeOverlayRoot = null,
 } = {}) {
   if (!sourceRoot || !outputRoot) fail("HEAD_CLAUDE_MARKETPLACE_ARGUMENTS", "Source and output roots are required.");
   const source = path.resolve(sourceRoot);
@@ -236,7 +238,7 @@ export function buildClaudeMarketplaceSnapshot({
   const temporary = fs.mkdtempSync(`${output}.stage-`);
   try {
     const pluginRoot = path.join(temporary, "plugins", sourcePlugin.name);
-    const distribution = stageDistributionRelease({ sourceRoot: source, destinationRoot: pluginRoot });
+    const distribution = stageDistributionRelease({ sourceRoot: source, destinationRoot: pluginRoot, nativeOverlayRoot });
     fs.renameSync(
       path.join(pluginRoot, "distribution-manifest.json"),
       path.join(pluginRoot, SOURCE_DISTRIBUTION_MANIFEST),
@@ -257,9 +259,9 @@ export function buildClaudeMarketplaceSnapshot({
       commit,
       contentDigest,
     })));
-    verifyClaudeMarketplaceSnapshot({ root: temporary });
+    verifyClaudeMarketplaceSnapshot({ root: temporary, requireNativeBundle: Boolean(nativeOverlayRoot) });
     fs.renameSync(temporary, output);
-    return verifyClaudeMarketplaceSnapshot({ root: output });
+    return verifyClaudeMarketplaceSnapshot({ root: output, requireNativeBundle: Boolean(nativeOverlayRoot) });
   } catch (error) {
     fs.rmSync(temporary, { recursive: true, force: true });
     throw error;
@@ -271,6 +273,7 @@ export function verifyClaudeMarketplaceSnapshot({
   expectedRepository = null,
   expectedMarketplaceName = null,
   expectedCommit = null,
+  requireNativeBundle = false,
 } = {}) {
   if (!root) fail("HEAD_CLAUDE_MARKETPLACE_VERIFY_ARGUMENTS", "Marketplace root is required.");
   const marketplaceRoot = path.resolve(root);
@@ -329,6 +332,11 @@ export function verifyClaudeMarketplaceSnapshot({
   sourceDistributionIdentity(sourceDistribution);
   if (sourceDistribution.name !== plugin.name || sourceDistribution.version !== plugin.version || sourceDistribution.packageName !== pkg.name) {
     fail("HEAD_CLAUDE_MARKETPLACE_SOURCE_DISTRIBUTION_MISMATCH", "Claude projection does not match its verified source distribution identity.");
+  }
+  const hasNativeBundle = sourceDistribution.files.some((file) => file.path.startsWith("dist/"));
+  const nativeBundle = hasNativeBundle ? verifyNativeBundleOverlay({ pluginRoot, version: plugin.version }) : null;
+  if (requireNativeBundle && !nativeBundle) {
+    fail("HEAD_CLAUDE_MARKETPLACE_NATIVE_REQUIRED", "Claude marketplace snapshot is missing the verified cross-platform native bundle.");
   }
   for (const file of sourceDistribution.files) {
     const absolute = path.resolve(pluginRoot, ...file.path.split("/"));
@@ -400,6 +408,8 @@ export function verifyClaudeMarketplaceSnapshot({
     sourceRepository: marker.sourceRepository,
     sourceCommit: marker.sourceCommit,
     pluginFileCount: sourceDistribution.files.length + 2,
+    nativeBundleId: nativeBundle?.nativeBundleId || null,
+    nativeTargetCount: nativeBundle?.targets.length || 0,
     claudePluginRootProjection: true,
     credentialInputsAccepted: false,
     sourceAllowlistOnly: true,

@@ -17,6 +17,7 @@ if (providedRoot) {
     expectedRepository: option("--expected-repository"),
     expectedMarketplaceName: option("--expected-marketplace-name"),
     expectedCommit: option("--expected-commit"),
+    requireNativeBundle: process.argv.includes("--require-native"),
   }), null, 2)}\n`);
 } else {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-claude-marketplace-"));

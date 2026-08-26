@@ -26,7 +26,10 @@ plugins/head-agent-core/<allowlisted distribution files>
 The builder first stages and verifies the same immutable user-distribution
 allowlist used by the Codex marketplace. It excludes Git metadata, tests,
 development-only goals and fixtures, local build output, temporary trees,
-caches, and credentials. The original verified manifest is retained as
+caches, and credentials. CI then overlays the exact five verified build-matrix
+targets. Each target must share the plugin version and source commit and pass
+the worker, supervisor, and read-only ArcadeDB bridge integrity contracts. The
+original verified manifest, including every native byte, is retained as
 `.head-source-distribution-manifest.json` to bind source release lineage.
 
 Claude Code copies installed plugins to a versioned cache, so relative process
@@ -65,6 +68,12 @@ the bundled `head-agent-onboarding` Skill and typed `head_core` MCP operations.
 Installation alone does not create `.head/`, modify a project, contact GraphDB,
 choose a provider/model, approve Product Canon, or create a ReviewDecision.
 
+The versioned Claude cache receives all five platform packages, but the runtime
+selects only its exact current-host directory. No installation-time release
+download is required. Native components remain an authority-free compute and
+transport projection; the JavaScript Core still owns semantic validation,
+lineage, and every consequential gate.
+
 ## Upgrade and removal
 
 ```powershell
@@ -98,6 +107,10 @@ npm run verify:claude-marketplace
 node scripts/build-claude-marketplace.mjs --output C:\temporary\head-agent-claude-marketplace
 claude plugin validate C:\temporary\head-agent-claude-marketplace
 ```
+
+The publisher additionally builds with `--native-root` and verifies with
+`--require-native`; a source-only local snapshot cannot satisfy that publish
+gate.
 
 For an isolated install test, set `CLAUDE_CONFIG_DIR` to a new temporary
 directory before adding the local generated marketplace. This keeps marketplace,

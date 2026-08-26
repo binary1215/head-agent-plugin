@@ -48,6 +48,7 @@ on:
       - "scripts/lib/claude-marketplace.mjs"
       - "scripts/lib/native-artifact-delivery.mjs"
       - "scripts/distribution.mjs"
+      - "scripts/assemble-native-bundle.mjs"
       - "scripts/build-codex-marketplace.mjs"
       - "scripts/verify-codex-marketplace.mjs"
       - "scripts/build-claude-marketplace.mjs"
@@ -124,6 +125,7 @@ on:
       - "scripts/lib/claude-marketplace.mjs"
       - "scripts/lib/native-artifact-delivery.mjs"
       - "scripts/distribution.mjs"
+      - "scripts/assemble-native-bundle.mjs"
       - "scripts/build-codex-marketplace.mjs"
       - "scripts/verify-codex-marketplace.mjs"
       - "scripts/build-claude-marketplace.mjs"
@@ -213,15 +215,25 @@ jobs:
             release_tag="${MANUAL_RELEASE_TAG}"
           fi
 
-          if [[ -n "${release_tag}" && ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ -n "${release_tag}" && ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "release_tag must be a v-prefixed semantic version." >&2
             exit 1
           fi
 
+          source_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          plugin_version="$(node -p "JSON.parse(require('fs').readFileSync('.codex-plugin/plugin.json', 'utf8')).version")"
+          if [[ "${source_version}" != "${plugin_version}" ]]; then
+            echo "package.json and plugin.json versions must match." >&2
+            exit 1
+          fi
           if [[ -n "${release_tag}" ]]; then
             version="${release_tag#v}"
+            if [[ "${version}" != "${source_version}" ]]; then
+              echo "release_tag must exactly match the source plugin version." >&2
+              exit 1
+            fi
           else
-            version="0.0.0-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
+            version="${source_version}"
           fi
 
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
@@ -532,7 +544,8 @@ jobs:
 
             Source commit: `${{ github.sha }}`
 
-            These binaries accelerate the plugin compute plane. They do not replace Product Canon,
+            These binaries provide the verified native compute transport, process supervisor, and
+            read-only ArcadeDB bridge. They do not replace Product Canon,
             ReviewDecision authority, or the JavaScript control plane. The separate supervisor binary
             provides OS-enforced descendant-tree ownership for bounded provider execution.
             The separate ArcadeDB bridge batches read-only query transport while JavaScript retains
@@ -562,6 +575,24 @@ jobs:
           persist-credentials: true
           fetch-depth: 1
 
+      - name: Download every verified native platform artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: head-agent-worker-*
+          path: ${{ runner.temp }}/head-agent-native-artifacts
+          merge-multiple: true
+
+      - name: Assemble one integrity-verified native bundle
+        shell: bash
+        run: |
+          native_root="${RUNNER_TEMP}/head-agent-native-bundle"
+          echo "NATIVE_ROOT=${native_root}" >> "${GITHUB_ENV}"
+          node scripts/assemble-native-bundle.mjs \
+            --artifacts "${RUNNER_TEMP}/head-agent-native-artifacts" \
+            --output "${native_root}" \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --commit "${GITHUB_SHA}"
+
       - name: Build content-verified marketplace snapshot
         shell: bash
         run: |
@@ -570,11 +601,13 @@ jobs:
           node scripts/build-codex-marketplace.mjs \
             --output "${marketplace_root}" \
             --source-repository "${GITHUB_REPOSITORY}" \
-            --source-commit "${GITHUB_SHA}"
+            --source-commit "${GITHUB_SHA}" \
+            --native-root "${NATIVE_ROOT}"
           node scripts/verify-codex-marketplace.mjs \
             --root "${marketplace_root}" \
             --expected-repository "${GITHUB_REPOSITORY}" \
-            --expected-marketplace-name "head-agent-plugin"
+            --expected-marketplace-name "head-agent-plugin" \
+            --require-native
 
       - name: Refuse to replace an unowned marketplace branch
         id: ownership
@@ -639,6 +672,24 @@ jobs:
           persist-credentials: true
           fetch-depth: 1
 
+      - name: Download every verified native platform artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: head-agent-worker-*
+          path: ${{ runner.temp }}/head-agent-native-artifacts
+          merge-multiple: true
+
+      - name: Assemble one integrity-verified native bundle
+        shell: bash
+        run: |
+          native_root="${RUNNER_TEMP}/head-agent-native-bundle"
+          echo "NATIVE_ROOT=${native_root}" >> "${GITHUB_ENV}"
+          node scripts/assemble-native-bundle.mjs \
+            --artifacts "${RUNNER_TEMP}/head-agent-native-artifacts" \
+            --output "${native_root}" \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --commit "${GITHUB_SHA}"
+
       - name: Build content-verified Claude Code marketplace snapshot
         shell: bash
         run: |
@@ -647,12 +698,14 @@ jobs:
           node scripts/build-claude-marketplace.mjs \
             --output "${marketplace_root}" \
             --source-repository "${GITHUB_REPOSITORY}" \
-            --source-commit "${GITHUB_SHA}"
+            --source-commit "${GITHUB_SHA}" \
+            --native-root "${NATIVE_ROOT}"
           node scripts/verify-claude-marketplace.mjs \
             --root "${marketplace_root}" \
             --expected-repository "${GITHUB_REPOSITORY}" \
             --expected-marketplace-name "head-agent-plugin" \
-            --expected-commit "${GITHUB_SHA}"
+            --expected-commit "${GITHUB_SHA}" \
+            --require-native
 
       - name: Refuse to replace an unowned Claude Code marketplace branch
         id: ownership

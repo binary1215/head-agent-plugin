@@ -3,9 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
-import { resolveVerifiedGoWorker } from "./go-worker-adapter.mjs";
-import { resolveVerifiedProcessSupervisor } from "./runtime-process-supervisor.mjs";
-import { resolveVerifiedArcadeDbNativeBridge } from "./arcadedb-native-bridge.mjs";
+import { resolveVerifiedGoWorker, validateGoWorkerManifest } from "./go-worker-adapter.mjs";
+import { resolveVerifiedProcessSupervisor, verifyProcessSupervisorManifest } from "./runtime-process-supervisor.mjs";
+import { resolveVerifiedArcadeDbNativeBridge, verifyArcadeDbNativeBridgeManifest } from "./arcadedb-native-bridge.mjs";
 
 export const NATIVE_ARTIFACT_DELIVERY_VERSION = "0.1.0";
 const DEFAULT_RELEASE_ROOT = "https://github.com/binary1215/head-agent-plugin/releases/download";
@@ -27,6 +27,14 @@ function fail(code, message) {
 }
 
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
+
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
 function normalizedMode(mode) {
   const value = String(mode || "auto").trim().toLowerCase();
@@ -270,7 +278,11 @@ export function verifyNativeOverlay({ pluginRoot, platform = process.platform, a
   const targetRoot = path.join(path.resolve(pluginRoot), "dist", target.directory);
   const expectedEntries = ["ARCADEDB-BRIDGE-MANIFEST.json", "BUILD-METADATA.json", "SUPERVISOR-MANIFEST.json", "WORKER-MANIFEST.json", ...target.binaries].sort();
   let entries;
-  try { entries = fs.readdirSync(targetRoot).sort(); }
+  try {
+    const targetStat = fs.lstatSync(targetRoot);
+    if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) throw new Error("unsafe target directory");
+    entries = fs.readdirSync(targetRoot).sort();
+  }
   catch { fail("HEAD_NATIVE_OVERLAY_INVALID", "Native overlay target directory is unavailable."); }
   if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) {
     fail("HEAD_NATIVE_OVERLAY_INVALID", "Native overlay must contain the exact verified target file set.");
@@ -280,9 +292,37 @@ export function verifyNativeOverlay({ pluginRoot, platform = process.platform, a
     if (!stat.isFile() || stat.isSymbolicLink()) fail("HEAD_NATIVE_OVERLAY_INVALID", `Native overlay entry is unsafe: ${entry}`);
   }
   const metadata = version ? verifyBuildMetadata(pluginRoot, target, version) : null;
-  const worker = resolveVerifiedGoWorker({ pluginRoot, platform, arch });
-  const supervisor = resolveVerifiedProcessSupervisor({ pluginRoot, platform, arch });
-  const arcadedbBridge = resolveVerifiedArcadeDbNativeBridge({ pluginRoot, platform, arch });
+  const currentTarget = platform === process.platform && arch === process.arch;
+  const verifyForeignBinary = (manifestName, validateManifest) => {
+    const manifestPath = path.join(targetRoot, manifestName);
+    let manifest;
+    try { manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")); }
+    catch { fail("HEAD_NATIVE_OVERLAY_INVALID", `Native overlay manifest is invalid: ${manifestName}`); }
+    validateManifest(manifest, { platform, arch });
+    const binaryPath = path.resolve(targetRoot, ...manifest.binary.relativePath.split("/"));
+    const relative = path.relative(targetRoot, binaryPath);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      fail("HEAD_NATIVE_OVERLAY_INVALID", `Native overlay binary escaped its target directory: ${manifestName}`);
+    }
+    const binaryStat = fs.lstatSync(binaryPath, { throwIfNoEntry: false });
+    if (!binaryStat?.isFile() || binaryStat.isSymbolicLink()) {
+      fail("HEAD_NATIVE_OVERLAY_INVALID", `Native overlay binary is missing or unsafe: ${manifest.binary.relativePath}`);
+    }
+    const bytes = fs.readFileSync(binaryPath);
+    if (bytes.length !== manifest.binary.size || sha256(bytes) !== manifest.binary.sha256) {
+      fail("HEAD_NATIVE_OVERLAY_INVALID", `Native overlay binary failed integrity verification: ${manifest.binary.relativePath}`);
+    }
+    return { manifest, manifestPath, binaryPath };
+  };
+  const worker = currentTarget
+    ? resolveVerifiedGoWorker({ pluginRoot, platform, arch })
+    : verifyForeignBinary("WORKER-MANIFEST.json", validateGoWorkerManifest);
+  const supervisor = currentTarget
+    ? resolveVerifiedProcessSupervisor({ pluginRoot, platform, arch })
+    : verifyForeignBinary("SUPERVISOR-MANIFEST.json", verifyProcessSupervisorManifest);
+  const arcadedbBridge = currentTarget
+    ? resolveVerifiedArcadeDbNativeBridge({ pluginRoot, platform, arch })
+    : verifyForeignBinary("ARCADEDB-BRIDGE-MANIFEST.json", verifyArcadeDbNativeBridgeManifest);
   return {
     targetDirectory: path.basename(path.dirname(worker.manifestPath)),
     buildCommit: metadata?.commit || null,
@@ -290,6 +330,81 @@ export function verifyNativeOverlay({ pluginRoot, platform = process.platform, a
     supervisorManifestId: supervisor.manifest.manifestId,
     arcadedbBridgeManifestId: arcadedbBridge.manifest.manifestId,
   };
+}
+
+export function verifyNativeBundleOverlay({ pluginRoot, version, commit = null } = {}) {
+  if (!pluginRoot || !version) fail("HEAD_NATIVE_BUNDLE_ARGUMENTS", "Native bundle root and version are required.");
+  const root = path.resolve(pluginRoot);
+  const distRoot = path.join(root, "dist");
+  const expectedDirectories = Object.values(TARGETS).map((target) => target.directory).sort();
+  let entries;
+  try { entries = fs.readdirSync(distRoot, { withFileTypes: true }); }
+  catch { fail("HEAD_NATIVE_BUNDLE_INVALID", "Native bundle dist directory is unavailable."); }
+  const actualDirectories = entries.map((entry) => entry.name).sort();
+  if (entries.some((entry) => !entry.isDirectory() || entry.isSymbolicLink())
+    || JSON.stringify(actualDirectories) !== JSON.stringify(expectedDirectories)) {
+    fail("HEAD_NATIVE_BUNDLE_INVALID", "Native bundle must contain the exact supported platform directories.");
+  }
+  const targets = Object.entries(TARGETS).sort(([left], [right]) => left.localeCompare(right, "en")).map(([targetKey]) => {
+    const separator = targetKey.lastIndexOf("-");
+    const platform = targetKey.slice(0, separator);
+    const arch = targetKey.slice(separator + 1);
+    const verified = verifyNativeOverlay({ pluginRoot: root, platform, arch, version });
+    if (commit && verified.buildCommit !== commit) {
+      fail("HEAD_NATIVE_BUNDLE_COMMIT_MISMATCH", "Native bundle target does not match the expected source commit.");
+    }
+    return { platform, arch, ...verified };
+  });
+  const buildCommits = [...new Set(targets.map((target) => target.buildCommit))];
+  if (buildCommits.length !== 1) fail("HEAD_NATIVE_BUNDLE_COMMIT_MISMATCH", "Native bundle targets do not share one source commit.");
+  const identity = {
+    protocolVersion: NATIVE_ARTIFACT_DELIVERY_VERSION,
+    kind: "HeadAgentNativeBundle",
+    version,
+    buildCommit: buildCommits[0],
+    targets,
+    authorityEffect: "none",
+  };
+  return {
+    ...identity,
+    nativeBundleId: `native-bundle-${sha256(Buffer.from(canonical(identity))).slice(0, 24)}`,
+  };
+}
+
+export function assembleVerifiedNativeBundle({ artifactsRoot, outputRoot, version, commit = null } = {}) {
+  if (!artifactsRoot || !outputRoot || !version) {
+    fail("HEAD_NATIVE_BUNDLE_ARGUMENTS", "Native artifact directory, output root, and version are required.");
+  }
+  const artifacts = path.resolve(artifactsRoot);
+  const output = path.resolve(outputRoot);
+  if (fs.existsSync(output)) fail("HEAD_NATIVE_BUNDLE_OUTPUT_EXISTS", "Native bundle output root already exists.");
+  let artifactEntries;
+  try {
+    const stat = fs.lstatSync(artifacts);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe artifact root");
+    artifactEntries = fs.readdirSync(artifacts, { withFileTypes: true });
+  } catch {
+    fail("HEAD_NATIVE_BUNDLE_ARTIFACTS_INVALID", "Native bundle artifact directory is unavailable or unsafe.");
+  }
+  const expectedArchives = Object.values(TARGETS).map((target) => `${target.package}.tar.gz`).sort();
+  const actualArchives = artifactEntries.map((entry) => entry.name).sort();
+  if (artifactEntries.some((entry) => !entry.isFile() || entry.isSymbolicLink())
+    || JSON.stringify(actualArchives) !== JSON.stringify(expectedArchives)) {
+    fail("HEAD_NATIVE_BUNDLE_ARTIFACTS_INVALID", "Native bundle requires the exact supported platform archives.");
+  }
+  fs.mkdirSync(path.join(output, "dist"), { recursive: true });
+  try {
+    for (const target of Object.values(TARGETS)) {
+      const archiveFile = path.join(artifacts, `${target.package}.tar.gz`);
+      const archive = fs.readFileSync(archiveFile);
+      if (archive.length > MAX_ARCHIVE_BYTES) fail("HEAD_NATIVE_ARTIFACT_TOO_LARGE", "Native artifact exceeds the fixed download budget.");
+      extractTarGz(archive, path.join(output, "dist"), target);
+    }
+    return verifyNativeBundleOverlay({ pluginRoot: output, version, commit });
+  } catch (error) {
+    fs.rmSync(output, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export { DEFAULT_RELEASE_ROOT };

@@ -2,25 +2,28 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { createGoWorkerManifest } from "./lib/go-worker-adapter.mjs";
 import { createProcessSupervisorManifest } from "./lib/runtime-process-supervisor.mjs";
 import { createArcadeDbNativeBridgeManifest } from "./lib/arcadedb-native-bridge.mjs";
-import { acquireVerifiedNativeArtifact } from "./lib/native-artifact-delivery.mjs";
+import { acquireVerifiedNativeArtifact, assembleVerifiedNativeBundle, verifyNativeBundleOverlay } from "./lib/native-artifact-delivery.mjs";
 import { installDistribution, inspectDistribution, uninstallDistribution } from "./lib/distribution-lifecycle.mjs";
+import { buildCodexMarketplaceSnapshot, verifyCodexMarketplaceSnapshot } from "./lib/codex-marketplace.mjs";
+import { buildClaudeMarketplaceSnapshot, verifyClaudeMarketplaceSnapshot } from "./lib/claude-marketplace.mjs";
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json"), "utf8")).version;
-const scratchRoot = path.join(sourceRoot, "tmp", `native-delivery-e2e-${process.pid}`);
+const scratchRoot = path.join(os.tmpdir(), `head-native-delivery-e2e-${process.pid}`);
 const fixtureRoot = path.join(scratchRoot, "fixture");
 const targetMap = {
-  "darwin-arm64": { package: "head-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
-  "darwin-x64": { package: "head-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
-  "linux-arm64": { package: "head-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
-  "linux-x64": { package: "head-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
-  "win32-x64": { package: "head-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", worker: "head-agent-worker.exe", supervisor: "head-agent-supervisor.exe", bridge: "head-agent-arcadedb-bridge.exe" },
+  "darwin-arm64": { platform: "darwin", arch: "arm64", package: "head-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
+  "darwin-x64": { platform: "darwin", arch: "x64", package: "head-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
+  "linux-arm64": { platform: "linux", arch: "arm64", package: "head-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
+  "linux-x64": { platform: "linux", arch: "x64", package: "head-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
+  "win32-x64": { platform: "win32", arch: "x64", package: "head-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", worker: "head-agent-worker.exe", supervisor: "head-agent-supervisor.exe", bridge: "head-agent-arcadedb-bridge.exe" },
 };
 const target = targetMap[`${process.platform}-${process.arch}`];
 assert(target, `Native delivery fixture does not support ${process.platform}-${process.arch}.`);
@@ -61,29 +64,29 @@ function archive(entries) {
   ]), { level: 9, mtime: 0 });
 }
 
-function fixtureArchive() {
-  const directory = path.join(fixtureRoot, target.directory);
+function fixtureArchive(fixtureTarget = target) {
+  const directory = path.join(fixtureRoot, fixtureTarget.directory);
   fs.mkdirSync(directory, { recursive: true });
-  const workerFile = path.join(directory, target.worker);
-  const supervisorFile = path.join(directory, target.supervisor);
-  const bridgeFile = path.join(directory, target.bridge);
+  const workerFile = path.join(directory, fixtureTarget.worker);
+  const supervisorFile = path.join(directory, fixtureTarget.supervisor);
+  const bridgeFile = path.join(directory, fixtureTarget.bridge);
   fs.writeFileSync(workerFile, "fixture worker\n", { mode: 0o755 });
   fs.writeFileSync(supervisorFile, "fixture supervisor\n", { mode: 0o755 });
   fs.writeFileSync(bridgeFile, "fixture arcadedb bridge\n", { mode: 0o755 });
-  const workerManifest = createGoWorkerManifest({ platform: process.platform, arch: process.arch, binaryFile: workerFile, manifestDirectory: directory });
-  const supervisorManifest = createProcessSupervisorManifest({ platform: process.platform, arch: process.arch, binaryFile: supervisorFile, manifestDirectory: directory });
-  const bridgeManifest = createArcadeDbNativeBridgeManifest({ platform: process.platform, arch: process.arch, binaryFile: bridgeFile, manifestDirectory: directory });
-  const metadata = { version, commit: "a".repeat(40), goos: target.goos, goarch: target.goarch, cgoEnabled: false };
+  const workerManifest = createGoWorkerManifest({ platform: fixtureTarget.platform, arch: fixtureTarget.arch, binaryFile: workerFile, manifestDirectory: directory });
+  const supervisorManifest = createProcessSupervisorManifest({ platform: fixtureTarget.platform, arch: fixtureTarget.arch, binaryFile: supervisorFile, manifestDirectory: directory });
+  const bridgeManifest = createArcadeDbNativeBridgeManifest({ platform: fixtureTarget.platform, arch: fixtureTarget.arch, binaryFile: bridgeFile, manifestDirectory: directory });
+  const metadata = { version, commit: "a".repeat(40), goos: fixtureTarget.goos, goarch: fixtureTarget.goarch, cgoEnabled: false };
   const files = [
     ["BUILD-METADATA.json", Buffer.from(`${JSON.stringify(metadata, null, 2)}\n`), 0o644],
     ["WORKER-MANIFEST.json", Buffer.from(`${JSON.stringify(workerManifest, null, 2)}\n`), 0o644],
     ["SUPERVISOR-MANIFEST.json", Buffer.from(`${JSON.stringify(supervisorManifest, null, 2)}\n`), 0o644],
     ["ARCADEDB-BRIDGE-MANIFEST.json", Buffer.from(`${JSON.stringify(bridgeManifest, null, 2)}\n`), 0o644],
-    [target.worker, fs.readFileSync(workerFile), 0o755],
-    [target.supervisor, fs.readFileSync(supervisorFile), 0o755],
-    [target.bridge, fs.readFileSync(bridgeFile), 0o755],
+    [fixtureTarget.worker, fs.readFileSync(workerFile), 0o755],
+    [fixtureTarget.supervisor, fs.readFileSync(supervisorFile), 0o755],
+    [fixtureTarget.bridge, fs.readFileSync(bridgeFile), 0o755],
   ];
-  return archive(files.map(([name, bytes, mode]) => ({ name: `${target.directory}/${name}`, bytes, mode })));
+  return archive(files.map(([name, bytes, mode]) => ({ name: `${fixtureTarget.directory}/${name}`, bytes, mode })));
 }
 
 function fetchFixture(assetName, archiveBytes, { unavailable = false } = {}) {
@@ -149,6 +152,39 @@ try {
     (error) => error.code === "HEAD_NATIVE_ARCHIVE_PATH_UNSAFE",
   );
 
+  const artifactsRoot = path.join(scratchRoot, "all-platform-artifacts");
+  fs.mkdirSync(artifactsRoot);
+  for (const fixtureTarget of Object.values(targetMap)) {
+    fs.writeFileSync(path.join(artifactsRoot, `${fixtureTarget.package}.tar.gz`), fixtureArchive(fixtureTarget), { flag: "wx" });
+  }
+  const bundleRoot = path.join(scratchRoot, "native-bundle");
+  const assembled = assembleVerifiedNativeBundle({
+    artifactsRoot,
+    outputRoot: bundleRoot,
+    version,
+    commit: "a".repeat(40),
+  });
+  assert.equal(assembled.targets.length, 5);
+  assert.equal(verifyNativeBundleOverlay({ pluginRoot: bundleRoot, version }).nativeBundleId, assembled.nativeBundleId);
+
+  const missingArtifactsRoot = path.join(scratchRoot, "missing-platform-artifacts");
+  fs.cpSync(artifactsRoot, missingArtifactsRoot, { recursive: true });
+  fs.rmSync(path.join(missingArtifactsRoot, `${target.package}.tar.gz`));
+  assert.throws(
+    () => assembleVerifiedNativeBundle({ artifactsRoot: missingArtifactsRoot, outputRoot: path.join(scratchRoot, "invalid-bundle"), version }),
+    (error) => error.code === "HEAD_NATIVE_BUNDLE_ARTIFACTS_INVALID",
+  );
+
+  const codexMarketplaceRoot = path.join(scratchRoot, "codex-marketplace");
+  const codexMarketplace = buildCodexMarketplaceSnapshot({ sourceRoot, outputRoot: codexMarketplaceRoot, nativeOverlayRoot: bundleRoot });
+  assert.equal(codexMarketplace.nativeTargetCount, 5);
+  assert.equal(verifyCodexMarketplaceSnapshot({ root: codexMarketplaceRoot, requireNativeBundle: true }).nativeBundleId, assembled.nativeBundleId);
+
+  const claudeMarketplaceRoot = path.join(scratchRoot, "claude-marketplace");
+  const claudeMarketplace = buildClaudeMarketplaceSnapshot({ sourceRoot, outputRoot: claudeMarketplaceRoot, nativeOverlayRoot: bundleRoot });
+  assert.equal(claudeMarketplace.nativeTargetCount, 5);
+  assert.equal(verifyClaudeMarketplaceSnapshot({ root: claudeMarketplaceRoot, requireNativeBundle: true }).nativeBundleId, assembled.nativeBundleId);
+
   uninstallDistribution({ installRoot, binDirectory, purge: true });
   process.stdout.write(`${JSON.stringify({
     status: "passed",
@@ -159,6 +195,10 @@ try {
     checksumFailureClosed: true,
     pathEscapeRejected: true,
     immutableReleaseIncludesNative: true,
+    exactFivePlatformBundleVerified: true,
+    missingPlatformFailsClosed: true,
+    codexMarketplaceIncludesNativeBundle: true,
+    claudeMarketplaceIncludesNativeBundle: true,
   }, null, 2)}\n`);
 } finally {
   fs.rmSync(scratchRoot, { recursive: true, force: true });

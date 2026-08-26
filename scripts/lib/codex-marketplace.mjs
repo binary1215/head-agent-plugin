@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { stageDistributionRelease, verifyDistributionRelease } from "./distribution-lifecycle.mjs";
+import { verifyNativeBundleOverlay } from "./native-artifact-delivery.mjs";
 
 const CODEX_MARKETPLACE_PROTOCOL = "0.1.0";
 const DEFAULT_MARKETPLACE_NAME = "head-agent-plugin";
@@ -146,6 +147,7 @@ export function buildCodexMarketplaceSnapshot({
   displayName = DEFAULT_MARKETPLACE_DISPLAY_NAME,
   repository = "local",
   commit = "local",
+  nativeOverlayRoot = null,
 } = {}) {
   if (!sourceRoot || !outputRoot) fail("HEAD_CODEX_MARKETPLACE_ARGUMENTS", "Source and output roots are required.");
   const source = path.resolve(sourceRoot);
@@ -164,7 +166,7 @@ export function buildCodexMarketplaceSnapshot({
   const temporary = fs.mkdtempSync(`${output}.stage-`);
   try {
     const pluginRoot = path.join(temporary, "plugins", pluginManifest.name);
-    const distribution = stageDistributionRelease({ sourceRoot: source, destinationRoot: pluginRoot });
+    const distribution = stageDistributionRelease({ sourceRoot: source, destinationRoot: pluginRoot, nativeOverlayRoot });
     fs.writeFileSync(path.join(temporary, ".gitattributes"), MARKETPLACE_GIT_ATTRIBUTES, { flag: "wx" });
     writeJson(path.join(temporary, ".agents", "plugins", "marketplace.json"), marketplaceDocument({
       name,
@@ -180,9 +182,9 @@ export function buildCodexMarketplaceSnapshot({
       commit,
     });
     writeJson(path.join(temporary, ".head-agent-marketplace-generated.json"), snapshotMarker(identity));
-    verifyCodexMarketplaceSnapshot({ root: temporary });
+    verifyCodexMarketplaceSnapshot({ root: temporary, requireNativeBundle: Boolean(nativeOverlayRoot) });
     fs.renameSync(temporary, output);
-    return verifyCodexMarketplaceSnapshot({ root: output });
+    return verifyCodexMarketplaceSnapshot({ root: output, requireNativeBundle: Boolean(nativeOverlayRoot) });
   } catch (error) {
     fs.rmSync(temporary, { recursive: true, force: true });
     throw error;
@@ -194,6 +196,7 @@ export function verifyCodexMarketplaceSnapshot({
   expectedRepository = null,
   expectedMarketplaceName = null,
   allowLegacyBytePreservation = false,
+  requireNativeBundle = false,
 } = {}) {
   if (!root) fail("HEAD_CODEX_MARKETPLACE_VERIFY_ARGUMENTS", "Marketplace root is required.");
   const marketplaceRoot = path.resolve(root);
@@ -251,6 +254,11 @@ export function verifyCodexMarketplaceSnapshot({
   const distribution = verifyDistributionRelease({ releaseRoot: pluginRoot });
   if (distribution.name !== manifest.name || distribution.version !== manifest.version) {
     fail("HEAD_CODEX_MARKETPLACE_DISTRIBUTION_MISMATCH", "Marketplace plugin does not match its verified distribution manifest.");
+  }
+  const hasNativeBundle = distribution.files.some((file) => file.path.startsWith("dist/"));
+  const nativeBundle = hasNativeBundle ? verifyNativeBundleOverlay({ pluginRoot, version: manifest.version }) : null;
+  if (requireNativeBundle && !nativeBundle) {
+    fail("HEAD_CODEX_MARKETPLACE_NATIVE_REQUIRED", "Marketplace snapshot is missing the verified cross-platform native bundle.");
   }
 
   const marker = readJson(
@@ -312,6 +320,8 @@ export function verifyCodexMarketplaceSnapshot({
     sourceCommit: marker.sourceCommit,
     bytePreservation: hasGitAttributes ? "git_attributes_exact" : "legacy_migration_only",
     pluginFileCount: distribution.files.length,
+    nativeBundleId: nativeBundle?.nativeBundleId || null,
+    nativeTargetCount: nativeBundle?.targets.length || 0,
     credentialInputsAccepted: false,
     sourceAllowlistOnly: true,
     authorityEffect: "none",

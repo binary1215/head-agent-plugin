@@ -16,6 +16,7 @@ try {
     name: option("--marketplace-name", "head-agent-plugin"),
     repository: option("--source-repository", "local"),
     commit: option("--source-commit", "local"),
+    nativeOverlayRoot: option("--native-root") ? path.resolve(option("--native-root")) : null,
   });
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 } catch (error) {

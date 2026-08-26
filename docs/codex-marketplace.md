@@ -22,8 +22,12 @@ plugins/head-agent-core/<verified distribution files>
 
 The plugin directory is built from the same allowlisted file set used by the
 immutable user distribution. It excludes `.git`, `test`, `node_modules`, local
-`dist`, temporary trees, and caches. `distribution-manifest.json` hashes every
-included plugin file, and the branch marker binds the marketplace name, plugin
+developer `dist`, temporary trees, and caches. CI then assembles the five matrix
+artifacts into one verified `dist/` bundle. Every target must match the plugin
+version and source commit and must pass its worker, supervisor, and read-only
+ArcadeDB bridge manifest checks; a missing, extra, mixed-commit, or digest-invalid
+target stops publication. `distribution-manifest.json` hashes every source and
+native file, and the branch marker binds the marketplace name, plugin
 name/version, distribution release ID, source repository, and exact source
 commit into a content-derived snapshot ID.
 
@@ -48,6 +52,13 @@ Start a new Codex task after installation. Normal use begins through the
 bundled `head-agent-onboarding` Skill, which calls the typed `head_core` MCP
 operations. Installation alone does not create `.head`, infer or approve
 Features, contact GraphDB, or alter project files.
+
+The marketplace snapshot already carries Windows x64, Linux x64/arm64, and
+macOS x64/arm64 native packages. Runtime selection uses only the current host's
+integrity-verified directory and needs no install-time download. Native
+availability does not change authority: production repository scanning remains
+on the JavaScript reference path until its native candidate earns activation by
+benchmark and conformance evidence.
 
 ## Upgrade and removal
 
@@ -86,6 +97,11 @@ npm run verify:codex-marketplace
 node scripts/build-codex-marketplace.mjs --output C:\temporary\head-agent-marketplace
 node scripts/verify-codex-marketplace.mjs --root C:\temporary\head-agent-marketplace
 ```
+
+CI supplies `--native-root` to the builder and `--require-native` to the
+verifier. Local source-only verification intentionally remains available for
+development; it must not be used as evidence that a publishable native snapshot
+was assembled.
 
 ## Public-directory boundary
 

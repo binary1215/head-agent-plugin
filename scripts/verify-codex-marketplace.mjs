@@ -12,6 +12,7 @@ const expectedRepository = repositoryIndex === -1 ? null : process.argv[reposito
 const marketplaceIndex = process.argv.indexOf("--expected-marketplace-name");
 const expectedMarketplaceName = marketplaceIndex === -1 ? null : process.argv[marketplaceIndex + 1] || "";
 const allowLegacyBytePreservation = process.argv.includes("--allow-legacy-byte-preservation");
+const requireNativeBundle = process.argv.includes("--require-native");
 
 if (providedRoot) {
   process.stdout.write(`${JSON.stringify(verifyCodexMarketplaceSnapshot({
@@ -19,6 +20,7 @@ if (providedRoot) {
     expectedRepository,
     expectedMarketplaceName,
     allowLegacyBytePreservation,
+    requireNativeBundle,
   }), null, 2)}\n`);
 } else {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-codex-marketplace-"));

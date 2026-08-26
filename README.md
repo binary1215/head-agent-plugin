@@ -147,8 +147,11 @@ expected to become the unquestioned source of project meaning.
 ## Install
 
 Choose one installation path. The Codex and Claude Code marketplace paths
-install the conversation Skill and typed MCP server. The user-scoped path also
-provides the global `head-agent` command for automation and recovery.
+install the conversation Skill, typed MCP server, and verified native bundle for
+all supported hosts. Only the exact current-host binary can be selected at
+runtime. The user-scoped path also provides the global `head-agent` command for
+automation and recovery and obtains its native package from the matching GitHub
+Release.
 
 ### Codex Git marketplace
 
@@ -536,6 +539,11 @@ the exact version and platform package, verifies release checksum, archive paths
 build metadata, and native manifests, then includes the binaries in the release
 identity. Use `--native off` for JavaScript-only installation or
 `--native required` when fallback is unacceptable.
+
+Codex and Claude marketplace snapshots carry the same verified packages for all
+five supported targets, so those installs do not need a runtime download. A
+missing target, mixed build commit, or manifest/digest mismatch blocks
+marketplace publication.
 
 Native components have separate contracts for authority-free computation, owned
 process supervision, and read-only ArcadeDB batching. Installing one never

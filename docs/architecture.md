@@ -32,10 +32,13 @@ Claude Code, Codex, and OpenCode are projections of the same `.head/` authority.
 
 The source tree remains the directly runnable Core. CI creates independent,
 content-verified `codex-marketplace` and `claude-marketplace` branches from the
-same allowlisted distribution. Claude's generated branch adds only the catalog,
-plugin manifest, and `${CLAUDE_PLUGIN_ROOT}` MCP cache-path projection required
-by Claude Code. Distribution metadata and cache paths cannot alter Core identity,
-Product Canon, Session/Run recovery, or any authority plane. See
+same allowlisted distribution and overlays one five-platform, version- and
+commit-bound native bundle assembled from the verified build matrix. Runtime
+selection is exact-host and integrity-gated; the other targets remain inert
+distribution bytes. Claude's generated branch adds only the catalog, plugin
+manifest, and `${CLAUDE_PLUGIN_ROOT}` MCP cache-path projection required by
+Claude Code. Distribution metadata, native binaries, and cache paths cannot
+alter Core identity, Product Canon, Session/Run recovery, or any authority plane. See
 [`codex-marketplace.md`](codex-marketplace.md) and
 [`claude-marketplace.md`](claude-marketplace.md).
 
