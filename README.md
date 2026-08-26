@@ -110,6 +110,7 @@ product decision. See [Feature mapping](docs/feature-mapping.md).
 | A graph or generated document becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable views over verified records. |
 | A large repository overwhelms the prompt | Source Scope and bounded compilation keep unrelated generated, vendored, or copied material out of normal task context. |
 | Several agents blur responsibility | Bounded execution, result evidence, and independent review stay distinct while HEAD integrates them into one outcome. |
+| Parallel workers are hard to scan at a glance | A provider-neutral launch wave shows requested, started, returned, waiting, succeeded, and failed workers without merging their authorizations or treating wave completion as approval. |
 
 > A conventional coding agent optimizes the current task. HEAD Agent Core
 > optimizes for many tasks to accumulate into the same reviewed product

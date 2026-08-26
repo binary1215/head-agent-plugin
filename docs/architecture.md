@@ -102,6 +102,13 @@ checkpoint whose recovery fields are explicit HEAD/user input; ResultPacket and
 the P3 integration receipt cannot author or replace that direction. See
 [`session-recovery.md`](session-recovery.md).
 
+Provider-neutral launch-wave visibility is a separate P3/P4/P5 composition over
+existing HF-009 dispatches. A `BoundedWorkerWave` cannot create or widen an
+authorization; an explicit seal requires every independent lease consumption;
+status/results remain P4 views and wait remains P5. Each result still crosses
+Fresh HEAD review and explicit HF-010 checkpoint integration independently. See
+[`bounded-worker-wave.md`](bounded-worker-wave.md).
+
 Version 0.3 alpha binds Runs to verified contracts, converts completion into a ResultPacket, builds a deterministic minimum Fresh HEAD review projection, and requires that exact projection for the manual HEAD ReviewDecision. `revise` and `expand` require a ReviewDecision-linked next WholePlanSnapshot before another Run. Candidate knowledge and HEAD recommendations remain authority-free. Exact optional WorkspaceHost attachment is active only after P2 restore; general provider resume/stream, broader runtime controls, and authorized knowledge-promotion surfaces remain deferred.
 
 ## Repository World Model plane

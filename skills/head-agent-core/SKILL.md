@@ -133,6 +133,17 @@ consumption must fail, and wait/reply cannot create review. `worker-apply` may
 create the ResultPacket and Fresh HEAD context only; explicit review and the
 HF-010 integration step remain mandatory.
 
+Read `../../docs/bounded-worker-wave.md` before grouping multiple HF-009
+dispatches. Create each dispatch and authorization independently first, then
+create a Wave only for the exact same current Project/Session/Run/WholePlan/
+ExecutionContract/Capsule lineage. Status is P4 and cannot seal. Seal only after
+Core verifies every independent lease consumption; result aggregation and wait
+must fail closed before seal. `completed` means every member succeeded, but it
+does not apply ResultPackets, create ReviewDecisions, or perform HF-010
+integration. Use create-only abandonment for an unsealed unrecoverable partial
+launch and never put provider session, pane, socket, TUI, CLI, or opaque caller
+handles into Wave input.
+
 ## Compaction recovery
 
 Read `../../docs/compaction-recovery.md` before intentionally compacting a recovery-sensitive Session or active Run. Compaction is lossy; never use a provider summary, transcript, provider-session identity, ContextCapsule, or `HEADContinuitySnapshot` to rewrite `purpose`, approved decisions, current position, or the next expected result.
@@ -275,6 +286,13 @@ node <plugin-root>/scripts/head.mjs run-review-context <project>
 node <plugin-root>/scripts/head.mjs run-review <project> --input <review.json>
 node <plugin-root>/scripts/head.mjs run-integrate-checkpoint <project> --input <integration.json>
 node <plugin-root>/scripts/head.mjs run-integration-read <project> --review <review-decision-id>
+node <plugin-root>/scripts/head.mjs worker-wave-create <project> --input <wave.json>
+node <plugin-root>/scripts/head.mjs worker-wave-read <project> --wave <bounded-worker-wave-id>
+node <plugin-root>/scripts/head.mjs worker-wave-seal <project> --wave <bounded-worker-wave-id>
+node <plugin-root>/scripts/head.mjs worker-wave-status <project> --wave <bounded-worker-wave-id>
+node <plugin-root>/scripts/head.mjs worker-wave-results <project> --wave <bounded-worker-wave-id>
+node <plugin-root>/scripts/head.mjs worker-wave-wait <project> --wave <bounded-worker-wave-id> --wait-timeout-ms <0..600000>
+node <plugin-root>/scripts/head.mjs worker-wave-abandon <project> --input <abandonment.json>
 ```
 
 Initialization writes only absent managed files. If `AGENTS.md` or `opencode.json` already exists, preserve it and report the generated projection under `.head/generated/` for manual integration.

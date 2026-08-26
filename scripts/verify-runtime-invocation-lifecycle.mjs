@@ -63,6 +63,14 @@ import {
   executeBoundedWorkerDispatch,
   waitForBoundedWorkerDispatch,
 } from "./lib/bounded-worker-dispatch.mjs";
+import {
+  abandonBoundedWorkerWave,
+  createBoundedWorkerWave,
+  readBoundedWorkerWaveResults,
+  readBoundedWorkerWaveStatus,
+  sealBoundedWorkerWave,
+  waitForBoundedWorkerWave,
+} from "./lib/bounded-worker-wave.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureNonce = `${process.pid}-${Date.now()}`;
@@ -71,6 +79,12 @@ const temporaryOperationalRoot = path.join(pluginRoot, `.test-tmp-runtime-operat
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+async function rejectsWithCode(operation, expectedCode) {
+  try { await operation(); }
+  catch (error) { return error.code === expectedCode; }
+  return false;
 }
 
 function canonicalFixtureValue(value) {
@@ -260,6 +274,18 @@ process.stdin.on('end', () => {
   write({ type: 'turn.started' });
   write({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(result) } });
   write({ type: 'turn.completed', usage: { input_tokens: input.length, output_tokens: 1 } });
+});
+`;
+
+const BOUNDED_WORKER_FAILURE_PROTOCOL_FIXTURE = String.raw`
+let input = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => { input = Buffer.concat([input, chunk]); });
+process.stdin.on('end', () => {
+  const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
+  write({ type: 'thread.started', thread_id: 'bounded-worker-failure-fixture-thread' });
+  write({ type: 'turn.started' });
+  write({ type: 'turn.failed', error: { message: 'synthetic bounded worker failure' } });
+  process.exitCode = 7;
 });
 `;
 
@@ -1220,6 +1246,245 @@ async function main() {
       && completedWorker.waitOutcome.resultDraftId === workerExecution.result.draft.draftId
       && reviewCount() === reviewsBeforeDispatch,
     "Durable worker wait did not return the exact result evidence without creating review authority.");
+
+    const stateFile = path.join(resolvedRoot, ".head", "sessions", "current.json");
+    const productCanonFile = path.join(resolvedRoot, ".head", "context", "product-model.json");
+    const stateBeforeWave = fs.readFileSync(stateFile);
+    const productCanonBeforeWave = fs.readFileSync(productCanonFile);
+    const latestCheckpointBeforeWave = JSON.parse(stateBeforeWave).latestCheckpoint;
+    const authorizationForWave = (maxEvents) => buildRuntimeInvocationAuthorization({
+      root: resolvedRoot,
+      runtime: "codex",
+      scope: { kind: "run" },
+      workspaceMode: "read-only",
+      protocolEvidence,
+      projectBinding,
+      limits: { timeoutMs: 5_000, maxEvents },
+      persist: true,
+    }).authorization;
+    const workerAuthorizationB = authorizationForWave(4_091);
+    const workerAuthorizationC = authorizationForWave(4_090);
+    createBoundedWorkerDispatch({ root: resolvedRoot, authorizationId: workerAuthorizationB.authorizationId, role: "developer" });
+    createBoundedWorkerDispatch({ root: resolvedRoot, authorizationId: workerAuthorizationC.authorizationId, role: "reviewer" });
+    let duplicateWaveMemberRejected = false;
+    try {
+      createBoundedWorkerWave({
+        root: resolvedRoot,
+        authorizationIds: [workerAuthorization.authorizationId, workerAuthorization.authorizationId],
+      });
+    } catch (error) {
+      duplicateWaveMemberRejected = error.code === "BOUNDED_WORKER_WAVE_DUPLICATE_MEMBER";
+    }
+    assert(duplicateWaveMemberRejected, "A worker wave reused one authorization as two members.");
+    assert(await rejectsWithCode(() => createBoundedWorkerWave({
+      root: resolvedRoot,
+      authorizationIds: [workerAuthorization.authorizationId, workerAuthorizationB.authorizationId],
+      workspaceMode: "workspace-write",
+    }), "BOUNDED_WORKER_WAVE_AUTHORIZATION_AMPLIFICATION_REJECTED"),
+    "Worker wave accepted a request to widen member authorization scope.");
+    const createdWave = createBoundedWorkerWave({
+      root: resolvedRoot,
+      authorizationIds: [workerAuthorizationC.authorizationId, workerAuthorization.authorizationId, workerAuthorizationB.authorizationId],
+    });
+    assert(createdWave.status === "created" && createdWave.wave.authorityBoundary.planeId === "P3"
+      && createdWave.wave.waveBoundary.createsExecutionAuthorization === false
+      && createdWave.wave.waveBoundary.widensMemberScope === false,
+    "Worker wave did not remain a P3 grouping over existing exact authorizations.");
+    const existingWave = createBoundedWorkerWave({
+      root: resolvedRoot,
+      authorizationIds: [workerAuthorization.authorizationId, workerAuthorizationB.authorizationId, workerAuthorizationC.authorizationId],
+    });
+    assert(existingWave.status === "existing" && existingWave.wave.waveId === createdWave.wave.waveId,
+      "Identical worker wave create did not converge.");
+    const openWave = readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }).projection;
+    assert(openWave.state === "open" && openWave.counts.requested === 3 && openWave.counts.started === 1
+      && openWave.counts.returned === 1 && openWave.counts.succeeded === 1 && openWave.counts.failed === 0
+      && openWave.authorityBoundary.planeId === "P4",
+    "Open worker wave status did not distinguish requested, started, returned, and succeeded members.");
+    assert(await rejectsWithCode(
+      () => sealBoundedWorkerWave({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      "BOUNDED_WORKER_WAVE_NOT_FULLY_STARTED",
+    ), "A dispatch-only partial wave was sealed.");
+    assert(await rejectsWithCode(
+      () => waitForBoundedWorkerWave({ root: resolvedRoot, waveId: createdWave.wave.waveId, timeoutMs: 0 }),
+      "BOUNDED_WORKER_WAVE_NOT_SEALED",
+    ), "Wave wait did not fail closed before seal.");
+    assert(await rejectsWithCode(
+      () => readBoundedWorkerWaveResults({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      "BOUNDED_WORKER_WAVE_NOT_SEALED",
+    ), "Wave result aggregation did not fail closed before seal.");
+
+    await executeBoundedWorkerDispatch({
+      root: resolvedRoot,
+      authorizationId: workerAuthorizationB.authorizationId,
+      role: "developer",
+      execution: {
+        protocolEvidence,
+        projectBinding,
+        targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+        supervisorSelection,
+        providerArguments: ["-e", BOUNDED_WORKER_RUN_PROTOCOL_FIXTURE],
+        evidenceMode: "protocol-fixture",
+        onProcessEvent: recordProcess,
+      },
+    });
+    const partialWave = readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }).projection;
+    assert(partialWave.counts.started === 2 && partialWave.counts.succeeded === 2 && partialWave.state === "open",
+      "Partially launched wave was not kept open.");
+    const successfulWave = createBoundedWorkerWave({
+      root: resolvedRoot,
+      authorizationIds: [workerAuthorization.authorizationId, workerAuthorizationB.authorizationId],
+    });
+    sealBoundedWorkerWave({ root: resolvedRoot, waveId: successfulWave.wave.waveId });
+    const completedWave = readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: successfulWave.wave.waveId }).projection;
+    assert(completedWave.state === "completed" && completedWave.counts.succeeded === 2 && completedWave.counts.failed === 0,
+      "A fully successful sealed wave did not become completed.");
+    assert(await rejectsWithCode(
+      () => sealBoundedWorkerWave({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      "BOUNDED_WORKER_WAVE_NOT_FULLY_STARTED",
+    ), "A partially started wave was sealed.");
+    const failedWorkerExecution = await executeBoundedWorkerDispatch({
+      root: resolvedRoot,
+      authorizationId: workerAuthorizationC.authorizationId,
+      role: "reviewer",
+      execution: {
+        protocolEvidence,
+        projectBinding,
+        targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+        supervisorSelection,
+        providerArguments: ["-e", BOUNDED_WORKER_FAILURE_PROTOCOL_FIXTURE],
+        evidenceMode: "protocol-fixture",
+        onProcessEvent: recordProcess,
+      },
+    });
+    assert(failedWorkerExecution.result.receipt.status === "failed", "Fast terminal worker failure did not remain failed evidence.");
+    const sealedWave = sealBoundedWorkerWave({ root: resolvedRoot, waveId: createdWave.wave.waveId });
+    assert(sealedWave.status === "sealed" && sealedWave.seal.authorityBoundary.planeId === "P3"
+      && sealedWave.seal.memberStartEvidence.length === 3,
+    "Fully started worker wave did not produce one create-only P3 seal.");
+    const failedWave = readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }).projection;
+    assert(failedWave.state === "failed" && failedWave.counts.started === 3 && failedWave.counts.returned === 3
+      && failedWave.counts.succeeded === 2 && failedWave.counts.failed === 1,
+    "Fast terminal failure was mislabeled as wave success or completion.");
+    const failedWaveWait = await waitForBoundedWorkerWave({ root: resolvedRoot, waveId: createdWave.wave.waveId, timeoutMs: 0 });
+    assert(failedWaveWait.waitOutcome.authorityBoundary.planeId === "P5"
+      && failedWaveWait.waitOutcome.state === "failed" && failedWaveWait.waitOutcome.reviewDecisionCreated === false,
+    "Wave wait did not preserve the P5 failed outcome boundary.");
+    const failedWaveResults = readBoundedWorkerWaveResults({ root: resolvedRoot, waveId: createdWave.wave.waveId });
+    assert(failedWaveResults.projection.authorityBoundary.planeId === "P4"
+      && failedWaveResults.projection.state === "failed" && failedWaveResults.projection.resultAuthority === "evidence-reference-only",
+    "Wave result projection crossed out of P4 evidence references.");
+    const sameSeal = sealBoundedWorkerWave({ root: resolvedRoot, waveId: createdWave.wave.waveId });
+    assert(sameSeal.status === "existing" && sameSeal.seal.sealId === sealedWave.seal.sealId,
+      "Wave seal replay did not converge.");
+    const cliWaveStatus = runCommand(["worker-wave-status", resolvedRoot, "--wave", createdWave.wave.waveId]);
+    assert(cliWaveStatus.projection.statusProjectionId === failedWave.statusProjectionId,
+      "CLI wave status did not preserve Core identity.");
+    const mcpWaveStatus = await dispatch({
+      jsonrpc: "2.0",
+      id: 8_801,
+      method: "tools/call",
+      params: { name: "head_bounded_worker_wave_status", arguments: { project_root: resolvedRoot, wave_id: createdWave.wave.waveId } },
+    });
+    assert(mcpWaveStatus.result.structuredContent.projection.statusProjectionId === failedWave.statusProjectionId,
+      "Typed MCP wave status did not preserve CLI/Core identity.");
+
+    const sealPath = path.join(resolvedRoot, ".head", "runtime", "worker-waves", `${createdWave.wave.waveId}.terminal.json`);
+    const sealBytes = fs.readFileSync(sealPath);
+    const tamperedSeal = JSON.parse(sealBytes);
+    tamperedSeal.sealHash = "0".repeat(64);
+    fs.writeFileSync(sealPath, `${JSON.stringify(tamperedSeal, null, 2)}\n`);
+    assert(await rejectsWithCode(
+      () => readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      "BOUNDED_WORKER_WAVE_SEAL_DIGEST_MISMATCH",
+    ), "Tampered wave seal was accepted.");
+    fs.writeFileSync(sealPath, sealBytes);
+    const memberPath = path.join(resolvedRoot, ".head", "runtime", "worker-dispatches", `${workerAuthorizationB.authorizationId}.json`);
+    const memberBytes = fs.readFileSync(memberPath);
+    const tamperedMember = JSON.parse(memberBytes);
+    tamperedMember.dispatchHash = "0".repeat(64);
+    fs.writeFileSync(memberPath, `${JSON.stringify(tamperedMember, null, 2)}\n`);
+    assert(await rejectsWithCode(
+      () => readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      "INVALID_BOUNDED_WORKER_DISPATCH",
+    ), "Tampered wave member dispatch was accepted.");
+    fs.writeFileSync(memberPath, memberBytes);
+    const currentStateBytes = fs.readFileSync(stateFile);
+    const driftedState = JSON.parse(currentStateBytes);
+    driftedState.updatedAt = new Date(Date.parse(driftedState.updatedAt) + 1_000).toISOString();
+    fs.writeFileSync(stateFile, `${JSON.stringify(driftedState, null, 2)}\n`);
+    assert(await rejectsWithCode(
+      () => readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      "BOUNDED_WORKER_WAVE_LINEAGE_DRIFT",
+    ), "Session pointer drift did not stale the wave.");
+    fs.writeFileSync(stateFile, currentStateBytes);
+    const contractDriftState = JSON.parse(currentStateBytes);
+    contractDriftState.activeExecutionContractId = `execution-contract-${"0".repeat(24)}`;
+    fs.writeFileSync(stateFile, `${JSON.stringify(contractDriftState, null, 2)}\n`);
+    assert(await rejectsWithCode(
+      () => readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      "BOUNDED_WORKER_WAVE_LINEAGE_DRIFT",
+    ), "A new ExecutionContract pointer did not stale the wave.");
+    fs.writeFileSync(stateFile, currentStateBytes);
+    const capsulePath = path.join(resolvedRoot, ".head", "context", "capsules", `${createdWave.wave.contextCapsuleId}.json`);
+    const capsuleBytes = fs.readFileSync(capsulePath);
+    const tamperedCapsule = JSON.parse(capsuleBytes);
+    tamperedCapsule.capsuleHash = "0".repeat(64);
+    fs.writeFileSync(capsulePath, `${JSON.stringify(tamperedCapsule, null, 2)}\n`);
+    assert(await rejectsWithCode(
+      () => readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      "CAPSULE_DIGEST_MISMATCH",
+    ), "Context Capsule tamper did not fail the wave status surface.");
+    fs.writeFileSync(capsulePath, capsuleBytes);
+
+    const workerAuthorizationD = authorizationForWave(4_089);
+    const workerAuthorizationE = authorizationForWave(4_088);
+    createBoundedWorkerDispatch({ root: resolvedRoot, authorizationId: workerAuthorizationD.authorizationId, role: "coder" });
+    createBoundedWorkerDispatch({ root: resolvedRoot, authorizationId: workerAuthorizationE.authorizationId, role: "developer" });
+    const abandonedWave = createBoundedWorkerWave({
+      root: resolvedRoot,
+      authorizationIds: [workerAuthorizationD.authorizationId, workerAuthorizationE.authorizationId],
+    });
+    const abandoned = abandonBoundedWorkerWave({
+      root: resolvedRoot,
+      waveId: abandonedWave.wave.waveId,
+      reasonCode: "partial-launch",
+      reasonSummary: "Launch evidence is incomplete; do not infer success or recovery direction.",
+    });
+    assert(abandoned.status === "abandoned" && abandoned.abandonment.authorityBoundary.planeId === "P3"
+      && abandoned.abandonment.abandonBoundary.privilegedInstruction === false
+      && readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: abandonedWave.wave.waveId }).projection.state === "abandoned",
+    "Partial launch did not become explicit non-success P3 abandonment evidence.");
+    const sameAbandonment = abandonBoundedWorkerWave({
+      root: resolvedRoot,
+      waveId: abandonedWave.wave.waveId,
+      reasonCode: "partial-launch",
+      reasonSummary: "Launch evidence is incomplete; do not infer success or recovery direction.",
+    });
+    assert(sameAbandonment.status === "existing" && sameAbandonment.abandonment.abandonmentId === abandoned.abandonment.abandonmentId,
+      "Identical wave abandonment did not converge.");
+    assert(await rejectsWithCode(() => abandonBoundedWorkerWave({
+      root: resolvedRoot,
+      waveId: abandonedWave.wave.waveId,
+      reasonCode: "operator-stop",
+      reasonSummary: "Divergent retry",
+    }), "BOUNDED_WORKER_WAVE_ABANDON_CONFLICT"), "Divergent wave abandonment retry was accepted.");
+    assert(await rejectsWithCode(
+      () => sealBoundedWorkerWave({ root: resolvedRoot, waveId: abandonedWave.wave.waveId }),
+      "BOUNDED_WORKER_WAVE_ABANDONED",
+    ), "Abandoned wave was sealed.");
+    assert(await rejectsWithCode(
+      () => waitForBoundedWorkerWave({ root: resolvedRoot, waveId: abandonedWave.wave.waveId, timeoutMs: 0 }),
+      "BOUNDED_WORKER_WAVE_NOT_SEALED",
+    ), "Abandoned wave wait did not fail closed.");
+    assert(fs.readFileSync(stateFile).equals(stateBeforeWave)
+      && fs.readFileSync(productCanonFile).equals(productCanonBeforeWave)
+      && JSON.parse(fs.readFileSync(stateFile, "utf8")).latestCheckpoint === latestCheckpointBeforeWave
+      && reviewCount() === reviewsBeforeDispatch,
+    "Wave surfaces changed P1 Canon, ReviewDecision, Session pointer, or P2 checkpoint state.");
+    const persistedWaveText = [createdWave.wave, sealedWave.seal, abandoned.abandonment].map((value) => JSON.stringify(value)).join("\n");
+    assert(!/(?:providerSession|callerHandle|paneId|socketPath|tuiCommand)/iu.test(persistedWaveText),
+      "Provider, caller-handle, pane, socket, or TUI identity entered wave semantic state.");
     let duplicateWorkerConsumptionRejected = false;
     try {
       await executeBoundedWorkerDispatch({
@@ -1302,6 +1567,19 @@ async function main() {
         competingOwnerRejected,
         duplicateWorkerConsumptionRejected,
         fixtureApplicationRejected,
+      },
+      boundedWorkerWave: {
+        waveId: createdWave.wave.waveId,
+        sealId: sealedWave.seal.sealId,
+        failedStatusProjectionId: failedWave.statusProjectionId,
+        abandonmentId: abandoned.abandonment.abandonmentId,
+        duplicateMemberRejected: duplicateWaveMemberRejected,
+        partialLaunchSealRejected: true,
+        preSealWaitRejected: true,
+        preSealResultReadRejected: true,
+        terminalFailurePreserved: true,
+        cliMcpParityVerified: true,
+        authorityNonMutationVerified: true,
       },
       rawTranscriptPersisted: false,
       actualProviderInvoked: false,

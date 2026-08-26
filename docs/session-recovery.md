@@ -29,6 +29,9 @@ alone closes the original dispatch/wait lifecycle.
 | `BoundedWorkerDispatch`, `ResultPacket`, `RunResultIntegrationRequest`, `RunResultIntegrationReceipt` | P3 | worker ownership, result, and integration evidence only |
 | `SessionRestoreProjection` | P4 | non-persisted, reproducible consumer view |
 | `ContinuationOutcome`, `BoundedWorkerWaitOutcome`, execution lease/process | P5 | optional live attachment and operational progress only |
+| `BoundedWorkerWave`, seal, abandonment | P3 | same-lineage multi-dispatch grouping and non-success handoff evidence |
+| `WorkerWaveStatusProjection`, `WorkerWaveResultProjection` | P4 | non-persisted launch-wave views |
+| `BoundedWorkerWaveWaitOutcome` | P5 | bounded sealed-wave observation only |
 
 The planes are not a persistence ranking. A P3 ResultPacket can be absent after
 checkpoint creation without changing P2 direction. A P1 ReviewDecision can
@@ -91,6 +94,12 @@ completed actual-provider result with verified native supervision and creates
 only the ResultPacket plus Fresh HEAD review context. Explicit review and the
 integration transaction below remain separate.
 
+Multiple existing dispatches may be viewed through the provider-neutral wave
+contract in [`bounded-worker-wave.md`](bounded-worker-wave.md). Wave seal is
+start-evidence aggregation, not result acceptance. Wave `completed` means all
+members succeeded operationally; each member still requires its own ResultPacket,
+Fresh HEAD ReviewDecision, and explicit HF-010 checkpoint integration.
+
 ## P2-first optional live continuation
 
 `session-continue` always calls artifact restore before consulting a provider or
@@ -139,6 +148,11 @@ head worker-dispatch <project> --authorization <authorization-id> --role <non-he
 head worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
 head worker-execute <project> --authorization <authorization-id> --role <non-head-role>
 head worker-apply <project> --authorization <authorization-id>
+head worker-wave-create <project> --input <wave.json>
+head worker-wave-seal <project> --wave <bounded-worker-wave-id>
+head worker-wave-status <project> --wave <bounded-worker-wave-id>
+head worker-wave-wait <project> --wave <bounded-worker-wave-id>
+head worker-wave-abandon <project> --input <abandonment.json>
 head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```

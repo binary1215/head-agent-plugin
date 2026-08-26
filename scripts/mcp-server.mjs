@@ -31,6 +31,15 @@ import {
   readBoundedWorkerDispatch,
   waitForBoundedWorkerDispatch,
 } from "./lib/bounded-worker-dispatch.mjs";
+import {
+  abandonBoundedWorkerWave,
+  createBoundedWorkerWave,
+  readBoundedWorkerWave,
+  readBoundedWorkerWaveResults,
+  readBoundedWorkerWaveStatus,
+  sealBoundedWorkerWave,
+  waitForBoundedWorkerWave,
+} from "./lib/bounded-worker-wave.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -416,6 +425,107 @@ export const tools = [
         authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
       },
       required: ["project_root", "authorization_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_wave_create",
+    description: "Create one P3 grouping over 2-64 already-created bounded worker dispatches sharing the exact current Project/HEAD Session/Run/WholePlan/ExecutionContract/ContextCapsule lineage. It creates no authorization and widens no member scope.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        authorization_ids: { type: "array", minItems: 2, maxItems: 64, uniqueItems: true, items: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" } },
+      },
+      required: ["project_root", "authorization_ids"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_wave_read",
+    description: "Read and reverify one P3 worker wave, every member dispatch, current P2 lineage, and any create-only seal or abandonment evidence. This read cannot seal the wave.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        wave_id: { type: "string", pattern: "^bounded-worker-wave-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "wave_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_wave_seal",
+    description: "Create one P3 wave seal only after every independent member authorization has verified at-most-once lease consumption. A seal is not completion, review, or checkpoint integration.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        wave_id: { type: "string", pattern: "^bounded-worker-wave-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "wave_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_wave_status",
+    description: "Return one non-persisted P4 requested/started/returned/waiting/succeeded/failed projection. Status is observational and cannot create a seal, ReviewDecision, or recovery direction.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        wave_id: { type: "string", pattern: "^bounded-worker-wave-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "wave_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_wave_results",
+    description: "Read one non-persisted P4 aggregate of member result references after an explicit verified wave seal. It never applies ResultPackets or creates Fresh HEAD review.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        wave_id: { type: "string", pattern: "^bounded-worker-wave-[a-f0-9]{24}$" },
+      },
+      required: ["project_root", "wave_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_wave_wait",
+    description: "Boundedly observe one sealed wave as a non-persisted P5 outcome. Open or abandoned waves fail closed, and completion requires every member to succeed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        wave_id: { type: "string", pattern: "^bounded-worker-wave-[a-f0-9]{24}$" },
+        wait_timeout_ms: { type: "integer", minimum: 0, maximum: 600000, default: 0 },
+      },
+      required: ["project_root", "wave_id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_wave_abandon",
+    description: "Create one P3 non-success abandoned handoff for an unsealed wave using a bounded reason code and non-authoritative sanitized summary. This cannot create review or recovery direction.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        wave_id: { type: "string", pattern: "^bounded-worker-wave-[a-f0-9]{24}$" },
+        reason_code: { type: "string", enum: ["partial-launch", "lineage-drift", "operator-stop", "unrecoverable-member", "other"] },
+        reason_summary: { type: "string", maxLength: 256, default: "" },
+      },
+      required: ["project_root", "wave_id", "reason_code"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1066,6 +1176,20 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                     ? await waitForBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id, timeoutMs: args.wait_timeout_ms ?? 0 })
                   : name === "head_bounded_worker_apply_result"
                     ? applyBoundedWorkerDispatchResult({ root: args.project_root, authorizationId: args.authorization_id })
+                  : name === "head_bounded_worker_wave_create"
+                    ? createBoundedWorkerWave({ root: args.project_root, authorizationIds: args.authorization_ids })
+                  : name === "head_bounded_worker_wave_read"
+                    ? readBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id })
+                  : name === "head_bounded_worker_wave_seal"
+                    ? sealBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id })
+                  : name === "head_bounded_worker_wave_status"
+                    ? readBoundedWorkerWaveStatus({ root: args.project_root, waveId: args.wave_id })
+                  : name === "head_bounded_worker_wave_results"
+                    ? readBoundedWorkerWaveResults({ root: args.project_root, waveId: args.wave_id })
+                  : name === "head_bounded_worker_wave_wait"
+                    ? await waitForBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id, timeoutMs: args.wait_timeout_ms ?? 0 })
+                  : name === "head_bounded_worker_wave_abandon"
+                    ? abandonBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id, reasonCode: args.reason_code, reasonSummary: args.reason_summary || "" })
                   : name === "head_run_integrate_checkpoint"
                     ? integrateReviewedRunCheckpoint({
                         root: args.project_root,

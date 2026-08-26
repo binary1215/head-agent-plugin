@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.79+codex.20260826141239",
+  "version": "0.3.0-alpha.79+codex.20260826145549",
   "description": "Provider-neutral HEAD coordination for Claude Code, Codex, and OpenCode with reproducible Context Capsules and evidence-linked Execution Lineage contracts.",
   "author": {
     "name": "ccolt"
@@ -56,6 +56,10 @@
       "P3 Bounded Worker Dispatch Ownership",
       "P5 Bounded Worker Wait",
       "At-most-once Worker Authorization Consumption",
+      "Provider-neutral Bounded Worker Launch Waves",
+      "Create-only Verified Worker Wave Seals",
+      "Non-persisted Worker Wave Status and Result Projections",
+      "Bounded Worker Wave Wait and Abandonment Evidence",
       "Accepted Run Result Integration Checkpoint",
       "Hostless Resident HEAD Recovery Verification",
       "One-shot Run Result Integration Receipt",
@@ -175,6 +179,7 @@
       "Restore the exact current Session consumer input from verified artifacts without resuming a provider session.",
       "Restore P2 first, then optionally verify one exact live HEAD attachment; fall back to a disclosed fresh logical HEAD without persisting provider session identity.",
       "Dispatch one registered non-HEAD worker against an exact Run authorization, observe only P5 progress, and reject competing ownership or duplicate consumption.",
+      "Group already-dispatched same-lineage workers into a provider-neutral launch wave, seal only after verified independent lease consumption, and observe bounded status without treating completion as review or integration.",
       "Apply a completed actual-provider worker result only into ResultPacket plus Fresh HEAD review context before separate accept and checkpoint integration.",
       "After an accepted Fresh HEAD review, bind one reviewed Run result to one explicit recovery checkpoint without letting worker evidence author the next direction.",
       "Exchange durable role messages through a trusted host binding without allowing messages to replace ExecutionContracts, ReviewDecisions, or Product Canon.",

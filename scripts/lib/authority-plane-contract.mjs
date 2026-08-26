@@ -84,6 +84,9 @@ const ARTIFACT_PLANES = Object.freeze({
   RunResultIntegrationRequest: "P3",
   RunResultIntegrationReceipt: "P3",
   BoundedWorkerDispatch: "P3",
+  BoundedWorkerWave: "P3",
+  BoundedWorkerWaveSeal: "P3",
+  BoundedWorkerWaveAbandonment: "P3",
 
   GraphSnapshot: "P4",
   GraphDBProjection: "P4",
@@ -92,6 +95,8 @@ const ARTIFACT_PLANES = Object.freeze({
   MarkdownProjection: "P4",
   HEADContinuitySnapshot: "P4",
   SessionRestoreProjection: "P4",
+  WorkerWaveStatusProjection: "P4",
+  WorkerWaveResultProjection: "P4",
 
   ProcessId: "P5",
   ControlToken: "P5",
@@ -103,6 +108,7 @@ const ARTIFACT_PLANES = Object.freeze({
   ProviderSessionReference: "P5",
   ContinuationOutcome: "P5",
   BoundedWorkerWaitOutcome: "P5",
+  BoundedWorkerWaveWaitOutcome: "P5",
 });
 
 const ARTIFACT_PLANES_V01 = Object.freeze({

@@ -56,6 +56,14 @@ provider draft can become a ResultPacket only through the existing application
 gate, then requires Fresh HEAD review and explicit P2 integration. Dispatch and
 wait cannot write WholePlan, ReviewDecision, or checkpoint direction.
 
+A provider-neutral `BoundedWorkerWave` optionally groups 2-64 already-created
+dispatches for concise launch visibility. It stores no caller handle or provider/
+Herdr session topology, creates no authorization, and never shares a lease.
+Explicit seal requires verified consumption of every independent authorization;
+open-wave aggregate result read and wait fail closed. P4 status/results and P5
+wait cannot apply results or perform HF-010 integration. See
+[`bounded-worker-wave.md`](bounded-worker-wave.md).
+
 The separate current-host discovery composition uses a read-only `PlatformAdapter` to inspect absolute PATH entries for regular Claude Code, Codex, and OpenCode launcher candidates. It records only runtime name, availability, launcher kind, byte length, symlink/direct-spawn safety, and SHA-256 identities of the discovered and canonical paths. It never returns a raw path, environment value, command, argument, provider session, prompt, transcript, endpoint, credential, or process identity. A read-only `AgentRuntimeAdapter` binds each observation to one selected runtime, while the native-process `WorkspaceHostAdapter` reports only that its discovery boundary is present.
 
 On the current Windows host Claude Code, Codex, and OpenCode candidates are discovered through this boundary. The discovery composition still records:

@@ -40,6 +40,15 @@ import {
   readBoundedWorkerDispatch,
   waitForBoundedWorkerDispatch,
 } from "./lib/bounded-worker-dispatch.mjs";
+import {
+  abandonBoundedWorkerWave,
+  createBoundedWorkerWave,
+  readBoundedWorkerWave,
+  readBoundedWorkerWaveResults,
+  readBoundedWorkerWaveStatus,
+  sealBoundedWorkerWave,
+  waitForBoundedWorkerWave,
+} from "./lib/bounded-worker-wave.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
@@ -81,6 +90,13 @@ export function usage({ all = false } = {}) {
       "head worker-wait <project> --authorization <execution-authorization-id> [--wait-timeout-ms <0..600000>]",
       "head worker-execute <project> --authorization <execution-authorization-id> --role <developer|coder|reviewer>",
       "head worker-apply <project> --authorization <execution-authorization-id>",
+      "head worker-wave-create <project> --input <wave.json>",
+      "head worker-wave-read <project> --wave <bounded-worker-wave-id>",
+      "head worker-wave-seal <project> --wave <bounded-worker-wave-id>",
+      "head worker-wave-status <project> --wave <bounded-worker-wave-id>",
+      "head worker-wave-results <project> --wave <bounded-worker-wave-id>",
+      "head worker-wave-wait <project> --wave <bounded-worker-wave-id> [--wait-timeout-ms <0..600000>]",
+      "head worker-wave-abandon <project> --input <abandonment.json>",
       "head onboarding-start <project> [--input <onboarding.json>]",
       "head onboarding-status <project>",
       "head onboarding-review <project> --input <review.json>",
@@ -289,6 +305,28 @@ export function runCommand(argv = process.argv.slice(2)) {
     }));
   }
   if (command === "worker-apply") return applyBoundedWorkerDispatchResult({ root, authorizationId: options.authorization });
+  if (command === "worker-wave-create") {
+    const input = inputJson(options, "Bounded worker wave");
+    const unexpected = Object.keys(input).filter((key) => key !== "authorizationIds");
+    if (unexpected.length) throw new Error(`Bounded worker wave contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    return createBoundedWorkerWave({ root, authorizationIds: input.authorizationIds });
+  }
+  if (command === "worker-wave-read") return readBoundedWorkerWave({ root, waveId: options.wave });
+  if (command === "worker-wave-seal") return sealBoundedWorkerWave({ root, waveId: options.wave });
+  if (command === "worker-wave-status") return readBoundedWorkerWaveStatus({ root, waveId: options.wave });
+  if (command === "worker-wave-results") return readBoundedWorkerWaveResults({ root, waveId: options.wave });
+  if (command === "worker-wave-wait") return waitForBoundedWorkerWave({
+    root,
+    waveId: options.wave,
+    timeoutMs: options["wait-timeout-ms"] == null ? 0 : Number(options["wait-timeout-ms"]),
+  });
+  if (command === "worker-wave-abandon") {
+    const input = inputJson(options, "Bounded worker wave abandonment");
+    const allowed = new Set(["waveId", "reasonCode", "reasonSummary"]);
+    const unexpected = Object.keys(input).filter((key) => !allowed.has(key));
+    if (unexpected.length) throw new Error(`Bounded worker wave abandonment contains unsupported fields: ${unexpected.sort().join(", ")}`);
+    return abandonBoundedWorkerWave({ root, waveId: input.waveId, reasonCode: input.reasonCode, reasonSummary: input.reasonSummary || "" });
+  }
   if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
   if (command === "onboarding-status") return inspectOnboarding({ root });
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });

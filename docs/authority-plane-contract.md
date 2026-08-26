@@ -24,9 +24,9 @@ become an additional source of product meaning or recovery direction.
 |---|---|---|---|
 | P1 Normative Authority | approved product meaning, policy, and explicit decisions | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision | existence in a graph, message, result, or host cannot create approval |
 | P2 Canonical Recovery/Lineage Record | provider-independent recovery of Project, Session, Run, plan, context, contract, and next direction | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | evidence deletion or provider summary cannot rewrite checkpoint fields |
-| P3 Evidence Record | reviewable results, observations, candidates, claims, ownership records, and audit receipts | ResultPacket, WorkerReport, BoundedWorkerDispatch, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
-| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
-| P5 Operational Effect | host-local process, continuation, wait, and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, provider-session reference | successful continuation, waiting, delivery, or process control cannot authorize execution, review, promotion, or recovery |
+| P3 Evidence Record | reviewable results, observations, candidates, claims, ownership records, and audit receipts | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
+| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, WorkerWaveStatusProjection/ResultProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
+| P5 Operational Effect | host-local process, continuation, wait, and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, provider-session reference | successful continuation, waiting, delivery, or process control cannot authorize execution, review, promotion, or recovery |
 
 `scripts/lib/authority-plane-contract.mjs` emits one content-derived
 `AuthorityPlaneContract`, assigns the implemented artifacts above to exact planes,
@@ -113,6 +113,13 @@ at-most-once use and reports progress, but neither dispatch nor wait can alter t
 WholePlan or create a ReviewDecision. Only the resulting P3 ResultPacket reaches
 Fresh HEAD; explicit P1 review and the existing reviewed-result integration are
 still required before a new P2 checkpoint is written.
+
+`BoundedWorkerWave` may group multiple such dispatches only when their exact
+Project, HEAD Session, active Run, WholePlan, ExecutionContract, and Capsule
+lineage is identical. It grants no authorization and each lease remains
+independent. A P3 seal requires verified consumption for every member; P4 status
+cannot create that seal. Wave failure, completion, abandonment, result projection,
+and P5 wait cannot create P1 review or P2 recovery direction.
 
 The executable recovery test creates a ResultPacket, prepares a checkpoint,
 deletes the ResultPacket file, and verifies that the checkpoint still reproduces

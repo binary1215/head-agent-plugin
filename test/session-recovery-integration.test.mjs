@@ -306,10 +306,18 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("session-restore")), true);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("session-continue")), true);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("worker-dispatch")), true);
+  assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("worker-wave-create")), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_session_restore"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_session_continue"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_dispatch"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wait"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_create"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_read"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_seal"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_status"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_results"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_wait"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_abandon"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_run_integrate_checkpoint"), true);
 
   const integrated = await dispatch({

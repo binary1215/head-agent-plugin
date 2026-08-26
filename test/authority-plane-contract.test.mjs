@@ -38,11 +38,17 @@ test("freezes the five semantic authority planes separately from Distribution an
   assert.equal(artifactAuthorityBoundary("RunResultIntegrationRequest").planeId, "P3");
   assert.equal(artifactAuthorityBoundary("RunResultIntegrationReceipt").planeId, "P3");
   assert.equal(artifactAuthorityBoundary("BoundedWorkerDispatch").planeId, "P3");
+  assert.equal(artifactAuthorityBoundary("BoundedWorkerWave").planeId, "P3");
+  assert.equal(artifactAuthorityBoundary("BoundedWorkerWaveSeal").planeId, "P3");
+  assert.equal(artifactAuthorityBoundary("BoundedWorkerWaveAbandonment").planeId, "P3");
   assert.equal(artifactAuthorityBoundary("GraphSnapshot").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("SessionRestoreProjection").planeId, "P4");
+  assert.equal(artifactAuthorityBoundary("WorkerWaveStatusProjection").planeId, "P4");
+  assert.equal(artifactAuthorityBoundary("WorkerWaveResultProjection").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("CoordinationInbox").planeId, "P5");
   assert.equal(artifactAuthorityBoundary("ContinuationOutcome").planeId, "P5");
   assert.equal(artifactAuthorityBoundary("BoundedWorkerWaitOutcome").planeId, "P5");
+  assert.equal(artifactAuthorityBoundary("BoundedWorkerWaveWaitOutcome").planeId, "P5");
   verifyArtifactAuthorityBoundary("GraphSnapshot", artifactAuthorityBoundary("GraphSnapshot"));
   verifyArtifactAuthorityBoundary("ResultPacket", { ...artifactAuthorityBoundary("ResultPacket"), contractVersion: "0.1.0" });
 });
