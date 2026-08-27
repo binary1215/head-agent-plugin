@@ -2,14 +2,15 @@
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { coreContract, inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
-import { compileContext, CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
+import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
+import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
+import { previewContextWorkflow } from "./lib/context-workflow.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
 import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
 import { inspectOnboarding, reviewOnboarding } from "./lib/onboarding.mjs";
 import { inspectConversationalOnboarding } from "./lib/onboarding-conversation.mjs";
-import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
+import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
 import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
 import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
@@ -53,13 +54,14 @@ export const tools = [
   },
   {
     name: "head_project_status",
-    description: "Read canonical HEAD project and Session/Run status without modifying the project.",
+    description: "Read a bounded Core/Product readiness, next-action, capability, and Session/Run projection without modifying the project or activating any capability.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
       required: ["project_root"],
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_onboarding_guide",
@@ -277,13 +279,13 @@ export const tools = [
   },
   {
     name: "head_context_preview",
-    description: "Compile a deterministic Context Capsule and mechanically prove coverage of any HEAD-defined task evidence needs without writing project state.",
+    description: "Preview a deterministic Context Capsule plus a read-only World→EvidenceNeed→coverage→budget→HEAD-assessment workflow. It automatically retries fixed tiers up to 512K only for proven context-budget exclusion; it writes nothing, never invents EvidenceNeeds, and never judges semantic sufficiency.",
     inputSchema: {
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
         task: { type: "string", minLength: 1 },
-        budget: { type: "integer", enum: CONTEXT_BUDGET_TIERS, default: DEFAULT_CONTEXT_BUDGET, description: "Approximate-token hard-bound tier. Start at 32768 and let HEAD explicitly choose a larger tier only when the task needs it." },
+        budget: { type: "integer", enum: CONTEXT_BUDGET_TIERS, default: DEFAULT_CONTEXT_BUDGET, description: "Starting approximate-token tier for read-only preview. Matching evidence excluded by context-budget triggers deterministic retries through fixed tiers up to the 524288 hard maximum." },
         evidence_needs: {
           type: "array",
           maxItems: 32,
@@ -305,7 +307,8 @@ export const tools = [
       },
       required: ["project_root", "task"],
       additionalProperties: false
-    }
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_context_capsule",
@@ -1118,7 +1121,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
     const value = await (name === "head_core_contract"
       ? coreContract()
       : name === "head_project_status"
-        ? inspectProject(args.project_root)
+        ? inspectProjectExperience({ root: args.project_root })
       : name === "head_onboarding_guide"
         ? inspectConversationalOnboarding({ root: args.project_root, candidateLimit: args.candidate_limit ?? 25 })
       : name === "head_project_initialize_or_resume"
@@ -1159,7 +1162,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
         : name === "head_vcs_evidence"
           ? readVcsEvidence({ root: args.project_root, vcsEvidenceId: args.vcs_evidence_id })
         : name === "head_context_preview"
-          ? compileContext({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET, evidenceNeeds: args.evidence_needs || [], persist: false })
+          ? previewContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET, evidenceNeeds: args.evidence_needs || [] })
           : name === "head_context_capsule"
             ? readContextCapsule({ root: args.project_root, capsuleId: args.capsule_id })
             : name === "head_lineage_artifact"

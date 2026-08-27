@@ -98,7 +98,13 @@ function assertReadmeContract() {
     "head-agent world-docs-build",
     "head-agent resume",
     "--profile product",
-    "head_ready",
+    "core_ready",
+    "readiness.product",
+    "requires-active-run-authorization",
+    "evidence_needs_unassessed",
+    "world_refresh_required",
+    "ready_for_head_semantic_assessment",
+    "workflow.budget.attemptedTiers",
     "distribution.mjs uninstall",
     "head-agent-core@head-agent-plugin",
     "verify:claude-marketplace",
@@ -180,11 +186,16 @@ try {
   assert.equal(context.status, "preview");
   assert.equal("file" in context, false);
   assert.equal(context.capsule.productContext.length > 0, true);
+  assert.equal(context.workflow.budget.autoEscalates, true);
+  assert.equal(context.workflow.budget.requestedTier, 32768);
+  assert.equal(context.workflow.budget.attemptedTiers[0], 32768);
+  assert.equal(context.workflow.capsule.persisted, false);
   const documents = await runGlobal(["world-docs-build", projectRoot]);
   assert.equal(documents.status, "projected");
 
   const resumed = await runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode", "--profile", "product"]);
-  assert.equal(resumed.status, "ready");
+  assert.equal(resumed.status, "product_ready");
+  assert.equal(resumed.readiness.product.state, "ready");
   assert.equal(resumed.project.projectId, installed.project.project.projectId);
   assert.equal(resumed.project.sessionId, installed.project.project.sessionId);
   const distributionStatus = await runNode([

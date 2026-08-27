@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, compileContext, requireSufficientContextCapsule } from "../scripts/lib/context-compiler.mjs";
+import { previewContextWorkflow } from "../scripts/lib/context-workflow.mjs";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
@@ -90,6 +91,15 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
     params: { name: "head_context_preview", arguments: { project_root: root, task, budget: DEFAULT_CONTEXT_BUDGET, evidence_needs: evidenceNeeds } },
   });
   assert.equal(throughMcp.result.structuredContent.capsule.capsuleId, first.capsule.capsuleId);
+  assert.equal(throughMcp.result.structuredContent.workflow.status, "ready_for_head_semantic_assessment");
+  assert.equal(throughMcp.result.structuredContent.workflow.nextAction.id, "head_assess_semantic_sufficiency");
+  assert.equal(throughMcp.result.structuredContent.workflow.world.state, "current-verified");
+  assert.equal(throughMcp.result.structuredContent.workflow.budget.autoEscalates, true);
+  assert.equal(throughMcp.result.structuredContent.workflow.budget.autoEscalationPerformed, false);
+  assert.deepEqual(throughMcp.result.structuredContent.workflow.budget.attemptedTiers, [DEFAULT_CONTEXT_BUDGET]);
+  assert.equal(throughMcp.result.structuredContent.workflow.authority.judgesSemanticSufficiency, false);
+  assert.equal(throughMcp.result.structuredContent.workflow.authority.persistsCapsule, false);
+  assert.equal(Buffer.byteLength(JSON.stringify(throughMcp.result.structuredContent.workflow), "utf8") < 32 * 1024, true);
   assert.equal(first.capsule.coverageAssessment.status, "coverage-complete");
   assert.equal(first.capsule.coverageAssessment.mechanicalCoverageSatisfied, true);
   assert.equal(first.capsule.coverageAssessment.semanticAcceptance, "not-assessed-HEAD-owned");
@@ -112,6 +122,11 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   const noNeeds = compileContext({ root, task, budget: DEFAULT_CONTEXT_BUDGET, persist: false });
   assert.equal(noNeeds.capsule.coverageAssessment.status, "not-requested");
   assert.equal(noNeeds.capsule.sufficiency.status, "unassessed");
+  const guidedNoNeeds = previewContextWorkflow({ root, task, budget: DEFAULT_CONTEXT_BUDGET });
+  assert.equal(guidedNoNeeds.workflow.status, "evidence_needs_unassessed");
+  assert.equal(guidedNoNeeds.workflow.nextAction.id, "head_define_evidence_needs_or_explicitly_accept_none");
+  assert.equal(guidedNoNeeds.workflow.evidenceNeeds.owner, "HEAD");
+  assert.equal(guidedNoNeeds.workflow.authority.selectsEvidenceNeeds, false);
 
   const missingTestNeed = [{
     id: "asan-test-evidence",
@@ -126,6 +141,12 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   assert.equal(incomplete.capsule.coverageAssessment.unmetEvidenceNeeds[0].evidenceNeed.id, "asan-test-evidence");
   assert.equal(incomplete.capsule.coverageAssessment.unmetEvidenceNeeds[0].availableMatchCount, 0);
   assert.equal(incomplete.capsule.sufficiency.executionEligible, false);
+  const guidedGap = previewContextWorkflow({ root, task, budget: DEFAULT_CONTEXT_BUDGET, evidenceNeeds: missingTestNeed });
+  assert.equal(guidedGap.workflow.status, "evidence_gap_requires_head_action");
+  assert.equal(guidedGap.workflow.budget.nextEligibleTier, null);
+  assert.equal(guidedGap.workflow.budget.autoEscalationPerformed, false);
+  assert.equal(guidedGap.workflow.budget.autoEscalationStopReason, "non-budget-evidence-gap");
+  assert.equal(guidedGap.workflow.nextAction.id, "gather_evidence_or_revise_the_head_requirement");
   assert.throws(
     () => requireSufficientContextCapsule({ root, capsuleId: incomplete.capsule.capsuleId }),
     { code: "CONTEXT_CAPSULE_COVERAGE_INCOMPLETE" },
@@ -137,6 +158,113 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
     () => compileContext({ root, task, budget: DEFAULT_CONTEXT_BUDGET, evidenceNeeds: [{ id: "bad", kind: "repository-source", unexpected: true }] }),
     { code: "INVALID_EVIDENCE_NEEDS" },
   );
+});
+
+test("Context workflow guides World freshness without mutation or authority", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  const sourceFile = path.join(root, "src", "controller.mjs");
+  fs.writeFileSync(sourceFile, "export function control() { return true; }\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+
+  const repositoryNeed = [{ id: "controller-source", kind: "repository-source", facets: ["controller"] }];
+  const withoutWorld = previewContextWorkflow({ root, task: "Inspect controller source", evidenceNeeds: repositoryNeed });
+  assert.equal(withoutWorld.workflow.status, "world_evidence_unavailable");
+  assert.equal(withoutWorld.workflow.nextAction.id, "build_world_explicitly_or_revise_evidence_needs");
+  assert.equal(withoutWorld.workflow.budget.autoEscalationPerformed, false);
+  assert.equal(withoutWorld.workflow.budget.autoEscalationStopReason, "world-evidence-unavailable");
+  assert.equal(withoutWorld.workflow.authority.mutatesWorldModel, false);
+
+  await buildWorldModel({ root });
+  const pointerFile = path.join(root, ".head", "world-model", "current.json");
+  const pointerBefore = fs.readFileSync(pointerFile, "utf8");
+  const capsuleDirectory = path.join(root, ".head", "context", "capsules");
+  const capsulesBefore = fs.existsSync(capsuleDirectory) ? fs.readdirSync(capsuleDirectory).sort() : [];
+  fs.appendFileSync(sourceFile, "export const changed = true;\n");
+
+  const stale = previewContextWorkflow({ root, task: "Inspect controller source", evidenceNeeds: repositoryNeed });
+  assert.equal(stale.workflow.status, "world_refresh_required");
+  assert.equal(stale.workflow.world.state, "stale-excluded");
+  assert.equal(stale.workflow.nextAction.id, "refresh_world_explicitly");
+  assert.equal(stale.workflow.nextAction.mcpTool, null);
+  assert.equal(stale.workflow.budget.autoEscalationPerformed, false);
+  assert.equal(stale.workflow.budget.autoEscalationStopReason, "world-refresh-required");
+  assert.equal(stale.workflow.capsule.persisted, false);
+  assert.equal(fs.readFileSync(pointerFile, "utf8"), pointerBefore);
+  assert.deepEqual(fs.existsSync(capsuleDirectory) ? fs.readdirSync(capsuleDirectory).sort() : [], capsulesBefore);
+});
+
+test("Context workflow automatically retries only justified fixed budget tiers", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const knowledgeFile = path.join(root, ".head", "context", "knowledge.json");
+  const knowledge = JSON.parse(fs.readFileSync(knowledgeFile, "utf8"));
+  knowledge.claims = Array.from({ length: 20 }, (_, index) => ({
+    id: `claim-budget-${index}`,
+    statement: `Budget evidence ${index} ${"bounded context evidence ".repeat(420)}`,
+    status: "active",
+    importance: 5,
+    tags: ["budget"],
+    evidenceIds: [],
+  }));
+  fs.writeFileSync(knowledgeFile, `${JSON.stringify(knowledge, null, 2)}\n`);
+  const task = "Inspect all budget evidence claims";
+  const needs = [{ id: "budget-claims", kind: "claim", facets: ["budget"], minimumItems: 20 }];
+
+  const constrained = previewContextWorkflow({ root, task, budget: 32_768, evidenceNeeds: needs });
+  assert.equal(constrained.workflow.status, "ready_for_head_semantic_assessment");
+  assert.equal(constrained.workflow.budget.requestedTier, 32_768);
+  assert.equal(constrained.workflow.budget.currentTier, 65_536);
+  assert.equal(constrained.workflow.budget.nextEligibleTier, null);
+  assert.equal(constrained.workflow.budget.autoEscalates, true);
+  assert.equal(constrained.workflow.budget.autoEscalationPerformed, true);
+  assert.equal(constrained.workflow.budget.autoEscalationStopReason, "mechanical-coverage-complete");
+  assert.deepEqual(constrained.workflow.budget.attemptedTiers, [32_768, 65_536]);
+  assert.equal(constrained.workflow.budget.attempts[0].workflowStatus, "budget_expansion_required");
+  assert.equal(constrained.workflow.budget.attempts[1].workflowStatus, "ready_for_head_semantic_assessment");
+  assert.equal(constrained.capsule.budget.maxApproxTokens, 65_536);
+  assert.equal(fs.existsSync(path.join(root, ".head", "context", "capsules")), false);
+
+  const throughMcp = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "head_context_preview", arguments: { project_root: root, task, budget: 32_768, evidence_needs: needs } },
+  });
+  assert.equal(throughMcp.result.structuredContent.capsule.capsuleId, constrained.capsule.capsuleId);
+  assert.deepEqual(throughMcp.result.structuredContent.workflow.budget.attemptedTiers, [32_768, 65_536]);
+
+  const expanded = previewContextWorkflow({ root, task, budget: 65_536, evidenceNeeds: needs });
+  assert.equal(expanded.workflow.status, "ready_for_head_semantic_assessment");
+  assert.equal(expanded.workflow.budget.autoEscalationPerformed, false);
+  assert.deepEqual(expanded.workflow.budget.attemptedTiers, [65_536]);
+  assert.equal(expanded.workflow.budget.nextEligibleTier, null);
+  assert.equal(expanded.capsule.budget.maxApproxTokens, 65_536);
+
+  const oversizedClaims = Array.from({ length: 20 }, (_, index) => ({
+    id: `claim-ceiling-${index}`,
+    statement: `Ceiling evidence ${index} ${"bounded ceiling evidence ".repeat(5_200)}`,
+    status: "active",
+    importance: 5,
+    tags: ["ceiling"],
+    evidenceIds: [],
+  }));
+  knowledge.claims = oversizedClaims;
+  fs.writeFileSync(knowledgeFile, `${JSON.stringify(knowledge, null, 2)}\n`);
+  const ceiling = previewContextWorkflow({
+    root,
+    task: "Inspect all ceiling evidence claims",
+    budget: 32_768,
+    evidenceNeeds: [{ id: "ceiling-claims", kind: "claim", facets: ["ceiling"], minimumItems: 20 }],
+  });
+  assert.equal(ceiling.workflow.status, "evidence_gap_requires_head_action");
+  assert.equal(ceiling.workflow.budget.currentTier, 524_288);
+  assert.deepEqual(ceiling.workflow.budget.attemptedTiers, CONTEXT_BUDGET_TIERS);
+  assert.equal(ceiling.workflow.budget.autoEscalationPerformed, true);
+  assert.equal(ceiling.workflow.budget.autoEscalationStopReason, "hard-maximum-reached");
+  assert.equal(ceiling.workflow.budget.nextEligibleTier, null);
 });
 
 test("Context budget uses fixed approximate-token tiers from 32K through 512K", () => {

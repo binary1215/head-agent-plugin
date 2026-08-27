@@ -246,8 +246,62 @@ head-agent init C:\path\to\project --runtime claude,codex,opencode
 ```
 
 이 경로는 저장소를 인덱싱하거나 Product, World Model, Graph, 문서 거버넌스를
-시작하지 않고 `head_ready`를 반환합니다. 이 기능들은 명시적인 `product`
-프로필로 계속 사용할 수 있습니다.
+시작하지 않고 `core_ready`를 반환합니다. 같은 범위 제한 상태는 언제든 확인할
+수 있습니다.
+
+```powershell
+head-agent status C:\path\to\project
+```
+
+결과는 `readiness.core`와 `readiness.product`를 분리하고, 지금 수행할
+`nextAction` 하나와 실제 선행조건이 붙은 선택 기능 목록을 보여줍니다. 예를
+들어 Product는 `available-not-activated`, bounded worker는
+`requires-active-run-authorization`으로 표시됩니다. 이 결과는 저장되지 않는
+자문용 투영입니다. 읽는 것만으로 Product 활성화, Run 생성, 권한 부여 또는
+드리프트 복구가 일어나지 않습니다. `profile`도 숨은 프로젝트 모드가 아니라
+한 번의 초기화/재개 호출에서 선택하는 동작 범위입니다.
+
+최상위 상태는 바로 행동으로 연결됩니다. `core_ready`,
+`product_evidence_required`, `product_review_required`, `product_ready`,
+`product_refresh_required`, `core_drifted`를 사용하며, 세부 온보딩 상태는
+`readiness.product.onboardingStatus`에 그대로 남습니다.
+
+### World에서 Context까지 안내되는 미리보기
+
+대화에서는 typed `head_context_preview`를 사용하고, CLI에서는 같은 Core
+동작을 다음처럼 사용할 수 있습니다.
+
+```powershell
+head-agent context-preview C:\path\to\project `
+  --task "재시도에서도 이 작업 문구를 정확히 유지" `
+  --budget 32768 `
+  --evidence-needs .\evidence-needs.json
+```
+
+미리보기는 기존의 결정론적 Capsule 내용을 그대로 반환하면서, 작은 읽기 전용
+`workflow` 투영을 추가합니다. World Model이 current·미구축·stale 제외 중
+어느 상태인지, HEAD가 EvidenceNeed를 정의했는지, 실제 포함 coverage, 현재
+고정 예산 계층과 다음 행동 하나를 보여줍니다. 미리보기는 요청 계층에서
+시작하고, 일치 증거가 정확히 `context-budget` 때문에 제외된 경우에만 다음
+고정 계층으로 자동 재시도합니다. `workflow.budget.attempts`는 각 시도의
+계층·Capsule ID·coverage proof digest를 기록하고,
+`workflow.budget.attemptedTiers`는 시도한 계층을 요약합니다. 대표적인 최종
+상태는 다음과 같습니다.
+
+- `evidence_needs_unassessed`: HEAD가 작업에 필요한 증거 종류를 선택하거나
+  기계적 요구가 없다고 명시적으로 판단해야 합니다.
+- `world_evidence_unavailable` 또는 `world_refresh_required`: World 활성화,
+  인덱싱, 갱신은 별도의 명시적 동작으로 남습니다.
+- `evidence_gap_requires_head_action`: 증거 자체가 없으므로 더 큰 예산을
+  사용하지 않거나, 512K 하드 상한에서도 일치 증거가 모두 들어오지 않습니다.
+- `ready_for_head_semantic_assessment`: 포함 coverage는 완전하지만 의미적
+  충분성은 여전히 HEAD가 판단해야 합니다.
+
+안내 계층은 EvidenceNeed를 만들어내거나, World를 갱신하거나, 미리보기
+Capsule을 저장하거나, 실행 권한을 부여하거나, `coverage-complete`를 승인으로
+바꾸지 않습니다. 자동 확대는 32K·64K·128K·256K·512K 사이의 읽기 전용
+재시도일 뿐이며, 제공자 호출·무제한 컨텍스트 증가·충분성 판정이 아닙니다.
+재시도 사이의 정확한 task와 EvidenceNeed는 바뀌지 않습니다.
 
 ### 대화 우선 경로
 
@@ -368,9 +422,11 @@ Context Compiler는 명시적인 예산 안에서 작업과 관련된 증거를 
 컴파일러 버전, 탐색 정책, 예산은 동일한 Context Capsule을 재현합니다.
 
 예산은 결정론적인 근사 토큰 계층 다섯 개만 사용합니다. `32768`(기본값),
-`65536`, `131072`, `262144`, `524288`(하드 상한)입니다. 32K에서 시작하고
-작업에 더 많은 증거가 필요할 때만 HEAD가 더 큰 계층을 명시적으로
-선택합니다. 현재 값은 UTF-16 코드 단위 수를 4로 나눈 근사치이므로,
+`65536`, `131072`, `262144`, `524288`(하드 상한)입니다. 읽기 전용
+미리보기는 32K에서 시작하고, HEAD가 정의한 미충족 need의 일치 증거가
+`context-budget` 때문에 제외된 동안에만 다음 계층으로 자동 확대합니다.
+직접 컴파일과 Capsule 저장은 여전히 하나의 명시적 계층을 사용하며 512K를
+넘지 않습니다. 현재 값은 UTF-16 코드 단위 수를 4로 나눈 근사치이므로,
 실제 호출 전에는 런타임 어댑터가 제공자의 토크나이저, 컨텍스트 창,
 출력 예약분을 별도로 확인해야 합니다.
 

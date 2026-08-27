@@ -130,7 +130,7 @@ try {
   fs.mkdirSync(coreOnlyProjectRoot, { recursive: true });
   fs.writeFileSync(path.join(coreOnlyProjectRoot, "core.mjs"), "export const coordinated = true;\n", "utf8");
   const coreOnly = runGlobal(["init", coreOnlyProjectRoot, "--runtime", "codex"]);
-  assert.equal(coreOnly.status, "head_ready");
+  assert.equal(coreOnly.status, "core_ready");
   assert.equal(coreOnly.profile, "core");
   assert.equal(coreOnly.productGovernanceActivated, false);
   assert.equal(coreOnly.onboardingAction, "not-activated");
@@ -157,12 +157,12 @@ try {
 
   fs.mkdirSync(evidenceResumeProjectRoot, { recursive: true });
   const awaitingEvidence = runGlobal(["init", evidenceResumeProjectRoot, "--runtime", "codex", "--profile", "product"]);
-  assert.equal(awaitingEvidence.status, "awaiting_onboarding_evidence");
+  assert.equal(awaitingEvidence.status, "product_evidence_required");
   assert.equal(awaitingEvidence.onboarding.candidateCount, 0);
   fs.mkdirSync(path.join(evidenceResumeProjectRoot, "src"), { recursive: true });
   fs.writeFileSync(path.join(evidenceResumeProjectRoot, "src", "capture.mjs"), "export function captureDepthImage() { return true; }\n", "utf8");
   const resumedEvidence = runGlobal(["resume", evidenceResumeProjectRoot, "--runtime", "codex", "--profile", "product"]);
-  assert.equal(resumedEvidence.status, "awaiting_onboarding_review");
+  assert.equal(resumedEvidence.status, "product_review_required");
   assert.equal(resumedEvidence.onboardingAction, "resumed-analysis");
   assert.equal(resumedEvidence.project.projectId, awaitingEvidence.project.projectId);
   assert.equal(resumedEvidence.project.sessionId, awaitingEvidence.project.sessionId);

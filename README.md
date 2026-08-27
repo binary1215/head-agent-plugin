@@ -249,9 +249,65 @@ fixed Project/Session recovery anchors:
 head-agent init C:\path\to\project --runtime claude,codex,opencode
 ```
 
-It returns `head_ready` without indexing the repository or starting Product,
-World Model, Graph, or document governance. Those capabilities remain available
-through the explicit `product` profile.
+It returns `core_ready` without indexing the repository or starting Product,
+World Model, Graph, or document governance. The same bounded status is available
+at any time:
+
+```powershell
+head-agent status C:\path\to\project
+```
+
+The result separates `readiness.core` from `readiness.product`, names one
+`nextAction`, and lists optional capabilities with their real prerequisites.
+For example, Product appears as `available-not-activated`, while bounded workers
+appear as `requires-active-run-authorization`. This is a non-persisted advisory
+projection: reading it never activates Product, creates a Run, grants authority,
+or repairs drift. `profile` remains a choice for one initialize/resume operation,
+not a hidden project mode.
+
+Top-level status is deliberately actionable: `core_ready`,
+`product_evidence_required`, `product_review_required`, `product_ready`,
+`product_refresh_required`, or `core_drifted`. The exact lower-level onboarding
+state remains visible under `readiness.product.onboardingStatus`.
+
+### Guided World-to-Context preview
+
+Use the typed `head_context_preview` tool in conversation, or the same Core
+operation from the CLI:
+
+```powershell
+head-agent context-preview C:\path\to\project `
+  --task "Keep this exact task text across retries" `
+  --budget 32768 `
+  --evidence-needs .\evidence-needs.json
+```
+
+The preview still returns the deterministic Capsule content, and now adds a
+small read-only `workflow` projection. It reports whether the World Model is
+current, missing, or stale-excluded; whether HEAD has defined EvidenceNeeds;
+mechanical inclusion coverage; the current fixed budget tier; and one next
+action. The preview starts at the requested tier and automatically retries only
+when matching evidence was excluded specifically by `context-budget`. Every
+attempt in `workflow.budget.attempts` and summarizes the tiers in
+`workflow.budget.attemptedTiers`. Each attempt binds its tier, Capsule ID, and
+coverage-proof digest. Common final
+states are:
+
+- `evidence_needs_unassessed`: HEAD must choose task-required evidence kinds or
+  explicitly decide that no mechanical requirements are needed;
+- `world_evidence_unavailable` or `world_refresh_required`: World activation,
+  indexing, or refresh remains a separate explicit operation;
+- `evidence_gap_requires_head_action`: evidence is absent, so a larger budget is
+  not used, or matching evidence still does not fit at the 512K hard maximum;
+- `ready_for_head_semantic_assessment`: inclusion coverage is complete, but HEAD
+  must still judge semantic sufficiency.
+
+The guide never invents EvidenceNeeds, refreshes the World, persists the preview
+Capsule, grants execution authority, or converts `coverage-complete` into
+approval. Automatic expansion is a bounded read-only retry across the fixed
+32K, 64K, 128K, 256K, and 512K tiers—not a provider call, open-ended context
+growth, or a sufficiency judgment. The exact task and EvidenceNeeds remain
+unchanged across retries.
 
 ### Conversation-first path
 
@@ -373,8 +429,10 @@ The same canonical inputs, compiler version, traversal policy, and budget
 reproduce the same Context Capsule.
 
 Budgets use five deterministic approximate-token tiers: `32768` (default),
-`65536`, `131072`, `262144`, and `524288` (hard maximum). Start at 32K and let
-HEAD explicitly select a larger tier only when the task needs more evidence.
+`65536`, `131072`, `262144`, and `524288` (hard maximum). Read-only preview
+starts at 32K and advances automatically only while an unmet HEAD-owned need has
+matching evidence excluded by `context-budget`. Direct compilation and Capsule
+persistence still use one explicit tier, and 512K is never exceeded.
 These are compiler estimates, currently calculated as UTF-16 code units divided
 by four; the runtime adapter must still check the provider's actual tokenizer,
 context window, and output reserve before invocation.

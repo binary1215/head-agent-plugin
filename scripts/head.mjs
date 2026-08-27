@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { compileContext, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
+import { previewContextWorkflow } from "./lib/context-workflow.mjs";
 import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSnapshot, readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
@@ -26,7 +27,7 @@ import {
 import { executeRuntimeInvocation } from "./lib/runtime-one-shot-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
-import { initializeOrResumeProject } from "./lib/project-bootstrap.mjs";
+import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
@@ -254,7 +255,7 @@ export function runCommand(argv = process.argv.slice(2)) {
     profile: options.profile || "core",
     onboarding: options.input ? inputJson(options, "Project onboarding") : null,
   });
-  if (command === "status" || command === "doctor") return inspectProject(root);
+  if (command === "status" || command === "doctor") return inspectProjectExperience({ root });
   if (command === "runtime-adapters") return inspectRuntimeAdapters(root);
   if (command === "runtime-invocation-authorize") {
     const input = inputJson(options, "Runtime invocation authorization");
@@ -519,7 +520,7 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "run-review") return reviewRun({ ...inputJson(options, "ReviewDecision"), root });
   if (command === "run-integrate-checkpoint") return integrateReviewedRunCheckpoint({ ...inputJson(options, "Run result integration"), root });
   if (command === "run-integration-read") return readRunResultIntegration({ root, reviewDecisionId: options.review });
-  if (command === "context-preview") return compileContext({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options), persist: false });
+  if (command === "context-preview") return previewContextWorkflow({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options) });
   if (command === "context-compile") return compileContext({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options), persist: true });
   if (command === "context-read") return readContextCapsule({ root, capsuleId: options.capsule });
   if (command === "lineage-read") return readLineageArtifact({ root, artifactId: options.artifact });

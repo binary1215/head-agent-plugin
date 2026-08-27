@@ -60,6 +60,17 @@ or silently refreshes an already active Product profile. Onboarding input is
 rejected unless `product` is selected explicitly. Provider adapters may expose
 different optional capabilities, but no adapter may redefine these semantics.
 
+`profile` is therefore an operation choice, not persisted project mode. The
+read-only `HeadProjectExperienceProjection` reports Core readiness and Product
+readiness independently, chooses one actionable next step, and discloses the
+preconditions for Context compilation, durable Runs, bounded workers,
+compaction recovery, and provider invocation. It is bounded, non-persisted, and
+authority-free: inspection cannot activate a capability, repair a managed file,
+create a Run or ReviewDecision, consume a lease, or write recovery direction.
+CLI `status`/`doctor` and MCP `head_project_status` return the same projection.
+The verified onboarding status remains embedded so friendly guidance never
+replaces the canonical state machine.
+
 ## Onboarding authority plane
 
 Initialization creates a project-scoped HEAD Session record and a dormant
@@ -88,6 +99,15 @@ The managed manifest records SHA-256 digests. Canonical mutation stops when mana
 ## Context Compiler plane
 
 The Context Compiler sits between canonical project knowledge and HEAD execution. It compiles a bounded, reproducible `ContextCapsule`; it does not become a second authority.
+
+The `ContextWorkflowProjection` is a thin P4-style advisory view over one
+non-persisted preview. It connects verified World availability, HEAD-authored
+EvidenceNeeds, Compiler inclusion proof, fixed budget-tier options, and the next
+HEAD decision without changing any underlying artifact. It may repeat the same
+non-persisted compile at the next fixed tier only for a proven `context-budget`
+exclusion, recording every Capsule identity and proof. It never executes an
+external or mutating operation and never promotes coverage into semantic
+acceptance.
 
 ```text
 Canonical sources -> Snapshot -> ranking/budget -> ContextCapsule -> HEAD/Executor

@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.80+codex.20260827135311",
+  "version": "0.3.0-alpha.80+codex.20260827154109",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -25,6 +25,8 @@
     "capabilities": [
       "Small Provider-neutral HEAD Constitution",
       "Default Core and Explicit Product Profiles",
+      "Read-only Core and Product Readiness Guidance",
+      "Guided World to EvidenceNeed to Context Preview",
       "Skills",
       "MCP Tools",
       "Verified Git-backed Codex Marketplace Distribution",
@@ -151,6 +153,8 @@
     ],
     "defaultPrompt": [
       "Initialize or resume this project with the small provider-neutral HEAD core.",
+      "Inspect Core and Product readiness, the next action, and optional capability prerequisites without activating or authorizing anything.",
+      "Preview exact-task context, automatically expand fixed budget tiers only for proven context-budget exclusion, and distinguish mechanical coverage from HEAD-owned semantic sufficiency.",
       "Explicitly activate Product onboarding and prepare an evidence-linked candidate batch without changing Product Canon.",
       "Choose the lightest safe Observe, Session, Run, or Authority lane for this task.",
       "Preview minimum sufficient context for this exact task and report coverage separately from semantic sufficiency.",

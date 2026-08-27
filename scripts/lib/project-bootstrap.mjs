@@ -2,7 +2,7 @@ import { convergeProjectInstallation, initializeProject, inspectProject } from "
 import { inspectOnboarding, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 
-export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.2.0";
+export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.3.0";
 
 const PROJECT_PROFILES = new Set(["core", "product"]);
 
@@ -50,6 +50,236 @@ function onboardingSummary(inspected) {
   };
 }
 
+function productReadiness(status) {
+  const states = {
+    initialized: {
+      state: "not_activated",
+      status: "core_ready",
+      action: "work_directly",
+      summary: "The constitutional Core is ready. Use Product governance only when product meaning or governed projections are needed.",
+    },
+    migration_required: {
+      state: "migration_required",
+      status: "product_migration_required",
+      action: "resume_product_governance",
+      summary: "Core is ready, but legacy Product onboarding state must be migrated before Product governance can continue.",
+    },
+    awaiting_evidence: {
+      state: "evidence_required",
+      status: "product_evidence_required",
+      action: "provide_product_evidence",
+      summary: "Product governance is active and needs repository evidence or a bounded product brief.",
+    },
+    awaiting_review: {
+      state: "review_required",
+      status: "product_review_required",
+      action: "review_product_candidates",
+      summary: "Evidence-linked Product candidates are waiting for an explicit user ReviewDecision.",
+    },
+    revision_required: {
+      state: "review_required",
+      status: "product_review_required",
+      action: "review_product_candidates",
+      summary: "A revised Product candidate set is waiting for an explicit user ReviewDecision.",
+    },
+    rejected: {
+      state: "rejected",
+      status: "product_rejected",
+      action: "resume_product_governance",
+      summary: "The current Product candidate set was rejected. Core remains ready and Product governance may be resumed explicitly.",
+    },
+    ready: {
+      state: "ready",
+      status: "product_ready",
+      action: "work_with_product_context",
+      summary: "Core and the reviewed Product/World path are ready for task-scoped use.",
+    },
+    ready_world_changed: {
+      state: "refresh_required",
+      status: "product_refresh_required",
+      action: "refresh_product_world",
+      summary: "Reviewed Product Canon is preserved, but its derived World projection must be refreshed or reconciled.",
+    },
+  };
+  return states[status] || {
+    state: "inspection_required",
+    status: "product_inspection_required",
+    action: "inspect_product_governance",
+    summary: `Product governance reported an unrecognized state: ${status}.`,
+  };
+}
+
+function entrypoint(action) {
+  const entries = {
+    initialize_core: {
+      cli: "head-agent init <project> --runtime <runtimes>",
+      mcpTool: "head_project_initialize_or_resume",
+      mcpArguments: { profile: "core" },
+    },
+    review_managed_projection_drift: {
+      cli: "head-agent doctor <project>",
+      mcpTool: "head_project_status",
+      note: "Review each reported managed-file drift before choosing an explicit repair.",
+    },
+    work_directly: {
+      cli: "head-agent status <project>",
+      mcpTool: "head_project_status",
+      alternative: { mcpTool: "head_project_initialize_or_resume", mcpArguments: { profile: "product" } },
+    },
+    provide_product_evidence: {
+      cli: "head-agent resume <project> --profile product --input <onboarding.json>",
+      mcpTool: "head_project_initialize_or_resume",
+      mcpArguments: { profile: "product" },
+    },
+    review_product_candidates: {
+      cli: "head-agent onboarding-status <project>",
+      mcpTool: "head_onboarding_guide",
+    },
+    resume_product_governance: {
+      cli: "head-agent resume <project> --profile product",
+      mcpTool: "head_project_initialize_or_resume",
+      mcpArguments: { profile: "product" },
+    },
+    refresh_product_world: {
+      cli: "head-agent world-refresh <project>",
+      mcpTool: null,
+      note: "The current typed MCP surface is read-only for refresh state; use the explicit CLI mutation entrypoint.",
+    },
+    work_with_product_context: {
+      cli: "head-agent context-preview <project> --task <exact-task> --budget <tier>",
+      mcpTool: "head_context_preview",
+    },
+    inspect_product_governance: {
+      cli: "head-agent onboarding-status <project>",
+      mcpTool: "head_onboarding_guide",
+    },
+  };
+  return entries[action];
+}
+
+function capabilityGuide({ coreState, productState, runtimes = [] }) {
+  const coreAvailable = coreState === "ready";
+  const blocked = coreAvailable ? null : "blocked-until-core-ready";
+  return [
+    {
+      id: "direct-work",
+      availability: blocked || "available",
+      useWhen: "The task can be completed coherently in the current Project and Session without durable execution governance.",
+      entrypoint: "Use the active coding conversation; HEAD artifacts are not required for ordinary edits.",
+    },
+    {
+      id: "product-governance",
+      availability: blocked || (productState === "not_activated" ? "available-not-activated" : productState === "ready" ? "active-ready" : "active-action-required"),
+      useWhen: "The task needs reviewed product meaning, World/Graph evidence, or governed document projections.",
+      entrypoint: "head_project_initialize_or_resume profile=product, then head_onboarding_guide",
+    },
+    {
+      id: "context-compiler",
+      availability: blocked || "available-on-demand",
+      useWhen: "The exact task needs reproducible minimum-sufficient evidence or a durable Run Capsule.",
+      entrypoint: "head_context_preview",
+    },
+    {
+      id: "durable-run",
+      availability: blocked || "available-on-demand",
+      useWhen: "Execution is long, risky, review-sensitive, or must survive provider/context loss.",
+      entrypoint: "WholePlanSnapshot -> ExecutionContract + ContextCapsule -> ResultPacket -> Fresh HEAD review",
+    },
+    {
+      id: "bounded-workers",
+      availability: blocked || "requires-active-run-authorization",
+      useWhen: "Independent, bounded whole outcomes can run in parallel under one Whole-plan HEAD.",
+      entrypoint: "Create exact per-worker authorizations before dispatch or wave grouping.",
+    },
+    {
+      id: "compaction-recovery",
+      availability: blocked || "available-on-demand",
+      useWhen: "Direction must survive intentional compaction or provider replacement.",
+      entrypoint: "Prepare and verify an immutable checkpoint before one-shot continuation.",
+    },
+    {
+      id: "provider-runtime",
+      availability: blocked || "requires-capability-inspection-and-authorization",
+      useWhen: "A selected provider must execute an explicitly bounded Session or Run action.",
+      entrypoint: "head_runtime_adapters, then an exact ExecutionAuthorization",
+      selectedRuntimes: runtimes,
+    },
+  ];
+}
+
+function projectExperience(projectInspection, onboardingInspection = null) {
+  if (projectInspection.status === "not_initialized") {
+    const action = "initialize_core";
+    return {
+      kind: "HeadProjectExperienceProjection",
+      protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+      status: "not_initialized",
+      projectRoot: projectInspection.projectRoot,
+      readiness: {
+        core: { state: "not_initialized", managedProjectionDriftCount: 0 },
+        product: { state: "unavailable", governanceActivated: false, onboardingStatus: null },
+      },
+      nextAction: { id: action, summary: "Initialize the constitutional Core and one canonical Project/Session before using optional capabilities.", entrypoint: entrypoint(action) },
+      capabilities: capabilityGuide({ coreState: "not_initialized", productState: "unavailable" }),
+      authority: { advisoryOnly: true, persisted: false, mutatesProject: false, activatesCapabilities: false, grantsAuthorization: false },
+    };
+  }
+
+  const product = onboardingInspection ? productReadiness(onboardingInspection.status) : {
+    state: "inspection_blocked",
+    status: "core_drifted",
+    action: "review_managed_projection_drift",
+    summary: "Managed project projections have drifted. Product readiness is not inferred until Core integrity is restored.",
+  };
+  const coreState = projectInspection.status === "ready" ? "ready" : "drifted";
+  const action = coreState === "ready" ? product.action : "review_managed_projection_drift";
+  return {
+    kind: "HeadProjectExperienceProjection",
+    protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+    status: coreState === "ready" ? product.status : "core_drifted",
+    project: { ...projectInspection.project, sessionId: projectInspection.state.sessionId },
+    state: projectInspection.state,
+    drift: projectInspection.drift,
+    readiness: {
+      core: { state: coreState, managedProjectionDriftCount: projectInspection.drift.length },
+      product: {
+        state: product.state,
+        governanceActivated: onboardingInspection ? !["initialized", "migration_required"].includes(onboardingInspection.status) : null,
+        onboardingStatus: onboardingInspection?.status || null,
+      },
+    },
+    nextAction: {
+      id: action,
+      summary: coreState === "ready" ? product.summary : "Review managed-file drift before any mutating HEAD operation. No automatic repair is attempted.",
+      entrypoint: entrypoint(action),
+    },
+    capabilities: capabilityGuide({ coreState, productState: product.state, runtimes: projectInspection.project.runtimes }),
+    authority: { advisoryOnly: true, persisted: false, mutatesProject: false, activatesCapabilities: false, grantsAuthorization: false },
+  };
+}
+
+export function inspectProjectExperience({ root = "." } = {}) {
+  const project = inspectProject(root);
+  if (project.status !== "ready") return projectExperience(project);
+  return projectExperience(project, inspectOnboarding({ root }));
+}
+
+function bootstrapResponse({ root, profile, before, installation, onboardingAction, inputDisposition, inspected, extra = {} }) {
+  const experience = projectExperience(inspectProject(root), inspected);
+  return {
+    ...experience,
+    profile,
+    profileSemantics: "operation-choice-not-persisted-project-mode",
+    projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
+    installationAction: installation.status,
+    onboardingAction,
+    inputDisposition,
+    productGovernanceActivated: experience.readiness.product.governanceActivated,
+    onboarding: onboardingSummary(inspected),
+    ...extra,
+  };
+}
+
 export async function initializeOrResumeProject({ root = ".", pluginRoot, runtimes = null, profile: requestedProfile = "core", onboarding = null } = {}) {
   const profile = validateProfile(requestedProfile);
   const onboardingInput = validateOnboardingInput(onboarding);
@@ -80,22 +310,15 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   let current = inspectOnboarding({ root });
   if (profile === "core") {
     const productGovernanceActivated = !["initialized", "migration_required"].includes(current.status);
-    return {
-      status: "head_ready",
-      protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+    return bootstrapResponse({
+      root,
       profile,
-      projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
-      installationAction: installation.status,
       onboardingAction: productGovernanceActivated ? "preserved-existing-state" : "not-activated",
       inputDisposition: "not-applicable",
-      productGovernanceActivated,
-      project: {
-        projectId: current.sessionRecord.projectId,
-        sessionId: current.sessionRecord.sessionId,
-        runtimes: inspectProject(root).project.runtimes,
-      },
-      onboarding: onboardingSummary(current),
-    };
+      before,
+      installation,
+      inspected: current,
+    });
   }
 
   let onboardingAction;
@@ -103,45 +326,32 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     const started = await startOnboarding({ root, ...onboardingInput });
     onboardingAction = current.status === "initialized" || current.status === "migration_required" ? "started" : "resumed-analysis";
     const inspected = inspectOnboarding({ root });
-    return {
-      status: started.status,
-      protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+    return bootstrapResponse({
+      root,
       profile,
-      productGovernanceActivated: true,
-      projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
-      installationAction: installation.status,
       onboardingAction,
       inputDisposition: "applied",
-      project: {
-        projectId: inspected.sessionRecord.projectId,
-        sessionId: inspected.sessionRecord.sessionId,
-        runtimes: inspectProject(root).project.runtimes,
-      },
-      onboarding: onboardingSummary(inspected),
-    };
+      before,
+      installation,
+      inspected,
+      extra: { onboardingOperationStatus: started.status },
+    });
   }
 
   if (current.status === "awaiting_review" || current.status === "revision_required") {
     const refresh = await refreshOnboardingCandidates({ root });
     if (refresh.refreshed) {
       current = inspectOnboarding({ root });
-      return {
-        status: current.status,
-        protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+      return bootstrapResponse({
+        root,
         profile,
-        productGovernanceActivated: true,
-        projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
-        installationAction: installation.status,
         onboardingAction: "refreshed-stale-candidates",
         inputDisposition: Object.keys(onboardingInput).length ? "not-reapplied-to-existing-authority-state" : "not-required",
-        project: {
-          projectId: current.sessionRecord.projectId,
-          sessionId: current.sessionRecord.sessionId,
-          runtimes: inspectProject(root).project.runtimes,
-        },
-        onboarding: onboardingSummary(current),
-        previousCandidateSetId: refresh.previousCandidateSetId,
-      };
+        before,
+        installation,
+        inspected: current,
+        extra: { previousCandidateSetId: refresh.previousCandidateSetId },
+      });
     }
   }
 
@@ -149,20 +359,13 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   if (!resumableWithoutMutation.has(current.status)) {
     fail("PROJECT_BOOTSTRAP_STATE_UNSUPPORTED", `Unsupported onboarding resume status: ${current.status}`);
   }
-  return {
-    status: current.status,
-    protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+  return bootstrapResponse({
+    root,
     profile,
-    productGovernanceActivated: true,
-    projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
-    installationAction: installation.status,
     onboardingAction: current.status === "awaiting_review" || current.status === "revision_required" ? "review-required" : "already-ready",
     inputDisposition: Object.keys(onboardingInput).length ? "not-reapplied-to-existing-authority-state" : "not-required",
-    project: {
-      projectId: current.sessionRecord.projectId,
-      sessionId: current.sessionRecord.sessionId,
-      runtimes: inspectProject(root).project.runtimes,
-    },
-    onboarding: onboardingSummary(current),
-  };
+    before,
+    installation,
+    inspected: current,
+  });
 }

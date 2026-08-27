@@ -4,7 +4,7 @@
 
 Compile the minimum sufficient context for one task. This is context construction, not long-term memory recall and not a replacement for HEAD judgment. The budget is a hard bound, not evidence that the result is sufficient.
 
-Use only the deterministic approximate-token tiers `32768` (default), `65536`, `131072`, `262144`, and `524288` (hard maximum). Start at 32K; HEAD must explicitly choose a larger tier and the Compiler never auto-escalates. Because the current estimate is `ceil(UTF-16 code units / 4)`, the runtime adapter must verify actual provider-token fit and output reserve before invocation.
+Use only the deterministic approximate-token tiers `32768` (default), `65536`, `131072`, `262144`, and `524288` (hard maximum). The Compiler itself always receives one explicit tier and never changes it. The read-only preview wrapper starts at the caller's tier and deterministically retries the next fixed tier only while matching evidence was excluded by `context-budget`. Because the current estimate is `ceil(UTF-16 code units / 4)`, the runtime adapter must verify actual provider-token fit and output reserve before invocation.
 
 ```text
 Canonical sources and promoted knowledge
@@ -29,7 +29,20 @@ Canonical sources and promoted knowledge
 
 HEAD owns the whole outcome and determines whether the compiled world is sufficient. For each task, HEAD may define an explicit `EvidenceNeed[]` contract with evidence kind, facets, relation types, and minimum item counts. The compiler ranks and packages evidence, reserves budget for those declared needs, and proves only whether matching evidence was actually included. It must not infer required evidence kinds from what happens to exist in the repository and must not impose tests on every technical facet. It does not decide material product, policy, architecture, cost, workflow, or external action.
 
-Inspect `capsule.coverageAssessment` before consuming a Capsule. `not-requested` means HEAD supplied no mechanical evidence requirements; it is not a sufficiency judgment. For supplied needs, use a Capsule for consequential execution only when `status` is `coverage-complete` and `mechanicalCoverageSatisfied` is true, then make the separate HEAD-owned semantic acceptance decision. A `coverage-incomplete` Capsule remains a reproducible diagnostic: follow its unmet EvidenceNeeds through bounded expansion or recompile with an explicit larger budget. Never treat a full budget, a valid digest, successful persistence, or the deprecated `capsule.sufficiency` compatibility field as semantic sufficiency.
+Inspect `capsule.coverageAssessment` before consuming a Capsule. `not-requested` means HEAD supplied no mechanical evidence requirements; it is not a sufficiency judgment. For supplied needs, use a Capsule for consequential execution only when `status` is `coverage-complete` and `mechanicalCoverageSatisfied` is true, then make the separate HEAD-owned semantic acceptance decision. A `coverage-incomplete` Capsule remains a reproducible diagnostic: follow its unmet EvidenceNeeds through bounded expansion, gather missing evidence, or change HEAD's requirement only when the original requirement was wrong. Never treat a full budget, a valid digest, successful persistence, or the deprecated `capsule.sufficiency` compatibility field as semantic sufficiency.
+
+`head_context_preview` and CLI `context-preview` add a non-persisted
+`ContextWorkflowProjection` beside the unchanged Capsule. It exposes the exact
+task binding, verified/missing/stale-excluded World state, HEAD-owned
+EvidenceNeed authoring questions, mechanical coverage, fixed budget tiers,
+bounded attempt evidence, and one next action. The wrapper retries a larger tier
+only when matching evidence exists, was excluded specifically by
+`context-budget`, and fits a later allowed tier. It preserves the exact task and
+EvidenceNeeds and records each tier, Capsule ID, and coverage-proof digest.
+Missing evidence, a missing World, or a stale World never triggers expansion,
+and 512K is the hard stop. The projection cannot select EvidenceNeeds, mutate or
+refresh World, persist the preview, assess semantic sufficiency, grant
+authorization, create a ReviewDecision, or write recovery direction.
 
 The executor may request narrow expansion through `query_product_graph`, `query_semantic_graph`, `query_temporal_graph`, `expand_relationship`, `verify_claim`, `get_source`, `get_history`, or `explain_decision`. Product and temporal expansion must preserve relation, authority, freshness, confidence, depth, node, and edge bounds and record graph/query/result digests. ProductContext remains a derived view of user-owned Product Canon. Discoveries return as candidate knowledge. They become persistent only after evidence verification and appropriate authority approval.
 

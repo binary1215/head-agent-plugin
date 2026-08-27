@@ -63,6 +63,12 @@ The same rule applies in context and coordination:
 
 - a Capsule may include a bounded graph traversal only with false instruction and
   promotion authority;
+- the non-persisted ContextWorkflowProjection is advisory UX over one Capsule
+  preview rather than a new semantic artifact; it follows P4 non-amplification
+  constraints and may repeat the same read-only compile at the next fixed tier
+  only for proven `context-budget` exclusion, but cannot select EvidenceNeeds,
+  exceed 512K, invoke a provider, mutate state, assess semantic sufficiency,
+  grant authorization, or write recovery direction;
 - unreviewed candidates remain excluded from default traversal and compilation;
 - provider summaries, continuity views, inbox messages, and replies cannot change
   checkpoint fields or create a ReviewDecision;

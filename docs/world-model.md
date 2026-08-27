@@ -74,6 +74,15 @@ Repository file changes, product Git refs, semantic HEAD lifecycle state, and in
 
 The read-only MCP tool `head_world_model` performs the same complete snapshot digest, structure, and repository-freshness verification as `world-status`, but returns only a bounded `WorldModelStatusProjection`. The projection contains identities, digests, numeric counts, at most 20 paths per change class, non-active file samples, explicit omitted counts, and the omitted full snapshot's compact serialized byte length. It never returns the complete `snapshot`, physical snapshot paths, or unbounded freshness arrays. Its projection is capped at 512 KiB and the duplicated JSON-RPC text/structured MCP envelope is capped at 4 MiB; these are transport limits, not reduced verification or indexing limits. Use `head_world_query`, `head_temporal_graph`, `head_git_history`, or `head_runtime_state` for bounded detail, and the local `world-status` CLI only when a complete snapshot is operationally required.
 
+`head_context_preview` consumes this freshness boundary and reports it through a
+small non-persisted `ContextWorkflowProjection`. A missing or stale World is
+disclosed and excluded exactly as before; the workflow only explains the next
+explicit World operation. It may automatically repeat the same non-persisted
+compile at a later fixed tier for proven `context-budget` exclusion, but cannot
+build, refresh, or materialize the World, and it
+cannot turn World freshness into EvidenceNeed selection, semantic sufficiency,
+execution authorization, Product Canon, or recovery direction.
+
 `head_graph_projection_status` exposes graph-projection verification. `head_incremental_refresh_status` and `head_incremental_refresh_receipt` expose refresh freshness, ancestry, changes, and active-execution drift without mutation authority. `head_refresh_trigger_status` and `head_refresh_trigger_delivery` verify event batches, serialized delivery, and linked refresh evidence but cannot ingest events or start a watcher. `head_post_refresh_projection_status` and `head_post_refresh_projection_receipt` verify the effective policy and exact document outcome without changing either. `head_world_query` returns a bounded zero-to-three-hop heuristic semantic neighborhood. `head_temporal_graph` returns a deterministic allowlisted temporal traversal with graph/query/result digests through the current projection adapter, or a disclosed embedded-graph fallback when no projection exists. `head_git_history` performs a bounded query over verified current Git evidence. `head_runtime_state` performs a bounded query over verified point-in-time runtime observations. All semantic queries reject a stale index.
 
 ## Temporal provenance graph

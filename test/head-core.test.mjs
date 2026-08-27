@@ -77,7 +77,7 @@ import {
 } from "../scripts/lib/refresh-trigger.mjs";
 import { withRefreshWriterLease } from "../scripts/lib/refresh-writer-lease.mjs";
 import { inspectPostRefreshProjectionPolicy } from "../scripts/lib/post-refresh-projection.mjs";
-import { initializeOrResumeProject } from "../scripts/lib/project-bootstrap.mjs";
+import { initializeOrResumeProject, inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
 import {
   applyDocumentChangeReview,
   inspectDocumentChangeReviewStatus,
@@ -253,11 +253,25 @@ test("defaults to the constitutional core without activating Product or Graph go
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "index.mjs"), "export const ready = true;\n");
 
+  const absent = inspectProjectExperience({ root });
+  assert.equal(absent.status, "not_initialized");
+  assert.equal(absent.nextAction.id, "initialize_core");
+  assert.equal(absent.authority.mutatesProject, false);
+
   const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
-  assert.equal(first.status, "head_ready");
+  assert.equal(first.status, "core_ready");
   assert.equal(first.profile, "core");
+  assert.equal(first.profileSemantics, "operation-choice-not-persisted-project-mode");
   assert.equal(first.productGovernanceActivated, false);
   assert.equal(first.onboardingAction, "not-activated");
+  assert.deepEqual(first.readiness, {
+    core: { state: "ready", managedProjectionDriftCount: 0 },
+    product: { state: "not_activated", governanceActivated: false, onboardingStatus: "initialized" },
+  });
+  assert.equal(first.nextAction.id, "work_directly");
+  assert.equal(first.capabilities.find((item) => item.id === "product-governance").availability, "available-not-activated");
+  assert.equal(first.authority.activatesCapabilities, false);
+  assert.equal(first.authority.grantsAuthorization, false);
   assert.equal(first.onboarding.status, "initialized");
   assert.equal(first.onboarding.candidateSetId, null);
   assert.equal(first.onboarding.sourceSnapshotId, null);
@@ -266,10 +280,26 @@ test("defaults to the constitutional core without activating Product or Graph go
 
   const onboardingBeforeResume = fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8");
   const resumed = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
-  assert.equal(resumed.status, "head_ready");
+  assert.equal(resumed.status, "core_ready");
   assert.equal(resumed.project.projectId, first.project.projectId);
   assert.equal(resumed.project.sessionId, first.project.sessionId);
   assert.equal(fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8"), onboardingBeforeResume);
+
+  const projected = inspectProjectExperience({ root });
+  assert.equal(projected.status, "core_ready");
+  assert.equal(projected.state.sessionId, first.project.sessionId);
+  assert.equal(projected.capabilities.find((item) => item.id === "bounded-workers").availability, "requires-active-run-authorization");
+  assert.equal(fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8"), onboardingBeforeResume);
+  assert.equal(runCommand(["status", root]).status, "core_ready");
+  const mcpStatus = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: "project-experience-status",
+    method: "tools/call",
+    params: { name: "head_project_status", arguments: { project_root: root } },
+  });
+  assert.equal(mcpStatus.result.structuredContent.status, "core_ready");
+  assert.deepEqual(mcpStatus.result.structuredContent.readiness, projected.readiness);
+  assert.equal(Buffer.byteLength(JSON.stringify(mcpStatus.result.structuredContent), "utf8") < 64 * 1024, true);
 });
 
 test("requires an explicit product profile before applying onboarding input", async (t) => {
@@ -310,6 +340,8 @@ test("resume refreshes stale non-authoritative onboarding candidates without cha
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "capture.py"), "def capture_frame():\n    return True\n");
   const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product", onboarding: { mode: "existing" } });
+  assert.equal(first.status, "product_review_required");
+  assert.equal(first.nextAction.id, "review_product_candidates");
   assert.equal(first.onboarding.status, "awaiting_review");
   const firstSetId = first.onboarding.candidateSetId;
   const firstSourceSnapshotId = first.onboarding.sourceSnapshotId;
@@ -611,6 +643,13 @@ test("detects managed file drift and blocks canonical mutation", (t) => {
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
   fs.appendFileSync(path.join(root, "AGENTS.md"), "drift\n");
   assert.equal(inspectProject(root).status, "drifted");
+  const experience = inspectProjectExperience({ root });
+  assert.equal(experience.status, "core_drifted");
+  assert.equal(experience.readiness.product.state, "inspection_blocked");
+  assert.equal(experience.readiness.product.governanceActivated, null);
+  assert.equal(experience.nextAction.id, "review_managed_projection_drift");
+  assert.equal(experience.nextAction.entrypoint.note.includes("explicit repair"), true);
+  assert.equal(experience.capabilities.every((item) => item.availability === "blocked-until-core-ready"), true);
   assert.throws(() => createRecoveryCheckpoint({
     root,
     purpose: "must fail",

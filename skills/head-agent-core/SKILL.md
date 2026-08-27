@@ -47,6 +47,13 @@ If Product governance is already active, a core resume preserves it without
 refreshing, promoting, or deleting it. Enter the product profile explicitly to
 resume its state machine.
 
+After initialization, resume, compaction recovery, or provider replacement,
+call `head_project_status` before choosing a deeper mechanism. Read
+`readiness.core`, `readiness.product`, `nextAction`, and `capabilities`
+together. This projection is guidance only: never treat it as activation,
+authorization, review, or recovery direction. `profile` describes the current
+operation; do not infer a persisted active profile from it.
+
 ## Choose the lightest sufficient lane
 
 - **Observe**: read, explain, compare, or advise. Do not create durable HEAD
@@ -66,6 +73,18 @@ For context-sensitive work, call live `head_context_preview` first with the
 task text held byte-identical. Verify identity, freshness, evidence coverage,
 and semantic sufficiency separately. Persist a Capsule only when the Run or
 recovery boundary needs it.
+
+Read the returned `workflow` before consuming the Capsule. HEAD—not the tool—
+chooses task-required EvidenceNeeds. The read-only preview automatically retries
+the same task and EvidenceNeeds at the next fixed tier only when matching
+evidence was excluded by `context-budget`; inspect `attemptedTiers`, Capsule IDs,
+and coverage-proof digests. It stops on missing or stale World, genuinely missing
+evidence, coverage completion, or the 512K hard maximum. A
+`ready_for_head_semantic_assessment` result means mechanical inclusion is
+complete; make and state the separate HEAD-owned semantic judgment. The
+workflow is non-persisted advice and cannot activate Product, mutate World,
+persist a Capsule, authorize execution, review a result, or write recovery
+direction.
 
 For a durable Run, preserve this sequence:
 

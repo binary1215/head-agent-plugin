@@ -53,11 +53,18 @@ try {
     project_root: coreProjectRoot,
     runtimes: ["codex"],
   });
-  assert.equal(coreInitialized.status, "head_ready");
+  assert.equal(coreInitialized.status, "core_ready");
   assert.equal(coreInitialized.profile, "core");
   assert.equal(coreInitialized.productGovernanceActivated, false);
   assert.equal(coreInitialized.onboardingAction, "not-activated");
   assert.equal(coreInitialized.onboarding.candidateSetId, null);
+  assert.equal(coreInitialized.nextAction.id, "work_directly");
+  assert.equal(coreInitialized.capabilities.find((item) => item.id === "product-governance").availability, "available-not-activated");
+  const coreStatus = await tool("head_project_status", { project_root: coreProjectRoot });
+  assert.equal(coreStatus.status, "core_ready");
+  assert.equal(coreStatus.readiness.product.state, "not_activated");
+  assert.equal(coreStatus.authority.mutatesProject, false);
+  assert.equal(coreStatus.authority.activatesCapabilities, false);
 
   fs.mkdirSync(graphProjectRoot, { recursive: true });
   fs.writeFileSync(path.join(graphProjectRoot, "service.mjs"), "export function serve() { return true; }\n");
@@ -122,7 +129,8 @@ try {
     source_scope: { include_roots: [], exclude_roots: [] },
     storage: { mode: "local" },
   });
-  assert.equal(initialized.status, "awaiting_onboarding_review");
+  assert.equal(initialized.status, "product_review_required");
+  assert.equal(initialized.nextAction.id, "review_product_candidates");
   assert.equal(initialized.onboarding.candidateCount > 0, true);
 
   const reviewGuide = await tool("head_onboarding_guide", { project_root: projectRoot, candidate_limit: 200 });

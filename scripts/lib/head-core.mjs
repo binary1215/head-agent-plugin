@@ -466,6 +466,8 @@ export function coreContract() {
     "constitutional-core-default-profile",
     "explicit-product-governance-profile",
     "managed-installation-projection-convergence",
+    "read-only-core-product-readiness-projection",
+    "read-only-world-context-workflow-guidance",
     "conversation-guided-onboarding-projection",
     "mcp-project-initialize-resume",
     "mcp-explicit-onboarding-review",

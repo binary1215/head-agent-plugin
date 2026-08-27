@@ -46,6 +46,12 @@ HEAD itself. A core resume preserves any existing product state without
 refreshing or promoting it. Supplying onboarding input without explicitly
 selecting `product` fails closed.
 
+Profiles are per-operation choices, not persistent modes. A read-only readiness
+projection may explain Core and Product state, recommend a next action, and
+disclose optional capability prerequisites. That projection has no authority:
+it cannot activate Product, create execution lineage, grant authorization,
+repair drift, or write recovery direction.
+
 ## Records and graph boundary
 
 The graph records provenance *about* authoritative and evidentiary artifacts;
