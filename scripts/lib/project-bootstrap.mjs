@@ -2,7 +2,9 @@ import { convergeProjectInstallation, initializeProject, inspectProject } from "
 import { inspectOnboarding, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 
-export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.1.0";
+export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.2.0";
+
+const PROJECT_PROFILES = new Set(["core", "product"]);
 
 const ALLOWED_ONBOARDING_FIELDS = new Set(["mode", "storage", "brief", "sourceScope"]);
 
@@ -23,6 +25,14 @@ function validateOnboardingInput(value) {
   return source;
 }
 
+function validateProfile(value) {
+  const profile = value == null ? "core" : String(value).trim();
+  if (!PROJECT_PROFILES.has(profile)) {
+    fail("PROJECT_BOOTSTRAP_PROFILE_INVALID", `Project profile must be one of: ${[...PROJECT_PROFILES].join(", ")}.`);
+  }
+  return profile;
+}
+
 function onboardingSummary(inspected) {
   const latestReviewDecisionId = inspected.state.latestReviewDecisionId ?? inspected.state.reviewDecisionId ?? null;
   return {
@@ -40,8 +50,12 @@ function onboardingSummary(inspected) {
   };
 }
 
-export async function initializeOrResumeProject({ root = ".", pluginRoot, runtimes = null, onboarding = null } = {}) {
+export async function initializeOrResumeProject({ root = ".", pluginRoot, runtimes = null, profile: requestedProfile = "core", onboarding = null } = {}) {
+  const profile = validateProfile(requestedProfile);
   const onboardingInput = validateOnboardingInput(onboarding);
+  if (profile === "core" && Object.keys(onboardingInput).length) {
+    fail("PROJECT_BOOTSTRAP_PROFILE_REQUIRED", "Onboarding input requires the explicit product profile.");
+  }
   const before = inspectProject(root);
   let initialization;
   let installation;
@@ -64,6 +78,26 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   }
 
   let current = inspectOnboarding({ root });
+  if (profile === "core") {
+    const productGovernanceActivated = !["initialized", "migration_required"].includes(current.status);
+    return {
+      status: "head_ready",
+      protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+      profile,
+      projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
+      installationAction: installation.status,
+      onboardingAction: productGovernanceActivated ? "preserved-existing-state" : "not-activated",
+      inputDisposition: "not-applicable",
+      productGovernanceActivated,
+      project: {
+        projectId: current.sessionRecord.projectId,
+        sessionId: current.sessionRecord.sessionId,
+        runtimes: inspectProject(root).project.runtimes,
+      },
+      onboarding: onboardingSummary(current),
+    };
+  }
+
   let onboardingAction;
   if (["initialized", "migration_required", "awaiting_evidence", "rejected"].includes(current.status)) {
     const started = await startOnboarding({ root, ...onboardingInput });
@@ -72,6 +106,8 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     return {
       status: started.status,
       protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+      profile,
+      productGovernanceActivated: true,
       projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
       installationAction: installation.status,
       onboardingAction,
@@ -92,6 +128,8 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
       return {
         status: current.status,
         protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+        profile,
+        productGovernanceActivated: true,
         projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
         installationAction: installation.status,
         onboardingAction: "refreshed-stale-candidates",
@@ -114,6 +152,8 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   return {
     status: current.status,
     protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
+    profile,
+    productGovernanceActivated: true,
     projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
     installationAction: installation.status,
     onboardingAction: current.status === "awaiting_review" || current.status === "revision_required" ? "review-required" : "already-ready",

@@ -97,6 +97,8 @@ function assertReadmeContract() {
     "head-agent context-preview",
     "head-agent world-docs-build",
     "head-agent resume",
+    "--profile product",
+    "head_ready",
     "distribution.mjs uninstall",
     "head-agent-core@head-agent-plugin",
     "verify:claude-marketplace",
@@ -135,6 +137,7 @@ try {
     "--native", "off",
     "--project", projectRoot,
     "--runtime", "claude,codex,opencode",
+    "--profile", "product",
   ]);
   assert.equal(installed.status, "installed");
   assert.equal(installed.native.status, "javascript-fallback");
@@ -180,7 +183,7 @@ try {
   const documents = await runGlobal(["world-docs-build", projectRoot]);
   assert.equal(documents.status, "projected");
 
-  const resumed = await runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode"]);
+  const resumed = await runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode", "--profile", "product"]);
   assert.equal(resumed.status, "ready");
   assert.equal(resumed.project.projectId, installed.project.project.projectId);
   assert.equal(resumed.project.sessionId, installed.project.project.sessionId);

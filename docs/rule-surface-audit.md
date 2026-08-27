@@ -1,6 +1,6 @@
 # Rule surface audit
 
-Reviewed: 2026-08-20
+Reviewed: 2026-08-27
 
 This audit checks whether HEAD Agent Core retains only rules that protect a
 user-visible outcome or an authority boundary. A rule is retained only when it
@@ -28,6 +28,10 @@ and a condition under which it can be narrowed or removed.
 
 ## Subsystem and adapter-local rules
 
+- Project/Session initialization alone does not require Product onboarding,
+  repository indexing, Graph, Capsule, or ReviewDecision machinery. The `core`
+  profile is the public default; onboarding input must explicitly select the
+  `product` profile.
 - Onboarding alone requires evidence-linked candidates and an explicit batch
   ReviewDecision before Product Canon bootstrap.
 - Graph and document adapters alone require rebuildability, snapshot parity,
@@ -59,6 +63,8 @@ Session, Run, provider replacement, or Git/GraphDB-free core operation.
 
 - Removed the requirement to route every task through WholePlan, Capsule, Run,
   and Fresh HEAD; the risk-proportional lanes now own those costs.
+- Removed Product/World/Graph onboarding from the universal initialization path;
+  the optional product profile owns that cost and its review gates.
 - Removed Git commits/decision markers and GraphDB availability from semantic
   identity, recovery, and onboarding prerequisites.
 - Removed provider-session identity from HEAD Project, Session, and Run identity.

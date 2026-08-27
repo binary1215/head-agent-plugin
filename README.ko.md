@@ -238,19 +238,30 @@ head-agent doctor /path/to/project
 
 ## 첫 프로젝트
 
+기본 경로는 공급자 중립 HEAD 헌법과 고정 Project/Session 복구 앵커만
+초기화합니다.
+
+```powershell
+head-agent init C:\path\to\project --runtime claude,codex,opencode
+```
+
+이 경로는 저장소를 인덱싱하거나 Product, World Model, Graph, 문서 거버넌스를
+시작하지 않고 `head_ready`를 반환합니다. 이 기능들은 명시적인 `product`
+프로필로 계속 사용할 수 있습니다.
+
 ### 대화 우선 경로
 
 번들로 제공되는 `head-agent-onboarding` Skill이 권장 대화형 진입점입니다.
 현재 상태를 검사하고, 저장소 범위나 저장소 모드처럼 중요한 선택만 질문하며,
 증거가 연결된 후보를 제시하고, Product Canon 변경 전에 명시적인 검토를
-사용합니다.
+사용합니다. 이 Skill은 `product` 프로필을 명시적으로 선택합니다.
 
-### CLI 경로
+### 선택적 Product 프로필 CLI 경로
 
 동일한 프로젝트 및 HEAD Session 식별자를 초기화하거나 재개합니다.
 
 ```powershell
-head-agent init C:\path\to\project --runtime claude,codex,opencode
+head-agent init C:\path\to\project --runtime claude,codex,opencode --profile product
 head-agent onboarding-status C:\path\to\project
 ```
 
@@ -283,7 +294,7 @@ head-agent world-status C:\path\to\project
 head-agent context-preview C:\path\to\project `
   --task "검토된 Feature 하나의 구현 증거 찾기" --budget 32768
 head-agent world-docs-build C:\path\to\project
-head-agent resume C:\path\to\project --runtime claude,codex,opencode
+head-agent resume C:\path\to\project --runtime claude,codex,opencode --profile product
 ```
 
 `accept-all`은 전체 후보를 직접 확인한 경우 사용할 수 있지만 기본 권장
@@ -307,7 +318,7 @@ Unknown으로 남길 수 있습니다. 전체 계약은
 }
 ```
 
-`head-agent init ... --input .\onboarding.json`으로 전달합니다. Source Scope는
+`head-agent init ... --profile product --input .\onboarding.json`으로 전달합니다. Source Scope는
 관찰 범위만 제어합니다. Product Canon을 정의하거나 후보를 승인하거나 실행
 권한을 부여할 수 없습니다.
 
@@ -327,6 +338,9 @@ HEAD는 의미, 복구, 증거, 뷰, 효과를 분리하여 하나의 표현이 
 배포와 호스트 통합은 이 계약을 패키징하거나 실행할 뿐, 제품 의미의 여섯
 번째 원천이 되지 않습니다. 전체 실행 가능 경계는
 [권한 평면 문서](docs/authority-plane-contract.md)에 설명되어 있습니다.
+
+더 작은 규범적 뿌리와 Record/Graph의 공식 경계는
+[공급자 중립 HEAD 헌법](docs/head-constitution.md)에 설명되어 있습니다.
 
 ### 아키텍처 개요
 

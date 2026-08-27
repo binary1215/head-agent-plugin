@@ -73,8 +73,8 @@ export function parse(argv) {
 
 export function usage({ all = false } = {}) {
   const allCommands = [
-      "head init <project> [--runtime claude,codex,opencode] [--input <onboarding.json>]",
-      "head resume <project> [--runtime claude,codex,opencode] [--input <onboarding.json>]",
+      "head init <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>]",
+      "head resume <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>]",
       "head --version",
       "head status <project>",
       "head doctor <project>",
@@ -188,8 +188,8 @@ export function usage({ all = false } = {}) {
       "head lineage-read <project> --artifact <lineage-artifact-id>",
     ];
   const defaultCommands = [
-    "head init <project> [--runtime claude,codex,opencode] [--input <onboarding.json>]",
-    "head resume <project> [--runtime claude,codex,opencode] [--input <onboarding.json>]",
+    "head init <project> [--runtime claude,codex,opencode] [--profile core|product]  # core is the default",
+    "head resume <project> [--runtime claude,codex,opencode] [--profile core|product]  # product is explicit",
     "head status <project>",
     "head product-note <project> --input <note.json>",
     "head operating-lane-recommend <project> --input <risk.json>  # optional advisory",
@@ -251,6 +251,7 @@ export function runCommand(argv = process.argv.slice(2)) {
     root,
     pluginRoot,
     runtimes: options.runtime?.split(","),
+    profile: options.profile || "core",
     onboarding: options.input ? inputJson(options, "Project onboarding") : null,
   });
   if (command === "status" || command === "doctor") return inspectProject(root);

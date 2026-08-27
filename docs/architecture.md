@@ -42,9 +42,32 @@ alter Core identity, Product Canon, Session/Run recovery, or any authority plane
 [`codex-marketplace.md`](codex-marketplace.md) and
 [`claude-marketplace.md`](claude-marketplace.md).
 
+## Constitutional core and optional profiles
+
+The stable normative root is the small provider-neutral HEAD constitution in
+[`head-constitution.md`](head-constitution.md). P1-P5 is its executable internal
+type system, not a mandatory user ceremony. The public initialize/resume
+transaction exposes two profiles without creating separate project identities:
+
+- `core` is the default and establishes only the canonical Project, current
+  Session, managed runtime projections, and dormant optional-state pointers;
+- `product` explicitly activates or resumes evidence-linked onboarding and the
+  Product/World/Graph governance path.
+
+Both profiles use the same Core transaction, Project identity, Session identity,
+managed-install convergence, and authority contracts. Core resume never deletes
+or silently refreshes an already active Product profile. Onboarding input is
+rejected unless `product` is selected explicitly. Provider adapters may expose
+different optional capabilities, but no adapter may redefine these semantics.
+
 ## Onboarding authority plane
 
-Initialization creates a project-scoped HEAD Session record and an explicit onboarding pointer independently from provider conversations. Onboarding indexes the local World Model, derives bounded evidence-linked candidates from an existing project or structured brief, and presents one immutable batch. Candidate inference stays in the JavaScript control plane and has no instruction or promotion authority.
+Initialization creates a project-scoped HEAD Session record and a dormant
+onboarding pointer independently from provider conversations. Only the explicit
+`product` profile indexes the local World Model, derives bounded evidence-linked
+candidates from an existing project or structured brief, and presents one
+immutable batch. Candidate inference stays in the JavaScript control plane and
+has no instruction or promotion authority.
 
 Only a CLI-supplied `ReviewDecision` with `decisionScope: product-canon-bootstrap` may create a Product Canon revision. Acceptance records previous and next Product Model hashes, rebuilds a child SourceSnapshot, and verifies the temporal GraphSnapshot before the state pointer becomes ready. Revision creates a successor candidate set; rejection leaves canon unchanged. Immutable candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts are projected into the graph for audit, but the projection cannot decide or promote. Read-only MCP exposes verified state and bounded graph traversal but cannot review or promote.
 

@@ -242,19 +242,30 @@ explicit `--project` initialization step.
 
 ## First project
 
+The default path initializes only the provider-neutral HEAD constitution and its
+fixed Project/Session recovery anchors:
+
+```powershell
+head-agent init C:\path\to\project --runtime claude,codex,opencode
+```
+
+It returns `head_ready` without indexing the repository or starting Product,
+World Model, Graph, or document governance. Those capabilities remain available
+through the explicit `product` profile.
+
 ### Conversation-first path
 
 The bundled `head-agent-onboarding` Skill is the preferred interactive entry.
 It inspects the current state, asks only for material choices such as repository
 scope or storage mode, presents evidence-linked candidates, and uses explicit
-review before Product Canon changes.
+review before Product Canon changes. It selects the `product` profile explicitly.
 
-### CLI path
+### Optional Product profile CLI path
 
 Initialize or resume the same project and HEAD Session identities:
 
 ```powershell
-head-agent init C:\path\to\project --runtime claude,codex,opencode
+head-agent init C:\path\to\project --runtime claude,codex,opencode --profile product
 head-agent onboarding-status C:\path\to\project
 ```
 
@@ -287,7 +298,7 @@ head-agent world-status C:\path\to\project
 head-agent context-preview C:\path\to\project `
   --task "Find implementation evidence for one reviewed Feature" --budget 32768
 head-agent world-docs-build C:\path\to\project
-head-agent resume C:\path\to\project --runtime claude,codex,opencode
+head-agent resume C:\path\to\project --runtime claude,codex,opencode --profile product
 ```
 
 `accept-all` is supported for a fully inspected batch, but it is not the default
@@ -311,7 +322,7 @@ before the first index:
 }
 ```
 
-Pass it with `head-agent init ... --input .\onboarding.json`. Source Scope
+Pass it with `head-agent init ... --profile product --input .\onboarding.json`. Source Scope
 controls observation only; it cannot define Product Canon, approve a candidate,
 or grant execution authority.
 
@@ -331,6 +342,9 @@ representation cannot inherit another's authority.
 Distribution and host integrations package or execute these contracts; neither
 becomes a sixth source of product meaning. The complete executable boundary is
 documented in [Authority planes](docs/authority-plane-contract.md).
+
+The smaller normative root and the formal Record/Graph boundary are documented
+in [Provider-neutral HEAD constitution](docs/head-constitution.md).
 
 ### Architecture at a glance
 

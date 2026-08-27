@@ -19,6 +19,7 @@ const installRoot = path.join(scratchRoot, "user-data", "head-agent-core");
 const binDirectory = path.join(scratchRoot, "user-home", ".local", "bin");
 const upgradedSource = path.join(scratchRoot, "upgraded-source");
 const projectRoot = path.join(scratchRoot, "project-without-git-or-graphdb");
+const coreOnlyProjectRoot = path.join(scratchRoot, "core-only-project");
 const evidenceResumeProjectRoot = path.join(scratchRoot, "project-awaiting-evidence");
 const runtimeForbiddenMarkers = [
   ["ultimate", "goal"].join("_"),
@@ -97,6 +98,7 @@ try {
     "--native", "off",
     "--project", projectRoot,
     "--runtime", "claude,codex,opencode",
+    "--profile", "product",
   ]);
   assert.equal(installed.status, "installed");
   assert.equal(installed.version, sourceVersion);
@@ -125,11 +127,20 @@ try {
   assert.equal(version.status, 0, version.stderr || version.error?.message);
   assert.equal(JSON.parse(version.stdout).version, sourceVersion);
 
+  fs.mkdirSync(coreOnlyProjectRoot, { recursive: true });
+  fs.writeFileSync(path.join(coreOnlyProjectRoot, "core.mjs"), "export const coordinated = true;\n", "utf8");
+  const coreOnly = runGlobal(["init", coreOnlyProjectRoot, "--runtime", "codex"]);
+  assert.equal(coreOnly.status, "head_ready");
+  assert.equal(coreOnly.profile, "core");
+  assert.equal(coreOnly.productGovernanceActivated, false);
+  assert.equal(coreOnly.onboardingAction, "not-activated");
+  assert.equal(coreOnly.onboarding.candidateSetId, null);
+
   const projectBeforeResume = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "project.json"), "utf8"));
   const sessionBeforeResume = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "sessions", "current.json"), "utf8"));
   const onboardingStateFile = path.join(projectRoot, ".head", "onboarding", "current.json");
   const onboardingBeforeResume = fs.readFileSync(onboardingStateFile, "utf8");
-  const resumed = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode"]);
+  const resumed = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode", "--profile", "product"]);
   assert.equal(resumed.projectAction, "resumed");
   assert.equal(resumed.onboardingAction, "review-required");
   assert.equal(resumed.project.projectId, projectBeforeResume.projectId);
@@ -139,18 +150,18 @@ try {
   const managedOpenCodeFile = path.join(projectRoot, "opencode.json");
   const managedOpenCodeBeforeDrift = fs.readFileSync(managedOpenCodeFile, "utf8");
   fs.writeFileSync(managedOpenCodeFile, `${managedOpenCodeBeforeDrift}\nuser-edit`, "utf8");
-  const driftFailure = runGlobalFailure(["resume", projectRoot, "--runtime", "claude,codex,opencode"]);
+  const driftFailure = runGlobalFailure(["resume", projectRoot, "--runtime", "claude,codex,opencode", "--profile", "product"]);
   assert.equal(driftFailure.code, "PROJECT_NOT_READY");
   assert.equal(fs.readFileSync(managedOpenCodeFile, "utf8"), `${managedOpenCodeBeforeDrift}\nuser-edit`);
   fs.writeFileSync(managedOpenCodeFile, managedOpenCodeBeforeDrift, "utf8");
 
   fs.mkdirSync(evidenceResumeProjectRoot, { recursive: true });
-  const awaitingEvidence = runGlobal(["init", evidenceResumeProjectRoot, "--runtime", "codex"]);
+  const awaitingEvidence = runGlobal(["init", evidenceResumeProjectRoot, "--runtime", "codex", "--profile", "product"]);
   assert.equal(awaitingEvidence.status, "awaiting_onboarding_evidence");
   assert.equal(awaitingEvidence.onboarding.candidateCount, 0);
   fs.mkdirSync(path.join(evidenceResumeProjectRoot, "src"), { recursive: true });
   fs.writeFileSync(path.join(evidenceResumeProjectRoot, "src", "capture.mjs"), "export function captureDepthImage() { return true; }\n", "utf8");
-  const resumedEvidence = runGlobal(["resume", evidenceResumeProjectRoot, "--runtime", "codex"]);
+  const resumedEvidence = runGlobal(["resume", evidenceResumeProjectRoot, "--runtime", "codex", "--profile", "product"]);
   assert.equal(resumedEvidence.status, "awaiting_onboarding_review");
   assert.equal(resumedEvidence.onboardingAction, "resumed-analysis");
   assert.equal(resumedEvidence.project.projectId, awaitingEvidence.project.projectId);
@@ -184,6 +195,7 @@ try {
     "--native", "off",
     "--project", projectRoot,
     "--runtime", "claude,codex,opencode",
+    "--profile", "product",
   ]);
   assert.equal(upgraded.status, "upgraded");
   assert.notEqual(upgraded.releaseId, installed.releaseId);
@@ -196,7 +208,7 @@ try {
   assert.equal(rolledBack.status, "rolled-back");
   assert.equal(rolledBack.activeReleaseId, installed.releaseId);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).version, sourceVersion);
-  const resumedAfterRollback = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode"]);
+  const resumedAfterRollback = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode", "--profile", "product"]);
   assert.equal(resumedAfterRollback.installationAction, "converged");
   assert.equal(resumedAfterRollback.project.projectId, projectBeforeResume.projectId);
   assert.equal(fs.readFileSync(path.join(projectRoot, "opencode.json"), "utf8").includes(installed.releaseId), true);
@@ -222,6 +234,7 @@ try {
     liveProviderCoordinationVerifierPackaged: true,
     hostlessSessionRecoveryVerifierPackaged: true,
     publicInitializeResumeVerified: true,
+    constitutionalCoreDefaultVerified: true,
     runtimeDevelopmentContextExcluded: true,
     projectAuthorityDeduplicated: true,
     gitAndGraphDbIndependentOnboardingVerified: true,

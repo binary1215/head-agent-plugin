@@ -34,7 +34,7 @@ The reference establishes six portable principles that this plugin must retain:
 
 | Concern | Original HEAD Core | This plugin | Universal-plugin consequence |
 | --- | --- | --- | --- |
-| Runtime composition | A user-scoped OpenCode/Herdr installation with one loopback coordination daemon and exact pane/tab/session evidence | One provider-neutral Core with typed Codex and OpenCode adapters, a portable CLI/MCP surface, runtime-independent HEAD identities, an injected exact-endpoint WorkspaceHost contract, and a production host-export filesystem bridge | Provider replacement does not replace project meaning; the plugin generalizes endpoint identity and external-host delivery without embedding host-specific executable, socket, command, pane, or TUI knowledge, while the original still has the established installed-Herdr provider-client operating path |
+| Runtime composition | A user-scoped OpenCode/Herdr installation with one loopback coordination daemon and exact pane/tab/session evidence | One provider-neutral Core with typed Claude Code, Codex, and OpenCode adapters, a portable CLI/MCP surface, runtime-independent HEAD identities, an injected exact-endpoint WorkspaceHost contract, and a production host-export filesystem bridge | Provider replacement does not replace project meaning; the plugin generalizes endpoint identity and external-host delivery without embedding host-specific executable, socket, command, pane, or TUI knowledge, while the original still has the established installed-Herdr provider-client operating path |
 | Durable authority | Project-owned Session/Run canon plus host-owned task/message state | Git-independent Project, Session, Run, Product Canon, World Model, Context, Execution Lineage, and recovery artifacts | More semantic and execution state is portable across providers and storage backends |
 | Graph role | A retrieval index whose linked source files remain authoritative | An embedded content-addressed GraphSnapshot with local, GraphDB, and document projections that remain rebuildable and non-authoritative | Graph storage is optional and cannot become a hidden orchestrator or source of truth |
 | Product model | Product and policy definitions remain project-owned extensions | Strict user-owned Product Canon plus candidate/review boundaries and a Product Operating Loop | Product learning is integrated without allowing inference or outcomes to promote Canon |
@@ -134,15 +134,15 @@ plugin-directory publication also remain incomplete. These are extension gaps,
 not reasons to weaken authority separation, but they bound any superiority
 claim.
 
-The original author directly audited the earlier caller-fencing and recovery
-slices and reported no blocking correction. The later actual provider-client and
-hostless recovery evidence closed those prior scenario gaps. Claude Code now has
-the same deterministic one-shot authorization, lease, supervisor, result,
-compaction, and projection contracts. Its live model-call and already-running
-host round trips remain separate opt-in evidence gates. The current portable
-continuation, independently ownable worker, and Claude Code adapter slices still
-require one new direct audit of the exact pushed source before the three
-unconditional final superiority verdicts may be claimed.
+The original author directly audited exact pushed source `fd9ad3b` after the
+portable continuation, independently ownable worker, actual Codex/OpenCode host
+round trip, and criterion-resolution evidence were complete. That audit issued
+all three unconditional comparative verdicts with no blocking correction.
+Later Claude Code, bounded-wave, and constitutional-profile changes do not
+inherit that exact-source verdict automatically. Claude Code has the same
+deterministic one-shot authorization, lease, supervisor, result, compaction, and
+projection contracts, while its live model-call and already-running-host round
+trips remain separate opt-in evidence gates.
 
 ## Claim boundary for author review
 
@@ -153,56 +153,35 @@ The proposition to validate is narrow:
 > product-authority, graph, execution-lineage, and distribution foundation.
 
 The proposition is false if any mandatory everyday rule still lacks a protected
-outcome, if the new light path can bypass a user-owned authority transition, if
-the cache merges independent trust boundaries, or if an original portable Core
-responsibility was lost rather than relocated. It does not assert superiority
-for host-native coordination until actual Codex/OpenCode provider clients consume
-the host-export wake, complete the role-tool round trip, and pass original-author
-source audit.
+outcome, if the core default can bypass a user-owned authority transition, if a
+derived view becomes unique recovery or meaning, or if an original portable
+Core responsibility was lost rather than relocated. The already-audited verdict
+applies to `fd9ad3b`; every later source slice needs its own bounded audit.
 
 ## Original-author review outcome
 
-The text-only file-mail review concluded on 2026-08-20 after the author first
-withheld a broad superiority claim, named the missing comparison evidence, and
-then reviewed the supplied bilateral module inventory and execution receipts.
-The final response was `20260820T091221Z--scoped-foundation-breadth` to request
-`20260820T091129Z--bilateral-evidence-verdict`.
+The first file-mail verdict on 2026-08-20 was intentionally scope-limited. It
+accepted broader provider-neutral foundation coverage while withholding overall
+and philosophical superiority until live coordination, portable recovery, and
+worker ownership gaps were closed.
 
-The accepted comparison is deliberately scoped:
+Those gaps were subsequently implemented and audited in several exact-source
+rounds. In criterion-resolution reply
+`20260820T183022Z--completeness-criterion-resolution`, the original author ruled
+that artifact-owned P2 restore satisfies semantic HF-008, live attachment is an
+optional P5 continuity feature, provider resume/stream and Herdr-specific
+implementation are optional adapter capabilities, and one-OS live evidence plus
+portable Host contracts satisfy the portability criterion. For exact pushed
+source `fd9ad3baf8879bd4b92f18e1b9cf4562358d737e`, the final verdict was:
 
-> Given the cited modules and execution receipt, `head_core_origin/6e66771`
-> does not replace the original's OpenCode/Herdr live-coordination advantage,
-> but provides a broader shared-Core foundation for provider-neutral runtime
-> coverage, fixture-verified provider-replacement semantic recovery, and
-> integrated Git-independent product/change/execution evidence.
+- blocking correction: none;
+- philosophical superiority: yes;
+- overall completeness superiority: yes;
+- overall superiority: yes.
 
-The author classified this as a **scope-limited comparative advantage for
-universal provider-neutral plugin use**. The component verdict was:
-
-- provider coverage: yes;
-- provider replacement: partial, limited to the two real adapter/supervisor
-  paths exercised with protocol fixtures across a fresh process;
-- product/change/temporal implementation integrated into the shared release:
-  yes, broader than the original base release;
-- cross-platform distribution breadth: yes.
-
-This is not approval of overall superiority, philosophical superiority,
-OpenCode/Herdr-native completeness, or live provider-network replacement
-completeness. At the time of that verdict, the original remained stronger in
-Herdr workspace/pane/session fencing and live coordination delivery. Since then,
-the plugin has implemented the provider-neutral exact-endpoint contract and
-production host-export bridge described above and explicitly rejected an embedded
-Herdr-specific driver. A separate live host consumer passes, but no actual
-Codex/OpenCode provider-client coordination or new author verdict has yet replaced
-that historical conclusion. Graph non-authority,
-whole-outcome ownership,
-and candidate/review separation remain inherited standards, not dimensions in
-which this plugin claims to have improved the original philosophy.
-
-The receipt supporting the partial replacement verdict is
-`scripts/verify-provider-replacement-recovery.mjs`: Codex and OpenCode adapter
-and supervisor paths preserved the exact Project and HEAD Session identities
-across a fresh process, created a new authorization, recovered the replacement
-result from project artifacts, persisted no provider-session identity, and
-required neither Git nor GraphDB. It uses isolated protocol fixtures and does
-not claim a live provider-network handoff.
+This remains comparative advisory evidence, not a Product Canon ReviewDecision
+or project authority. It is also commit-scoped: later Claude Code, bounded worker
+wave, and default-core/profile changes require fresh source review before the
+verdict can be claimed for current `main`. The current implementation continues
+to exclude embedded Herdr-specific behavior; equivalent outcomes use the
+provider-neutral Host/runtime contracts or separately owned optional adapters.

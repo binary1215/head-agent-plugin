@@ -27,8 +27,8 @@ function parse(argv) {
 function usage() {
   return {
     commands: [
-      "distribution install [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime claude,codex,opencode --onboarding-input <json>]",
-      "distribution upgrade [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime claude,codex,opencode --onboarding-input <json>]",
+      "distribution install [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime claude,codex,opencode --profile core|product --onboarding-input <json>]",
+      "distribution upgrade [--source <plugin-source>] [--install-root <directory>] [--bin-dir <directory>] [--native auto|off|required] [--project <directory> --runtime claude,codex,opencode --profile core|product --onboarding-input <json>]",
       "distribution status [--install-root <directory>] [--bin-dir <directory>]",
       "distribution doctor [--install-root <directory>] [--bin-dir <directory>]",
       "distribution rollback [--install-root <directory>] [--bin-dir <directory>]",
@@ -48,8 +48,8 @@ export async function runDistributionCommand(argv = process.argv.slice(2)) {
   const common = { installRoot: options["install-root"], binDirectory: options["bin-dir"] };
   if (command === "help" || command === "--help" || command === "-h") return usage();
   if (command === "install" || command === "upgrade") {
-    if (!options.project && (options.runtime || options["onboarding-input"])) {
-      throw new Error("--runtime and --onboarding-input require --project.");
+    if (!options.project && (options.runtime || options.profile || options["onboarding-input"])) {
+      throw new Error("--runtime, --profile, and --onboarding-input require --project.");
     }
     const sourceRoot = path.resolve(options.source || path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."));
     const sourcePackage = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json"), "utf8"));
@@ -69,6 +69,7 @@ export async function runDistributionCommand(argv = process.argv.slice(2)) {
         root: options.project,
         pluginRoot: activePluginRoot,
         runtimes: options.runtime?.split(","),
+        profile: options.profile || "core",
         onboarding: readOnboardingInput(options["onboarding-input"]),
       });
       return { ...distribution, project };

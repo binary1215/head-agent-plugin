@@ -8,6 +8,7 @@ import { dispatch } from "./mcp-server.mjs";
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-conversation-"));
 const projectRoot = path.join(temporaryRoot, "sample-project");
 const graphProjectRoot = path.join(temporaryRoot, "graph-project");
+const coreProjectRoot = path.join(temporaryRoot, "core-project");
 
 async function tool(name, args) {
   const response = await dispatch({
@@ -46,10 +47,23 @@ try {
   assert.equal(graphDbActivateTool.inputSchema.additionalProperties, false);
   assert.equal(Object.keys(graphDbActivateTool.inputSchema.properties).some((key) => /password|username|credential|token/i.test(key)), false);
 
+  fs.mkdirSync(coreProjectRoot, { recursive: true });
+  fs.writeFileSync(path.join(coreProjectRoot, "core.mjs"), "export const coordinated = true;\n");
+  const coreInitialized = await tool("head_project_initialize_or_resume", {
+    project_root: coreProjectRoot,
+    runtimes: ["codex"],
+  });
+  assert.equal(coreInitialized.status, "head_ready");
+  assert.equal(coreInitialized.profile, "core");
+  assert.equal(coreInitialized.productGovernanceActivated, false);
+  assert.equal(coreInitialized.onboardingAction, "not-activated");
+  assert.equal(coreInitialized.onboarding.candidateSetId, null);
+
   fs.mkdirSync(graphProjectRoot, { recursive: true });
   fs.writeFileSync(path.join(graphProjectRoot, "service.mjs"), "export function serve() { return true; }\n");
   await tool("head_project_initialize_or_resume", {
     project_root: graphProjectRoot,
+    profile: "product",
     runtimes: ["codex"],
     mode: "existing",
     source_scope: { include_roots: [], exclude_roots: [] },
@@ -102,6 +116,7 @@ try {
 
   const initialized = await tool("head_project_initialize_or_resume", {
     project_root: projectRoot,
+    profile: "product",
     runtimes: ["claude", "codex", "opencode"],
     mode: "existing",
     source_scope: { include_roots: [], exclude_roots: [] },
@@ -170,6 +185,7 @@ try {
 
   const resumed = await tool("head_project_initialize_or_resume", {
     project_root: projectRoot,
+    profile: "product",
     runtimes: ["claude", "codex", "opencode"],
   });
   assert.equal(resumed.project.projectId, initialized.project.projectId);
@@ -178,6 +194,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     status: "conversational_onboarding_verified",
+    constitutionalCoreDefaultVerified: true,
     projectIdentityPreserved: true,
     sessionIdentityPreserved: true,
     explicitReviewRequired: true,

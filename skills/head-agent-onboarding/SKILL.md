@@ -22,7 +22,7 @@ for the normal path.
    represented by empty `include_roots`; never use `"."` as a root alias. A new
    project needs a structured brief. GraphDB selection needs endpoint, database,
    and environment variable reference names—never credential values.
-4. Call `head_project_initialize_or_resume`. Re-entry must resume the same HEAD
+4. Call `head_project_initialize_or_resume` with `profile: "product"`. Re-entry must resume the same HEAD
    Project and Session rather than inventing new identities.
 5. Call `head_onboarding_guide` again and follow its `nextAction`.
 
@@ -98,6 +98,7 @@ artifacts.
 ## Recovery fallback
 
 If the MCP server is unavailable, explain the failure and use the plugin's
-public `head-agent init`/`resume` plus `onboarding-review` CLI as an equivalent
+public `head-agent init`/`resume` with `--profile product` plus
+`onboarding-review` CLI as an equivalent
 recovery path. Do not construct a second onboarding implementation in prompts
 or files. CLI and MCP must preserve the same Core identities.

@@ -77,16 +77,17 @@ export const tools = [
   },
   {
     name: "head_project_initialize_or_resume",
-    description: "Initialize or resume exactly one HEAD project and project-scoped Session, converge managed plugin projections, and start or resume evidence-linked onboarding through the same Core transaction as the public CLI. This writes only the selected project and never contacts GraphDB.",
+    description: "Initialize or resume exactly one HEAD project and project-scoped Session, converge managed plugin projections, and optionally activate evidence-linked Product onboarding only through the explicit product profile. Core is the default. This writes only the selected project and never contacts GraphDB.",
     inputSchema: {
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
+        profile: { type: "string", enum: ["core", "product"], default: "core" },
         runtimes: {
-          type: "array", minItems: 1, maxItems: 2, uniqueItems: true,
+          type: "array", minItems: 1, maxItems: 3, uniqueItems: true,
           items: { type: "string", enum: ["claude", "codex", "opencode"] },
         },
-        mode: { type: "string", enum: ["existing", "new"], default: "existing" },
+        mode: { type: "string", enum: ["existing", "new"] },
         source_scope: {
           type: "object",
           properties: {
@@ -1125,6 +1126,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           root: args.project_root,
           pluginRoot,
           runtimes: args.runtimes || null,
+          profile: args.profile || "core",
           onboarding: onboardingInputFromMcp(args),
         })
       : name === "head_onboarding_review"

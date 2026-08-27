@@ -247,6 +247,41 @@ test("initializes Claude, Codex, and OpenCode projections and verifies managed c
   assert.equal(inspected.project.runtimes.join(","), "claude,codex,opencode");
 });
 
+test("defaults to the constitutional core without activating Product or Graph governance", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "index.mjs"), "export const ready = true;\n");
+
+  const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  assert.equal(first.status, "head_ready");
+  assert.equal(first.profile, "core");
+  assert.equal(first.productGovernanceActivated, false);
+  assert.equal(first.onboardingAction, "not-activated");
+  assert.equal(first.onboarding.status, "initialized");
+  assert.equal(first.onboarding.candidateSetId, null);
+  assert.equal(first.onboarding.sourceSnapshotId, null);
+  assert.equal(fs.existsSync(path.join(root, ".head", "project.json")), true);
+  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "current.json")), true);
+
+  const onboardingBeforeResume = fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8");
+  const resumed = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  assert.equal(resumed.status, "head_ready");
+  assert.equal(resumed.project.projectId, first.project.projectId);
+  assert.equal(resumed.project.sessionId, first.project.sessionId);
+  assert.equal(fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8"), onboardingBeforeResume);
+});
+
+test("requires an explicit product profile before applying onboarding input", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  await assert.rejects(
+    () => initializeOrResumeProject({ root, pluginRoot, onboarding: { mode: "existing" } }),
+    { code: "PROJECT_BOOTSTRAP_PROFILE_REQUIRED" },
+  );
+  assert.equal(fs.existsSync(path.join(root, ".head")), false);
+});
+
 test("rejects invalid source scope before project initialization mutates the target", async (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -258,6 +293,7 @@ test("rejects invalid source scope before project initialization mutates the tar
       root,
       pluginRoot,
       runtimes: ["codex"],
+      profile: "product",
       onboarding: {
         mode: "existing",
         sourceScope: { includeRoots: ["."], excludeRoots: [] },
@@ -273,13 +309,13 @@ test("resume refreshes stale non-authoritative onboarding candidates without cha
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "capture.py"), "def capture_frame():\n    return True\n");
-  const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], onboarding: { mode: "existing" } });
+  const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product", onboarding: { mode: "existing" } });
   assert.equal(first.onboarding.status, "awaiting_review");
   const firstSetId = first.onboarding.candidateSetId;
   const firstSourceSnapshotId = first.onboarding.sourceSnapshotId;
   fs.writeFileSync(path.join(root, "src", "calibration.py"), "def calibrate_camera():\n    return True\n");
 
-  const resumed = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const resumed = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product" });
   assert.equal(resumed.project.projectId, first.project.projectId);
   assert.equal(resumed.project.sessionId, first.project.sessionId);
   assert.equal(resumed.onboardingAction, "refreshed-stale-candidates");
@@ -291,7 +327,7 @@ test("resume refreshes stale non-authoritative onboarding candidates without cha
   assert.equal(inspectOnboarding({ root }).state.stateRevision, first.onboarding.stateRevision + 1);
 
   fs.rmSync(path.join(root, "src", "calibration.py"));
-  const returnedToFirstSource = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const returnedToFirstSource = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product" });
   assert.equal(returnedToFirstSource.onboardingAction, "refreshed-stale-candidates");
   assert.equal(returnedToFirstSource.previousCandidateSetId, successor.candidateSetId);
   const returnedWorld = readWorldModel({ root }).snapshot;
