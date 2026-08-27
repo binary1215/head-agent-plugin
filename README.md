@@ -2,7 +2,7 @@
 
 # HEAD Agent Core Plugin
 
-[English](README.md) | [한국어](README.ko.md)
+[English](README.md) | [한국어](README.ko.md) | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
 **Keep long-running AI development on one reviewed product direction<br>
 even when the tool, agent, or conversation changes.**
@@ -702,6 +702,11 @@ and
 for the original design context.
 
 ## Documentation
+
+Browse the [complete English documentation index](docs/README.md) or the
+[complete Korean documentation index](docs/ko/README.md). Every public English
+subsystem document has a Korean counterpart; code, command names, protocol
+identifiers, and artifact field names remain unchanged across languages.
 
 Start with these documents:
 

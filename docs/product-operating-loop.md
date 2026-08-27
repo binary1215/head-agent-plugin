@@ -1,6 +1,6 @@
 # Product Operating Loop
 
-Status: implemented minimal vertical with a relaxed everyday path in `0.3.0-alpha.66`.
+Status: implemented minimal vertical under Product Operating Loop protocol `0.2.0`, with digest-readable `0.1.0` compatibility.
 
 The Product Operating Loop connects product learning to reviewed execution without turning observations, model inference, GraphDB, or a continuity summary into HEAD or user authority.
 

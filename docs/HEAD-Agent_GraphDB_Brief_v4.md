@@ -4,6 +4,10 @@
 
 검토일: 2026-08-19
 
+현재성 경계: 이 문서는 검토일 당시의 참고자료 감사 기록이다. 현재 구현과
+계약은 `architecture.md`, `authority-plane-contract.md`, `world-model.md`,
+`graph-projection-adapter.md` 및 실행 가능한 테스트를 우선한다.
+
 원본: `HEAD-Agent_GraphDB_Brief_v4.pdf`, `HEAD-Agent_GraphDB_Brief_v4.pptx`
 
 ## 문서의 성격과 해석 경계

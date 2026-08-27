@@ -2,7 +2,7 @@
 
 # HEAD Agent Core Plugin
 
-[English](README.md) | **한국어**
+[English](README.md) | **한국어** | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
 **도구와 에이전트, 대화가 바뀌어도<br>
 AI 개발이 하나의 검토된 제품 방향으로 이어지게 합니다.**
@@ -56,8 +56,8 @@ AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으�
 우선합니다.
 
 이는 대화 내용이나 모델의 말투를 복원하는 기능이 아니라 작업 방향을 복원하는
-기능입니다. 자세한 내용은 [대화 압축 복구](docs/compaction-recovery.md)와
-[세션 복구](docs/session-recovery.md)를 참고하세요.
+기능입니다. 자세한 내용은 [대화 압축 복구](docs/ko/compaction-recovery.md)와
+[세션 복구](docs/ko/session-recovery.md)를 참고하세요.
 
 ### 작업에 필요한 만큼만 컨텍스트를 전달합니다
 
@@ -70,7 +70,7 @@ AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으�
 입력, 컴파일러 버전, 작업과 예산이 같으면 같은 식별자가 만들어지고, 정본이나
 다이제스트가 달라지면 재사용을 중단합니다. 이는 불필요한 잡음을 줄이고,
 에이전트 간 인수인계를 검토하기 쉽게 만들며, 저장소 전체를 프롬프트로 넣지
-않게 합니다. 자세한 내용은 [Context Compiler](docs/context-compiler.md)를
+않게 합니다. 자세한 내용은 [Context Compiler](docs/ko/context-compiler.md)를
 참고하세요.
 
 ### 무엇을 바꿨는지뿐 아니라 왜 바꿨는지 검토합니다
@@ -89,8 +89,8 @@ Git은 어떤 파일과 바이트가 바뀌었는지 보여줍니다. HEAD는 �
 실행 결과가 스스로를 승인할 수 없으며, 중요한 다음 Run은 검토가 끝날 때까지
 시작되지 않습니다. 나중에 유지보수자는 대화 기록이나 커밋 메시지를 추측하지
 않고도 목표, 허용 범위, 증거, 결정, 변경된 리비전과 다음 방향을 확인할 수
-있습니다. 자세한 내용은 [실행 계보](docs/execution-lineage.md)와
-[ChangeSet](docs/change-sets.md)을 참고하세요.
+있습니다. 자세한 내용은 [실행 계보](docs/ko/execution-lineage.md)와
+[ChangeSet](docs/ko/change-sets.md)을 참고하세요.
 
 ### 제품 의도를 코드와 테스트에 연결합니다
 
@@ -98,7 +98,7 @@ HEAD는 검토된 Feature와 Capability가 어떤 파일, 심볼, 테스트와 �
 근거가 연결된 관계 후보를 제안할 수 있습니다. 이후 정확한 변경 전후 리비전을
 비교해 검토 가능한 기능 영향 후보도 만들 수 있습니다. 추론 결과는 명시적으로
 검토되기 전까지 후보로 남으므로, 단순한 이름 일치가 제품 결정으로 바뀌지
-않습니다. 자세한 내용은 [Feature 매핑](docs/feature-mapping.md)을 참고하세요.
+않습니다. 자세한 내용은 [Feature 매핑](docs/ko/feature-mapping.md)을 참고하세요.
 
 ### 그 밖의 장점
 
@@ -355,7 +355,7 @@ head-agent resume C:\path\to\project --runtime claude,codex,opencode --profile p
 방식은 아닙니다. 검토에서는 의존성이 완전한 일부 후보를 승인하거나, 후보
 집합을 수정·거부하거나, 추가 증거를 요청하거나, 미해결 개념을 명시적인
 Unknown으로 남길 수 있습니다. 전체 계약은
-[온보딩 문서](docs/onboarding.md)를 참고하세요.
+[온보딩 문서](docs/ko/onboarding.md)를 참고하세요.
 
 ### 소스 범위
 
@@ -391,10 +391,10 @@ HEAD는 의미, 복구, 증거, 뷰, 효과를 분리하여 하나의 표현이 
 
 배포와 호스트 통합은 이 계약을 패키징하거나 실행할 뿐, 제품 의미의 여섯
 번째 원천이 되지 않습니다. 전체 실행 가능 경계는
-[권한 평면 문서](docs/authority-plane-contract.md)에 설명되어 있습니다.
+[권한 평면 문서](docs/ko/authority-plane-contract.md)에 설명되어 있습니다.
 
 더 작은 규범적 뿌리와 Record/Graph의 공식 경계는
-[공급자 중립 HEAD 헌법](docs/head-constitution.md)에 설명되어 있습니다.
+[공급자 중립 HEAD 헌법](docs/ko/head-constitution.md)에 설명되어 있습니다.
 
 ### 아키텍처 개요
 
@@ -470,8 +470,8 @@ P2 체크포인트와 검증된 계보에서 현재 입력을 재구성합니다
 4. `compact-continue`가 체크포인트에 연결된 일회용 토큰을 소비합니다.
 
 더 새로운 실제 사용자 턴은 대기 중인 연속성보다 우선합니다. 자세한 내용은
-[컨텍스트 압축 복구](docs/compaction-recovery.md)와
-[Session 복구](docs/session-recovery.md)를 참고하세요.
+[컨텍스트 압축 복구](docs/ko/compaction-recovery.md)와
+[Session 복구](docs/ko/session-recovery.md)를 참고하세요.
 
 ### 제품 학습
 
@@ -493,7 +493,7 @@ Signal → Hypothesis → Initiative 후보 → 사용자 ReviewDecision
 - Run: 서로 의존하거나 복구 민감한 작업
 - Authority: Canon, Initiative 결정, 외부 쓰기, 자격 증명 또는 복구 정본 변경
 
-자세한 내용은 [Product Operating Loop](docs/product-operating-loop.md)를
+자세한 내용은 [Product Operating Loop](docs/ko/product-operating-loop.md)를
 참고하세요.
 
 ## 그래프와 기록
@@ -570,8 +570,8 @@ Claude Code, Codex, OpenCode는 하나의 `.head/` 권한을 공유하는 프로
 속합니다. Core는 공급자 중립적인 엔드포인트, 프로젝트 루트, 최신 스냅샷,
 증명, 승인 응답, 정리 경계를 유지합니다. 일반적인 공급자 resume과 stream은
 여전히 보류되어 있습니다. 자세한 내용은
-[런타임 어댑터](docs/runtime-adapters.md)와
-[역할 통신](docs/role-coordination.md)을 참고하세요.
+[런타임 어댑터](docs/ko/runtime-adapters.md)와
+[역할 통신](docs/ko/role-coordination.md)을 참고하세요.
 
 ## 선택적 GraphDB
 
@@ -598,7 +598,7 @@ JavaScript 브리지가 의미적 기준 구현입니다. 검증된 네이티브
 폐쇄됩니다. 정확한 자식 프로세스에는 설정된 자격 증명 참조 변수와 제한된
 OS, TLS, 로캘, 프록시 허용 목록만 전달됩니다. 계산 워커 자체는 네트워크와
 권한을 갖지 않습니다. 자세한 내용은
-[그래프 프로젝션 어댑터](docs/graph-projection-adapter.md)를 참고하세요.
+[그래프 프로젝션 어댑터](docs/ko/graph-projection-adapter.md)를 참고하세요.
 
 ## 설치 수명주기
 
@@ -678,7 +678,7 @@ HEAD Agent Core Plugin은
 [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core)에서
 영감을 받아 공급자 중립적인 플러그인으로 독립 재구성한 프로젝트입니다.
 공식 업스트림 릴리스나 드롭인 대체재가 아닙니다. 자세한 내용은
-[소스 기반 비교 문서](docs/original-head-core-comparison.md)를 참고하세요.
+[소스 기반 비교 문서](docs/ko/original-head-core-comparison.md)를 참고하세요.
 
 이 구현은 HEAD의 기반 원칙을 유지하면서 공급자 중립적인 계약으로
 표현합니다.
@@ -699,31 +699,35 @@ HEAD Agent Core Plugin은
 
 ## 문서
 
+[전체 영문 문서 색인](docs/README.md)과 [전체 한국어 문서 색인](docs/ko/README.md)을
+제공합니다. 모든 공개 영문 하위 시스템 문서에는 한국어 대응본이 있으며, 코드,
+명령 이름, 프로토콜 식별자, 아티팩트 필드 이름은 두 언어에서 동일하게 유지합니다.
+
 다음 문서부터 살펴보세요.
 
-- [아키텍처](docs/architecture.md): 공급자 중립적 구성
-- [권한 평면](docs/authority-plane-contract.md): 실행 가능한 Graph/record 및
+- [아키텍처](docs/ko/architecture.md): 공급자 중립적 구성
+- [권한 평면](docs/ko/authority-plane-contract.md): 실행 가능한 Graph/record 및
   권한 비증폭 계약
-- [온보딩](docs/onboarding.md): 후보 추론과 명시적 검토
-- [Context Compiler](docs/context-compiler.md): 재현 가능한 작업 컨텍스트
-- [실행 계보](docs/execution-lineage.md): 계획, 계약, 결과, 검토, 복구
-- [World Model](docs/world-model.md): 소스 증거와 그래프 구성
-- [런타임 어댑터](docs/runtime-adapters.md): 기능, 호출, 프로세스 소유권
-- [성능 fast path](docs/performance-fast-path-design.md): 의미 또는 권한을
+- [온보딩](docs/ko/onboarding.md): 후보 추론과 명시적 검토
+- [Context Compiler](docs/ko/context-compiler.md): 재현 가능한 작업 컨텍스트
+- [실행 계보](docs/ko/execution-lineage.md): 계획, 계약, 결과, 검토, 복구
+- [World Model](docs/ko/world-model.md): 소스 증거와 그래프 구성
+- [런타임 어댑터](docs/ko/runtime-adapters.md): 기능, 호출, 프로세스 소유권
+- [성능 fast path](docs/ko/performance-fast-path-design.md): 의미 또는 권한을
   생략하지 않는 최적화
 
 추가 참고 문서:
 
-- [Product Model](docs/product-model.md)
-- [Product Operating Loop](docs/product-operating-loop.md)
-- [증분 갱신](docs/incremental-refresh.md)
-- [컨텍스트 압축 복구](docs/compaction-recovery.md)
-- [Session 복구](docs/session-recovery.md)
-- [역할 통신](docs/role-coordination.md)
-- [그래프 프로젝션 어댑터](docs/graph-projection-adapter.md)
-- [문서 프로젝션 어댑터](docs/document-projection-adapter.md)
-- [Codex 마켓플레이스 배포](docs/codex-marketplace.md)
-- [Claude Code 마켓플레이스 배포](docs/claude-marketplace.md)
+- [Product Model](docs/ko/product-model.md)
+- [Product Operating Loop](docs/ko/product-operating-loop.md)
+- [증분 갱신](docs/ko/incremental-refresh.md)
+- [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)
+- [Session 복구](docs/ko/session-recovery.md)
+- [역할 통신](docs/ko/role-coordination.md)
+- [그래프 프로젝션 어댑터](docs/ko/graph-projection-adapter.md)
+- [문서 프로젝션 어댑터](docs/ko/document-projection-adapter.md)
+- [Codex 마켓플레이스 배포](docs/ko/codex-marketplace.md)
+- [Claude Code 마켓플레이스 배포](docs/ko/claude-marketplace.md)
 
 설치된 동작은 이 런타임 계약, 대상 프로젝트의 사용자 소유 Canon, 현재
 Session/Run 복구 상태, 명시적인 ReviewDecision의 지배를 받습니다. 저장소

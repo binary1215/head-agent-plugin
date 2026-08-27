@@ -15,7 +15,7 @@ Initialization now creates:
 - an immutable local-default `OnboardingStorageSelection`;
 - the empty user-owned `.head/context/product-model.json` canon.
 
-The HEAD Session identity is independent from Codex, OpenCode, and other provider conversation IDs. Older initialized projects report `migration_required` through read-only inspection. The next mutating onboarding command creates the missing Session record, local storage selection, and state pointer while preserving the existing Session ID and Product Model identity.
+The HEAD Session identity is independent from Claude Code, Codex, OpenCode, and all other provider conversation IDs. Older initialized projects report `migration_required` through read-only inspection. The next mutating onboarding command creates the missing Session record, local storage selection, and state pointer while preserving the existing Session ID and Product Model identity.
 
 State-pointer protocol `0.2.0` names the most recent decision as
 `latestReviewDecisionId`. Digest-valid `0.1.0` pointers whose compatibility field

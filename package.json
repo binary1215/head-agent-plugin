@@ -1,6 +1,6 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.80+codex.20260827154109",
+  "version": "0.3.0-alpha.80+codex.20260827163355",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
@@ -24,6 +24,7 @@
     "verify:distribution": "node scripts/verify-distribution-lifecycle.mjs",
     "verify:native-delivery": "node scripts/verify-native-artifact-delivery.mjs",
     "verify:newcomer": "node scripts/verify-newcomer-readme.mjs",
+    "verify:docs": "node test/verify-documentation-localization.mjs",
     "verify:conversational-onboarding": "node scripts/verify-conversational-onboarding.mjs",
     "verify:graphdb-sync": "node scripts/verify-arcadedb-incremental-sync.mjs",
     "build:codex-marketplace": "node scripts/build-codex-marketplace.mjs",

@@ -2,6 +2,12 @@
 
 Reviewed: 2026-08-20
 
+Status: historical source comparison. Later Claude Code support, constitutional
+profile defaults, bounded worker waves, readiness UX, and automatic fixed-tier
+Context preview expansion are not part of the reviewed source slice and must be
+evaluated from the current architecture and executable tests rather than inferred
+from this document.
+
 This document compares the extracted `Won6314/head-agent-core` reference with
 this provider-neutral plugin. It records design lineage, adopted corrections,
 and the remaining limits of a claim that this plugin is preferable for
@@ -45,8 +51,8 @@ The reference establishes six portable principles that this plugin must retain:
 ## Strict surfaces narrowed from the earlier plugin design
 
 The original design rejects permanent machinery that has not earned its
-coordination, context, or maintenance cost. The alpha.66 implementation applies
-that correction at executable boundaries:
+coordination, context, or maintenance cost. The source slice reviewed at
+alpha.66 applied that correction at executable boundaries:
 
 - `ProductLearningNote` keeps an observation, hypothesis, or inferred meaning
   ephemeral by default. It has no content identity, graph node, persistence, or
