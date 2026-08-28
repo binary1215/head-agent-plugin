@@ -29,6 +29,8 @@ if (providedRoot) {
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, "test")), false);
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, "node_modules")), false);
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, ".git")), false);
+    assert.equal(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "LICENSE"), "utf8").startsWith("MIT License\n"), true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".claude-plugin", "plugin.json"), "utf8")).license, "MIT");
 
     const unexpectedDirectory = path.join(snapshotRoot, "plugins", built.pluginName, "unexpected-empty-directory");
     fs.mkdirSync(unexpectedDirectory);
@@ -89,6 +91,7 @@ if (providedRoot) {
       credentialInputsAccepted: false,
       sourceAllowlistOnly: true,
       authorityEffect: "none",
+      mitLicensePackaged: true,
     }, null, 2)}\n`);
   } finally {
     const resolvedTemporaryRoot = path.resolve(temporaryRoot);

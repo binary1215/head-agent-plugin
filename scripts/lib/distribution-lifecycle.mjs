@@ -9,6 +9,7 @@ const DISTRIBUTION_PROTOCOL = "0.1.0";
 const INCLUDE_ENTRIES = [
   ".codex-plugin",
   ".mcp.json",
+  "LICENSE",
   "README.md",
   "README.ko.md",
   "assets",
@@ -160,6 +161,19 @@ function validateSource(sourceRoot) {
   const pkg = readJson(packageFile, "HEAD_DISTRIBUTION_PACKAGE_INVALID");
   if (!plugin.version || plugin.version !== pkg.version) {
     fail("HEAD_DISTRIBUTION_VERSION_MISMATCH", "Plugin and package versions must match.");
+  }
+  if (!plugin.license || plugin.license !== pkg.license) {
+    fail("HEAD_DISTRIBUTION_LICENSE_MISMATCH", "Plugin and package license identifiers must match.");
+  }
+  const licenseFile = path.join(sourceRoot, "LICENSE");
+  if (!fs.existsSync(licenseFile)) {
+    fail("HEAD_DISTRIBUTION_LICENSE_MISSING", "Source must contain its declared LICENSE file.");
+  }
+  if (plugin.license === "MIT") {
+    const licenseText = fs.readFileSync(licenseFile, "utf8");
+    if (!licenseText.startsWith("MIT License\n") || !licenseText.includes("Permission is hereby granted, free of charge")) {
+      fail("HEAD_DISTRIBUTION_LICENSE_INVALID", "The declared MIT license text is invalid.");
+    }
   }
   return { plugin, pkg };
 }

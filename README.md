@@ -11,7 +11,7 @@ Recover safely after compaction. Give each task only the context it needs.
 Keep the reason behind every accepted change.
 
 [![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
-![Status](https://img.shields.io/badge/status-alpha-orange)
+![Status](https://img.shields.io/badge/status-beta-blue)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
 
@@ -759,6 +759,10 @@ integrity verification.
 
 ## Status and licensing
 
-HEAD Agent Core Plugin is alpha software. The repository remains `UNLICENSED`
-until an explicit distribution license is selected. Public source availability
-alone does not grant redistribution or derivative-use rights.
+HEAD Agent Core Plugin is beta software: the provider-neutral constitutional
+Core, recovery, Context Compiler, execution lineage, local projections, bounded
+workers, and verified Codex/Claude distribution are ready for broader testing.
+Capabilities marked Experimental, Planned, or Deferred above remain outside
+that beta claim.
+
+This project is released under the [MIT License](LICENSE).

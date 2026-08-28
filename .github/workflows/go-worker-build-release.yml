@@ -78,6 +78,7 @@ on:
       - "docs/**"
       - "package.json"
       - ".codex-plugin/plugin.json"
+      - "LICENSE"
       - ".gitattributes"
       - "benchmarks/repository-scan-v1/**"
       - "benchmarks/prepared-traversal-v1/**"
@@ -153,6 +154,7 @@ on:
       - "docs/**"
       - "package.json"
       - ".codex-plugin/plugin.json"
+      - "LICENSE"
       - ".gitattributes"
       - "benchmarks/repository-scan-v1/**"
       - "benchmarks/prepared-traversal-v1/**"
@@ -538,13 +540,17 @@ jobs:
         with:
           tag_name: ${{ needs.prepare.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
-          name: HEAD Agent Go Worker ${{ needs.prepare.outputs.release_tag }}
+          name: HEAD Agent Core ${{ needs.prepare.outputs.release_tag }}
           body: |
-            Provider-neutral HEAD Agent Core native compute-worker, process-supervisor, and read-only ArcadeDB bridge packages.
+            Beta release of the provider-neutral HEAD Agent Core plugin under the MIT License.
+
+            The beta scope covers the constitutional Core, recovery, Context Compiler, execution
+            lineage, local projections, bounded workers, and verified Codex/Claude distribution.
+            Experimental, Planned, and Deferred capabilities remain outside this beta claim.
 
             Source commit: `${{ github.sha }}`
 
-            These binaries provide the verified native compute transport, process supervisor, and
+            The attached binaries provide the verified native compute transport, process supervisor, and
             read-only ArcadeDB bridge. They do not replace Product Canon,
             ReviewDecision authority, or the JavaScript control plane. The separate supervisor binary
             provides OS-enforced descendant-tree ownership for bounded provider execution.

@@ -46,7 +46,7 @@ function assertRuntimeSurfaceIsolated(root) {
 
 function copySourceFixture() {
   fs.mkdirSync(upgradedSource, { recursive: true });
-  for (const entry of [".codex-plugin", ".mcp.json", "README.md", "README.ko.md", "assets", "docs", "native", "package.json", "scripts", "skills"]) {
+  for (const entry of [".codex-plugin", ".mcp.json", "LICENSE", "README.md", "README.ko.md", "assets", "docs", "native", "package.json", "scripts", "skills"]) {
     const source = path.join(sourceRoot, entry);
     if (!fs.existsSync(source)) continue;
     fs.cpSync(source, path.join(upgradedSource, entry), {
@@ -114,6 +114,9 @@ try {
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-hostless-session-recovery.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "lib", "workspace-host-export-driver.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "README.ko.md")), true);
+  assert.equal(fs.readFileSync(path.join(installedReleaseRoot, "LICENSE"), "utf8"), fs.readFileSync(path.join(sourceRoot, "LICENSE"), "utf8"));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(installedReleaseRoot, ".codex-plugin", "plugin.json"), "utf8")).license, "MIT");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(installedReleaseRoot, "package.json"), "utf8")).license, "MIT");
   assert.equal(fs.readFileSync(path.join(installedReleaseRoot, "README.md"), "utf8").includes("[한국어](README.ko.md)"), true);
   assert.equal(fs.readFileSync(path.join(installedReleaseRoot, "README.ko.md"), "utf8").includes("[English](README.md)"), true);
   assertRuntimeSurfaceIsolated(installedReleaseRoot);
@@ -186,6 +189,15 @@ try {
   );
   assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
   fs.writeFileSync(upgradedPluginFile, `${JSON.stringify(upgradedPlugin, null, 2)}\n`, "utf8");
+  const upgradedPackageFile = path.join(upgradedSource, "package.json");
+  const upgradedPackage = JSON.parse(fs.readFileSync(upgradedPackageFile, "utf8"));
+  fs.writeFileSync(upgradedPackageFile, `${JSON.stringify({ ...upgradedPackage, license: "Apache-2.0" }, null, 2)}\n`, "utf8");
+  assert.throws(
+    () => installDistribution({ sourceRoot: upgradedSource, installRoot, binDirectory }),
+    (error) => error.code === "HEAD_DISTRIBUTION_LICENSE_MISMATCH",
+  );
+  assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
+  fs.writeFileSync(upgradedPackageFile, `${JSON.stringify(upgradedPackage, null, 2)}\n`, "utf8");
   const upgraded = runNode([
     path.join(sourceRoot, "scripts", "distribution.mjs"),
     "upgrade",
@@ -236,6 +248,7 @@ try {
     publicInitializeResumeVerified: true,
     constitutionalCoreDefaultVerified: true,
     runtimeDevelopmentContextExcluded: true,
+    mitLicensePackaged: true,
     projectAuthorityDeduplicated: true,
     gitAndGraphDbIndependentOnboardingVerified: true,
     managedProjectionConvergenceVerified: true,

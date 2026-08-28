@@ -11,7 +11,7 @@ AI 개발이 하나의 검토된 제품 방향으로 이어지게 합니다.**
 승인된 변경의 이유를 함께 남깁니다.
 
 [![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
-![Status](https://img.shields.io/badge/status-alpha-orange)
+![Status](https://img.shields.io/badge/status-beta-blue)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
 
@@ -751,6 +751,9 @@ npm run verify:claude-marketplace
 
 ## 상태와 라이선스
 
-HEAD Agent Core Plugin은 알파 소프트웨어입니다. 명시적인 배포 라이선스가
-선택되기 전까지 저장소는 `UNLICENSED` 상태입니다. 소스가 공개되어 있다는
-사실만으로 재배포 또는 파생 사용 권한이 부여되지는 않습니다.
+HEAD Agent Core Plugin은 베타 소프트웨어입니다. 공급자 중립 헌법 Core, 복구,
+Context Compiler, 실행 계보, 로컬 프로젝션, bounded worker, 검증된 Codex/Claude
+배포는 더 넓은 사용자의 테스트를 받을 준비가 됐습니다. 위 표에서 실험적,
+계획됨 또는 보류됨으로 표시한 기능은 이 베타 판정의 범위에 포함되지 않습니다.
+
+이 프로젝트는 [MIT License](LICENSE)로 배포됩니다.

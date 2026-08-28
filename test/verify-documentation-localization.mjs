@@ -151,6 +151,7 @@ const publicMarkdown = [
   ...koreanFiles.map((name) => fs.readFileSync(path.join(koDir, name), "utf8")),
 ].join("\n");
 assert.doesNotMatch(publicMarkdown, /neo\s*pick/i, "public documentation must not contain NeoPick material");
+assert.doesNotMatch(publicMarkdown, /status-alpha|\bUNLICENSED\b/i, "public documentation must not retain the superseded alpha or unlicensed status");
 
 for (const readmeName of ["README.md", "README.ko.md"]) {
   const readme = fs.readFileSync(path.join(root, readmeName), "utf8");
@@ -160,6 +161,10 @@ for (const readmeName of ["README.md", "README.ko.md"]) {
 
 const koreanReadme = fs.readFileSync(path.join(root, "README.ko.md"), "utf8");
 const englishReadme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+for (const [name, readme] of [["README.md", englishReadme], ["README.ko.md", koreanReadme]]) {
+  assert.match(readme, /status-beta-blue/, `${name} must publish the beta status badge`);
+  assert.match(readme, /\[MIT License\]\(LICENSE\)/, `${name} must link the canonical MIT license`);
+}
 assert.deepEqual(
   links(koreanReadme).filter((target) => /^https?:/i.test(target)).sort(),
   links(englishReadme).filter((target) => /^https?:/i.test(target)).sort(),

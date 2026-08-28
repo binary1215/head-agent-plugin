@@ -117,5 +117,4 @@ claude plugin validate C:\temporary\head-agent-claude-marketplace
 캐시 및 플러그인 상태가 사용자의 일반 Claude 구성 밖에 유지됩니다.
 
 이 저장소는 공식 Anthropic 마켓플레이스가 아닙니다. Git으로 호스팅되는 타사
-Claude Code 마켓플레이스이며, 명시적 배포 라이선스가 선택될 때까지 플러그인은
-`UNLICENSED` 상태로 남습니다.
+Claude Code 마켓플레이스이며 [MIT License](../../LICENSE)에 따라 배포됩니다.

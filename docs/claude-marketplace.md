@@ -117,5 +117,4 @@ directory before adding the local generated marketplace. This keeps marketplace,
 cache, and plugin state outside the user's normal Claude configuration.
 
 This repository is not an official Anthropic marketplace. It is a Git-hosted
-third-party Claude Code marketplace, and the plugin remains `UNLICENSED` until an
-explicit distribution license is selected.
+third-party Claude Code marketplace distributed under the [MIT License](../LICENSE).

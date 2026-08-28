@@ -108,6 +108,8 @@ function assertReadmeContract() {
     "distribution.mjs uninstall",
     "head-agent-core@head-agent-plugin",
     "verify:claude-marketplace",
+    "status-beta-blue",
+    "[MIT License](LICENSE)",
   ];
   for (const required of sharedRequired) {
     assert(readme.includes(required), `README newcomer contract is missing: ${required}`);

@@ -1,11 +1,11 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-alpha.80+codex.20260827163355",
+  "version": "0.3.0-beta.1+codex.20260828000650",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "keywords": [
     "head-agent",
     "claude-code",

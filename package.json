@@ -1,9 +1,10 @@
 {
   "name": "@local/head-agent-core-plugin",
-  "version": "0.3.0-alpha.80+codex.20260827163355",
+  "version": "0.3.0-beta.1+codex.20260828000650",
   "private": true,
   "type": "module",
   "description": "HEAD Agent Core plugin distribution",
+  "license": "MIT",
   "scripts": {
     "test": "node --test --test-isolation=none --test-concurrency=1 test/*.test.mjs",
     "check": "npm test",
