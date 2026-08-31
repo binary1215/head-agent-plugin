@@ -134,6 +134,8 @@ Load only the reference needed for the current outcome:
 - Provider/runtime/host composition: read `references/runtime-composition.md`.
 - Session restore: read `../../docs/session-recovery.md`.
 - Bounded workers or waves: read `../../docs/bounded-worker-wave.md`.
+- Git ref, deployment-result, or release observations: read
+  `../../docs/release-observation.md`.
 - Role messaging: read `../../docs/role-coordination.md`.
 - Full CLI discovery: run `node <plugin-root>/scripts/head.mjs help-all`.
 

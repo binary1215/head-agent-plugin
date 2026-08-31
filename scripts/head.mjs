@@ -29,6 +29,7 @@ import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtim
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
+import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
@@ -121,6 +122,8 @@ export function usage({ all = false } = {}) {
       "head operating-lane-recommend <project> --input <risk.json>",
       "head product-note <project> --input <note.json>",
       "head product-signal-record <project> --input <signal.json>",
+      "head release-observe <project> --input <deployment-result.json>",
+      "head release-status <project>",
       "head product-hypothesis-record <project> --input <hypothesis.json>",
       "head product-initiative-propose <project> --input <initiative.json>",
       "head product-initiative-review <project> --input <review.json>",
@@ -365,6 +368,8 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "product-initiative-review") return reviewProductInitiative({ ...inputJson(options, "Product Initiative ReviewDecision"), root });
   if (command === "product-outcome-observe") return observeProductOutcome({ ...inputJson(options, "OutcomeObservation"), root });
   if (command === "product-operating-status") return inspectProductOperatingLoop({ root, fresh: options.fresh === true });
+  if (command === "release-observe") return observeReleaseState({ root, input: inputJson(options, "DeploymentResultObservation") });
+  if (command === "release-status") return inspectReleaseObservations({ root });
   if (command === "head-continuity") return buildHeadContinuitySnapshot({ root, fresh: options.fresh === true });
   if (command === "world-index") return buildWorldModel({
     root,

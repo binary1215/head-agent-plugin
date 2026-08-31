@@ -321,9 +321,9 @@ ReviewDecision, Product Model revision, Product Canon identity 및 World Model f
 
 ## Temporal graph projection
 
-World Model `0.13.0`은 bounded immutable onboarding artifact를 계속 load하고, 모든
+World Model `0.14.0`은 bounded immutable onboarding artifact를 계속 load하고, 모든
 nested content identity를 검증한 뒤, onboarding projection protocol `0.1.0`을 거쳐
-P4 temporal provenance protocol `0.10.0`으로 project합니다. Candidate set은 정확한
+P4 temporal provenance protocol `0.11.0`으로 project합니다. Candidate set은 정확한
 source evidence와 연결되고, candidate는 Evidence 및 별도의 proposed product-concept
 reference와 연결되며, ReviewDecision은 accepted, rejected, revised 및 promotion outcome을
 보존합니다. revise decision에는 후속 candidate set으로 향하는 명시적 `PRODUCES` edge가

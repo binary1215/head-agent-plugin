@@ -7,7 +7,7 @@
 
 ## 목적
 
-`GraphProjectionAdapter` 버전 `0.1.0`은 semantic temporal `GraphSnapshot`을 이를 구체화하고 순회하는 데 사용되는 backend로부터 분리합니다. temporal provenance 프로토콜 `0.10.0`은 [`AuthorityPlaneContract`](authority-plane-contract.md)의 P4 경계를 내장합니다. World Model 안에 내장되어 digest로 검증된 GraphSnapshot은 프로젝션 재구축을 위한 복구 가능한 원본으로 유지됩니다. snapshot, local adapter, ArcadeDB adapter 중 어느 것도 Product semantic Canon, 지시 권위, 승격 권위 또는 유일한 권위가 아닙니다.
+`GraphProjectionAdapter` 버전 `0.1.0`은 semantic temporal `GraphSnapshot`을 이를 구체화하고 순회하는 데 사용되는 backend로부터 분리합니다. temporal provenance 프로토콜 `0.11.0`은 [`AuthorityPlaneContract`](authority-plane-contract.md)의 P4 경계를 내장합니다. World Model 안에 내장되어 digest로 검증된 GraphSnapshot은 프로젝션 재구축을 위한 복구 가능한 원본으로 유지됩니다. snapshot, local adapter, ArcadeDB adapter 중 어느 것도 Product semantic Canon, 지시 권위, 승격 권위 또는 유일한 권위가 아닙니다.
 
 Product semantic Canon은 P1에 그대로 유지되며, Core GraphSnapshot은 그에 대한 P4 관계 및 검색 index입니다. graph의 ProductModel identity는 규범적 권위를 이전하지 않은 채 프로젝션된 정확한 원본에 결속됩니다. Distribution과 Host는 아키텍처 평면이지 추가적인 의미 평면이 아닙니다. graph adapter는 정확한 Product Canon byte fence 뒤에서 실행됩니다. 변경 또는 삭제가 발생하면 World Model pointer가 전진하기 전에 복원되고 거부됩니다.
 

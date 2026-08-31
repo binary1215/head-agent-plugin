@@ -112,6 +112,7 @@ HEAD는 검토된 Feature와 Capability가 어떤 파일, 심볼, 테스트와 �
 | 큰 저장소가 프롬프트를 압도함 | Source Scope와 제한된 컨텍스트 구성이 생성물, 외부 의존성, 복사된 자료를 일반 작업 컨텍스트에서 제외합니다. |
 | 여러 에이전트 사이에서 책임이 흐려짐 | 제한된 실행, 결과 증거, 독립 검토를 구분하면서 HEAD가 하나의 전체 결과로 통합합니다. |
 | 병렬 워커의 진행 상황을 한눈에 보기 어려움 | 공급자 중립적인 launch wave가 요청·시작·반환·대기·성공·실패를 보여주되, 워커별 권한을 합치거나 wave 완료를 승인으로 취급하지 않습니다. |
+| Git 및 배포 이력을 사람이 직접 입력해야 함 | 공급자 중립 관측이 현재 product ref와 호스트가 보고한 배포 결과를 불변 P3 evidence로 만들며, 승인·성공·정확한 commit/ref 일치가 모두 확인될 때만 권한 없는 ReleaseObservation을 만듭니다. |
 
 > 일반적인 코딩 에이전트가 현재 작업을 최적화한다면, HEAD Agent Core는
 > 여러 작업이 검토된 하나의 제품 방향으로 축적되도록 최적화합니다.
@@ -501,6 +502,8 @@ Signal → Hypothesis → Initiative 후보 → 사용자 ReviewDecision
 
 자세한 내용은 [Product Operating Loop](docs/ko/product-operating-loop.md)를
 참고하세요.
+Git ref 및 배포 배관은 [Release observation](docs/ko/release-observation.md)에
+설명되어 있습니다.
 
 ## 그래프와 기록
 
@@ -664,6 +667,7 @@ HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정�
 | 런타임 | Claude Code, Codex, OpenCode 일회성 Session/Run 실행 | **사용 가능** |
 | 런타임 증거 | 세 런타임 결정론적 fixture 및 로컬 CLI 기능 probe | **사용 가능** |
 | 런타임 증거 | Claude Code 실제 모델 호출 적합성 | **실험적** |
+| 릴리스 증거 | 공급자 중립 Git ref, deployment-result 및 release observation | **사용 가능** |
 | 워커 | 범위가 제한된 전달, 대기, 결과, 검토, 통합 | **사용 가능** |
 | 역할 통신 | 지속 가능한 역할 메시징과 정확한 엔드포인트 전달 | **사용 가능** |
 | 프로젝션 | 로컬 그래프와 Markdown | **사용 가능** |
@@ -726,6 +730,7 @@ HEAD Agent Core Plugin은
 
 - [Product Model](docs/ko/product-model.md)
 - [Product Operating Loop](docs/ko/product-operating-loop.md)
+- [Release observation](docs/ko/release-observation.md)
 - [증분 갱신](docs/ko/incremental-refresh.md)
 - [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)
 - [Session 복구](docs/ko/session-recovery.md)

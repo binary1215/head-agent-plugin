@@ -8,7 +8,7 @@ The Product Operating Loop connects product learning to reviewed execution witho
 
 The implementation keeps two semantic directions without creating two competing authorities. The development spine is the top-down normative path from `Product Canon` and its explicit `ReviewDecision` records into reviewed product-to-code relations. The operating flow is the time-ordered evidence path through initiative review, execution, `ChangeSet`, and `OutcomeObservation`. Their intersection is an exact verified identity or relation in the P4 graph, never a copied authority record. Code or runtime observations can create P3 evidence and candidates, but cannot rewrite the development spine.
 
-The current vertical intentionally stops before provider-neutral `Release`, `BranchState`, or `AnalyticsEvent` ingestion. Those may later extend the operating flow as bounded observed evidence, but their existence, timing, or measured outcome must not create product approval, Product Canon, success judgment, or recovery direction. This is a disclosed capability gap rather than an inferred or simulated loop closure.
+Provider-neutral `BranchStateObservation`, `DeploymentResultObservation`, and `ReleaseObservation` ingestion now extend the operating flow as bounded P3 evidence. Their existence or timing cannot create product approval, Product Canon, success judgment, or recovery direction. `AnalyticsEvent` ingestion remains a disclosed capability gap rather than an inferred or simulated loop closure. See [Release observation](release-observation.md).
 
 ## Authority split
 

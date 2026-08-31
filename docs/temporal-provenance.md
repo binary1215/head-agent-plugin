@@ -17,11 +17,11 @@ The graph builder consumes only provider-neutral inputs:
 - zero-or-more explicit parent `SourceSnapshot` identities;
 - optional zero-or-more parent Revision identities keyed by stable logical entity identity.
 
-Git commits, branches, tags, GraphDB record IDs, provider session IDs, document-provider page IDs, observation timestamps, and line locations used only as Evidence are excluded from required logical entity and ChangeSet identity. The enclosing World Model may separately contain optional Git history. The temporal GraphSnapshot consumes no live Git state; it consumes only a separately persisted and digest-verified `VcsEvidence` attachment when one exists.
+Git commits, branches, tags, GraphDB record IDs, provider session IDs, document-provider page IDs, observation timestamps, and line locations used only as Evidence are excluded from required logical entity and ChangeSet identity. The enclosing World Model may separately contain optional Git history. The temporal GraphSnapshot consumes no live Git state; it consumes only separately persisted and digest-verified `VcsEvidence` and release-observation projection inputs.
 
 ## Logical entities and immutable revisions
 
-Temporal provenance protocol `0.10.0` materializes a P4 rebuildable relation and retrieval index under the [`AuthorityPlaneContract`](authority-plane-contract.md). Digest-valid `0.9.0` graphs remain readable; new graphs rename the successor creator property to `producerReviewDecisionId` and project the creator as an explicit relation:
+Temporal provenance protocol `0.11.0` materializes a P4 rebuildable relation and retrieval index under the [`AuthorityPlaneContract`](authority-plane-contract.md). Digest-valid `0.10.0` graphs remain readable; new graphs add provider-neutral release-observation nodes and relations without changing older identities:
 
 - stable product logical entities: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`;
 - immutable product states: the corresponding `*Revision` kinds;
@@ -34,6 +34,7 @@ Temporal provenance protocol `0.10.0` materializes a P4 rebuildable relation and
 - optional external change evidence: `VcsEvidence` and immutable `GitCommit` observation nodes. These nodes are omitted when no attachment exists and never replace the ChangeSet.
 - document review lineage: hidden `DocumentChangeCandidateSet` and `DocumentChangeCandidate` nodes plus normally visible `DocumentChangeReviewDecision`, `DocumentProductModelRevision`, `DocumentChangeApplication`, and historical `DocumentProjectionReference` evidence.
 - product operating evidence: `ProductSignal`, `ProductHypothesis`, hidden `ProductInitiativeCandidate` and `ProductFeatureCandidate`, historical `ProductFeatureReference`, explicit `ProductInitiativeReviewDecision`, separate `ReviewedProductInitiative`, and execution-bound `OutcomeObservation` nodes.
+- release evidence: `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObservation`, and embedded immutable `GitCommit` observations.
 
 Non-persisted `ProductLearningNote` values never enter a GraphSnapshot. A v0.2 Initiative candidate may contain inline reasoning and no Feature resolution; it has no `PROPOSES_TO` edge until review and, when it has no persisted hypothesis references, no `PROPOSES_FROM` edge. Explicit accept review resolves exactly one existing Feature, Feature candidate, or honest gap in the separate reviewed Initiative. The candidate bytes remain unchanged.
 
@@ -62,6 +63,7 @@ Every edge records the same authority and provenance surface plus `edgeId`, type
 - provider-neutral `CHANGES` and `SUPERSEDES` lineage plus explicitly reviewed `IMPACTS` edges.
 - optional `ChangeSet -[:MATERIALIZED_AS]-> VcsEvidence -[:REFERENCES]-> GitCommit` evidence links.
 - product learning and observation through `SUPPORTED_BY`, `PROPOSES_FROM`, `PROPOSES_TO`, review/promotion relations, and `OutcomeObservation -[:OBSERVES]-> ChangeSet|ReviewedProductInitiative`.
+- release evidence through `AT_REVISION`, `OBSERVED_ON`, `EVIDENCED_BY`, and optional `ReleaseObservation -[:DEPLOYS]-> ChangeSet`.
 
 The verifier rejects digest mismatch, unsupported node or relation types, duplicate identities, nondeterministic ordering, dangling or invalid endpoint kinds, missing provenance, invalid authority flags, invalid confidence, scope mismatch, and direct self-parent cycles.
 

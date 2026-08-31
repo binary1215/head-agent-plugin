@@ -4,11 +4,12 @@ import { verifyFeatureMappingProjectionInput } from "./feature-mapping-projectio
 import { verifyChangeSetProjectionInput } from "./change-set-projection.mjs";
 import { verifyDocumentChangeProjectionInput } from "./document-change-projection.mjs";
 import { verifyProductOperatingProjectionInput } from "./product-operating-loop.mjs";
+import { verifyReleaseObservationProjectionInput } from "./release-observation.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";
 
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.10.0";
+export const TEMPORAL_PROVENANCE_VERSION = "0.11.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -46,7 +47,8 @@ const TEMPORAL_RELATION_TYPES_V06 = Object.freeze([
   "MATERIALIZED_AS",
 ]);
 const TEMPORAL_RELATION_TYPES_V07 = Object.freeze([...TEMPORAL_RELATION_TYPES_V06]);
-export const TEMPORAL_RELATION_TYPES = Object.freeze([...TEMPORAL_RELATION_TYPES_V07, "OBSERVES"]);
+const TEMPORAL_RELATION_TYPES_V10 = Object.freeze([...TEMPORAL_RELATION_TYPES_V07, "OBSERVES"]);
+export const TEMPORAL_RELATION_TYPES = Object.freeze([...TEMPORAL_RELATION_TYPES_V10, "AT_REVISION", "OBSERVED_ON", "EVIDENCED_BY", "DEPLOYS"]);
 
 const TEMPORAL_NODE_KINDS_V02 = Object.freeze([
   "Repository",
@@ -118,7 +120,7 @@ const TEMPORAL_NODE_KINDS_V07 = Object.freeze([
   "DocumentProductModelRevision",
   "DocumentProjectionReference",
 ]);
-export const TEMPORAL_NODE_KINDS = Object.freeze([
+const TEMPORAL_NODE_KINDS_V10 = Object.freeze([
   ...TEMPORAL_NODE_KINDS_V07,
   "ProductSignal",
   "ProductHypothesis",
@@ -128,6 +130,12 @@ export const TEMPORAL_NODE_KINDS = Object.freeze([
   "ProductFeatureCandidate",
   "ProductFeatureReference",
   "OutcomeObservation",
+]);
+export const TEMPORAL_NODE_KINDS = Object.freeze([
+  ...TEMPORAL_NODE_KINDS_V10,
+  "BranchStateObservation",
+  "DeploymentResultObservation",
+  "ReleaseObservation",
 ]);
 
 const PRODUCER = "head-agent-core-temporal-provenance";
@@ -1472,6 +1480,107 @@ function appendProductOperatingProjection({ projectId, productModelId, sourceSna
   return { productSignalCount: projection.signals.length, productHypothesisCount: projection.hypotheses.length, productInitiativeCandidateCount: projection.initiativeCandidates.length, productInitiativeReviewDecisionCount: projection.initiativeReviews.length, reviewedProductInitiativeCount: projection.reviewedInitiatives.length, productFeatureCandidateCount: projection.featureCandidates.length, outcomeObservationCount: projection.outcomeObservations.length };
 }
 
+function releaseObservationProjectionDescriptor(projection) {
+  if (!projection) return {
+    status: "not-provided", projectionInputId: null, projectionInputHash: null,
+    branchStateObservationIds: [], deploymentResultObservationIds: [], releaseObservationIds: [],
+  };
+  return {
+    status: "projected",
+    projectionInputId: projection.projectionInputId,
+    projectionInputHash: projection.projectionInputHash,
+    branchStateObservationIds: projection.branchStates.map((item) => item.branchStateObservationId),
+    deploymentResultObservationIds: projection.deploymentResults.map((item) => item.deploymentResultObservationId),
+    releaseObservationIds: projection.releases.map((item) => item.releaseObservationId),
+  };
+}
+
+function appendReleaseObservationProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+  const empty = { branchStateObservationCount: 0, deploymentResultObservationCount: 0, releaseObservationCount: 0 };
+  if (!projection) return empty;
+  verifyReleaseObservationProjectionInput(projection);
+  const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
+  const pushNode = (node) => { const existing = nodeById.get(node.nodeId); if (existing) return existing; nodeById.set(node.nodeId, node); nodes.push(node); return node; };
+  const add = (type, from, to, evidenceIds) => edges.push(edgeRecord({ type, from, to, sourceSnapshotId, evidenceIds: [...new Set(evidenceIds)].sort(), authorityClass: "runtime-observed", origin: "release-observation" }));
+  const ensureCommit = (observation) => pushNode({
+    nodeId: observation.gitCommitObservationId,
+    kind: "GitCommit",
+    vcsKind: observation.vcsKind,
+    gitCommitObservationHash: observation.gitCommitObservationHash,
+    objectId: observation.objectId,
+    parentObjectIds: observation.parents,
+    authoredAt: observation.authoredAt,
+    committedAt: observation.committedAt,
+    authorName: observation.author.name,
+    authorEmailDigest: observation.authorEmailDigest,
+    refs: observation.refs,
+    subject: observation.subject,
+    body: observation.body,
+    trustBoundary: observation.trustBoundary,
+    sourceAuthority: observation.authority,
+    ...nodeMetadata({ evidenceIds: [observation.objectId], sourceSnapshotId, authorityClass: "runtime-observed", origin: "release-git-observation", freshness: "historical" }),
+  });
+  for (const branch of projection.branchStates) {
+    const commit = ensureCommit(branch.commitObservation);
+    pushNode({
+      nodeId: branch.branchStateObservationId,
+      kind: "BranchStateObservation",
+      projectId,
+      branchStateObservationHash: branch.branchStateObservationHash,
+      vcsKind: branch.vcsKind,
+      ref: branch.ref,
+      refKind: branch.refKind,
+      commit: branch.commit,
+      referencesDigest: branch.referencesDigest,
+      sourceAuthority: branch.authority,
+      ...nodeMetadata({ evidenceIds: [branch.branchStateObservationId, commit.nodeId], sourceSnapshotId, authorityClass: "runtime-observed", origin: "release-branch-state-observation", freshness: "historical" }),
+    });
+    add("AT_REVISION", branch.branchStateObservationId, commit.nodeId, [branch.branchStateObservationId, commit.nodeId]);
+  }
+  for (const deployment of projection.deploymentResults) pushNode({
+    nodeId: deployment.deploymentResultObservationId,
+    kind: "DeploymentResultObservation",
+    projectId,
+    deploymentResultObservationHash: deployment.deploymentResultObservationHash,
+    environmentKey: deployment.environmentKey,
+    status: deployment.status,
+    commit: deployment.commit,
+    observedAt: deployment.observedAt,
+    sourceEventKeyDigest: deployment.sourceEventKeyDigest,
+    deploymentEvidenceDigest: deployment.deploymentEvidenceDigest,
+    approved: deployment.approved,
+    approvalEvidenceDigest: deployment.approvalEvidenceDigest,
+    changeSetId: deployment.changeSetId,
+    vcsEvidenceId: deployment.vcsEvidenceId,
+    sourceAuthority: deployment.authority,
+    ...nodeMetadata({ evidenceIds: [deployment.deploymentResultObservationId, deployment.deploymentEvidenceDigest, deployment.approvalEvidenceDigest].filter(Boolean), sourceSnapshotId, authorityClass: "runtime-observed", origin: "deployment-result-observation", freshness: "historical" }),
+  });
+  for (const release of projection.releases) {
+    pushNode({
+      nodeId: release.releaseObservationId,
+      kind: "ReleaseObservation",
+      projectId,
+      releaseObservationHash: release.releaseObservationHash,
+      environmentKey: release.environmentKey,
+      commit: release.commit,
+      deploymentResultObservationId: release.deploymentResultObservationId,
+      branchStateObservationIds: release.branchStateObservationIds,
+      changeSetId: release.changeSetId,
+      vcsEvidenceId: release.vcsEvidenceId,
+      sourceAuthority: release.authority,
+      ...nodeMetadata({ evidenceIds: [release.releaseObservationId, release.deploymentResultObservationId, ...release.branchStateObservationIds], sourceSnapshotId, authorityClass: "runtime-observed", origin: "release-observation", freshness: "historical" }),
+    });
+    const matchingCommit = projection.branchStates.find((item) => release.branchStateObservationIds.includes(item.branchStateObservationId))?.commitObservation;
+    if (!matchingCommit) fail("ReleaseObservation commit evidence is missing.", "RELEASE_OBSERVATION_TEMPORAL_LINEAGE_MISSING");
+    ensureCommit(matchingCommit);
+    add("AT_REVISION", release.releaseObservationId, matchingCommit.gitCommitObservationId, [release.releaseObservationId, matchingCommit.gitCommitObservationId]);
+    add("EVIDENCED_BY", release.releaseObservationId, release.deploymentResultObservationId, [release.releaseObservationId, release.deploymentResultObservationId]);
+    for (const branchId of release.branchStateObservationIds) add("OBSERVED_ON", release.releaseObservationId, branchId, [release.releaseObservationId, branchId]);
+    if (release.changeSetId) add("DEPLOYS", release.releaseObservationId, release.changeSetId, [release.releaseObservationId, release.changeSetId, release.vcsEvidenceId]);
+  }
+  return { branchStateObservationCount: projection.branchStates.length, deploymentResultObservationCount: projection.deploymentResults.length, releaseObservationCount: projection.releases.length, gitCommitObservationCount: nodes.filter((node) => node.kind === "GitCommit").length };
+}
+
 export function buildTemporalProvenanceGraph({
   projectId,
   files,
@@ -1482,6 +1591,7 @@ export function buildTemporalProvenanceGraph({
   changeSetProjection = null,
   documentChangeProjection = null,
   productOperatingProjection = null,
+  releaseObservationProjection = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
 } = {}) {
@@ -1493,6 +1603,7 @@ export function buildTemporalProvenanceGraph({
   const selectedChangeSetProjection = changeSetProjection ? verifyChangeSetProjectionInput(changeSetProjection) : null;
   const selectedDocumentChangeProjection = documentChangeProjection ? verifyDocumentChangeProjectionInput(documentChangeProjection) : null;
   const selectedProductOperatingProjection = productOperatingProjection ? verifyProductOperatingProjectionInput(productOperatingProjection) : null;
+  const selectedReleaseObservationProjection = releaseObservationProjection ? verifyReleaseObservationProjectionInput(releaseObservationProjection) : null;
   if (selectedChangeSetProjection && selectedChangeSetProjection.projectId !== projectId) {
     fail("ChangeSet projection input does not match the temporal graph scope.", "CHANGE_SET_TEMPORAL_SCOPE_MISMATCH");
   }
@@ -1501,6 +1612,9 @@ export function buildTemporalProvenanceGraph({
   }
   if (selectedProductOperatingProjection && selectedProductOperatingProjection.projectId !== projectId) {
     fail("Product operating projection input does not match the temporal graph scope.", "PRODUCT_OPERATING_TEMPORAL_SCOPE_MISMATCH");
+  }
+  if (selectedReleaseObservationProjection && selectedReleaseObservationProjection.projectId !== projectId) {
+    fail("Release observation projection input does not match the temporal graph scope.", "RELEASE_OBSERVATION_TEMPORAL_SCOPE_MISMATCH");
   }
   if (selectedOnboardingProjection && (selectedOnboardingProjection.projectId !== projectId
     || selectedOnboardingProjection.currentProductModelId !== selectedProductModel.productModelId)) {
@@ -1857,6 +1971,13 @@ export function buildTemporalProvenanceGraph({
     nodes,
     edges,
   });
+  const releaseObservationSummary = appendReleaseObservationProjection({
+    projectId,
+    sourceSnapshotId,
+    projection: selectedReleaseObservationProjection,
+    nodes,
+    edges,
+  });
 
   deduplicateTemporalEdgesInPlace(edges);
 
@@ -1885,6 +2006,7 @@ export function buildTemporalProvenanceGraph({
     ...changeSetSummary,
     ...documentChangeSummary,
     ...productOperatingSummary,
+    ...releaseObservationSummary,
   };
   const payload = {
     kind: "GraphSnapshot",
@@ -1901,6 +2023,7 @@ export function buildTemporalProvenanceGraph({
     changeSetProjection: changeSetProjectionDescriptor(selectedChangeSetProjection),
     documentChangeProjection: documentChangeProjectionDescriptor(selectedDocumentChangeProjection),
     productOperatingProjection: productOperatingProjectionDescriptor(selectedProductOperatingProjection),
+    releaseObservationProjection: releaseObservationProjectionDescriptor(selectedReleaseObservationProjection),
     sourceSnapshotId,
     parentSourceSnapshotIds: parents,
     revisionParentIds: revisionParents,
@@ -2063,6 +2186,9 @@ function expectedNodeId(node) {
   if (node.kind === "ProductFeatureCandidate") return `product-feature-candidate-${String(node.featureCandidateHash || "").slice(0, 24)}`;
   if (node.kind === "ProductFeatureReference") return identity("product-feature-reference", { projectId: node.projectId, featureKey: node.featureKey, productModelId: node.referencedProductModelId });
   if (node.kind === "OutcomeObservation") return `outcome-observation-${String(node.outcomeObservationHash || "").slice(0, 24)}`;
+  if (node.kind === "BranchStateObservation") return `branch-state-observation-${String(node.branchStateObservationHash || "").slice(0, 24)}`;
+  if (node.kind === "DeploymentResultObservation") return `deployment-result-observation-${String(node.deploymentResultObservationHash || "").slice(0, 24)}`;
+  if (node.kind === "ReleaseObservation") return `release-observation-${String(node.releaseObservationHash || "").slice(0, 24)}`;
   return "";
 }
 
@@ -2131,6 +2257,10 @@ function validEndpointKinds(type, fromKind, toKind) {
     || (fromKind === "ChangeRevisionReference" && toKind === "ChangeRevisionReference");
   if (type === "MATERIALIZED_AS") return fromKind === "ChangeSet" && toKind === "VcsEvidence";
   if (type === "OBSERVES") return fromKind === "OutcomeObservation" && ["ChangeSet", "ReviewedProductInitiative"].includes(toKind);
+  if (type === "AT_REVISION") return ["BranchStateObservation", "ReleaseObservation"].includes(fromKind) && toKind === "GitCommit";
+  if (type === "OBSERVED_ON") return fromKind === "ReleaseObservation" && toKind === "BranchStateObservation";
+  if (type === "EVIDENCED_BY") return fromKind === "ReleaseObservation" && toKind === "DeploymentResultObservation";
+  if (type === "DEPLOYS") return fromKind === "ReleaseObservation" && toKind === "ChangeSet";
   return false;
 }
 
@@ -2144,14 +2274,15 @@ export function verifyTemporalProvenanceGraph(graph) {
   const legacyV07 = graphVersion === "0.7.0";
   const legacyV08 = graphVersion === "0.8.0";
   const legacyV09 = graphVersion === "0.9.0";
+  const legacyV10 = graphVersion === "0.10.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
+    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0", "0.10.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
     fail("Temporal provenance graph cannot claim canonical or unique authority.", "INVALID_TEMPORAL_GRAPH_AUTHORITY");
   }
-  if (legacyV09 || graphVersion === TEMPORAL_PROVENANCE_VERSION) verifyArtifactAuthorityBoundary("GraphSnapshot", graph.authorityBoundary);
+  if (legacyV09 || legacyV10 || graphVersion === TEMPORAL_PROVENANCE_VERSION) verifyArtifactAuthorityBoundary("GraphSnapshot", graph.authorityBoundary);
   if (!/^product-model-[a-f0-9]{24}$/.test(graph.productModelId || "") || !/^[a-f0-9]{64}$/.test(graph.productModelHash || "")) {
     fail("Temporal graph product model identity is invalid.", "INVALID_TEMPORAL_PRODUCT_MODEL");
   }
@@ -2168,8 +2299,8 @@ export function verifyTemporalProvenanceGraph(graph) {
   if (canonicalJson(graph.revisionParentIds) !== canonicalJson(normalizeRevisionParentIds(graph.revisionParentIds))) {
     fail("Revision parents must be normalized.", "INVALID_REVISION_PARENT_SET");
   }
-  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : legacyV05 ? TEMPORAL_RELATION_TYPES_V05 : legacyV06 ? TEMPORAL_RELATION_TYPES_V06 : legacyV07 ? TEMPORAL_RELATION_TYPES_V07 : TEMPORAL_RELATION_TYPES;
-  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : legacyV05 ? TEMPORAL_NODE_KINDS_V05 : legacyV06 ? TEMPORAL_NODE_KINDS_V06 : legacyV07 ? TEMPORAL_NODE_KINDS_V07 : TEMPORAL_NODE_KINDS;
+  const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : legacyV05 ? TEMPORAL_RELATION_TYPES_V05 : legacyV06 ? TEMPORAL_RELATION_TYPES_V06 : legacyV07 ? TEMPORAL_RELATION_TYPES_V07 : (legacyV08 || legacyV09 || legacyV10) ? TEMPORAL_RELATION_TYPES_V10 : TEMPORAL_RELATION_TYPES;
+  const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : legacyV05 ? TEMPORAL_NODE_KINDS_V05 : legacyV06 ? TEMPORAL_NODE_KINDS_V06 : legacyV07 ? TEMPORAL_NODE_KINDS_V07 : (legacyV08 || legacyV09 || legacyV10) ? TEMPORAL_NODE_KINDS_V10 : TEMPORAL_NODE_KINDS;
   if (canonicalJson(graph.relationTypes) !== canonicalJson([...expectedRelationTypes])
     || canonicalJson(graph.nodeKinds) !== canonicalJson([...expectedNodeKinds])) {
     fail("Temporal graph vocabulary does not match the implemented allowlist.", "TEMPORAL_VOCABULARY_MISMATCH");
@@ -2339,7 +2470,7 @@ export function verifyTemporalProvenanceGraph(graph) {
   const productModelRevisionIds = new Set(idsOf(productModelRevisions));
   const containingSetsByCandidate = new Map();
   for (const candidateSet of onboardingCandidateSets) {
-    const producerReviewDecisionId = graphVersion === TEMPORAL_PROVENANCE_VERSION
+    const producerReviewDecisionId = legacyV10 || graphVersion === TEMPORAL_PROVENANCE_VERSION
       ? candidateSet.producerReviewDecisionId
       : candidateSet.successorReviewDecisionId;
     if (!/^[a-f0-9]{64}$/.test(candidateSet.candidateSetHash || "")
@@ -2349,7 +2480,7 @@ export function verifyTemporalProvenanceGraph(graph) {
       || (producerReviewDecisionId != null && !/^onboarding-review-decision-[a-f0-9]{24}$/.test(producerReviewDecisionId))) {
       fail(`Onboarding candidate-set node is invalid: ${candidateSet.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
     }
-    if (graphVersion === TEMPORAL_PROVENANCE_VERSION && Object.hasOwn(candidateSet, "successorReviewDecisionId")) {
+    if ((legacyV10 || graphVersion === TEMPORAL_PROVENANCE_VERSION) && Object.hasOwn(candidateSet, "successorReviewDecisionId")) {
       fail(`Onboarding candidate-set node uses a legacy producer field: ${candidateSet.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
     }
     for (const [field, known] of [["candidateIds", onboardingCandidateIds], ["onboardingEvidenceIds", onboardingEvidenceIds], ["unknownIds", onboardingUnknownIds]]) {
@@ -2371,7 +2502,7 @@ export function verifyTemporalProvenanceGraph(graph) {
       const producerReview = onboardingReviewsById.get(producerReviewDecisionId);
       if (!producerReview || producerReview.disposition !== "revise"
         || !(candidateSet.parentCandidateSetIds || []).includes(producerReview.candidateSetId)
-        || (graphVersion === TEMPORAL_PROVENANCE_VERSION && !hasEdge("PRODUCES", producerReviewDecisionId, candidateSet.nodeId))) {
+        || ((legacyV10 || graphVersion === TEMPORAL_PROVENANCE_VERSION) && !hasEdge("PRODUCES", producerReviewDecisionId, candidateSet.nodeId))) {
         fail(`Onboarding successor producer lineage is invalid: ${candidateSet.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
       }
     }
@@ -2698,11 +2829,12 @@ export function verifyTemporalProvenanceGraph(graph) {
       || !Array.isArray(commit.parentObjectIds) || commit.parentObjectIds.some((item) => !/^[a-f0-9]{40,64}$/.test(item))) {
       fail(`Git commit observation node is invalid: ${commit.nodeId}`, "INVALID_GIT_COMMIT_TEMPORAL_NODE");
     }
-    if (!graph.edges.some((edge) => edge.type === "REFERENCES" && edge.to === commit.nodeId && nodes.get(edge.from)?.kind === "VcsEvidence")) {
-      fail(`Git commit observation is not referenced by VCS evidence: ${commit.nodeId}`, "VCS_EVIDENCE_TEMPORAL_RELATION_MISSING");
+    if (!graph.edges.some((edge) => ((edge.type === "REFERENCES" && nodes.get(edge.from)?.kind === "VcsEvidence")
+      || (edge.type === "AT_REVISION" && nodes.get(edge.from)?.kind === "BranchStateObservation")) && edge.to === commit.nodeId)) {
+      fail(`Git commit observation is not referenced by VCS or branch-state evidence: ${commit.nodeId}`, "VCS_EVIDENCE_TEMPORAL_RELATION_MISSING");
     }
   }
-  const documentDescriptor = (legacyV07 || legacyV08 || legacyV09 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
+  const documentDescriptor = (legacyV07 || legacyV08 || legacyV09 || legacyV10 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
   if (!documentDescriptor || !["not-provided", "projected"].includes(documentDescriptor.status)) {
     fail("Temporal graph document-change projection descriptor is invalid.", "INVALID_DOCUMENT_CHANGE_TEMPORAL_PROJECTION");
   }
@@ -2755,7 +2887,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     || !/^graph-snapshot-[a-f0-9]{24}$/.test(reference.graphSnapshotId || "") || !/^source-snapshot-[a-f0-9]{24}$/.test(reference.referencedSourceSnapshotId || "")) {
     fail(`DocumentProjectionReference is invalid: ${reference.nodeId}`, "INVALID_DOCUMENT_CHANGE_TEMPORAL_NODE");
   }
-  const productOperatingDescriptor = (legacyV08 || legacyV09 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.productOperatingProjection : productOperatingProjectionDescriptor(null);
+  const productOperatingDescriptor = (legacyV08 || legacyV09 || legacyV10 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.productOperatingProjection : productOperatingProjectionDescriptor(null);
   if (!productOperatingDescriptor || !["not-provided", "projected"].includes(productOperatingDescriptor.status)) fail("Product operating projection descriptor is invalid.", "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
   for (const field of ["signalIds", "hypothesisIds", "initiativeCandidateIds", "reviewDecisionIds", "reviewedInitiativeIds", "featureCandidateIds", "outcomeObservationIds"]) {
     if (!Array.isArray(productOperatingDescriptor[field]) || canonicalJson(productOperatingDescriptor[field]) !== canonicalJson([...new Set(productOperatingDescriptor[field])].sort())) fail(`Product operating descriptor ${field} is invalid.`, "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
@@ -2777,6 +2909,40 @@ export function verifyTemporalProvenanceGraph(graph) {
   for (const review of operatingReviews) if (!hasEdge("REVIEWED_BY", review.initiativeCandidateId, review.nodeId) || !hasEdge(review.disposition === "accept" ? "ACCEPTED_BY" : "REJECTED_BY", review.initiativeCandidateId, review.nodeId)) fail("Product Initiative review relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
   for (const initiative of operatingReviewedInitiatives) if (!hasEdge("PROMOTED_FROM", initiative.nodeId, initiative.initiativeCandidateId) || !hasEdge("PRODUCES", initiative.reviewDecisionId, initiative.nodeId)) fail("Reviewed Product Initiative lineage is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
   for (const outcome of operatingOutcomes) if (!hasEdge("OBSERVES", outcome.nodeId, outcome.changeSetId)) fail("OutcomeObservation relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
+  const releaseDescriptor = graphVersion === TEMPORAL_PROVENANCE_VERSION ? graph.releaseObservationProjection : releaseObservationProjectionDescriptor(null);
+  if (!releaseDescriptor || !["not-provided", "projected"].includes(releaseDescriptor.status)) fail("Release observation projection descriptor is invalid.", "INVALID_RELEASE_OBSERVATION_TEMPORAL_DESCRIPTOR");
+  for (const field of ["branchStateObservationIds", "deploymentResultObservationIds", "releaseObservationIds"]) {
+    if (!Array.isArray(releaseDescriptor[field]) || canonicalJson(releaseDescriptor[field]) !== canonicalJson([...new Set(releaseDescriptor[field])].sort())) fail(`Release observation descriptor ${field} is invalid.`, "INVALID_RELEASE_OBSERVATION_TEMPORAL_DESCRIPTOR");
+  }
+  if (releaseDescriptor.status === "projected" && (!/^release-observation-projection-[a-f0-9]{24}$/.test(releaseDescriptor.projectionInputId || "") || !/^[a-f0-9]{64}$/.test(releaseDescriptor.projectionInputHash || ""))) fail("Release observation projection identity is invalid.", "INVALID_RELEASE_OBSERVATION_TEMPORAL_DESCRIPTOR");
+  const branchStateObservations = graph.nodes.filter((node) => node.kind === "BranchStateObservation");
+  const deploymentResultObservations = graph.nodes.filter((node) => node.kind === "DeploymentResultObservation");
+  const releaseObservations = graph.nodes.filter((node) => node.kind === "ReleaseObservation");
+  const releaseSets = [[branchStateObservations, "branchStateObservationIds"], [deploymentResultObservations, "deploymentResultObservationIds"], [releaseObservations, "releaseObservationIds"]];
+  for (const [values, field] of releaseSets) if (canonicalJson(idsOf(values)) !== canonicalJson(releaseDescriptor[field])) fail(`Release observation projected ${field} does not match its descriptor.`, "RELEASE_OBSERVATION_TEMPORAL_SET_MISMATCH");
+  for (const branch of branchStateObservations) {
+    if (!/^[a-f0-9]{64}$/.test(branch.branchStateObservationHash || "") || branch.vcsKind !== "git"
+      || !["branch", "remote", "tag"].includes(branch.refKind) || !/^refs\/(?:heads|remotes|tags)\//.test(branch.ref || "")
+      || !/^[a-f0-9]{40,64}$/.test(branch.commit || "") || !/^[a-f0-9]{64}$/.test(branch.referencesDigest || "")
+      || branch.sourceAuthority !== "non-authoritative-branch-state-observation"
+      || !graph.edges.some((edge) => edge.type === "AT_REVISION" && edge.from === branch.nodeId && nodes.get(edge.to)?.kind === "GitCommit" && nodes.get(edge.to)?.objectId === branch.commit)) fail("BranchStateObservation projection is invalid.", "RELEASE_OBSERVATION_TEMPORAL_RELATION_MISSING");
+  }
+  for (const deployment of deploymentResultObservations) if (!/^[a-f0-9]{64}$/.test(deployment.deploymentResultObservationHash || "")
+    || !["succeeded", "failed", "cancelled"].includes(deployment.status) || !/^[a-f0-9]{40,64}$/.test(deployment.commit || "")
+    || typeof deployment.approved !== "boolean" || deployment.approved !== (deployment.approvalEvidenceDigest !== null)
+    || !/^[a-f0-9]{64}$/.test(deployment.sourceEventKeyDigest || "") || !/^[a-f0-9]{64}$/.test(deployment.deploymentEvidenceDigest || "")
+    || deployment.approvalEvidenceDigest !== null && !/^[a-f0-9]{64}$/.test(deployment.approvalEvidenceDigest || "")
+    || deployment.sourceAuthority !== "non-authoritative-deployment-result-observation") fail("DeploymentResultObservation projection is invalid.", "INVALID_RELEASE_OBSERVATION_TEMPORAL_NODE");
+  for (const release of releaseObservations) {
+    const deployment = nodes.get(release.deploymentResultObservationId);
+    if (!/^[a-f0-9]{64}$/.test(release.releaseObservationHash || "") || release.sourceAuthority !== "non-authoritative-release-observation"
+      || deployment?.kind !== "DeploymentResultObservation" || deployment.status !== "succeeded" || deployment.approved !== true
+      || deployment.commit !== release.commit || deployment.environmentKey !== release.environmentKey
+      || !hasEdge("EVIDENCED_BY", release.nodeId, release.deploymentResultObservationId)
+      || !graph.edges.some((edge) => edge.type === "AT_REVISION" && edge.from === release.nodeId && nodes.get(edge.to)?.kind === "GitCommit" && nodes.get(edge.to)?.objectId === release.commit)) fail("ReleaseObservation evidence or revision relation is missing.", "RELEASE_OBSERVATION_TEMPORAL_RELATION_MISSING");
+    for (const branchId of release.branchStateObservationIds) if (nodes.get(branchId)?.kind !== "BranchStateObservation" || nodes.get(branchId)?.commit !== release.commit || !hasEdge("OBSERVED_ON", release.nodeId, branchId)) fail("ReleaseObservation branch relation is missing.", "RELEASE_OBSERVATION_TEMPORAL_RELATION_MISSING");
+    if (release.changeSetId && !hasEdge("DEPLOYS", release.nodeId, release.changeSetId)) fail("ReleaseObservation ChangeSet relation is missing.", "RELEASE_OBSERVATION_TEMPORAL_RELATION_MISSING");
+  }
   const productLogical = new Map();
   for (const kind of Object.keys(PRODUCT_DEFINITIONS)) {
     for (const node of graph.nodes.filter((candidate) => candidate.kind === kind)) productLogical.set(`${kind}:${node.key}`, node.nodeId);
@@ -2899,7 +3065,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     vcsEvidenceCount: vcsEvidenceNodes.length,
     gitCommitObservationCount: gitCommitNodes.length,
   });
-  if (legacyV07 || legacyV08 || legacyV09 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV07 || legacyV08 || legacyV09 || legacyV10 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     documentChangeCandidateSetCount: documentCandidateSets.length,
     documentChangeCandidateCount: documentCandidates.length,
     documentChangeReviewDecisionCount: documentReviews.length,
@@ -2907,7 +3073,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     documentChangeApplicationCount: documentApplications.length,
     documentProjectionReferenceCount: documentReferences.length,
   });
-  if (legacyV08 || legacyV09 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV08 || legacyV09 || legacyV10 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     productSignalCount: operatingSignals.length,
     productHypothesisCount: operatingHypotheses.length,
     productInitiativeCandidateCount: operatingInitiativeCandidates.length,
@@ -2915,6 +3081,11 @@ export function verifyTemporalProvenanceGraph(graph) {
     reviewedProductInitiativeCount: operatingReviewedInitiatives.length,
     productFeatureCandidateCount: operatingFeatureCandidates.length,
     outcomeObservationCount: operatingOutcomes.length,
+  });
+  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+    branchStateObservationCount: branchStateObservations.length,
+    deploymentResultObservationCount: deploymentResultObservations.length,
+    releaseObservationCount: releaseObservations.length,
   });
   if (canonicalJson(summary) !== canonicalJson(graph.summary)) {
     fail(`Temporal graph summary does not match its contents: expected ${canonicalJson(summary)}, received ${canonicalJson(graph.summary)}.`, "TEMPORAL_SUMMARY_MISMATCH");
@@ -2935,6 +3106,7 @@ function searchable(node) {
     node.productKind, node.inputMode, node.sourceKind, node.disposition, node.statement, node.explanation, node.rationale,
     node.changeSetId, node.changeId, node.targetNodeId, node.targetKind, node.resultPacketId, node.executionReviewDecisionId,
     node.vcsKind, node.objectId, node.subject, node.body, node.authorName, node.gitHistoryId, node.relativePath,
+    node.ref, node.refKind, node.environmentKey, node.status, node.commit, node.deploymentResultObservationId,
     node.semantic ? canonicalJson(node.semantic) : ""]
     .filter(Boolean).join(" ").toLocaleLowerCase();
 }

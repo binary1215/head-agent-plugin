@@ -123,6 +123,9 @@
       "Multiple-parent Source and Revision DAG",
       "Deterministic Allowlisted Graph Traversal",
       "Git Decision Evidence",
+      "Provider-neutral Git Ref and Deployment Result Observation",
+      "P3 BranchState DeploymentResult and Release Evidence",
+      "P4 Release Observation Temporal Projection",
       "External Runtime State Evidence",
       "Provider-neutral Runtime Adapter Contracts",
       "Claude Code, Codex, and OpenCode Projection-only Runtime Adapters",
@@ -163,7 +166,8 @@
       "Prepare and verify an intentional compaction without treating the provider summary as recovery authority.",
       "Inspect the Graph and record boundary without treating derived projections as Canon or unique recovery state.",
       "Dispatch a bounded worker outcome without widening its authorization or allowing it to approve itself.",
-      "Inspect provider-specific capabilities while preserving provider-neutral Core semantics."
+      "Inspect provider-specific capabilities while preserving provider-neutral Core semantics.",
+      "Observe host deployment results against exact current product Git refs without granting deployment, Product Canon, or recovery authority."
     ],
     "brandColor": "#234E70"
   }

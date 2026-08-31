@@ -14,6 +14,7 @@
 - [프로젝트 온보딩](onboarding.md)
 - [Product Model 정본](product-model.md)
 - [Product Operating Loop](product-operating-loop.md)
+- [Release observation](release-observation.md)
 
 ## 컨텍스트, 월드 모델, 검색
 

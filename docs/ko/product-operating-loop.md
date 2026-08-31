@@ -10,7 +10,7 @@ Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약
 
 구현은 경쟁하는 두 권위를 만들지 않으면서 두 가지 의미 방향을 유지합니다. 개발 척추는 `Product Canon`과 명시적 `ReviewDecision` record에서 검토된 제품-코드 관계로 이어지는 하향식 규범 경로입니다. 운영 흐름은 initiative 검토, 실행, `ChangeSet`, `OutcomeObservation`을 지나는 시간 순서 evidence 경로입니다. 두 경로의 교차점은 P4 graph의 정확히 검증된 identity 또는 relation이며, 권위 record의 복사본이 아닙니다. 코드나 runtime 관찰은 P3 evidence와 candidate를 만들 수 있지만 개발 척추를 다시 쓸 수 없습니다.
 
-현재 vertical은 provider-neutral `Release`, `BranchState`, `AnalyticsEvent` ingestion 이전에서 의도적으로 멈춥니다. 이후 이를 bounded observed evidence로 운영 흐름에 확장할 수 있지만, 그 존재·시각·측정 outcome은 제품 승인, Product Canon, 성공 판정 또는 복구 방향을 만들 수 없습니다. 이는 추론하거나 모사한 loop closure가 아니라 명시된 capability gap입니다.
+이제 provider-neutral `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObservation` ingestion이 bounded P3 evidence로 운영 흐름을 확장합니다. 그 존재나 시각은 제품 승인, Product Canon, 성공 판정 또는 복구 방향을 만들 수 없습니다. `AnalyticsEvent` ingestion은 추론하거나 모사한 loop closure가 아니라 명시된 capability gap으로 남습니다. [Release observation](release-observation.md)을 참고하세요.
 
 ## 권한 분리
 

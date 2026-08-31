@@ -17,11 +17,11 @@ graph builder는 다음과 같은 제공자 중립적 입력만 사용합니다.
 - 0개 이상의 명시적 parent `SourceSnapshot` ID
 - 안정적인 logical entity ID를 키로 하는 선택적 parent Revision ID 0개 이상
 
-Evidence로만 사용되는 Git commit, branch, tag, GraphDB record ID, provider session ID, document-provider page ID, observation timestamp 및 line location은 필수 logical entity 및 ChangeSet ID에서 제외됩니다. 이를 포함하는 World Model에는 선택적으로 Git history가 별도로 들어갈 수 있습니다. temporal GraphSnapshot은 live Git state를 사용하지 않으며, 별도로 영속화되고 digest 검증을 거친 `VcsEvidence` attachment가 있을 때만 이를 사용합니다.
+Evidence로만 사용되는 Git commit, branch, tag, GraphDB record ID, provider session ID, document-provider page ID, observation timestamp 및 line location은 필수 logical entity 및 ChangeSet ID에서 제외됩니다. 이를 포함하는 World Model에는 선택적으로 Git history가 별도로 들어갈 수 있습니다. temporal GraphSnapshot은 live Git state를 사용하지 않으며, 별도로 영속화되고 digest 검증을 거친 `VcsEvidence`와 release-observation projection input만 사용합니다.
 
 ## Logical entity와 불변 revision
 
-Temporal provenance protocol `0.10.0`은 [`AuthorityPlaneContract`](authority-plane-contract.md) 아래에 P4 재구축 가능 relation 및 retrieval index를 구체화합니다. digest가 유효한 `0.9.0` graph는 계속 읽을 수 있습니다. 새 graph는 successor creator property의 이름을 `producerReviewDecisionId`로 바꾸고 creator를 명시적 relation으로 projection합니다.
+Temporal provenance protocol `0.11.0`은 [`AuthorityPlaneContract`](authority-plane-contract.md) 아래에 P4 재구축 가능 relation 및 retrieval index를 구체화합니다. digest가 유효한 `0.10.0` graph는 계속 읽을 수 있습니다. 새 graph는 기존 identity를 변경하지 않고 provider-neutral release-observation node와 relation을 추가합니다.
 
 - 안정적인 product logical entity: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, `Decision`
 - 불변 product state: 이에 대응하는 `*Revision` kind
@@ -34,6 +34,7 @@ Temporal provenance protocol `0.10.0`은 [`AuthorityPlaneContract`](authority-pl
 - 선택적 외부 change evidence: `VcsEvidence` 및 불변 `GitCommit` observation node. attachment가 없을 때는 이러한 node가 생략되며 ChangeSet을 절대 대체하지 않습니다.
 - document review lineage: 숨겨진 `DocumentChangeCandidateSet` 및 `DocumentChangeCandidate` node와 일반적으로 표시되는 `DocumentChangeReviewDecision`, `DocumentProductModelRevision`, `DocumentChangeApplication` 및 과거 `DocumentProjectionReference` evidence
 - product operating evidence: `ProductSignal`, `ProductHypothesis`, 숨겨진 `ProductInitiativeCandidate` 및 `ProductFeatureCandidate`, 과거의 `ProductFeatureReference`, 명시적인 `ProductInitiativeReviewDecision`, 별도의 `ReviewedProductInitiative` 및 execution-bound `OutcomeObservation` node
+- release evidence: `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObservation` 및 내장된 불변 `GitCommit` observation
 
 비영속적 `ProductLearningNote` 값은 절대 GraphSnapshot에 들어가지 않습니다. v0.2 Initiative candidate는 inline reasoning을 포함하면서 Feature resolution은 없을 수 있습니다. review 전까지는 `PROPOSES_TO` edge가 없고, 영속화된 hypothesis reference가 없으면 `PROPOSES_FROM` edge도 없습니다. 명시적 accept review는 별도의 reviewed Initiative에서 기존 Feature, Feature candidate 또는 정직하게 기록된 gap 중 정확히 하나를 해석합니다. candidate byte는 변경되지 않습니다.
 
@@ -62,6 +63,7 @@ projection된 모든 node는 `nodeId`, `kind`, `authorityClass`, `origin`, 정�
 - 제공자 중립적 `CHANGES` 및 `SUPERSEDES` lineage와 명시적으로 review를 거친 `IMPACTS` edge
 - 선택적 `ChangeSet -[:MATERIALIZED_AS]-> VcsEvidence -[:REFERENCES]-> GitCommit` evidence link
 - `SUPPORTED_BY`, `PROPOSES_FROM`, `PROPOSES_TO`, review/promotion relation 및 `OutcomeObservation -[:OBSERVES]-> ChangeSet|ReviewedProductInitiative`를 통한 product learning 및 observation
+- `AT_REVISION`, `OBSERVED_ON`, `EVIDENCED_BY` 및 선택적 `ReleaseObservation -[:DEPLOYS]-> ChangeSet`을 통한 release evidence
 
 verifier는 digest mismatch, 지원되지 않는 node 또는 relation type, 중복 ID, 비결정적 순서, dangling 또는 invalid endpoint kind, 누락된 provenance, invalid authority flag, invalid confidence, scope mismatch 및 직접적인 self-parent cycle을 거부합니다.
 

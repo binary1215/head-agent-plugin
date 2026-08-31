@@ -21,6 +21,7 @@ import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from
 import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
+import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
@@ -1066,6 +1067,19 @@ export const tools = [
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, fresh: { type: "boolean", default: false } }, required: ["project_root"], additionalProperties: false },
   },
   {
+    name: "head_release_observe",
+    description: "Record a host-supplied deployment result and current product Git refs as immutable P3 evidence. A ReleaseObservation is created only for an approved successful result whose exact commit is reachable and present on a current product ref; this never approves deployment or changes Product Canon.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, environment_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }, status: { type: "string", enum: ["succeeded", "failed", "cancelled"] }, commit: { type: "string", pattern: "^[a-fA-F0-9]{40,64}$" }, observed_at: { type: "string", format: "date-time" }, source_event_key_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, deployment_evidence_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, approved: { type: "boolean" }, approval_evidence_digest: { anyOf: [{ type: "string", pattern: "^[a-f0-9]{64}$" }, { type: "null" }] }, change_set_id: { anyOf: [{ type: "string", pattern: "^change-set-[a-f0-9]{24}$" }, { type: "null" }] }, vcs_evidence_id: { anyOf: [{ type: "string", pattern: "^vcs-evidence-[a-f0-9]{24}$" }, { type: "null" }] }, confirm_host_observation: { type: "boolean" },
+    }, required: ["project_root", "environment_key", "status", "commit", "observed_at", "source_event_key_digest", "deployment_evidence_digest", "approved", "approval_evidence_digest", "change_set_id", "vcs_evidence_id", "confirm_host_observation"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "head_release_status",
+    description: "Read digest-verified P3 BranchState, DeploymentResult, and Release observations. The projection is evidence-only and has no Product Canon, execution, or recovery authority.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+  },
+  {
     name: "head_continuity_snapshot",
     description: "Build an on-demand non-persisted derived reference view over exact Session, Run, lineage, product, and graph identities, with optional forced fresh verification. It is not recovery canon or HEAD judgment authority.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, fresh: { type: "boolean", default: false } }, required: ["project_root"], additionalProperties: false },
@@ -1450,6 +1464,10 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                             ? observeProductOutcome({ root: args.project_root, changeSetId: args.change_set_id, initiativeId: args.initiative_id || "", statement: args.statement, epistemicClass: args.epistemic_class || "observed-fact", evidenceIds: args.evidence_ids || [] })
                           : name === "head_product_operating_status"
                             ? inspectProductOperatingLoop({ root: args.project_root, fresh: args.fresh ?? false })
+                          : name === "head_release_observe"
+                            ? (requireMcpConfirmation(args.confirm_host_observation, "Release observation requires explicit confirmation that the payload came from a host deployment observer.", "RELEASE_HOST_OBSERVATION_CONFIRMATION_REQUIRED"), observeReleaseState({ root: args.project_root, input: { environmentKey: args.environment_key, status: args.status, commit: args.commit, observedAt: args.observed_at, sourceEventKeyDigest: args.source_event_key_digest, deploymentEvidenceDigest: args.deployment_evidence_digest, approved: args.approved, approvalEvidenceDigest: args.approval_evidence_digest, changeSetId: args.change_set_id, vcsEvidenceId: args.vcs_evidence_id } }))
+                          : name === "head_release_status"
+                            ? inspectReleaseObservations({ root: args.project_root })
                           : name === "head_continuity_snapshot"
                             ? buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());
