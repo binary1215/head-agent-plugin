@@ -36,15 +36,14 @@ import {
 import { buildWorldModel, inspectWorldModel, readWorldModel } from "./world-model.mjs";
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./repository-source-scope.mjs";
 
-export const ONBOARDING_CANDIDATE_VERSION = "0.3.0";
+export const ONBOARDING_CANDIDATE_VERSION = "0.4.0";
 export const ONBOARDING_REVIEW_VERSION = "0.1.0";
-export const ONBOARDING_INFERENCE_VERSION = "0.3.0";
+export const ONBOARDING_INFERENCE_VERSION = "0.4.0";
 
-const MAX_INFERRED_SYMBOLS = 24;
-const MAX_INFERRED_CONCEPTS = 16;
 const MAX_CANDIDATES = 200;
 const MAX_EVIDENCE_RECORDS = 250;
 const MAX_UNKNOWNS = 100;
+const MAX_PROPOSAL_EVIDENCE_PER_CANDIDATE = 8;
 const KIND_ORDER = new Map(PRODUCT_ENTITY_KINDS.map((kind, index) => [kind, index]));
 const ARRAY_BY_KIND = Object.freeze({
   FeatureGroup: "featureGroups",
@@ -271,8 +270,12 @@ function evidenceRecord(fields) {
 
 function candidateArtifact({ kind, entity, evidenceIds, explanation, confidence, sourceSnapshotId, origin }) {
   if (!PRODUCT_ENTITY_KINDS.includes(kind)) fail(`Unsupported product candidate kind: ${kind}`, "INVALID_ONBOARDING_CANDIDATE");
-  if (typeof confidence !== "number" || confidence < 0 || confidence > 1) {
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
     fail("Onboarding candidate confidence must be from zero through one.", "INVALID_ONBOARDING_CONFIDENCE");
+  }
+  const normalizedExplanation = requiredText(explanation, "Candidate explanation");
+  if (normalizedExplanation.length > 2000) {
+    fail("Onboarding candidate explanation must contain at most 2000 characters.", "INVALID_ONBOARDING_CANDIDATE");
   }
   const payload = {
     schemaVersion: 1,
@@ -280,11 +283,13 @@ function candidateArtifact({ kind, entity, evidenceIds, explanation, confidence,
     productKind: kind,
     proposedEntity: entity,
     evidenceIds: [...new Set(evidenceIds)].sort(),
-    explanation: requiredText(explanation, "Candidate explanation"),
+    explanation: normalizedExplanation,
     confidence: Number(confidence.toFixed(6)),
     sourceSnapshotId: requiredText(sourceSnapshotId, "Candidate sourceSnapshotId"),
     origin: requiredText(origin, "Candidate origin"),
-    producer: "head-agent-core-onboarding-inference",
+    producer: origin === "user-owned-brief-candidate"
+      ? "head-agent-core-user-brief-normalizer"
+      : "head-agent-core-semantic-proposal-normalizer",
     producerVersion: ONBOARDING_INFERENCE_VERSION,
     authorityClass: "candidate",
     instructionAuthority: false,
@@ -341,7 +346,7 @@ function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId
       authorityTransition: "only-an-explicit-onboarding-review-decision-may-write-product-canon",
     },
     limits: {
-      maxInferredSymbols: MAX_INFERRED_SYMBOLS,
+      maxSemanticProposalEvidencePerCandidate: MAX_PROPOSAL_EVIDENCE_PER_CANDIDATE,
       maxCandidates: MAX_CANDIDATES,
       maxEvidenceRecords: MAX_EVIDENCE_RECORDS,
       maxUnknowns: MAX_UNKNOWNS,
@@ -417,247 +422,88 @@ function normalizedBrief(brief) {
   return { document: normalized, model, evidenceId: `onboarding-brief-${hash.slice(0, 24)}`, evidenceHash: hash };
 }
 
-function stableKey(prefix, value) {
-  const slug = String(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
-  return `${prefix}:${slug || onboardingDigest(String(value)).slice(0, 12)}`;
+function semanticProposalRequiredUnknown(sourceSnapshotId) {
+  const statement = "Fresh HEAD semantic product candidates are required. Core intentionally does not infer product meaning from file names, symbols, or lexical overlap.";
+  const hash = onboardingDigest(onboardingCanonicalJson({ sourceSnapshotId, kind: "semantic-product-proposal-required", statement }));
+  return { unknownId: `onboarding-unknown-${hash.slice(0, 24)}`, statement, evidenceIds: [], status: "open" };
 }
 
-function humanName(value) {
-  return String(value).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function productSymbolScore({ file, symbol }) {
-  const words = humanName(symbol.name).toLowerCase();
-  let score = file.classification === "source" ? 20 : 4;
-  score += symbol.kind === "function" ? 14 : symbol.kind === "class" ? 8 : 2;
-  if (/\b(?:create|start|stop|open|close|connect|disconnect|read|write|send|receive|process|detect|pick|calibrate|align|capture|preview|serve|control|update|load|save|run|handle|publish|subscribe|transport|infer|verify|track|manage)\w*\b/u.test(words)) score += 16;
-  if (/\b(?:calculate|compute|find|plan|select)\w*\b/u.test(words)) score += 10;
-  if (/\b(?:mock|fake|stub|broken|benchmark|spec|descriptor|observation|record|stats?|dict|list|array|batch|base|block|head|queue|reader|writer|fixture)\w*\b/u.test(words)) score -= 24;
-  if (/\b(?:decode|deserialize|discard|encode|expand|legacy|serialize)\w*\b/u.test(words)) score -= 18;
-  if (file.classification === "test") score -= 8;
-  if (symbol.name.length < 4) score -= 4;
-  return score;
-}
-
-const TOKEN_ALIASES = Object.freeze({
-  calib: "calibration",
-  calibrate: "calibration",
-  cam: "camera",
-  cams: "camera",
-  infer: "inference",
-  inferred: "inference",
-  melsec: "plc",
-  pickup: "picking",
-  predictions: "prediction",
-  receiver: "receive",
-  rgbd: "depth",
-});
-
-const CONCEPT_RULES = Object.freeze([
-  Object.freeze({ key: "project-management", name: "Project Management", all: ["project"], any: ["create", "load", "open", "save"] }),
-  Object.freeze({ key: "plc-communication", name: "PLC Communication", any: ["plc"] }),
-  Object.freeze({ key: "point-cloud-processing", name: "Point Cloud Processing", all: ["point", "cloud"] }),
-  Object.freeze({ key: "sensor-alignment", name: "Sensor Alignment", any: ["align", "alignment"] }),
-  Object.freeze({ key: "calibration", name: "Calibration", any: ["calibration"] }),
-  Object.freeze({ key: "inference-model-management", name: "Inference Model Management", any: ["sam2", "transformer"] }),
-  Object.freeze({ key: "robot-configuration", name: "Robot Configuration", all: ["robot"], any: ["config", "configuration", "runtime"] }),
-  Object.freeze({ key: "shared-state-transport", name: "Shared State Transport", any: ["ipc", "shared"], allOneOf: [["memory", "state", "transport"]] }),
-  Object.freeze({ key: "inference", name: "Inference", any: ["detect", "detection", "inference", "model", "predict", "prediction", "recognition"] }),
-  Object.freeze({ key: "image-acquisition", name: "Image Acquisition", all: ["capture"], any: ["camera", "color", "depth", "frame", "image", "infrared", "ir"] }),
-  Object.freeze({ key: "picking-control", name: "Picking Control", any: ["grasp", "pick", "picking"] }),
-  Object.freeze({ key: "request-delivery", name: "Request Delivery", any: ["deliver", "delivery", "request", "serve"] }),
-  Object.freeze({ key: "external-communication", name: "External Communication", any: ["connect", "connection", "receive", "send", "transport"] }),
-]);
-
-const FALLBACK_STOP_WORDS = new Set([
-  "asan", "async", "base", "btn", "button", "callback", "click", "clicked", "config", "configure", "dict", "error", "event",
-  "get", "handle", "handler", "helper", "list", "main", "manager", "object", "processor", "request", "response", "set", "util", "utils",
-]);
-
-function tokenList(value) {
-  return humanName(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/u).filter(Boolean)
-    .map((token) => TOKEN_ALIASES[token] || token);
-}
-
-function productDocumentHeadingEligible(file) {
-  const normalized = file.path.toLowerCase();
-  const base = path.posix.basename(normalized);
-  if (["agents.md", "claude.md", "contributing.md", "license.md", "changelog.md"].includes(base)) return false;
-  return base.startsWith("readme") || normalized.startsWith("docs/");
-}
-
-function obviousNonProductSymbol(symbol) {
-  const words = humanName(symbol.name).toLowerCase();
-  return /^(?:btn|button|click|clicked|close|closed|on close)\b/u.test(words)
-    || /^(?:connect error|fail(?:ure)?|main)(?:\b|$)/u.test(words)
-    || /\b(?:configure|setup)\b.*\b(?:log|logging)\b/u.test(words)
-    || /^(?:align\d+|create|delete|destroy|dispose|exit|init|initialize|open|run|start|stop|update)$/u.test(words);
-}
-
-function conceptFor({ file, symbol }) {
-  if (obviousNonProductSymbol(symbol)) return null;
-  const symbolTokens = tokenList(symbol.name);
-  const contextTokens = tokenList(file.path.replace(/\.[^.\/]+$/u, ""));
-  const tokens = new Set([...symbolTokens, ...contextTokens]);
-  for (const rule of CONCEPT_RULES) {
-    if (rule.all && !rule.all.every((token) => tokens.has(token))) continue;
-    if (rule.any && !rule.any.some((token) => tokens.has(token))) continue;
-    if (rule.allOneOf && !rule.allOneOf.every((choices) => choices.some((token) => tokens.has(token)))) continue;
-    return { key: rule.key, name: rule.name, recognized: true };
+function normalizedProposalEvidence(value, index, { projectRoot, sourceSnapshotId, filesByPath }) {
+  assertRecordFields(value, ["path", "line", "contentDigest", "symbol"], `Semantic proposal evidence ${index}`);
+  const relativePath = requiredText(value.path, `Semantic proposal evidence ${index}.path`).replace(/\\/g, "/");
+  if (path.posix.isAbsolute(relativePath) || relativePath.split("/").some((part) => !part || part === "." || part === "..")) {
+    fail(`Semantic proposal evidence ${index}.path must be a normalized project-relative path.`, "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
   }
-  if (/^get_.*(?:config|data|path|state|value)$/u.test(symbol.name.toLowerCase())) return null;
-  const meaningful = symbolTokens.filter((token) => !FALLBACK_STOP_WORDS.has(token) && token.length > 2).slice(0, 4);
-  if (!meaningful.length) return null;
-  return { key: meaningful.join("-"), name: humanName(meaningful.join(" ")), recognized: false };
-}
-
-function inferRepositoryCandidates(worldModel) {
-  const evidence = [];
-  const candidates = [];
-  const unknowns = [];
-  const sourceSnapshotId = worldModel.temporalProvenanceGraph.sourceSnapshotId;
-  const documentationHeadings = worldModel.files.flatMap((file) => (
-    file.classification === "documentation" && productDocumentHeadingEligible(file)
-      ? file.symbols.filter((symbol) => symbol.kind === "heading").map((symbol) => ({ file, symbol }))
-      : []
-  )).sort((left, right) => compareText(left.file.path, right.file.path) || left.symbol.line - right.symbol.line || compareText(left.symbol.name, right.symbol.name));
-  let featureGroup = null;
-  if (documentationHeadings.length) {
-    const selected = documentationHeadings[0];
-    const groupEvidence = evidenceRecord({
-      sourceKind: "repository-documentation-heading",
-      sourceId: sourceSnapshotId,
-      path: selected.file.path,
-      line: selected.symbol.line,
-      contentDigest: selected.file.digest,
-      statement: `Documentation heading proposes a possible product grouping: ${selected.symbol.name}`,
-    });
-    evidence.push(groupEvidence);
-    featureGroup = {
-      key: stableKey("group", selected.symbol.name),
-      name: humanName(selected.symbol.name),
-      description: "Candidate product grouping inferred from an observed documentation heading; repository layout was not used as product taxonomy.",
-      parentFeatureGroupKeys: [],
+  const file = filesByPath.get(relativePath);
+  if (!file) fail(`Semantic proposal evidence path is absent from the current World Model: ${relativePath}`, "ONBOARDING_SEMANTIC_EVIDENCE_MISSING");
+  const contentDigest = value.contentDigest == null ? file.digest : requiredText(value.contentDigest, `Semantic proposal evidence ${index}.contentDigest`).toLowerCase();
+  if (contentDigest !== file.digest) fail(`Semantic proposal evidence digest does not match the current World Model: ${relativePath}`, "ONBOARDING_SEMANTIC_EVIDENCE_DRIFT");
+  const line = value.line;
+  const source = fs.readFileSync(path.join(projectRoot, ...relativePath.split("/")), "utf8");
+  const lineCount = source.split(/\r?\n/u).length;
+  if (!Number.isInteger(line) || line < 1 || line > lineCount) fail(`Semantic proposal evidence line is outside the current file: ${relativePath}:${value.line}`, "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
+  let symbol = null;
+  if (value.symbol != null) {
+    assertRecordFields(value.symbol, ["name", "kind", "line"], `Semantic proposal evidence ${index}.symbol`);
+    symbol = {
+      name: requiredText(value.symbol.name, `Semantic proposal evidence ${index}.symbol.name`),
+      kind: requiredText(value.symbol.kind, `Semantic proposal evidence ${index}.symbol.kind`),
+      line: value.symbol.line,
     };
-    candidates.push(candidateArtifact({
-      kind: "FeatureGroup",
-      entity: featureGroup,
-      evidenceIds: [groupEvidence.evidenceId],
-      explanation: "A repository document heading is product-language evidence, but remains a candidate until user review.",
-      confidence: 0.6,
-      sourceSnapshotId,
-      origin: "repository-documentation-heuristic",
-    }));
-  } else {
-    const hash = onboardingDigest(onboardingCanonicalJson({ sourceSnapshotId, kind: "feature-group-taxonomy" }));
-    unknowns.push({
-      unknownId: `onboarding-unknown-${hash.slice(0, 24)}`,
-      statement: "Observed implementation evidence does not justify a FeatureGroup taxonomy; directory structure was intentionally not promoted into product meaning.",
-      evidenceIds: [],
-      status: "open",
-    });
-  }
-
-  const symbols = worldModel.files.flatMap((file) => (
-    ["source", "test"].includes(file.classification)
-      ? file.symbols.filter((symbol) => symbol.kind !== "heading" && !symbol.name.startsWith("_")).map((symbol) => ({ file, symbol }))
-      : []
-  )).map((item) => ({ ...item, productScore: productSymbolScore(item), concept: conceptFor(item) }))
-    .filter((item) => item.concept)
-    .sort((left, right) => right.productScore - left.productScore
-      || compareText(left.symbol.name, right.symbol.name)
-      || compareText(left.file.path, right.file.path)
-      || left.symbol.line - right.symbol.line);
-  const selectedSymbols = [];
-  const seenNames = new Set();
-  for (const item of symbols) {
-    const normalizedName = item.symbol.name.toLowerCase();
-    if (seenNames.has(normalizedName)) continue;
-    seenNames.add(normalizedName);
-    selectedSymbols.push(item);
-    if (selectedSymbols.length >= MAX_INFERRED_SYMBOLS) break;
-  }
-  const clusters = new Map();
-  for (const item of selectedSymbols) {
-    const existing = clusters.get(item.concept.key) || { concept: item.concept, members: [] };
-    existing.members.push(item);
-    clusters.set(item.concept.key, existing);
-  }
-  const selectedClusters = [...clusters.values()].sort((left, right) => {
-    const leftScore = Math.max(...left.members.map((item) => item.productScore));
-    const rightScore = Math.max(...right.members.map((item) => item.productScore));
-    return rightScore - leftScore || compareText(left.concept.key, right.concept.key);
-  }).slice(0, MAX_INFERRED_CONCEPTS);
-  for (const cluster of selectedClusters) {
-    const clusterEvidence = [];
-    for (const { file, symbol } of cluster.members.slice(0, 4)) {
-      const testEvidence = file.classification === "test";
-      const symbolEvidence = evidenceRecord({
-        sourceKind: testEvidence ? "repository-test-symbol" : "repository-symbol",
-        sourceId: sourceSnapshotId,
-        path: file.path,
-        line: symbol.line,
-        contentDigest: file.digest,
-        statement: `Observed ${testEvidence ? "test " : ""}${symbol.kind} symbol ${symbol.name} contributes evidence for the candidate behavior cluster ${cluster.concept.name}.`,
-      });
-      evidence.push(symbolEvidence);
-      clusterEvidence.push(symbolEvidence.evidenceId);
+    if (!Number.isInteger(symbol.line) || symbol.line < 1) fail(`Semantic proposal evidence ${index}.symbol.line is invalid.`, "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
+    if (!(file.symbols || []).some((item) => item.name === symbol.name && item.kind === symbol.kind && item.line === symbol.line)) {
+      fail(`Semantic proposal symbol is absent from the current World Model: ${relativePath}:${symbol.name}`, "ONBOARDING_SEMANTIC_EVIDENCE_MISSING");
     }
-    const representative = cluster.members[0];
-    const testEvidence = representative.file.classification === "test";
-    const maxScore = Math.max(...cluster.members.map((item) => item.productScore));
-    const capabilityKey = stableKey("capability", cluster.concept.key);
-    candidates.push(candidateArtifact({
-      kind: "Capability",
-      entity: {
-        key: capabilityKey,
-        name: cluster.concept.name,
-        description: `Candidate capability inferred from ${cluster.members.length} bounded implementation observation${cluster.members.length === 1 ? "" : "s"}; the behavior cluster remains subject to user review.`,
-      },
-      evidenceIds: clusterEvidence,
-      explanation: "Related implementation symbols were clustered into one candidate behavior to avoid treating lifecycle helpers as separate product concepts.",
-      confidence: testEvidence ? 0.45 : Math.min(0.75, 0.5 + Math.max(0, maxScore) / 180),
-      sourceSnapshotId,
-      origin: testEvidence ? "repository-test-symbol-heuristic" : "repository-symbol-heuristic",
-    }));
-    candidates.push(candidateArtifact({
-      kind: "Feature",
-      entity: {
-        key: stableKey("feature", `${cluster.concept.key}-${representative.symbol.name}`),
-        name: humanName(representative.symbol.name),
-        description: `Candidate feature inferred from the ${cluster.concept.name} implementation behavior cluster, represented by ${representative.symbol.name}.`,
-        featureGroupKeys: [],
-        capabilityKeys: [capabilityKey],
-        governedBy: [],
-      },
-      evidenceIds: clusterEvidence,
-      explanation: "A clustered implementation behavior can propose one Feature, but only onboarding review can adopt or reshape it as Product Canon.",
-      confidence: testEvidence ? 0.4 : Math.min(0.7, 0.45 + Math.max(0, maxScore) / 180),
-      sourceSnapshotId,
-      origin: testEvidence ? "repository-test-symbol-heuristic" : "repository-symbol-heuristic",
-    }));
   }
-  if (!selectedClusters.length) {
-    const hash = onboardingDigest(onboardingCanonicalJson({ sourceSnapshotId, kind: "product-behavior" }));
-    unknowns.push({
-      unknownId: `onboarding-unknown-${hash.slice(0, 24)}`,
-      statement: "No supported source symbol currently provides enough evidence to propose a Capability or Feature.",
-      evidenceIds: [],
-      status: "open",
+  return { file, relativePath, line, symbol, sourceSnapshotId };
+}
+
+function candidatesFromSemanticProposal(proposal, worldModel, projectRoot) {
+  if (proposal == null) return { candidates: [], evidence: [], unknowns: [semanticProposalRequiredUnknown(worldModel.temporalProvenanceGraph.sourceSnapshotId)] };
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) fail("Semantic product proposal must be an object.", "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
+  assertRecordFields(proposal, ["schemaVersion", "sourceSnapshotId", "candidates"], "Semantic product proposal");
+  if (proposal.schemaVersion !== 1) fail("Semantic product proposal schemaVersion must be 1.", "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
+  const sourceSnapshotId = requiredText(proposal.sourceSnapshotId, "Semantic product proposal sourceSnapshotId");
+  if (sourceSnapshotId !== worldModel.temporalProvenanceGraph.sourceSnapshotId) fail("Semantic product proposal is bound to a stale SourceSnapshot.", "ONBOARDING_SEMANTIC_PROPOSAL_DRIFT");
+  const proposed = recordList(proposal.candidates, "Semantic product proposal candidates");
+  if (!proposed.length) fail("Semantic product proposal must contain at least one candidate.", "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
+  if (proposed.length > MAX_CANDIDATES) fail("Semantic product proposal exceeds the candidate bound.", "ONBOARDING_CANDIDATE_SET_LIMIT");
+  const filesByPath = new Map(worldModel.files.map((file) => [file.path, file]));
+  const evidenceById = new Map();
+  const candidates = proposed.map((item, candidateIndex) => {
+    assertRecordFields(item, ["productKind", "proposedEntity", "evidence", "explanation", "confidence"], `Semantic product candidate ${candidateIndex}`);
+    const productKind = requiredText(item.productKind, `Semantic product candidate ${candidateIndex}.productKind`);
+    const evidenceInput = recordList(item.evidence, `Semantic product candidate ${candidateIndex}.evidence`);
+    if (!evidenceInput.length || evidenceInput.length > MAX_PROPOSAL_EVIDENCE_PER_CANDIDATE) {
+      fail(`Semantic product candidate ${candidateIndex} must contain 1 through ${MAX_PROPOSAL_EVIDENCE_PER_CANDIDATE} evidence records.`, "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
+    }
+    const evidenceIds = evidenceInput.map((record, evidenceIndex) => {
+      const normalized = normalizedProposalEvidence(record, evidenceIndex, { projectRoot, sourceSnapshotId, filesByPath });
+      const evidence = evidenceRecord({
+        sourceKind: normalized.symbol ? "head-semantic-proposal-symbol" : "head-semantic-proposal-source",
+        sourceId: sourceSnapshotId,
+        path: normalized.relativePath,
+        line: normalized.line,
+        contentDigest: normalized.file.digest,
+        statement: normalized.symbol
+          ? `Current ${normalized.symbol.kind} symbol ${normalized.symbol.name} is cited as evidence for proposed ${productKind}.`
+          : `Current repository source ${normalized.relativePath}:${normalized.line} is cited as evidence for proposed ${productKind}.`,
+      });
+      evidenceById.set(evidence.evidenceId, evidence);
+      return evidence.evidenceId;
     });
-  }
-  if (symbols.length > selectedSymbols.length || clusters.size > selectedClusters.length) {
-    const excluded = Math.max(0, symbols.length - selectedSymbols.length) + Math.max(0, clusters.size - selectedClusters.length);
-    const hash = onboardingDigest(onboardingCanonicalJson({ sourceSnapshotId, kind: "candidate-bound", total: symbols.length, selectedSymbols: selectedSymbols.length, selectedConcepts: selectedClusters.length }));
-    unknowns.push({
-      unknownId: `onboarding-unknown-${hash.slice(0, 24)}`,
-      statement: `Candidate inference was bounded to ${MAX_INFERRED_SYMBOLS} unique symbols and ${MAX_INFERRED_CONCEPTS} behavior clusters; ${excluded} additional observations or clusters were excluded from this review set.`,
-      evidenceIds: [],
-      status: "open",
+    return candidateArtifact({
+      kind: productKind,
+      entity: item.proposedEntity,
+      evidenceIds,
+      explanation: requiredText(item.explanation, `Semantic product candidate ${candidateIndex}.explanation`),
+      confidence: item.confidence,
+      sourceSnapshotId,
+      origin: "fresh-head-semantic-proposal",
     });
-  }
-  return { candidates, evidence, unknowns };
+  });
+  modelFromCandidateEntities(candidates);
+  return { candidates, evidence: [...evidenceById.values()], unknowns: [] };
 }
 
 function candidatesFromBrief(brief, sourceSnapshotId) {
@@ -685,17 +531,17 @@ function candidatesFromBrief(brief, sourceSnapshotId) {
   return { candidates, evidence: [briefEvidence], unknowns: [] };
 }
 
-function mergeCandidateSources(inferred, fromBrief) {
+function mergeCandidateSources(semantic, fromBrief) {
   const candidates = new Map();
-  for (const candidate of inferred.candidates) candidates.set(`${candidate.productKind}:${candidate.proposedEntity.key}`, candidate);
+  for (const candidate of semantic.candidates) candidates.set(`${candidate.productKind}:${candidate.proposedEntity.key}`, candidate);
   for (const candidate of fromBrief.candidates) candidates.set(`${candidate.productKind}:${candidate.proposedEntity.key}`, candidate);
   const evidence = new Map();
-  for (const record of [...inferred.evidence, ...fromBrief.evidence]) evidence.set(record.evidenceId, record);
+  for (const record of [...semantic.evidence, ...fromBrief.evidence]) evidence.set(record.evidenceId, record);
   const usedEvidence = new Set([...candidates.values()].flatMap((candidate) => candidate.evidenceIds));
   return {
     candidates: [...candidates.values()],
     evidence: [...evidence.values()].filter((record) => usedEvidence.has(record.evidenceId)),
-    unknowns: inferred.unknowns,
+    unknowns: semantic.unknowns,
   };
 }
 
@@ -733,12 +579,13 @@ async function rebuildWithOnboardingProjection({
   });
 }
 
-export async function startOnboarding({ root = ".", mode = "existing", storage = null, brief = null, sourceScope = null } = {}) {
+export async function startOnboarding({ root = ".", mode = "existing", storage = null, brief = null, semanticProposal = null, sourceScope = null } = {}) {
   const inspected = readyProject(root, "onboarding start");
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("Onboarding cannot change product authority while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
   }
   const projectRoot = inspected.project.projectRoot;
+  if (brief != null && semanticProposal != null) fail("Onboarding accepts either a user-owned brief or a fresh HEAD semantic proposal, not both.", "ONBOARDING_INPUT_CONFLICT");
   const previousState = ensureOnboardingState(inspected);
   if (new Set(["awaiting-review", "revision-required"]).has(previousState.phase)) {
     fail("The current onboarding candidate set requires review before onboarding can restart.", "ONBOARDING_REVIEW_REQUIRED");
@@ -775,9 +622,11 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
     };
   }
   const briefInput = normalizedBrief(brief);
-  const inferred = inferRepositoryCandidates(world.snapshot);
+  const semantic = semanticProposal == null && briefInput
+    ? { candidates: [], evidence: [], unknowns: [] }
+    : candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot);
   const briefCandidates = candidatesFromBrief(briefInput, world.snapshot.temporalProvenanceGraph.sourceSnapshotId);
-  const merged = mergeCandidateSources(inferred, briefCandidates);
+  const merged = mergeCandidateSources(semantic, briefCandidates);
   const candidateSet = buildCandidateSet({
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
@@ -787,6 +636,7 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
     candidates: merged.candidates,
     evidence: merged.evidence,
     unknowns: merged.unknowns,
+    parentCandidateSetIds: previousState.candidateSetId ? [previousState.candidateSetId] : [],
     briefEvidenceId: briefInput?.evidenceId || null,
   });
   const projectedWorld = await rebuildWithOnboardingProjection({
@@ -824,7 +674,7 @@ export async function startOnboarding({ root = ".", mode = "existing", storage =
   };
 }
 
-export async function refreshOnboardingCandidates({ root = "." } = {}) {
+export async function refreshOnboardingCandidates({ root = ".", semanticProposal = null } = {}) {
   const inspected = readyProject(root, "onboarding candidate refresh");
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("Onboarding candidate refresh cannot run while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
@@ -840,22 +690,32 @@ export async function refreshOnboardingCandidates({ root = "." } = {}) {
   }
   const productCanon = readProductModelCanon({ projectRoot });
   if (productCanon.model.productModelId !== state.productModelId || productCanon.model.productModelId !== previousSet.productModelId) {
-    fail("Product Canon changed after candidate inference; candidate evidence cannot refresh automatically.", "ONBOARDING_PRODUCT_CANON_DRIFT");
+    fail("Product Canon changed after candidate proposal; candidate evidence cannot refresh automatically.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
   const world = await buildWorldModel({ root: projectRoot, persist: true });
-  if (world.snapshot.temporalProvenanceGraph.sourceSnapshotId === previousSet.sourceSnapshotId) {
+  if (world.snapshot.temporalProvenanceGraph.sourceSnapshotId === previousSet.sourceSnapshotId && semanticProposal == null) {
     return { status: "onboarding_candidates_current", refreshed: false, reason: "source-snapshot-current", state, candidateSet: previousSet };
   }
-  const inferred = inferRepositoryCandidates(world.snapshot);
+  if (semanticProposal == null) {
+    return {
+      status: "onboarding_semantic_reproposal_required",
+      refreshed: false,
+      reason: "source-snapshot-changed-fresh-head-semantic-proposal-required",
+      state,
+      candidateSet: previousSet,
+      currentSourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+    };
+  }
+  const semantic = candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot);
   const candidateSet = buildCandidateSet({
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     inputMode: previousSet.inputMode,
     storageSelectionId: previousSet.storageSelectionId,
     worldModel: world.snapshot,
-    candidates: inferred.candidates,
-    evidence: inferred.evidence,
-    unknowns: inferred.unknowns,
+    candidates: semantic.candidates,
+    evidence: semantic.evidence,
+    unknowns: semantic.unknowns,
     parentCandidateSetIds: [previousSet.candidateSetId],
   });
   const projectedWorld = await rebuildWithOnboardingProjection({
@@ -1124,7 +984,7 @@ export async function reviewOnboarding({
   const currentWorld = inspectWorldModel({ root: projectRoot });
   if (currentWorld.status !== "current"
     || currentWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId) {
-    fail("Observed project state changed after candidate inference; re-index and create a new candidate set.", "ONBOARDING_SOURCE_DRIFT");
+    fail("Observed project state changed after candidate proposal; re-index and create a new candidate set.", "ONBOARDING_SOURCE_DRIFT");
   }
   const normalizedDisposition = requiredText(disposition, "Review disposition").toLowerCase();
   if (!new Set(["accept-all", "accept-selection", "revise", "reject"]).has(normalizedDisposition)) {
@@ -1132,7 +992,7 @@ export async function reviewOnboarding({
   }
   const currentCanon = readProductModelCanon({ projectRoot });
   if (currentCanon.model.productModelId !== candidateSet.productModelId || currentCanon.model.productModelId !== state.productModelId) {
-    fail("Product Canon changed after candidate inference; a new onboarding candidate set is required.", "ONBOARDING_PRODUCT_CANON_DRIFT");
+    fail("Product Canon changed after candidate proposal; a new onboarding candidate set is required.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
   const revisionItems = editedCandidates(candidateSet, userEdits, addedEntities, removedCandidateIds);
   const allCandidateIds = candidateSet.candidates.map((candidate) => candidate.candidateId);

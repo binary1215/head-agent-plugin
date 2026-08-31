@@ -5,7 +5,7 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.12.0";
+export const CONTEXT_COMPILER_VERSION = "0.13.0";
 export const CONTEXT_COVERAGE_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
@@ -491,17 +491,10 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
-function productContextCandidates(worldModel, task, graphProjectionAdapter = null) {
-  if (!worldModel || worldModel.status !== "current") return [];
+function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapter, anchorTerm, matchingTerms, selectedEntityKey = null) {
   const graph = worldModel.snapshot.temporalProvenanceGraph;
   const productModel = worldModel.snapshot.productModel;
-  if (!graph || !productModel || graph.summary.productRevisionCount === 0) return [];
   const taskTerms = terms(task);
-  const productCorpus = graph.nodes.filter((node) => node.semantic).map((node) => canonicalJson(node.semantic).toLocaleLowerCase()).join(" ");
-  const matchingTerms = [...taskTerms].filter((term) => productCorpus.includes(term))
-    .sort((left, right) => right.length - left.length || left.localeCompare(right));
-  if (matchingTerms.length === 0) return [];
-  const anchorTerm = matchingTerms[0];
   const traversal = queryTemporalProjection(worldModel, graphProjectionAdapter, {
     query: anchorTerm,
     kinds: [
@@ -561,7 +554,7 @@ function productContextCandidates(worldModel, task, graphProjectionAdapter = nul
     productModelId: productModel.productModelId,
     productModelHash: productModel.productModelHash,
     source: worldModel.snapshot.productModelSource,
-    taskAnchor: { selectedTerm: anchorTerm, matchingTerms },
+    taskAnchor: { selectedTerm: anchorTerm, selectedEntityKey, matchingTerms },
     entities: compactEntities,
     relationships: compactRelationships,
     projectionOmissions: {
@@ -584,6 +577,26 @@ function productContextCandidates(worldModel, task, graphProjectionAdapter = nul
     approxTokens: approxTokens(canonicalJson(record)),
     record,
   }];
+}
+
+function productContextCandidates(worldModel, task, graphProjectionAdapter = null, evidenceNeeds = []) {
+  if (!worldModel || worldModel.status !== "current") return [];
+  const graph = worldModel.snapshot.temporalProvenanceGraph;
+  const productModel = worldModel.snapshot.productModel;
+  if (!graph || !productModel || graph.summary.productRevisionCount === 0) return [];
+  const taskTerms = terms(task);
+  const productCorpus = graph.nodes.filter((node) => node.semantic).map((node) => canonicalJson(node.semantic).toLocaleLowerCase()).join(" ");
+  const matchingTerms = [...taskTerms].filter((term) => productCorpus.includes(term))
+    .sort((left, right) => right.length - left.length || left.localeCompare(right));
+  const entityKeys = [...new Set(evidenceNeeds.filter((need) => need.kind === "product-context").flatMap((need) => need.entityKeys || []))].sort();
+  const anchors = entityKeys.length
+    ? entityKeys.map((key) => ({ anchorTerm: key, matchingTerms: [], selectedEntityKey: key }))
+    : matchingTerms.length ? [{ anchorTerm: matchingTerms[0], matchingTerms, selectedEntityKey: null }] : [];
+  const candidates = anchors.flatMap(({ anchorTerm, matchingTerms: anchorMatches, selectedEntityKey }) => (
+    productContextCandidateForAnchor(worldModel, task, graphProjectionAdapter, anchorTerm, anchorMatches, selectedEntityKey)
+  ));
+  return [...new Map(candidates.map((candidate) => [candidate.id, candidate])).values()]
+    .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
 function gitDecisionCandidates(worldModel, task, historyClass) {
@@ -679,7 +692,7 @@ function normalizeEvidenceNeeds(evidenceNeeds) {
   if (evidenceNeeds == null) return [];
   if (!Array.isArray(evidenceNeeds)) fail("HEAD evidence needs must be an array.", "INVALID_EVIDENCE_NEEDS");
   if (evidenceNeeds.length > 32) fail("HEAD evidence needs may contain at most 32 items.", "INVALID_EVIDENCE_NEEDS");
-  const allowedKeys = new Set(["id", "kind", "facets", "relationTypes", "minimumItems", "rationale"]);
+  const allowedKeys = new Set(["id", "kind", "paths", "entityKeys", "facets", "relationTypes", "minimumItems", "rationale"]);
   const knownKinds = new Set(EVIDENCE_NEED_KINDS);
   const seen = new Set();
   const normalized = evidenceNeeds.map((value, index) => {
@@ -692,6 +705,26 @@ function normalizeEvidenceNeeds(evidenceNeeds) {
     seen.add(id);
     const kind = String(value.kind || "").trim().toLocaleLowerCase();
     if (!knownKinds.has(kind)) fail(`Evidence need ${id} has an unsupported kind: ${kind || "(empty)"}.`, "INVALID_EVIDENCE_NEEDS");
+    const rawPaths = value.paths == null ? [] : value.paths;
+    if (!Array.isArray(rawPaths) || rawPaths.length > 32 || rawPaths.some((item) => typeof item !== "string" || !item.trim())) {
+      fail(`Evidence need ${id} paths must be an array of at most 32 non-empty project-relative paths.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    const paths = [...new Set(rawPaths.map((item) => item.trim().replace(/\\/g, "/")))].sort();
+    if (paths.some((item) => path.posix.isAbsolute(item) || item.split("/").some((part) => !part || part === "." || part === ".."))) {
+      fail(`Evidence need ${id} contains a non-normalized project-relative path.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    if (paths.length && !kind.startsWith("repository-") && !["semantic-relation", "temporal-relation"].includes(kind)) {
+      fail(`Evidence need ${id} may use paths only with repository or relation evidence.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    const rawEntityKeys = value.entityKeys == null ? [] : value.entityKeys;
+    if (!Array.isArray(rawEntityKeys) || rawEntityKeys.length > 32 || rawEntityKeys.some((item) => typeof item !== "string" || !item.trim())) {
+      fail(`Evidence need ${id} entityKeys must be an array of at most 32 non-empty Product keys.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    const entityKeys = [...new Set(rawEntityKeys.map((item) => item.trim()))].sort();
+    if (entityKeys.some((item) => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(item))) fail(`Evidence need ${id} contains an invalid Product key.`, "INVALID_EVIDENCE_NEEDS");
+    if (entityKeys.length && kind !== "product-context") {
+      fail(`Evidence need ${id} may use entityKeys only with product-context evidence.`, "INVALID_EVIDENCE_NEEDS");
+    }
     const rawFacets = value.facets == null ? [] : value.facets;
     if (!Array.isArray(rawFacets) || rawFacets.length > 16 || rawFacets.some((item) => typeof item !== "string" || !item.trim())) {
       fail(`Evidence need ${id} facets must be an array of at most 16 non-empty strings.`, "INVALID_EVIDENCE_NEEDS");
@@ -708,7 +741,7 @@ function normalizeEvidenceNeeds(evidenceNeeds) {
     if (!Number.isInteger(minimumItems) || minimumItems < 1 || minimumItems > 20) fail(`Evidence need ${id} minimumItems must be an integer from 1 to 20.`, "INVALID_EVIDENCE_NEEDS");
     const rationale = value.rationale == null ? "" : String(value.rationale).trim();
     if (rationale.length > 500) fail(`Evidence need ${id} rationale must be at most 500 characters.`, "INVALID_EVIDENCE_NEEDS");
-    return { id, kind, facets, relationTypes, minimumItems, rationale };
+    return { id, kind, paths, entityKeys, facets, relationTypes, minimumItems, rationale };
   });
   return normalized.sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -748,6 +781,14 @@ function evidenceItem(candidate, { id = candidate.id, kind, path = null, relatio
 function candidateEvidenceMatches(candidate, need) {
   const record = candidate.record;
   const candidateBody = canonicalJson(record);
+  if (need.paths.length && (!record.path || !need.paths.includes(record.path))) return [];
+  let matchedEntityKeys = [];
+  if (need.entityKeys.length) {
+    if (candidate.kind !== "ProductContext") return [];
+    const presentKeys = new Set((record.entities || []).flatMap((item) => [item.key, item.semantic?.key]).filter(Boolean));
+    matchedEntityKeys = need.entityKeys.filter((key) => presentKeys.has(key));
+    if (!matchedEntityKeys.length) return [];
+  }
   if (!["semantic-relation", "temporal-relation"].includes(need.kind) && !facetMatch(candidateBody, need.facets)) return [];
   const simpleKinds = {
     claim: "Claim",
@@ -758,6 +799,13 @@ function candidateEvidenceMatches(candidate, need) {
     unknown: "Unknown",
   };
   if (simpleKinds[need.kind]) {
+    if (need.kind === "product-context" && matchedEntityKeys.length) {
+      return matchedEntityKeys.map((entityKey) => evidenceItem(candidate, {
+        id: `${candidate.id}:product-entity:${entityKey}`,
+        kind: need.kind,
+        value: { carrierCandidateId: candidate.id, entityKey },
+      }));
+    }
     return candidate.kind === simpleKinds[need.kind]
       ? [evidenceItem(candidate, { kind: need.kind, path: record.path || null })]
       : [];
@@ -819,8 +867,7 @@ function selectCandidates(candidates, budget, baseTokens, needs) {
   let used = baseTokens;
   const included = [];
   const includedIds = new Set();
-  const hasNeedMatch = (candidate) => Object.values(candidate.evidenceNeedMatches).some((items) => items.length);
-  const eligible = candidates.filter((candidate) => hasNeedMatch(candidate) || !(candidate.relevance === 0 && candidate.importance < 4 && candidate.score < 20));
+  const eligible = candidates;
   while (needs.some((need) => selectedEvidenceCount(included, need.id) < need.minimumItems)) {
     const fitting = eligible.filter((candidate) => !includedIds.has(candidate.id) && used + candidate.approxTokens <= budget)
       .map((candidate) => ({ candidate, gain: coverageGain(candidate, included, needs) }))
@@ -844,7 +891,7 @@ function selectCandidates(candidates, budget, baseTokens, needs) {
   const excluded = candidates.filter((candidate) => !includedIds.has(candidate.id)).map((candidate) => ({
     id: candidate.id,
     kind: candidate.kind,
-    reason: !hasNeedMatch(candidate) && candidate.relevance === 0 && candidate.importance < 4 && candidate.score < 20 ? "low-relevance" : "context-budget",
+    reason: "context-budget",
     score: candidate.score,
     classification: candidate.record.classification || null,
     recordDigest: digest(canonicalJson(candidate.record)),
@@ -965,7 +1012,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
   };
   const candidates = [
     ...activeCandidates(sources.knowledge, task, historyClass),
-    ...productContextCandidates(sources.worldModel, task, graphProjectionAdapter),
+    ...productContextCandidates(sources.worldModel, task, graphProjectionAdapter, needContract.needs),
     ...repositoryCandidates(sources.worldModel, task, graphProjectionAdapter, maxApproxTokens),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
@@ -981,9 +1028,10 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     compiler: {
       name: "head-agent-core-context-compiler",
       version: CONTEXT_COMPILER_VERSION,
-      strategy: "deterministic-coverage-aware-minimum-sufficient-context",
+      strategy: "deterministic-head-guided-context-packaging",
       historyRelevance: historyClass,
       lexicalNormalization: "nfkc+url-elision+camel-snake-path+bounded-korean-particle-variants",
+      lexicalRole: "fallback-ranking-only-never-candidate-eligibility-or-semantic-acceptance",
     },
     budget: {
       protocol: { name: "head-agent-core-context-budget-tiers", version: CONTEXT_BUDGET_PROTOCOL_VERSION },

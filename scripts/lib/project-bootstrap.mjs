@@ -6,7 +6,7 @@ export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.3.0";
 
 const PROJECT_PROFILES = new Set(["core", "product"]);
 
-const ALLOWED_ONBOARDING_FIELDS = new Set(["mode", "storage", "brief", "sourceScope"]);
+const ALLOWED_ONBOARDING_FIELDS = new Set(["mode", "storage", "brief", "semanticProposal", "sourceScope"]);
 
 function fail(code, message) {
   const error = new Error(message);
@@ -68,7 +68,7 @@ function productReadiness(status) {
       state: "evidence_required",
       status: "product_evidence_required",
       action: "provide_product_evidence",
-      summary: "Product governance is active and needs repository evidence or a bounded product brief.",
+      summary: "Product governance is active and needs a user-owned brief or a fresh HEAD semantic proposal bound to current repository evidence.",
     },
     awaiting_review: {
       state: "review_required",
@@ -322,7 +322,8 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   }
 
   let onboardingAction;
-  if (["initialized", "migration_required", "awaiting_evidence", "rejected"].includes(current.status)) {
+  if (["initialized", "migration_required", "rejected"].includes(current.status)
+    || (current.status === "awaiting_evidence" && Object.keys(onboardingInput).length)) {
     const started = await startOnboarding({ root, ...onboardingInput });
     onboardingAction = current.status === "initialized" || current.status === "migration_required" ? "started" : "resumed-analysis";
     const inspected = inspectOnboarding({ root });
@@ -338,8 +339,20 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     });
   }
 
+  if (current.status === "awaiting_evidence") {
+    return bootstrapResponse({
+      root,
+      profile,
+      onboardingAction: "evidence-required",
+      inputDisposition: "semantic-proposal-or-user-brief-required",
+      before,
+      installation,
+      inspected: current,
+    });
+  }
+
   if (current.status === "awaiting_review" || current.status === "revision_required") {
-    const refresh = await refreshOnboardingCandidates({ root });
+    const refresh = await refreshOnboardingCandidates({ root, semanticProposal: onboardingInput.semanticProposal || null });
     if (refresh.refreshed) {
       current = inspectOnboarding({ root });
       return bootstrapResponse({
@@ -352,6 +365,31 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
         inspected: current,
         extra: { previousCandidateSetId: refresh.previousCandidateSetId },
       });
+    }
+    if (refresh.status === "onboarding_semantic_reproposal_required") {
+      const response = bootstrapResponse({
+        root,
+        profile,
+        onboardingAction: "fresh-head-semantic-reproposal-required",
+        inputDisposition: "semantic-proposal-required",
+        before,
+        installation,
+        inspected: current,
+        extra: { currentSourceSnapshotId: refresh.currentSourceSnapshotId },
+      });
+      return {
+        ...response,
+        status: "product_evidence_required",
+        readiness: {
+          ...response.readiness,
+          product: { ...response.readiness.product, state: "evidence_required" },
+        },
+        nextAction: {
+          id: "provide_product_evidence",
+          summary: "Repository evidence changed. Re-inspect the current SourceSnapshot and submit a fresh HEAD semantic proposal; do not review the stale candidate set.",
+          entrypoint: entrypoint("provide_product_evidence"),
+        },
+      };
     }
   }
 

@@ -210,6 +210,30 @@ function temporaryProject() {
   return fs.mkdtempSync(path.join(parent, "head-agent-core-test-"));
 }
 
+function semanticCapabilityProposal(root, relativePath, suffix = "current") {
+  const world = inspectWorldModel({ root });
+  assert.equal(world.status, "current");
+  const file = world.snapshot.files.find((item) => item.path === relativePath);
+  assert.ok(file);
+  const symbol = file.symbols[0];
+  return {
+    schemaVersion: 1,
+    sourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+    candidates: [{
+      productKind: "Capability",
+      proposedEntity: { key: `capability:${suffix}`, name: `Capability ${suffix}`, description: "Fresh HEAD semantic proposal fixture." },
+      evidence: [{
+        path: relativePath,
+        line: symbol?.line || 1,
+        contentDigest: file.digest,
+        ...(symbol ? { symbol: { name: symbol.name, kind: symbol.kind, line: symbol.line } } : {}),
+      }],
+      explanation: "Fresh HEAD proposes product meaning; Core verifies only current evidence and review gates.",
+      confidence: 0.8,
+    }],
+  };
+}
+
 function directoryFileDigests(root) {
   const files = {};
   const visit = (directory) => {
@@ -334,22 +358,64 @@ test("rejects invalid source scope before project initialization mutates the tar
   assert.equal(fs.existsSync(path.join(root, ".head")), false);
 });
 
-test("resume refreshes stale non-authoritative onboarding candidates without changing Project or Session identity", async (t) => {
+test("resume requires a fresh semantic reproposal for stale non-authoritative onboarding candidates", async (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
-  fs.writeFileSync(path.join(root, "src", "capture.py"), "def capture_frame():\n    return True\n");
-  const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product", onboarding: { mode: "existing" } });
+  fs.writeFileSync(path.join(root, "src", "routing.py"), "def route_request():\n    return True\n");
+  const discovery = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product", onboarding: { mode: "existing" } });
+  assert.equal(discovery.status, "product_evidence_required");
+  const invalidProposal = semanticCapabilityProposal(root, "src/routing.py", "invalid");
+  invalidProposal.candidates[0].confidence = Number.NaN;
+  await assert.rejects(
+    () => initializeOrResumeProject({
+      root,
+      pluginRoot,
+      runtimes: ["codex"],
+      profile: "product",
+      onboarding: { mode: "existing", semanticProposal: invalidProposal },
+    }),
+    { code: "INVALID_ONBOARDING_CONFIDENCE" },
+  );
+  const coercedProposal = semanticCapabilityProposal(root, "src/routing.py", "coerced");
+  coercedProposal.candidates[0].confidence = "0.8";
+  await assert.rejects(
+    () => initializeOrResumeProject({
+      root,
+      pluginRoot,
+      runtimes: ["codex"],
+      profile: "product",
+      onboarding: { mode: "existing", semanticProposal: coercedProposal },
+    }),
+    { code: "INVALID_ONBOARDING_CONFIDENCE" },
+  );
+  const first = await initializeOrResumeProject({
+    root,
+    pluginRoot,
+    runtimes: ["codex"],
+    profile: "product",
+    onboarding: { mode: "existing", semanticProposal: semanticCapabilityProposal(root, "src/routing.py", "routing") },
+  });
   assert.equal(first.status, "product_review_required");
   assert.equal(first.nextAction.id, "review_product_candidates");
   assert.equal(first.onboarding.status, "awaiting_review");
   const firstSetId = first.onboarding.candidateSetId;
   const firstSourceSnapshotId = first.onboarding.sourceSnapshotId;
-  fs.writeFileSync(path.join(root, "src", "calibration.py"), "def calibrate_camera():\n    return True\n");
+  fs.writeFileSync(path.join(root, "src", "policy.py"), "def apply_policy():\n    return True\n");
 
-  const resumed = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product" });
-  assert.equal(resumed.project.projectId, first.project.projectId);
-  assert.equal(resumed.project.sessionId, first.project.sessionId);
+  const blocked = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product" });
+  assert.equal(blocked.project.projectId, first.project.projectId);
+  assert.equal(blocked.project.sessionId, first.project.sessionId);
+  assert.equal(blocked.onboardingAction, "fresh-head-semantic-reproposal-required");
+  assert.equal(blocked.inputDisposition, "semantic-proposal-required");
+  assert.equal(blocked.onboarding.candidateSetId, firstSetId);
+  const resumed = await initializeOrResumeProject({
+    root,
+    pluginRoot,
+    runtimes: ["codex"],
+    profile: "product",
+    onboarding: { semanticProposal: semanticCapabilityProposal(root, "src/policy.py", "policy") },
+  });
   assert.equal(resumed.onboardingAction, "refreshed-stale-candidates");
   assert.equal(resumed.previousCandidateSetId, firstSetId);
   assert.notEqual(resumed.onboarding.candidateSetId, firstSetId);
@@ -358,8 +424,16 @@ test("resume refreshes stale non-authoritative onboarding candidates without cha
   assert.deepEqual(successor.parentCandidateSetIds, [firstSetId]);
   assert.equal(inspectOnboarding({ root }).state.stateRevision, first.onboarding.stateRevision + 1);
 
-  fs.rmSync(path.join(root, "src", "calibration.py"));
-  const returnedToFirstSource = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product" });
+  fs.rmSync(path.join(root, "src", "policy.py"));
+  const returnBlocked = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"], profile: "product" });
+  assert.equal(returnBlocked.onboardingAction, "fresh-head-semantic-reproposal-required");
+  const returnedToFirstSource = await initializeOrResumeProject({
+    root,
+    pluginRoot,
+    runtimes: ["codex"],
+    profile: "product",
+    onboarding: { semanticProposal: semanticCapabilityProposal(root, "src/routing.py", "routing-returned") },
+  });
   assert.equal(returnedToFirstSource.onboardingAction, "refreshed-stale-candidates");
   assert.equal(returnedToFirstSource.previousCandidateSetId, successor.candidateSetId);
   const returnedWorld = readWorldModel({ root }).snapshot;
@@ -2990,7 +3064,7 @@ test("indexes adapter-neutral external runtime observations without granting con
   );
 });
 
-test("compiles a reproducible minimum-sufficient Context Capsule", (t) => {
+test("compiles a reproducible HEAD-guided Context Capsule without lexical eligibility gates", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
@@ -3008,7 +3082,8 @@ test("compiles a reproducible minimum-sufficient Context Capsule", (t) => {
   assert.equal(first.capsule.compiler.historyRelevance, "DECISIONS");
   assert.deepEqual(first.capsule.selection.includedIds.includes("claim-session-ttl"), true);
   assert.deepEqual(first.capsule.selection.includedIds.includes("decision-auth-policy"), true);
-  assert.deepEqual(first.capsule.selection.includedIds.includes("claim-frontend-color"), false);
+  assert.deepEqual(first.capsule.selection.includedIds.includes("claim-frontend-color"), true);
+  assert.equal(first.capsule.selection.excluded.some((item) => item.reason === "low-relevance"), false);
   assert.equal(first.capsule.claims[0].evidence[0].instructionAuthority, false);
 });
 

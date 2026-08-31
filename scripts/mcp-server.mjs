@@ -11,7 +11,7 @@ import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWor
 import { inspectOnboarding, reviewOnboarding } from "./lib/onboarding.mjs";
 import { inspectConversationalOnboarding } from "./lib/onboarding-conversation.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
-import { inspectFeatureMapping } from "./lib/feature-mapping.mjs";
+import { inspectFeatureMapping, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
 import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
 import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
@@ -79,7 +79,7 @@ export const tools = [
   },
   {
     name: "head_project_initialize_or_resume",
-    description: "Initialize or resume exactly one HEAD project and project-scoped Session, converge managed plugin projections, and optionally activate evidence-linked Product onboarding only through the explicit product profile. Core is the default. This writes only the selected project and never contacts GraphDB.",
+    description: "Initialize or resume exactly one HEAD project and project-scoped Session, converge managed plugin projections, and optionally activate Product onboarding only through the explicit product profile. Existing projects require a fresh HEAD semantic proposal or user-owned brief; Core verifies evidence but never infers product meaning. Core is the default. This writes only the selected project and never contacts GraphDB.",
     inputSchema: {
       type: "object",
       properties: {
@@ -124,6 +124,57 @@ export const tools = [
             decisions: { type: "array", items: { type: "object" } },
           },
           required: ["schemaVersion"],
+          additionalProperties: false,
+        },
+        semantic_proposal: {
+          type: "object",
+          description: "Fresh HEAD-authored P3 product candidates. Core verifies exact current source paths, digests, lines, optional symbols, bounds, and Product Model structure; it never treats the proposal as Product Canon or instruction authority.",
+          properties: {
+            schemaVersion: { type: "integer", const: 1 },
+            sourceSnapshotId: { type: "string", pattern: "^source-snapshot-[a-f0-9]{24}$" },
+            candidates: {
+              type: "array",
+              minItems: 1,
+              maxItems: 200,
+              items: {
+                type: "object",
+                properties: {
+                  productKind: { type: "string", enum: ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"] },
+                  proposedEntity: { type: "object" },
+                  explanation: { type: "string", minLength: 1, maxLength: 2000 },
+                  confidence: { type: "number", minimum: 0, maximum: 1 },
+                  evidence: {
+                    type: "array",
+                    minItems: 1,
+                    maxItems: 8,
+                    items: {
+                      type: "object",
+                      properties: {
+                        path: { type: "string", minLength: 1 },
+                        line: { type: "integer", minimum: 1 },
+                        contentDigest: { type: "string", pattern: "^[a-f0-9]{64}$", description: "Optional optimistic freshness guard. Core always binds the verified current World digest even when omitted." },
+                        symbol: {
+                          type: "object",
+                          properties: {
+                            name: { type: "string", minLength: 1 },
+                            kind: { type: "string", minLength: 1 },
+                            line: { type: "integer", minimum: 1 },
+                          },
+                          required: ["name", "kind", "line"],
+                          additionalProperties: false,
+                        },
+                      },
+                      required: ["path", "line"],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ["productKind", "proposedEntity", "evidence", "explanation", "confidence"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["schemaVersion", "sourceSnapshotId", "candidates"],
           additionalProperties: false,
         },
       },
@@ -245,12 +296,71 @@ export const tools = [
     },
   },
   {
+    name: "head_feature_mapping_propose",
+    description: "Normalize one fresh HEAD semantic proposal for exact Product-to-code or Product-to-test mapping candidates. Core verifies current graph endpoints and records only P3 candidates; it does not infer mappings from lexical overlap or create reviewed relationships.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        semantic_proposal: {
+          type: "object",
+          properties: {
+            schema_version: { const: 1 },
+            source_snapshot_id: { type: "string", pattern: "^source-snapshot-[a-f0-9]{24}$" },
+            product_model_id: { type: "string", pattern: "^product-model-[a-f0-9]{24}$" },
+            candidates: {
+              type: "array", minItems: 1, maxItems: 500,
+              items: {
+                type: "object",
+                properties: {
+                  relationship_type: { type: "string", enum: ["IMPLEMENTS", "VERIFIED_BY"] },
+                  source_node_id: { type: "string", minLength: 1 },
+                  product_node_id: { type: "string", minLength: 1 },
+                  explanation: { type: "string", minLength: 1, maxLength: 2000 },
+                  confidence: { type: "number", minimum: 0, maximum: 1 },
+                },
+                required: ["relationship_type", "source_node_id", "product_node_id", "explanation", "confidence"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["schema_version", "source_snapshot_id", "product_model_id", "candidates"],
+          additionalProperties: false,
+        },
+      },
+      required: ["project_root", "semantic_proposal"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "head_feature_mapping_status",
     description: "Read and digest-verify the current Feature mapping candidate batch or explicit reviewed relationship decision without creating or promoting mappings.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
       required: ["project_root"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "head_feature_mapping_review",
+    description: "Record one explicit user-authored ReviewDecision for the exact current Feature mapping candidate set. This requires explicit confirmation; only accepted candidates create separate reviewed relationships, and Product Canon remains unchanged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        candidate_set_id: { type: "string", pattern: "^feature-mapping-candidates-[a-f0-9]{24}$" },
+        disposition: { type: "string", enum: ["accept-all", "accept-selection", "reject"] },
+        accepted_candidate_ids: {
+          type: "array",
+          uniqueItems: true,
+          items: { type: "string", pattern: "^feature-mapping-candidate-[a-f0-9]{24}$" },
+          default: [],
+        },
+        rationale: { type: "string", minLength: 1 },
+        confirm_user_review: { type: "boolean" },
+      },
+      required: ["project_root", "candidate_set_id", "disposition", "rationale", "confirm_user_review"],
       additionalProperties: false,
     },
   },
@@ -295,6 +405,8 @@ export const tools = [
             properties: {
               id: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" },
               kind: { type: "string", enum: ["claim", "decision", "git-decision", "product-context", "repository-file", "repository-source", "repository-test", "runtime-state", "semantic-relation", "temporal-relation", "unknown"] },
+              paths: { type: "array", maxItems: 32, description: "Exact normalized project-relative repository paths selected by HEAD after semantic task analysis. Core verifies actual current inclusion; paths never grant authority.", items: { type: "string", minLength: 1 } },
+              entityKeys: { type: "array", maxItems: 32, description: "Exact Product Canon entity keys selected by HEAD for product-context evidence. Core verifies actual current inclusion; keys never grant authority.", items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } },
               facets: { type: "array", maxItems: 16, items: { type: "string", minLength: 1 } },
               relationTypes: { type: "array", maxItems: 16, items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,63}$" } },
               minimumItems: { type: "integer", minimum: 1, maximum: 20, default: 1 },
@@ -981,7 +1093,23 @@ function onboardingInputFromMcp(args) {
     },
   };
   if (args.brief != null) onboarding.brief = args.brief;
+  if (args.semantic_proposal != null) onboarding.semanticProposal = args.semantic_proposal;
   return onboarding;
+}
+
+function featureMappingProposalFromMcp(value) {
+  return {
+    schemaVersion: value.schema_version,
+    sourceSnapshotId: value.source_snapshot_id,
+    productModelId: value.product_model_id,
+    candidates: value.candidates.map((candidate) => ({
+      relationshipType: candidate.relationship_type,
+      sourceNodeId: candidate.source_node_id,
+      productNodeId: candidate.product_node_id,
+      explanation: candidate.explanation,
+      confidence: candidate.confidence,
+    })),
+  };
 }
 
 function productFeatureResolutionFromMcp(value) {
@@ -1141,6 +1269,16 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           removedCandidateIds: args.removed_candidate_ids || [],
           userEdits: (args.user_edits || []).map((edit) => ({ candidateId: edit.candidate_id, entity: edit.entity })),
           addedEntities: args.added_entities || [],
+          rationale: args.rationale,
+        }))
+      : name === "head_feature_mapping_propose"
+        ? startFeatureMapping({ root: args.project_root, semanticProposal: featureMappingProposalFromMcp(args.semantic_proposal) })
+      : name === "head_feature_mapping_review"
+        ? (requireMcpConfirmation(args.confirm_user_review, "Feature mapping review requires explicit user confirmation.", "FEATURE_MAPPING_REVIEW_CONFIRMATION_REQUIRED"), reviewFeatureMapping({
+          root: args.project_root,
+          candidateSetId: args.candidate_set_id,
+          disposition: args.disposition,
+          acceptedCandidateIds: args.accepted_candidate_ids || [],
           rationale: args.rationale,
         }))
       : name === "head_markdown_projection_build"

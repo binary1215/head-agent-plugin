@@ -4,6 +4,12 @@ Status: implemented minimal vertical under Product Operating Loop protocol `0.2.
 
 The Product Operating Loop connects product learning to reviewed execution without turning observations, model inference, GraphDB, or a continuity summary into HEAD or user authority.
 
+## Development spine and operating flow
+
+The implementation keeps two semantic directions without creating two competing authorities. The development spine is the top-down normative path from `Product Canon` and its explicit `ReviewDecision` records into reviewed product-to-code relations. The operating flow is the time-ordered evidence path through initiative review, execution, `ChangeSet`, and `OutcomeObservation`. Their intersection is an exact verified identity or relation in the P4 graph, never a copied authority record. Code or runtime observations can create P3 evidence and candidates, but cannot rewrite the development spine.
+
+The current vertical intentionally stops before provider-neutral `Release`, `BranchState`, or `AnalyticsEvent` ingestion. Those may later extend the operating flow as bounded observed evidence, but their existence, timing, or measured outcome must not create product approval, Product Canon, success judgment, or recovery direction. This is a disclosed capability gap rather than an inferred or simulated loop closure.
+
 ## Authority split
 
 The loop uses five epistemic classes:
@@ -37,7 +43,7 @@ accepted execution ReviewDecision + ResultPacket -> ChangeSet
   -> HEAD reevaluates product meaning and success
 ```
 
-The persisted Signal/Hypothesis path remains available for compatibility and audit. The lighter path may create an immutable `ProductInitiativeCandidate` directly from explicit inline reasoning. It may defer Feature resolution until accept review, so no `ProductFeatureCandidate` exists before the user decision. The reviewed Initiative preserves the candidate's title, description, reasoning, and hypothesis references byte-independently while adding exactly one `existing-feature | candidate | gap` resolution in the separate reviewed artifact.
+The persisted Signal/Hypothesis path remains available for explicit audit boundaries. The lighter path may create an immutable `ProductInitiativeCandidate` directly from explicit inline reasoning. It may defer Feature resolution until accept review, so no `ProductFeatureCandidate` exists before the user decision. The reviewed Initiative preserves the candidate's title, description, reasoning, and hypothesis references byte-independently while adding exactly one `existing-feature | candidate | gap` resolution in the separate reviewed artifact.
 
 An `OutcomeObservation` must reference a ChangeSet whose `ResultPacket` has an accepted execution `ReviewDecision`. It can also reference a reviewed Initiative. It cannot mark a Feature successful, change Feature status, or promote Product Canon.
 

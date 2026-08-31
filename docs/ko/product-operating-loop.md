@@ -6,6 +6,12 @@
 
 Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약을 HEAD나 사용자의 권한으로 만들지 않으면서 제품 학습을 검토된 실행과 연결합니다.
 
+## 개발 척추와 운영 흐름
+
+구현은 경쟁하는 두 권위를 만들지 않으면서 두 가지 의미 방향을 유지합니다. 개발 척추는 `Product Canon`과 명시적 `ReviewDecision` record에서 검토된 제품-코드 관계로 이어지는 하향식 규범 경로입니다. 운영 흐름은 initiative 검토, 실행, `ChangeSet`, `OutcomeObservation`을 지나는 시간 순서 evidence 경로입니다. 두 경로의 교차점은 P4 graph의 정확히 검증된 identity 또는 relation이며, 권위 record의 복사본이 아닙니다. 코드나 runtime 관찰은 P3 evidence와 candidate를 만들 수 있지만 개발 척추를 다시 쓸 수 없습니다.
+
+현재 vertical은 provider-neutral `Release`, `BranchState`, `AnalyticsEvent` ingestion 이전에서 의도적으로 멈춥니다. 이후 이를 bounded observed evidence로 운영 흐름에 확장할 수 있지만, 그 존재·시각·측정 outcome은 제품 승인, Product Canon, 성공 판정 또는 복구 방향을 만들 수 없습니다. 이는 추론하거나 모사한 loop closure가 아니라 명시된 capability gap입니다.
+
 ## 권한 분리
 
 루프는 다섯 가지 인식론적 클래스를 사용합니다.
@@ -39,7 +45,7 @@ accepted execution ReviewDecision + ResultPacket -> ChangeSet
   -> HEAD reevaluates product meaning and success
 ```
 
-영속 Signal/Hypothesis 경로는 호환성과 감사를 위해 계속 사용할 수 있습니다. 더 가벼운 경로는 명시적인 인라인 추론에서 불변 `ProductInitiativeCandidate`를 직접 생성할 수 있습니다. 이 경로는 Feature 결정을 수락 검토까지 미룰 수 있으므로 사용자 결정 전에는 `ProductFeatureCandidate`가 존재하지 않습니다. 검토된 Initiative는 후보의 바이트에 의존하지 않고 제목, 설명, 추론 및 가설 참조를 보존하면서, 별도의 검토 아티팩트에 정확히 하나의 `existing-feature | candidate | gap` 결정을 추가합니다.
+영속 Signal/Hypothesis 경로는 명시적 감사 경계를 위해 계속 사용할 수 있습니다. 더 가벼운 경로는 명시적인 인라인 추론에서 불변 `ProductInitiativeCandidate`를 직접 생성할 수 있습니다. 이 경로는 Feature 결정을 수락 검토까지 미룰 수 있으므로 사용자 결정 전에는 `ProductFeatureCandidate`가 존재하지 않습니다. 검토된 Initiative는 후보의 바이트에 의존하지 않고 제목, 설명, 추론 및 가설 참조를 보존하면서, 별도의 검토 아티팩트에 정확히 하나의 `existing-feature | candidate | gap` 결정을 추가합니다.
 
 `OutcomeObservation`은 해당 `ResultPacket`에 수락된 실행 `ReviewDecision`이 있는 ChangeSet을 참조해야 합니다. 또한 검토된 Initiative를 참조할 수 있습니다. Feature의 성공을 표시하거나, Feature 상태를 변경하거나, Product Canon을 승격할 수는 없습니다.
 

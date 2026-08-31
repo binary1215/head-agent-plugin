@@ -39,7 +39,7 @@ the fixed Project/Session anchors and managed runtime projections without
 indexing the repository or starting Product/Graph governance.
 
 Use `profile: "product"` only when the user asks to onboard product meaning,
-infer evidence-linked candidates, or activate the Product/World/Graph path.
+propose evidence-linked candidates, or activate the Product/World/Graph path.
 Then use the sibling `head-agent-onboarding` skill. Onboarding input with the
 core profile must fail rather than silently widening the operation.
 
@@ -75,7 +75,9 @@ and semantic sufficiency separately. Persist a Capsule only when the Run or
 recovery boundary needs it.
 
 Read the returned `workflow` before consuming the Capsule. HEAD—not the tool—
-chooses task-required EvidenceNeeds. The read-only preview automatically retries
+performs semantic task analysis and chooses task-required EvidenceNeeds,
+including exact repository paths and Product Canon entity keys when known. Lexical overlap is fallback ranking
+only and never candidate eligibility. The read-only preview automatically retries
 the same task and EvidenceNeeds at the next fixed tier only when matching
 evidence was excluded by `context-budget`; inspect `attemptedTiers`, Capsule IDs,
 and coverage-proof digests. It stops on missing or stale World, genuinely missing
@@ -85,6 +87,14 @@ complete; make and state the separate HEAD-owned semantic judgment. The
 workflow is non-persisted advice and cannot activate Product, mutate World,
 persist a Capsule, authorize execution, review a result, or write recovery
 direction.
+
+For Product-to-code or Product-to-test mapping, inspect the current World and
+Graph, then use `head_feature_mapping_propose` with exact current Product and
+source/test node identities. Do not derive mappings from names or token overlap.
+Present every candidate to the user. Only after an explicit user disposition,
+call `head_feature_mapping_review` with the exact candidate-set ID and
+`confirm_user_review: true`; proposal, model agreement, or tool success alone
+never creates a reviewed relationship or changes Product Canon.
 
 For a durable Run, preserve this sequence:
 

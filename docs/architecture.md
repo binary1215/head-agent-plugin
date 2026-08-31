@@ -75,10 +75,12 @@ replaces the canonical state machine.
 
 Initialization creates a project-scoped HEAD Session record and a dormant
 onboarding pointer independently from provider conversations. Only the explicit
-`product` profile indexes the local World Model, derives bounded evidence-linked
-candidates from an existing project or structured brief, and presents one
-immutable batch. Candidate inference stays in the JavaScript control plane and
-has no instruction or promotion authority.
+`product` profile indexes the local World Model. A structured user brief may
+directly seed candidates; otherwise a fresh provider HEAD authors a bounded
+semantic proposal from current evidence. The JavaScript Core validates exact
+SourceSnapshot, path, digest, line, optional symbol, Product Model references,
+and bounds before presenting one immutable batch. Core performs no lexical
+product inference, and the proposal has no instruction or promotion authority.
 
 Only a CLI-supplied `ReviewDecision` with `decisionScope: product-canon-bootstrap` may create a Product Canon revision. Acceptance records previous and next Product Model hashes, rebuilds a child SourceSnapshot, and verifies the temporal GraphSnapshot before the state pointer becomes ready. Revision creates a successor candidate set; rejection leaves canon unchanged. Immutable candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts are projected into the graph for audit, but the projection cannot decide or promote. Read-only MCP exposes verified state and bounded graph traversal but cannot review or promote.
 
@@ -110,7 +112,7 @@ external or mutating operation and never promotes coverage into semantic
 acceptance.
 
 ```text
-Canonical sources -> Snapshot -> ranking/budget -> ContextCapsule -> HEAD/Executor
+Canonical sources -> Snapshot -> HEAD EvidenceNeeds -> verified packing/budget -> ContextCapsule -> HEAD/Executor
        ^                                                        |
        |             verified candidate knowledge               |
        +--------------------------------------------------------+

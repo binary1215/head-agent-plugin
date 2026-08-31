@@ -59,12 +59,13 @@ This restores the work direction, not a transcript or a model persona. See
 [Compaction recovery](docs/compaction-recovery.md) and
 [Session recovery](docs/session-recovery.md).
 
-### Give each task minimum sufficient context
+### Give each task bounded, reviewable context
 
-More context is not always better. The Context Compiler asks what one executor
-must know for one task and why each item belongs. It selects current product
-decisions, repository evidence, tests, relevant history, and explicit Unknowns
-under a fixed budget, while recording exclusions and stale coverage.
+More context is not always better. HEAD performs the semantic task analysis and
+can name exact repository paths in task-local EvidenceNeeds. The Context
+Compiler then verifies what was actually included under a fixed budget while
+recording exclusions and stale coverage. Lexical overlap remains fallback
+ranking only; it never makes a current file ineligible or declares sufficiency.
 
 The resulting Context Capsule is content-derived and reproducible. The same
 verified inputs, compiler version, task, and budget produce the same identity;
@@ -120,7 +121,7 @@ These benefits reinforce one another:
 
 ```text
 reviewed direction + current repository evidence
-  -> minimum sufficient Context Capsule
+  -> bounded Context Capsule + HEAD sufficiency judgment
   -> bounded execution and explicit review
   -> decision and change history
   -> exact checkpoint for handoff, session loss, or compaction
@@ -313,8 +314,10 @@ unchanged across retries.
 
 The bundled `head-agent-onboarding` Skill is the preferred interactive entry.
 It inspects the current state, asks only for material choices such as repository
-scope or storage mode, presents evidence-linked candidates, and uses explicit
-review before Product Canon changes. It selects the `product` profile explicitly.
+scope or storage mode, semantically analyzes bounded current evidence, submits a
+typed proposal for Core verification, presents the resulting evidence-linked
+candidates, and uses explicit review before Product Canon changes. It selects
+the `product` profile explicitly. The provider proposal remains P3 evidence.
 
 ### Optional Product profile CLI path
 
@@ -325,8 +328,12 @@ head-agent init C:\path\to\project --runtime claude,codex,opencode --profile pro
 head-agent onboarding-status C:\path\to\project
 ```
 
-First use normally returns an immutable onboarding candidate-set ID. Inspect it
-before review:
+Without a structured user brief, first use intentionally returns
+`awaiting-evidence`; Core does not invent product concepts from symbols. The
+conversation Skill normally supplies the fresh semantic proposal. CLI users may
+pass the same `semanticProposal` inside `--input`; after Core verifies the exact
+SourceSnapshot, paths, lines, optional symbols, and Product Model references, an
+immutable candidate-set ID is returned. Inspect it before review:
 
 ```powershell
 $onboarding = head-agent onboarding-status C:\path\to\project | ConvertFrom-Json
@@ -437,9 +444,11 @@ These are compiler estimates, currently calculated as UTF-16 code units divided
 by four; the runtime adapter must still check the provider's actual tokenizer,
 context window, and output reserve before invocation.
 
-HEAD decides which evidence kinds the current task actually requires. It can
-pass task-local `EvidenceNeed[]` entries for source, test, Product Context, or
-specific graph relations; the Compiler does not invent a universal test rule.
+HEAD decides which evidence the current task actually requires. It can pass
+task-local `EvidenceNeed[]` entries with exact repository `paths` for source or
+test evidence, exact Product Canon `entityKeys` for Product Context, or specific
+graph relations; the Compiler does not invent a universal test rule or infer
+semantics from word overlap.
 It emits a reproducible `coverageAssessment` proving only whether matching
 evidence was included. The later ExecutionContract records HEAD's separate
 semantic acceptance with the exact need-set and coverage-proof digests.
@@ -688,7 +697,7 @@ them through provider-neutral contracts:
 
 - HEAD owns the connected whole outcome;
 - the user retains consequential authority;
-- minimum sufficient context beats maximum context;
+- semantic sufficiency belongs to HEAD; bounded verified context beats maximum context;
 - durable Canon survives temporary model sessions;
 - delegation stays bounded and non-authoritative;
 - completion requires connected primary evidence;
@@ -713,7 +722,7 @@ Start with these documents:
 - [Architecture](docs/architecture.md) — the provider-neutral composition;
 - [Authority planes](docs/authority-plane-contract.md) — the executable
   Graph/record and non-amplification contract;
-- [Onboarding](docs/onboarding.md) — candidate inference and explicit review;
+- [Onboarding](docs/onboarding.md) — HEAD semantic proposals, Core verification, and explicit review;
 - [Context Compiler](docs/context-compiler.md) — reproducible task context;
 - [Execution Lineage](docs/execution-lineage.md) — plans, contracts, results,
   review, and recovery;

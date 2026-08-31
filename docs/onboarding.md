@@ -38,9 +38,9 @@ initialized
        -> ready
 ```
 
-Repository and brief analysis creates `OnboardingCandidateSet` evidence with `instructionAuthority: false` and `promotionAuthority: false`. Only an explicit `ReviewDecision` with `decisionScope: "product-canon-bootstrap"` may write Product Canon. A candidate is never mutated or relabeled: revision creates a successor candidate with a new identity, and acceptance creates separate canon plus an immutable decision receipt.
+Fresh HEAD semantic proposals and user-owned briefs create `OnboardingCandidateSet` evidence with `instructionAuthority: false` and `promotionAuthority: false`. Core does not infer product meaning from symbol names, repository paths, README headings, or lexical rules. It verifies every proposed source path, digest, line, optional symbol, Product Model reference, and resource bound against the current World Model. Only an explicit `ReviewDecision` with `decisionScope: "product-canon-bootstrap"` may write Product Canon. A candidate is never mutated or relabeled: revision creates a successor candidate with a new identity, and acceptance creates separate canon plus an immutable decision receipt.
 
-Candidate protocol `0.3.0` derives candidate-set identity from project, Session, mode, exact SourceSnapshot, Product Model input, candidates, Evidence, Unknowns, ancestry, producer ReviewDecision, and producer policy. It deliberately excludes the derived World Model ID so rebuilding the same evidence after rejection produces the same candidate identity instead of coupling authority review to a materialized-view pointer. Digest-valid `0.1.0` and `0.2.0` candidate sets remain readable; their legacy `reviewDecisionId` is interpreted only as the successor-producing review, never as the latest review of that successor.
+Candidate protocol `0.4.0` derives candidate-set identity from project, Session, mode, exact SourceSnapshot, Product Model input, bounded semantic proposals, verified Evidence, Unknowns, ancestry, producer ReviewDecision, and producer policy. It deliberately excludes the derived World Model ID so authority review is not coupled to a materialized-view pointer. Candidate sets from the retired lexical-inference protocols are rejected and must be replaced by fresh HEAD semantic proposals against the current SourceSnapshot.
 
 ## Public initialize and resume path
 
@@ -54,8 +54,11 @@ then invokes the same Core through typed MCP operations:
 - `head_onboarding_review` for an explicit evidence-linked candidate decision;
 - `head_markdown_projection_build` for a derived, recoverable document view.
 
-The Skill does not create a second onboarding protocol. It cannot infer a user
-ReviewDecision, widen source scope, or persist GraphDB credentials. If MCP is
+The Skill does not create a second onboarding protocol. The provider HEAD may
+inspect current repository evidence and author a typed `semantic_proposal`, but
+the Core validates and gates that proposal and the user still owns the
+ReviewDecision. The Skill cannot infer a user ReviewDecision, widen source
+scope, or persist GraphDB credentials. If MCP is
 unavailable, the CLI below is the equivalent recovery and automation surface.
 
 The primary public command composes project creation or verification,
@@ -89,7 +92,7 @@ node scripts/head.mjs onboarding-start C:\path\to\project
 node scripts/head.mjs onboarding-status C:\path\to\project
 ```
 
-An existing project indexes code and documentation first. Inference `0.3.0` ranks at most 24 unique supported source/test symbols and clusters them into at most 16 bounded behavior concepts; the complete candidate set remains capped at 200 candidates, 250 evidence records, and 100 Unknowns. Public source functions and action-oriented names rank ahead of test doubles, fixtures, serialization helpers, generic lifecycle methods, logging setup, UI close/click handlers, and alphabetical accidents. Related symbols share one Capability candidate and one representative concrete Feature candidate instead of producing a duplicate Capability/Feature pair for every function. This clustering improves the review batch but does not turn inference into Product Canon. A README or product-doc heading may propose a FeatureGroup, but instruction files and directory names cannot define taxonomy, and an inferred group is not automatically attached to Features. Missing, excluded, or insufficient evidence remains an explicit Unknown.
+An existing project indexes code and documentation first. If no user brief or fresh HEAD semantic proposal is supplied, onboarding stops at `awaiting-evidence` with an explicit Unknown; it does not manufacture product concepts from code vocabulary. A proposal contains at most 200 candidates, each with one through eight current source citations, while the set remains capped at 250 evidence records and 100 Unknowns. Each citation must name an exact project-relative path and valid line, may add an exact indexed symbol, and may include a digest as an optimistic freshness guard. Core always binds the verified current World digest itself. Stale, hallucinated, out-of-scope, oversized, or structurally invalid proposals fail closed. Valid proposals remain P3 candidate evidence until explicit user review.
 
 ### Repository source scope
 

@@ -88,7 +88,7 @@ function runGlobalFailure(args) {
 
 try {
   fs.mkdirSync(path.join(projectRoot, "src"), { recursive: true });
-  fs.writeFileSync(path.join(projectRoot, "src", "camera-service.mjs"), "export function captureCameraFrame() { return { captured: true }; }\n", "utf8");
+  fs.writeFileSync(path.join(projectRoot, "src", "request-service.mjs"), "export function acceptRequest() { return { accepted: true }; }\n", "utf8");
   const installed = runNode([
     path.join(sourceRoot, "scripts", "distribution.mjs"),
     "install",
@@ -104,8 +104,9 @@ try {
   assert.equal(installed.version, sourceVersion);
   assert.equal(installed.project.projectAction, "initialized");
   assert.equal(installed.project.onboardingAction, "started");
+  assert.equal(installed.project.status, "product_evidence_required");
   assert.equal(installed.project.onboarding.storageMode, "local");
-  assert.equal(installed.project.onboarding.candidateCount > 0, true);
+  assert.equal(installed.project.onboarding.candidateCount, 0);
   const generatedInstructions = fs.readFileSync(path.join(projectRoot, ".head", "generated", "head-instructions.md"), "utf8").toLowerCase();
   assert.equal(runtimeForbiddenMarkers.some((marker) => generatedInstructions.includes(marker)), false);
   const installedReleaseRoot = path.join(installRoot, "releases", installed.releaseId);
@@ -145,7 +146,8 @@ try {
   const onboardingBeforeResume = fs.readFileSync(onboardingStateFile, "utf8");
   const resumed = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode", "--profile", "product"]);
   assert.equal(resumed.projectAction, "resumed");
-  assert.equal(resumed.onboardingAction, "review-required");
+  assert.equal(resumed.status, "product_evidence_required");
+  assert.equal(resumed.onboardingAction, "evidence-required");
   assert.equal(resumed.project.projectId, projectBeforeResume.projectId);
   assert.equal(resumed.project.sessionId, sessionBeforeResume.sessionId);
   assert.equal(fs.readFileSync(onboardingStateFile, "utf8"), onboardingBeforeResume);
@@ -165,8 +167,9 @@ try {
   fs.mkdirSync(path.join(evidenceResumeProjectRoot, "src"), { recursive: true });
   fs.writeFileSync(path.join(evidenceResumeProjectRoot, "src", "capture.mjs"), "export function captureDepthImage() { return true; }\n", "utf8");
   const resumedEvidence = runGlobal(["resume", evidenceResumeProjectRoot, "--runtime", "codex", "--profile", "product"]);
-  assert.equal(resumedEvidence.status, "product_review_required");
-  assert.equal(resumedEvidence.onboardingAction, "resumed-analysis");
+  assert.equal(resumedEvidence.status, "product_evidence_required");
+  assert.equal(resumedEvidence.onboardingAction, "evidence-required");
+  assert.equal(resumedEvidence.onboarding.candidateCount, 0);
   assert.equal(resumedEvidence.project.projectId, awaitingEvidence.project.projectId);
   assert.equal(resumedEvidence.project.sessionId, awaitingEvidence.project.sessionId);
 

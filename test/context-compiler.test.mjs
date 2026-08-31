@@ -24,59 +24,60 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.mkdirSync(path.join(root, "tests"), { recursive: true });
   fs.mkdirSync(path.join(root, "patchnote_md"), { recursive: true });
-  fs.writeFileSync(path.join(root, "src", "CommandReceiver_asan.py"), [
-    "from ModbusCommandReceiver import ModbusCommandReceiver",
+  fs.writeFileSync(path.join(root, "src", "PrimaryRouter.py"), [
+    "from DurableCommandStore import DurableCommandStore",
     "",
-    "class CommandReceiverAsan:",
-    "    def receive_asan_command(self):",
-    "        return 'asan'",
-    "",
-  ].join("\n"));
-  fs.writeFileSync(path.join(root, "src", "ModbusCommandReceiver.py"), [
-    "class ModbusCommandReceiver:",
-    "    def receive_modbus_command(self):",
-    "        return 'modbus'",
+    "class PrimaryRouter:",
+    "    def route_primary_command(self):",
+    "        return 'primary-route'",
     "",
   ].join("\n"));
-  fs.writeFileSync(path.join(root, "src", "LegacyModbusBridge.py"), [
-    "class LegacyModbusBridge:",
-    "    def translate_modbus_command(self):",
-    "        return 'legacy-modbus'",
+  fs.writeFileSync(path.join(root, "src", "DurableCommandStore.py"), [
+    "class DurableCommandStore:",
+    "    def store_durable_command(self):",
+    "        return 'durable-command'",
     "",
   ].join("\n"));
-  fs.writeFileSync(path.join(root, "tests", "test_modbus_contract.py"), [
-    "def test_modbus_command_contract():",
+  fs.writeFileSync(path.join(root, "src", "LegacyCommandBridge.py"), [
+    "class LegacyCommandBridge:",
+    "    def translate_legacy_command(self):",
+    "        return 'legacy-command'",
+    "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(root, "src", "opaque-engine.mjs"), "export function zed(value) { return value; }\n");
+  fs.writeFileSync(path.join(root, "tests", "test_command_contract.py"), [
+    "def test_command_contract():",
     "    assert True",
     "",
   ].join("\n"));
   fs.writeFileSync(path.join(root, "patchnote_md", "architecture_report.md"), [
-    "# Complete Modbus ASAN redesign flow",
-    ...Array.from({ length: 40 }, (_, index) => `## Modbus ASAN architecture report section ${index}`),
+    "# Complete command routing redesign flow",
+    ...Array.from({ length: 40 }, (_, index) => `## Command routing architecture report section ${index}`),
     "",
   ].join("\n"));
 
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
   await buildWorldModel({ root });
 
-  const task = "Redesign the ASAN flow and Modbus command architecture";
+  const task = "Redesign the primary routing flow and durable command architecture";
   const evidenceNeeds = [
     {
-      id: "asan-implementation",
+      id: "router-implementation",
       kind: "repository-source",
-      facets: ["ASAN"],
-      rationale: "The task changes the ASAN implementation.",
+      facets: ["Router"],
+      rationale: "The task changes the primary routing implementation.",
     },
     {
-      id: "modbus-implementations",
+      id: "command-implementations",
       kind: "repository-source",
-      facets: ["Modbus"],
+      facets: ["Command"],
       minimumItems: 2,
-      rationale: "The task spans the current receiver and legacy bridge.",
+      rationale: "The task spans the current store and legacy bridge.",
     },
     {
-      id: "modbus-import-edge",
+      id: "durable-import-edge",
       kind: "semantic-relation",
-      facets: ["Modbus"],
+      facets: ["Durable"],
       relationTypes: ["IMPORTS"],
       rationale: "The direct import boundary must be present.",
     },
@@ -103,9 +104,9 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   assert.equal(first.capsule.coverageAssessment.status, "coverage-complete");
   assert.equal(first.capsule.coverageAssessment.mechanicalCoverageSatisfied, true);
   assert.equal(first.capsule.coverageAssessment.semanticAcceptance, "not-assessed-HEAD-owned");
-  assert.equal(first.capsule.coverageAssessment.satisfiedEvidenceNeedIds.includes("asan-implementation"), true);
-  assert.equal(first.capsule.coverageAssessment.satisfiedEvidenceNeedIds.includes("modbus-implementations"), true);
-  assert.equal(first.capsule.coverageAssessment.satisfiedEvidenceNeedIds.includes("modbus-import-edge"), true);
+  assert.equal(first.capsule.coverageAssessment.satisfiedEvidenceNeedIds.includes("router-implementation"), true);
+  assert.equal(first.capsule.coverageAssessment.satisfiedEvidenceNeedIds.includes("command-implementations"), true);
+  assert.equal(first.capsule.coverageAssessment.satisfiedEvidenceNeedIds.includes("durable-import-edge"), true);
   assert.equal(first.capsule.coverageAssessment.proofDigest.length, 64);
   assert.equal(first.capsule.evidenceNeedContract.owner, "HEAD");
   assert.equal(first.capsule.evidenceNeedContract.needs.some((item) => item.kind === "repository-test"), false);
@@ -113,8 +114,8 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   assert.equal(first.capsule.sufficiency.deprecated, true);
   assert.equal(first.capsule.sufficiency.executionEligible, true);
   assert.equal(first.capsule.repositoryContext.some((item) => item.classification === "source"), true);
-  assert.equal(first.capsule.repositoryContext.some((item) => item.path === "src/ModbusCommandReceiver.py"), true);
-  const importProof = first.capsule.coverageAssessment.proofs.find((item) => item.evidenceNeedId === "modbus-import-edge");
+  assert.equal(first.capsule.repositoryContext.some((item) => item.path === "src/DurableCommandStore.py"), true);
+  const importProof = first.capsule.coverageAssessment.proofs.find((item) => item.evidenceNeedId === "durable-import-edge");
   assert.equal(importProof.includedEvidence.every((item) => first.capsule.selection.includedIds.includes(item.carrierCandidateId)), true);
   assert.equal(first.capsule.repositoryContext.some((item) => item.semanticRelationships.some((edge) => edge.type === "IMPORTS")), true);
   assert.equal(first.capsule.compiler.lexicalNormalization.includes("camel-snake-path"), true);
@@ -128,17 +129,32 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   assert.equal(guidedNoNeeds.workflow.evidenceNeeds.owner, "HEAD");
   assert.equal(guidedNoNeeds.workflow.authority.selectsEvidenceNeeds, false);
 
+  const exactPathNeed = [{
+    id: "actual-cli-defect",
+    kind: "repository-source",
+    paths: ["src/opaque-engine.mjs"],
+    rationale: "Fresh HEAD identified this exact current file after semantic task analysis despite zero lexical overlap.",
+  }];
+  const exactPath = compileContext({ root, task: "Repair the user-facing command routing defect", evidenceNeeds: exactPathNeed });
+  assert.equal(exactPath.capsule.coverageAssessment.status, "coverage-complete");
+  assert.equal(exactPath.capsule.repositoryContext.some((item) => item.path === "src/opaque-engine.mjs"), true);
+  assert.equal(exactPath.capsule.evidenceNeedContract.needs[0].paths[0], "src/opaque-engine.mjs");
+  assert.equal(exactPath.capsule.compiler.lexicalRole, "fallback-ranking-only-never-candidate-eligibility-or-semantic-acceptance");
+  const unguided = compileContext({ root, task: "Repair the user-facing command routing defect" });
+  assert.equal(unguided.capsule.repositoryContext.some((item) => item.path === "src/opaque-engine.mjs"), true);
+  assert.equal(unguided.capsule.selection.excluded.some((item) => item.reason === "low-relevance"), false);
+
   const missingTestNeed = [{
-    id: "asan-test-evidence",
+    id: "router-test-evidence",
     kind: "repository-test",
-    facets: ["asan"],
+    facets: ["router"],
     rationale: "HEAD explicitly requires a test for this risk-bearing task.",
   }];
   const incomplete = compileContext({ root, task, budget: DEFAULT_CONTEXT_BUDGET, evidenceNeeds: missingTestNeed, persist: true });
   assert.equal(incomplete.status, "compiled");
   assert.equal(incomplete.capsule.coverageAssessment.status, "coverage-incomplete");
   assert.equal(incomplete.capsule.coverageAssessment.mechanicalCoverageSatisfied, false);
-  assert.equal(incomplete.capsule.coverageAssessment.unmetEvidenceNeeds[0].evidenceNeed.id, "asan-test-evidence");
+  assert.equal(incomplete.capsule.coverageAssessment.unmetEvidenceNeeds[0].evidenceNeed.id, "router-test-evidence");
   assert.equal(incomplete.capsule.coverageAssessment.unmetEvidenceNeeds[0].availableMatchCount, 0);
   assert.equal(incomplete.capsule.sufficiency.executionEligible, false);
   const guidedGap = previewContextWorkflow({ root, task, budget: DEFAULT_CONTEXT_BUDGET, evidenceNeeds: missingTestNeed });
@@ -156,6 +172,10 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   assert.notEqual(first.capsule.capsuleId, changedContract.capsule.capsuleId);
   assert.throws(
     () => compileContext({ root, task, budget: DEFAULT_CONTEXT_BUDGET, evidenceNeeds: [{ id: "bad", kind: "repository-source", unexpected: true }] }),
+    { code: "INVALID_EVIDENCE_NEEDS" },
+  );
+  assert.throws(
+    () => compileContext({ root, task, evidenceNeeds: [{ id: "bad-path", kind: "repository-source", paths: ["../outside.mjs"] }] }),
     { code: "INVALID_EVIDENCE_NEEDS" },
   );
 });

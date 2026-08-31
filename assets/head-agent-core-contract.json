@@ -23,11 +23,11 @@
   "onboarding": {
     "purpose": "Bootstrap a project-scoped HEAD Session and Product Canon without silently turning observed code, documentation, model inference, or storage capability into authority.",
     "types": ["HeadSession", "OnboardingStatePointer", "OnboardingStorageSelection", "OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "ReviewDecision", "ProductModelRevision"],
-    "inputs": ["existing project World Model", "new-project brief", "pre-existing Product Canon"],
+    "inputs": ["existing project World Model plus provider HEAD semantic proposal", "new-project brief", "pre-existing Product Canon"],
     "reviewDispositions": ["accept-all", "accept-selection", "revise", "reject"],
     "authority": "Candidates and GraphSnapshots remain non-authoritative. Only an explicit ReviewDecision with decisionScope product-canon-bootstrap may create a new Product Canon revision.",
     "storage": "Local JSON is complete by default. GraphDB endpoint, database, and secret-reference names may be recorded as pending operational configuration; credential values are rejected and the remote adapter is not claimed active.",
-    "status": "Project-scoped Session records, deterministic legacy migration, evidence-linked bounded candidate inference, stale-source rejection, batch review, immutable decision receipts, Product Canon revision history, onboarding receipt GraphSnapshot projection, and post-promotion GraphSnapshot verification are active."
+    "status": "Project-scoped Session records, deterministic state migration, evidence-linked bounded HEAD semantic proposals, stale-source rejection, batch review, immutable decision receipts, Product Canon revision history, onboarding receipt GraphSnapshot projection, and post-promotion GraphSnapshot verification are active."
   },
   "computeAdapter": {
     "purpose": "Delegate deterministic heavy computation without changing semantic identity or transferring authority from the JavaScript control plane.",

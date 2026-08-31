@@ -23,13 +23,13 @@ async function tool(name, args) {
 
 try {
   fs.mkdirSync(projectRoot, { recursive: true });
-  fs.writeFileSync(path.join(projectRoot, "camera.mjs"), [
-    "export function captureImage() { return 'frame'; }",
-    "export function calibrateSensor() { return 'calibrated'; }",
-    "export function publishPreview() { return captureImage(); }",
+  fs.writeFileSync(path.join(projectRoot, "request-service.mjs"), [
+    "export function acceptRequest() { return 'accepted'; }",
+    "export function validateRequest() { return 'valid'; }",
+    "export function publishReceipt() { return acceptRequest(); }",
     "",
   ].join("\n"));
-  fs.writeFileSync(path.join(projectRoot, "README.md"), "# Camera acquisition\n\nCapture and calibrate camera images.\n");
+  fs.writeFileSync(path.join(projectRoot, "README.md"), "# Request processing\n\nAccept, validate, and acknowledge user requests.\n");
 
   const listed = await dispatch({ jsonrpc: "2.0", id: "tools", method: "tools/list", params: {} });
   const names = new Set(listed.result.tools.map((entry) => entry.name));
@@ -129,9 +129,36 @@ try {
     source_scope: { include_roots: [], exclude_roots: [] },
     storage: { mode: "local" },
   });
-  assert.equal(initialized.status, "product_review_required");
-  assert.equal(initialized.nextAction.id, "review_product_candidates");
-  assert.equal(initialized.onboarding.candidateCount > 0, true);
+  assert.equal(initialized.status, "product_evidence_required");
+  assert.equal(initialized.nextAction.id, "provide_product_evidence");
+  assert.equal(initialized.onboarding.candidateCount, 0);
+
+  const evidenceGuide = await tool("head_onboarding_guide", { project_root: projectRoot });
+  assert.equal(evidenceGuide.status, "awaiting_evidence");
+  assert.deepEqual(evidenceGuide.materialChoicesRequired, ["fresh_head_semantic_proposal_or_user_brief"]);
+
+  const proposed = await tool("head_project_initialize_or_resume", {
+    project_root: projectRoot,
+    profile: "product",
+    semantic_proposal: {
+      schemaVersion: 1,
+      sourceSnapshotId: initialized.onboarding.sourceSnapshotId,
+      candidates: [{
+        productKind: "Capability",
+        proposedEntity: {
+          key: "capability:request-processing",
+          name: "Request processing",
+          description: "Accept current user requests and produce acknowledgements.",
+        },
+        evidence: [{ path: "request-service.mjs", line: 1 }],
+        explanation: "Fresh HEAD interpreted current behavior; Core binds the current digest and keeps this proposal non-authoritative.",
+        confidence: 0.8,
+      }],
+    },
+  });
+  assert.equal(proposed.status, "product_review_required");
+  assert.equal(proposed.nextAction.id, "review_product_candidates");
+  assert.equal(proposed.onboarding.candidateCount, 1);
 
   const reviewGuide = await tool("head_onboarding_guide", { project_root: projectRoot, candidate_limit: 200 });
   assert.equal(reviewGuide.status, "awaiting_review");
@@ -176,7 +203,7 @@ try {
 
   const context = await tool("head_context_preview", {
     project_root: projectRoot,
-    task: "Locate camera capture and calibration evidence",
+    task: "Locate request acceptance and validation evidence",
     budget: 32_768,
   });
   assert.equal(context.status, "preview");

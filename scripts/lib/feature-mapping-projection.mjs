@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const FEATURE_MAPPING_VERSION = "0.1.0";
+export const FEATURE_MAPPING_VERSION = "0.2.0";
 export const FEATURE_MAPPING_STATE_RELATIVE_PATH = ".head/feature-mappings/current.json";
 export const FEATURE_MAPPING_CANDIDATE_DIRECTORY = ".head/feature-mappings/candidate-sets";
 export const FEATURE_MAPPING_REVIEW_DIRECTORY = ".head/feature-mappings/review-decisions";
@@ -102,10 +102,10 @@ function verifyCandidate(candidate, evidenceIds) {
   if (candidate.kind !== "FeatureMappingCandidate" || candidate.schemaVersion !== 1
     || !["IMPLEMENTS", "VERIFIED_BY"].includes(candidate.relationshipType)
     || candidate.authorityClass !== "candidate" || candidate.instructionAuthority !== false
-    || candidate.promotionAuthority !== false || candidate.producer !== "head-agent-core-feature-mapping-inference"
+    || candidate.promotionAuthority !== false || candidate.producer !== "head-agent-core-feature-mapping-proposal-normalizer"
     || candidate.producerVersion !== FEATURE_MAPPING_VERSION
-    || typeof candidate.confidence !== "number" || candidate.confidence < 0 || candidate.confidence > 1
-    || typeof candidate.explanation !== "string" || !candidate.explanation
+    || !Number.isFinite(candidate.confidence) || candidate.confidence < 0 || candidate.confidence > 1
+    || typeof candidate.explanation !== "string" || !candidate.explanation || candidate.explanation.length > 2000
     || !/^source-snapshot-[a-f0-9]{24}$/.test(candidate.sourceSnapshotId || "")) {
     fail("Feature mapping candidate fields or authority are invalid.", "INVALID_FEATURE_MAPPING_CANDIDATE");
   }

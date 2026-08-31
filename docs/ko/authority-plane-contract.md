@@ -36,6 +36,9 @@ P3 증거, P4 파생 view, P5 운영 효과는 어떤 경우에도 P2 복구 권
 
 context와 조정에도 같은 규칙이 적용됩니다.
 
+- provider HEAD semantic product proposal은 P3 evidence입니다. Core는 이를 검증하고
+  immutable candidate set으로 정규화할 수 있지만 Product Canon이나 ReviewDecision을
+  생성할 수 없습니다.
 - Capsule은 지시 및 승격 권한이 false인 제한된 그래프 순회만 포함할 수 있습니다.
 - 지속되지 않는 ContextWorkflowProjection은 새로운 의미 artifact가 아니라 하나의 Capsule preview에 관한 조언용 UX입니다. 이는 P4 비증폭 제약을 따르며, 입증된 `context-budget` 제외에 대해서만 다음 고정 tier에서 동일한 읽기 전용 compile을 반복할 수 있습니다. 그러나 EvidenceNeeds를 선택하거나, 512K를 초과하거나, provider를 호출하거나, 상태를 변경하거나, 의미적 충분성을 평가하거나, 승인을 부여하거나, 복구 방향을 쓸 수는 없습니다.
 - 검토되지 않은 후보는 기본 traversal과 compilation에서 제외된 상태로 유지됩니다.

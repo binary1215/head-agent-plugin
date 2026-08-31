@@ -19,13 +19,13 @@ const ARTIFACT_LIMITS = Object.freeze({
   maxArtifactBytes: 8 * 1024 * 1024,
   maxTotalBytes: 32 * 1024 * 1024,
 });
-const CANDIDATE_SET_LIMITS = Object.freeze({
-  maxInferredSymbols: 24,
+const CURRENT_CANDIDATE_SET_LIMITS = Object.freeze({
+  maxSemanticProposalEvidencePerCandidate: 8,
   maxCandidates: 200,
   maxEvidenceRecords: 250,
   maxUnknowns: 100,
 });
-const CANDIDATE_PROTOCOL_VERSIONS = new Set(["0.1.0", "0.2.0", "0.3.0"]);
+const CANDIDATE_PROTOCOL_VERSION = "0.4.0";
 const KIND_ORDER = new Map(PRODUCT_ENTITY_KINDS.map((kind, index) => [kind, index]));
 const ARRAY_BY_KIND = Object.freeze({
   FeatureGroup: "featureGroups",
@@ -121,9 +121,10 @@ function verifyCandidate(candidate) {
   });
   if (candidate.schemaVersion !== 1 || candidate.kind !== "OnboardingProductCandidate" || !PRODUCT_ENTITY_KINDS.includes(candidate.productKind)
     || candidate.authorityClass !== "candidate" || candidate.instructionAuthority !== false || candidate.promotionAuthority !== false
-    || typeof candidate.confidence !== "number" || candidate.confidence < 0 || candidate.confidence > 1
-    || candidate.producer !== "head-agent-core-onboarding-inference" || !new Set(["0.1.0", "0.2.0", "0.3.0"]).has(candidate.producerVersion)
-    || typeof candidate.explanation !== "string" || !candidate.explanation
+    || !Number.isFinite(candidate.confidence) || candidate.confidence < 0 || candidate.confidence > 1
+    || !new Set(["head-agent-core-semantic-proposal-normalizer", "head-agent-core-user-brief-normalizer"]).has(candidate.producer)
+    || candidate.producerVersion !== CANDIDATE_PROTOCOL_VERSION
+    || typeof candidate.explanation !== "string" || !candidate.explanation || candidate.explanation.length > 2000
     || !/^source-snapshot-[a-f0-9]{24}$/.test(candidate.sourceSnapshotId || "")) {
     fail("Onboarding product candidate fields or authority are invalid.", "INVALID_ONBOARDING_PROJECTION_CANDIDATE");
   }
@@ -140,20 +141,19 @@ export function verifyOnboardingCandidateSetForProjection(document, projectId = 
   });
   const candidateProtocolVersion = document.protocol?.version;
   if (document.kind !== "OnboardingCandidateSet" || document.protocol?.name !== "head-agent-core-onboarding-candidates"
-    || !CANDIDATE_PROTOCOL_VERSIONS.has(candidateProtocolVersion)
+    || candidateProtocolVersion !== CANDIDATE_PROTOCOL_VERSION
     || document.schemaVersion !== 1 || (projectId && document.projectId !== projectId)
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.sessionId || "")
     || !["existing", "new"].includes(document.inputMode)
     || !/^onboarding-storage-[a-f0-9]{24}$/.test(document.storageSelectionId || "")
-    || (candidateProtocolVersion === "0.1.0" && !/^world-model-[a-f0-9]{24}$/.test(document.worldModelId || ""))
-    || (["0.2.0", "0.3.0"].includes(candidateProtocolVersion) && document.worldModelId != null)
+    || document.worldModelId != null
     || !/^source-snapshot-[a-f0-9]{24}$/.test(document.sourceSnapshotId || "")
     || !/^product-model-[a-f0-9]{24}$/.test(document.productModelId || "")
     || document.authorityClass !== "candidate-set" || document.instructionAuthority !== false || document.promotionAuthority !== false) {
     fail("Onboarding candidate set fields or authority are invalid.", "INVALID_ONBOARDING_PROJECTION_CANDIDATE_SET");
   }
-  if (canonicalJson(document.limits) !== canonicalJson(CANDIDATE_SET_LIMITS)) {
+  if (canonicalJson(document.limits) !== canonicalJson(CURRENT_CANDIDATE_SET_LIMITS)) {
     fail("Onboarding candidate set limits do not match the protocol bounds.", "INVALID_ONBOARDING_PROJECTION_CANDIDATE_SET");
   }
   if (!Array.isArray(document.candidates) || !Array.isArray(document.evidence) || !Array.isArray(document.unknowns)) {
@@ -216,20 +216,17 @@ export function verifyOnboardingCandidateSetForProjection(document, projectId = 
   if (producerReviewDecisionId != null && !/^onboarding-review-decision-[a-f0-9]{24}$/.test(producerReviewDecisionId)) {
     fail("Candidate-set producer ReviewDecision identity is invalid.", "INVALID_ONBOARDING_PROJECTION_REVIEW");
   }
-  if ((candidateProtocolVersion === "0.3.0" && Object.hasOwn(document, "reviewDecisionId"))
-    || (candidateProtocolVersion !== "0.3.0" && Object.hasOwn(document, "producerReviewDecisionId"))) {
+  if (Object.hasOwn(document, "reviewDecisionId")) {
     fail("Candidate-set producer ReviewDecision field does not match its protocol.", "INVALID_ONBOARDING_PROJECTION_REVIEW");
   }
   return document;
 }
 
 export function onboardingCandidateProducerReviewDecisionId(document = {}) {
-  const current = document.producerReviewDecisionId ?? null;
-  const legacy = document.reviewDecisionId ?? null;
-  if (current && legacy && current !== legacy) {
-    fail("Candidate set contains conflicting producer ReviewDecision identities.", "ONBOARDING_PROJECTION_REVIEW_CONFLICT");
+  if (Object.hasOwn(document, "reviewDecisionId")) {
+    fail("Candidate set uses a retired producer ReviewDecision field.", "INVALID_ONBOARDING_PROJECTION_REVIEW");
   }
-  return current || legacy;
+  return document.producerReviewDecisionId ?? null;
 }
 
 export function verifyOnboardingReviewDecisionForProjection(document, candidateSet, projectId = "") {

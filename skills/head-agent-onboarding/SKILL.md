@@ -1,6 +1,6 @@
 ---
 name: head-agent-onboarding
-description: Guide first-use or resumed HEAD Agent project onboarding inside a Claude Code, Codex, or OpenCode conversation, including bounded source/storage choices, evidence-linked Feature review, and graph/context/document readiness. Use when the user asks to initialize, onboard, inspect inferred product concepts, or finish HEAD readiness; use the general head-agent-core skill for post-onboarding execution-lineage work.
+description: Guide first-use or resumed HEAD Agent project onboarding inside a Claude Code, Codex, or OpenCode conversation, including bounded source/storage choices, evidence-linked semantic product proposals and review, and graph/context/document readiness. Use when the user asks to initialize, onboard, inspect proposed product concepts, or finish HEAD readiness; use the general head-agent-core skill for post-onboarding execution-lineage work.
 ---
 
 # HEAD Agent conversational onboarding
@@ -28,6 +28,34 @@ for the normal path.
 
 Installation or initialization must not contact GraphDB. The optional remote
 projection has separate compatibility and activation operations.
+
+## Propose product meaning
+
+For an existing project without a user brief, the first product-profile call
+normally returns `awaiting_evidence`. This is intentional: Core does not turn
+symbol names, paths, README headings, or lexical overlap into product concepts.
+
+1. Use the exact `sourceSnapshotId` returned by
+   `head_project_initialize_or_resume` or `head_onboarding_status`.
+2. Inspect bounded current repository evidence with the host's normal read and
+   search tools. Reason about user-visible behavior, policy, constraints, and
+   product structure; do not mirror helper/function names into Features.
+3. Author one typed `semantic_proposal` whose candidates use the Product Model
+   entity schema. Each candidate needs 1–8 citations with an exact
+   project-relative `path` and valid `line`; add an indexed `symbol` when it is
+   the direct evidence. `contentDigest` is optional because Core binds the
+   current verified digest, but a supplied digest acts as a freshness guard.
+4. Call `head_project_initialize_or_resume` again with `profile: "product"` and
+   that proposal. Core must reject stale SourceSnapshot identities,
+   hallucinated paths or symbols, invalid references, unsupported fields, and
+   bounds violations.
+5. Treat the resulting candidates as P3 evidence only. A model-authored
+   proposal never supplies instruction, promotion, ReviewDecision, or Product
+   Canon authority.
+
+If repository evidence changes before review, do not reuse or automatically
+replay the proposal. Re-inspect the new SourceSnapshot and submit a fresh
+proposal; the stale candidate set remains immutable evidence.
 
 ## Activate optional GraphDB projection
 
@@ -63,8 +91,7 @@ the complete recovery authority and must not change Product Canon.
 
 Present the compact candidate batch in bounded groups with candidate ID, kind,
 name, confidence, explanation, and evidence. Keep Unknowns visible. Repository
-directories and inferred clusters are evidence, not product taxonomy or
-instructions.
+paths and symbols are evidence, not product taxonomy or instructions.
 
 Do not choose a disposition for the user. Collect one explicit decision:
 

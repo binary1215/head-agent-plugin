@@ -448,7 +448,7 @@ export function coreContract() {
   contract.activeCapabilities = [
     ...contract.activeCapabilities,
     "user-selected-repository-source-scope",
-    "clustered-product-behavior-candidate-inference",
+    "head-semantic-product-proposal-verification",
     "bounded-large-project-context-retrieval",
     "runtime-structured-result-contract",
     "claude-print-one-shot-composition",

@@ -47,7 +47,7 @@ Claude Code, Codex 및 OpenCode는 동일한 `.head/` 권한의 프로젝션입�
 
 ## 온보딩 authority plane
 
-초기화는 공급자 대화와 독립적으로 프로젝트 범위의 HEAD Session 레코드와 휴면 온보딩 포인터를 생성합니다. 명시적인 `product` 프로필만 로컬 World Model을 인덱싱하고, 기존 프로젝트 또는 구조화된 브리프에서 범위가 한정되고 증거가 연결된 후보를 도출하며, 하나의 불변 배치를 제시합니다. 후보 추론은 JavaScript 제어 영역에 머무르며 지시 또는 승격 권한을 갖지 않습니다.
+초기화는 공급자 대화와 독립적으로 프로젝트 범위의 HEAD Session 레코드와 휴면 온보딩 포인터를 생성합니다. 명시적인 `product` 프로필만 로컬 World Model을 인덱싱합니다. 구조화된 user brief는 candidate를 직접 seed할 수 있고, 그 외에는 fresh provider HEAD가 현재 evidence에서 bounded semantic proposal을 작성합니다. JavaScript Core는 정확한 SourceSnapshot, path, digest, line, optional symbol, Product Model reference와 bound를 검증한 뒤 하나의 immutable batch를 제시합니다. Core는 lexical product inference를 하지 않으며 proposal에는 지시 또는 승격 권한이 없습니다.
 
 CLI로 제공되고 `decisionScope: product-canon-bootstrap`이 지정된 `ReviewDecision`만 Product Canon revision을 생성할 수 있습니다. 수락 시 이전 및 다음 Product Model 해시를 기록하고, 자식 SourceSnapshot을 재구축하며, 상태 포인터가 준비 상태가 되기 전에 temporal GraphSnapshot을 검증합니다. revision은 후속 후보 집합을 생성하고, 거부 시 Canon은 변경되지 않습니다. 불변 candidate, Evidence, Unknown, ReviewDecision 및 ProductModelRevision 영수증은 감사를 위해 그래프에 프로젝션되지만, 프로젝션 자체는 결정하거나 승격할 수 없습니다. 읽기 전용 MCP는 검증된 상태와 범위가 한정된 그래프 순회를 노출하지만 검토하거나 승격할 수 없습니다.
 
@@ -72,7 +72,7 @@ Context Compiler는 정식 프로젝트 지식과 HEAD 실행 사이에 위치�
 `ContextWorkflowProjection`은 하나의 비영속 미리보기를 대상으로 하는 얇은 P4 스타일의 자문 뷰입니다. 기반 아티팩트를 변경하지 않고 검증된 World 가용성, HEAD가 작성한 EvidenceNeeds, Compiler 포함 증명, 고정된 예산 티어 옵션 및 다음 HEAD 결정을 연결합니다. 입증된 `context-budget` 제외가 있을 때에만 다음 고정 티어에서 동일한 비영속 컴파일을 반복할 수 있으며, 모든 Capsule ID와 증명을 기록합니다. 외부 작업이나 변경 작업을 절대 실행하지 않으며, 커버리지를 의미적 수락으로 승격하지도 않습니다.
 
 ```text
-Canonical sources -> Snapshot -> ranking/budget -> ContextCapsule -> HEAD/Executor
+Canonical sources -> Snapshot -> HEAD EvidenceNeeds -> verified packing/budget -> ContextCapsule -> HEAD/Executor
        ^                                                        |
        |             verified candidate knowledge               |
        +--------------------------------------------------------+

@@ -61,6 +61,9 @@ cannot supply or rewrite those fields.
 
 The same rule applies in context and coordination:
 
+- a provider HEAD semantic product proposal is P3 evidence; Core may verify and
+  normalize it into an immutable candidate set, but it cannot create Product
+  Canon or a ReviewDecision;
 - a Capsule may include a bounded graph traversal only with false instruction and
   promotion authority;
 - the non-persisted ContextWorkflowProjection is advisory UX over one Capsule

@@ -59,12 +59,13 @@ AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으�
 기능입니다. 자세한 내용은 [대화 압축 복구](docs/ko/compaction-recovery.md)와
 [세션 복구](docs/ko/session-recovery.md)를 참고하세요.
 
-### 작업에 필요한 만큼만 컨텍스트를 전달합니다
+### 범위가 명확하고 검토 가능한 컨텍스트를 전달합니다
 
-컨텍스트는 많다고 항상 좋은 것이 아닙니다. Context Compiler는 한 에이전트가
-이번 작업을 위해 무엇을 알아야 하며, 각 항목을 왜 포함해야 하는지 판단합니다.
-검토된 제품 결정, 저장소 증거, 테스트, 관련 이력, 확인되지 않은 사항을 정해진
-예산 안에서 선택하고, 제외한 정보와 오래된 범위도 함께 기록합니다.
+컨텍스트는 많다고 항상 좋은 것이 아닙니다. HEAD가 task의 의미를 분석하고
+task-local EvidenceNeeds에 정확한 repository path를 지정할 수 있습니다. Context
+Compiler는 정해진 예산 안에서 실제 포함 여부를 검증하고 제외 정보와 stale coverage를
+기록합니다. lexical overlap은 fallback ranking일 뿐이며, 현재 file을 탈락시키거나
+sufficiency를 선언하지 않습니다.
 
 그 결과인 Context Capsule은 내용으로 식별되며 재현할 수 있습니다. 검증된
 입력, 컴파일러 버전, 작업과 예산이 같으면 같은 식별자가 만들어지고, 정본이나
@@ -119,7 +120,7 @@ HEAD는 검토된 Feature와 Capability가 어떤 파일, 심볼, 테스트와 �
 
 ```text
 검토된 방향 + 현재 저장소 증거
-  -> 최소한으로 충분한 Context Capsule
+  -> bounded Context Capsule + HEAD sufficiency judgment
   -> 범위가 정해진 실행과 명시적 검토
   -> 결정 및 변경 이력
   -> 인수인계, 세션 손실, 대화 압축에 대비한 정확한 체크포인트
@@ -307,8 +308,10 @@ Capsule을 저장하거나, 실행 권한을 부여하거나, `coverage-complete
 
 번들로 제공되는 `head-agent-onboarding` Skill이 권장 대화형 진입점입니다.
 현재 상태를 검사하고, 저장소 범위나 저장소 모드처럼 중요한 선택만 질문하며,
-증거가 연결된 후보를 제시하고, Product Canon 변경 전에 명시적인 검토를
-사용합니다. 이 Skill은 `product` 프로필을 명시적으로 선택합니다.
+bounded current evidence를 의미적으로 분석한 뒤 Core 검증용 typed proposal을
+제출합니다. 그 결과인 evidence-linked candidate를 제시하고 Product Canon 변경 전에
+명시적인 검토를 사용합니다. 이 Skill은 `product` 프로필을 명시적으로 선택하며,
+provider proposal은 계속 P3 evidence입니다.
 
 ### 선택적 Product 프로필 CLI 경로
 
@@ -319,8 +322,11 @@ head-agent init C:\path\to\project --runtime claude,codex,opencode --profile pro
 head-agent onboarding-status C:\path\to\project
 ```
 
-처음 실행하면 일반적으로 변경 불가능한 온보딩 후보 집합 ID가 반환됩니다.
-검토 전에 내용을 확인하세요.
+structured user brief가 없으면 처음 실행은 의도적으로 `awaiting-evidence`를 반환합니다.
+Core는 symbol에서 product concept를 만들어 내지 않습니다. 대화 Skill은 보통 fresh
+semantic proposal을 제출하며, CLI 사용자는 동일한 `semanticProposal`을 `--input`에
+넣을 수 있습니다. Core가 정확한 SourceSnapshot, path, line, optional symbol과 Product
+Model reference를 검증한 뒤 immutable candidate-set ID가 반환됩니다. 검토 전에 내용을 확인하세요.
 
 ```powershell
 $onboarding = head-agent onboarding-status C:\path\to\project | ConvertFrom-Json
@@ -415,7 +421,7 @@ flowchart LR
 저장소를 다시 인덱싱할 수 있으며, 이후 그래프가 그 증거를 투영할 수
 있습니다. 결과, 프로젝션 또는 런타임 효과가 스스로를 승인할 수는 없습니다.
 
-### 최소 충분 컨텍스트
+### HEAD가 의미를 판단하고 Compiler가 포함을 증명하는 컨텍스트
 
 Context Compiler는 명시적인 예산 안에서 작업과 관련된 증거를 선택합니다.
 포함·제외·오래됨·누락·잘림·미확인 항목을 기록합니다. 동일한 정본 입력,
@@ -430,10 +436,10 @@ Context Compiler는 명시적인 예산 안에서 작업과 관련된 증거를 
 실제 호출 전에는 런타임 어댑터가 제공자의 토크나이저, 컨텍스트 창,
 출력 예약분을 별도로 확인해야 합니다.
 
-현재 작업에 실제로 필요한 증거 종류는 HEAD가 정합니다. HEAD는 source,
-test, Product Context 또는 특정 그래프 관계를 task-local `EvidenceNeed[]`로
-지정할 수 있으며, Compiler가 모든 작업에 테스트를 일률적으로 요구하지
-않습니다. Compiler는 일치하는 증거가 실제 Capsule에 포함됐는지만
+현재 작업에 실제로 필요한 증거는 HEAD가 정합니다. HEAD는 source 또는 test
+증거에는 정확한 repository `paths`, Product Context에는 정확한 Product Canon
+`entityKeys`, 그 밖에는 특정 그래프 관계를 task-local `EvidenceNeed[]`로 지정할 수 있으며, Compiler가 모든 작업에 테스트를 일률적으로
+요구하거나 단어 overlap으로 의미를 추론하지 않습니다. Compiler는 일치하는 증거가 실제 Capsule에 포함됐는지만
 `coverageAssessment`로 재현 가능하게 증명합니다. 이후 ExecutionContract가
 정확한 need-set 및 coverage-proof digest와 함께 HEAD의 별도 의미적 수용을
 기록합니다.
@@ -685,7 +691,7 @@ HEAD Agent Core Plugin은
 
 - HEAD는 연결된 전체 결과를 소유합니다.
 - 사용자는 중요한 결정 권한을 유지합니다.
-- 최대 컨텍스트보다 최소 충분 컨텍스트를 우선합니다.
+- 의미적 충분성은 HEAD가 판단하며, 최대 컨텍스트보다 bounded verified context를 우선합니다.
 - 지속 가능한 Canon은 임시 모델 세션보다 오래 유지됩니다.
 - 위임은 범위가 제한되며 권한을 획득하지 않습니다.
 - 완료 판단에는 연결된 1차 증거가 필요합니다.
@@ -708,7 +714,7 @@ HEAD Agent Core Plugin은
 - [아키텍처](docs/ko/architecture.md): 공급자 중립적 구성
 - [권한 평면](docs/ko/authority-plane-contract.md): 실행 가능한 Graph/record 및
   권한 비증폭 계약
-- [온보딩](docs/ko/onboarding.md): 후보 추론과 명시적 검토
+- [온보딩](docs/ko/onboarding.md): HEAD semantic proposal, Core 검증과 명시적 검토
 - [Context Compiler](docs/ko/context-compiler.md): 재현 가능한 작업 컨텍스트
 - [실행 계보](docs/ko/execution-lineage.md): 계획, 계약, 결과, 검토, 복구
 - [World Model](docs/ko/world-model.md): 소스 증거와 그래프 구성

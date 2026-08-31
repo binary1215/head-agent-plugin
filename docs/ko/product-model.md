@@ -17,8 +17,9 @@ migration이 제품 의미를 만들어내지 않습니다.
 
 빈 Product Model은 “HEAD에 아직 승인된 product concept가 없다”는 뜻입니다. 기존 source
 file, test, README heading, issue 또는 directory name은 Evidence로 남으며 자동으로
-Feature가 되지 않습니다. 활성 온보딩 flow는 bounded repository evidence 또는 structured
-new-project brief에서 변경 불가능한 candidate를 도출할 수 있지만, 이 Canon으로 승격하려면
+Feature가 되지 않습니다. 활성 온보딩 flow는 bounded current repository evidence에 근거한
+provider HEAD semantic proposal 또는 structured new-project brief에서 변경 불가능한 candidate를
+정규화할 수 있지만, 이 Canon으로 승격하려면
 명시적인 batch ReviewDecision이 필요합니다. Directory structure는 authoritative
 FeatureGroup taxonomy로 절대 변환되지 않습니다.
 

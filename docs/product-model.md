@@ -10,7 +10,7 @@ validation fixtures, or model output.
 
 `.head/context/product-model.json` is mutable project canon for `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`. New project initialization creates an explicit empty document. An older initialized project without the file is interpreted as the same empty semantic model until an authorized process creates the file, so migration does not invent product meaning.
 
-An empty Product Model means “HEAD has no approved product concepts yet.” Existing source files, tests, README headings, issues, or directory names remain Evidence and do not automatically become Features. The active onboarding flow can derive immutable candidates from bounded repository evidence or a structured new-project brief, but requires an explicit batch ReviewDecision before promotion into this canon. Directory structure is never converted into authoritative FeatureGroup taxonomy.
+An empty Product Model means “HEAD has no approved product concepts yet.” Existing source files, tests, README headings, issues, or directory names remain Evidence and do not automatically become Features. The active onboarding flow can normalize immutable candidates from a provider HEAD semantic proposal grounded in bounded current repository evidence, or from a structured new-project brief, but requires an explicit batch ReviewDecision before promotion into this canon. Directory structure is never converted into authoritative FeatureGroup taxonomy.
 
 ## Schema
 

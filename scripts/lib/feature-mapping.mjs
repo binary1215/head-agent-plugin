@@ -18,10 +18,6 @@ import { buildWorldModel, inspectWorldModel } from "./world-model.mjs";
 const MAX_CANDIDATES = 500;
 const MAX_EVIDENCE = 750;
 const MAX_UNKNOWNS = 100;
-const STOP_TERMS = new Set([
-  "and", "the", "for", "from", "with", "this", "that", "into", "feature", "capability", "service",
-  "handler", "manager", "model", "core", "main", "index", "file", "test", "tests", "spec", "src",
-]);
 
 const fail = (message, code = "FEATURE_MAPPING_ERROR") => {
   const error = new Error(message);
@@ -35,6 +31,13 @@ const now = () => new Date().toISOString();
 function requiredText(value, label) {
   if (typeof value !== "string" || !value.trim()) fail(`${label} is required.`, "INVALID_FEATURE_MAPPING_INPUT");
   return value.trim();
+}
+
+function assertRecordFields(value, allowedFields, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object.`, "INVALID_FEATURE_MAPPING_PROPOSAL");
+  const allowed = new Set(allowedFields);
+  const unexpected = Object.keys(value).filter((field) => !allowed.has(field));
+  if (unexpected.length) fail(`${label} contains unsupported fields: ${unexpected.sort().join(", ")}`, "INVALID_FEATURE_MAPPING_PROPOSAL");
 }
 
 function readyProject(root, action = "feature mapping") {
@@ -161,15 +164,6 @@ function writeState(projectRoot, previous, changes) {
   return state;
 }
 
-function terms(...values) {
-  const text = values.filter(Boolean).join(" ").normalize("NFKC").replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLocaleLowerCase();
-  return new Set((text.match(/[\p{L}\p{N}]+/gu) || []).filter((term) => term.length >= 3 && !STOP_TERMS.has(term)));
-}
-
-function intersection(left, right) {
-  return [...left].filter((value) => right.has(value)).sort();
-}
-
 function endpointFor(node, revision, extra = {}) {
   return {
     nodeId: node.nodeId,
@@ -201,6 +195,9 @@ function evidenceArtifact({ sourceKind, sourceNodeId, sourceRevisionId, path: so
 }
 
 function candidateArtifact({ relationshipType, from, to, evidenceIds, explanation, confidence, sourceSnapshotId, origin }) {
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) fail("Feature mapping candidate confidence must be from zero through one.", "INVALID_FEATURE_MAPPING_CONFIDENCE");
+  const normalizedExplanation = requiredText(explanation, "Candidate explanation");
+  if (normalizedExplanation.length > 2000) fail("Feature mapping candidate explanation must contain at most 2000 characters.", "INVALID_FEATURE_MAPPING_PROPOSAL");
   const payload = {
     schemaVersion: 1,
     kind: "FeatureMappingCandidate",
@@ -208,11 +205,11 @@ function candidateArtifact({ relationshipType, from, to, evidenceIds, explanatio
     from,
     to,
     evidenceIds: [...new Set(evidenceIds)].sort(),
-    explanation: requiredText(explanation, "Candidate explanation"),
+    explanation: normalizedExplanation,
     confidence: Number(confidence.toFixed(6)),
     sourceSnapshotId,
     origin,
-    producer: "head-agent-core-feature-mapping-inference",
+    producer: "head-agent-core-feature-mapping-proposal-normalizer",
     producerVersion: FEATURE_MAPPING_VERSION,
     authorityClass: "candidate",
     instructionAuthority: false,
@@ -266,7 +263,7 @@ function candidateSetArtifact({ project, sessionId, worldModel, candidates, evid
   }, project.projectId);
 }
 
-function inferCandidates(worldModel) {
+function candidatesFromSemanticProposal(proposal, worldModel) {
   const graph = worldModel.temporalProvenanceGraph;
   const nodeById = new Map(graph.nodes.map((node) => [node.nodeId, node]));
   const currentRevisionByLogical = new Map(graph.edges.filter((edge) => edge.type === "CURRENT_REVISION")
@@ -276,84 +273,66 @@ function inferCandidates(worldModel) {
   const fileClassificationById = new Map(graph.nodes.filter((node) => node.kind === "FileRevision")
     .map((revision) => [revision.logicalEntityId, revision.classification]));
   const productNodes = graph.nodes.filter((node) => ["Feature", "Capability"].includes(node.kind));
-  const implementationNodes = graph.nodes.filter((node) => ["File", "Symbol"].includes(node.kind)
-    && fileClassificationById.get(node.kind === "Symbol" ? node.fileId : node.nodeId) !== "test");
-  const testNodes = graph.nodes.filter((node) => node.kind === "Test");
   const evidenceById = new Map();
-  const candidates = [];
-  const unknowns = [];
 
   if (!productNodes.length) {
-    unknowns.push(unknownArtifact(graph.sourceSnapshotId, "missing-product-canon", "No authoritative Feature or Capability exists. Complete Product Canon onboarding before implementation mapping."));
-    return { candidates, evidence: [], unknowns };
+    return { candidates: [], evidence: [], unknowns: [unknownArtifact(graph.sourceSnapshotId, "missing-product-canon", "No authoritative Feature or Capability exists. Complete Product Canon onboarding before implementation mapping.")] };
   }
+  if (proposal == null) {
+    return { candidates: [], evidence: [], unknowns: [unknownArtifact(graph.sourceSnapshotId, "semantic-mapping-proposal-required", "Fresh HEAD semantic implementation-mapping candidates are required. Core intentionally does not infer product-to-code meaning from names or lexical overlap.")] };
+  }
+  assertRecordFields(proposal, ["schemaVersion", "sourceSnapshotId", "productModelId", "candidates"], "Feature mapping semantic proposal");
+  if (proposal.schemaVersion !== 1) fail("Feature mapping semantic proposal schemaVersion must be 1.", "INVALID_FEATURE_MAPPING_PROPOSAL");
+  if (requiredText(proposal.sourceSnapshotId, "Feature mapping proposal sourceSnapshotId") !== graph.sourceSnapshotId) fail("Feature mapping proposal is bound to a stale SourceSnapshot.", "FEATURE_MAPPING_PROPOSAL_DRIFT");
+  if (requiredText(proposal.productModelId, "Feature mapping proposal productModelId") !== worldModel.productModel.productModelId) fail("Feature mapping proposal is bound to stale Product Canon.", "FEATURE_MAPPING_PROPOSAL_DRIFT");
+  if (!Array.isArray(proposal.candidates) || !proposal.candidates.length || proposal.candidates.length > MAX_CANDIDATES) fail(`Feature mapping proposal must contain 1 through ${MAX_CANDIDATES} candidates.`, "INVALID_FEATURE_MAPPING_PROPOSAL");
 
-  const addCandidate = ({ productNode, productRevision, sourceNode, sourceRevision, relationshipType, overlapTerms, confidence }) => {
+  const candidates = proposal.candidates.map((item, index) => {
+    assertRecordFields(item, ["relationshipType", "sourceNodeId", "productNodeId", "explanation", "confidence"], `Feature mapping proposal candidate ${index}`);
+    const relationshipType = requiredText(item.relationshipType, `Feature mapping proposal candidate ${index}.relationshipType`).toUpperCase();
+    if (!["IMPLEMENTS", "VERIFIED_BY"].includes(relationshipType)) fail("Feature mapping proposal relationshipType must be IMPLEMENTS or VERIFIED_BY.", "INVALID_FEATURE_MAPPING_PROPOSAL");
+    const sourceNode = nodeById.get(requiredText(item.sourceNodeId, `Feature mapping proposal candidate ${index}.sourceNodeId`));
+    const productNode = nodeById.get(requiredText(item.productNodeId, `Feature mapping proposal candidate ${index}.productNodeId`));
+    if (!sourceNode || !productNode) fail("Feature mapping proposal references a node absent from the current GraphSnapshot.", "FEATURE_MAPPING_PROPOSAL_EVIDENCE_MISSING");
+    if (!["Feature", "Capability"].includes(productNode.kind)) fail("Feature mapping proposal productNodeId must name a current Feature or Capability.", "INVALID_FEATURE_MAPPING_DIRECTION");
+    if (relationshipType === "IMPLEMENTS" && (!["File", "Symbol"].includes(sourceNode.kind)
+      || fileClassificationById.get(sourceNode.kind === "Symbol" ? sourceNode.fileId : sourceNode.nodeId) === "test")) {
+      fail("IMPLEMENTS proposals require a current non-test File or Symbol source.", "INVALID_FEATURE_MAPPING_DIRECTION");
+    }
+    if (relationshipType === "VERIFIED_BY" && sourceNode.kind !== "Test") fail("VERIFIED_BY proposals require a current Test source.", "INVALID_FEATURE_MAPPING_DIRECTION");
+    const sourceRevision = currentRevisionByLogical.get(sourceNode.nodeId);
+    const productRevision = currentRevisionByLogical.get(productNode.nodeId);
+    if (!sourceRevision || !productRevision) fail("Feature mapping proposal endpoints must have current revisions.", "FEATURE_MAPPING_PROPOSAL_EVIDENCE_MISSING");
     const sourceFileId = sourceNode.kind === "Symbol" ? sourceNode.fileId : sourceNode.fileId || sourceNode.nodeId;
     const contentDigest = fileDigestById.get(sourceFileId) || "";
     const evidence = evidenceArtifact({
-      sourceKind: `repository-${sourceNode.kind.toLocaleLowerCase()}`,
+      sourceKind: `head-semantic-proposal-${sourceNode.kind.toLocaleLowerCase()}`,
       sourceNodeId: sourceNode.nodeId,
       sourceRevisionId: sourceRevision.nodeId,
       path: sourceNode.path || sourceRevision.path || "",
       line: sourceRevision.line || null,
       contentDigest,
-      statement: `Observed ${sourceNode.kind} ${sourceNode.name || sourceNode.path} shares terms [${overlapTerms.join(", ")}] with authoritative ${productNode.kind} ${productRevision.semantic.name || productNode.key}.`,
+      statement: `Fresh HEAD cites current ${sourceNode.kind} ${sourceNode.name || sourceNode.path} as evidence for a proposed ${relationshipType} relation with authoritative ${productNode.kind} ${productRevision.semantic.name || productNode.key}.`,
     });
     evidenceById.set(evidence.evidenceId, evidence);
     const productEndpoint = endpointFor(productNode, productRevision, { name: productRevision.semantic.name || "" });
     const sourceEndpoint = endpointFor(sourceNode, sourceRevision);
     const from = relationshipType === "IMPLEMENTS" ? sourceEndpoint : productEndpoint;
     const to = relationshipType === "IMPLEMENTS" ? productEndpoint : sourceEndpoint;
-    candidates.push(candidateArtifact({
+    return candidateArtifact({
       relationshipType,
       from,
       to,
       evidenceIds: [evidence.evidenceId],
-      explanation: relationshipType === "IMPLEMENTS"
-        ? "Lexical repository evidence can propose an implementation relationship, but only explicit review may promote it."
-        : "Lexical test evidence can propose verification coverage, but only explicit review may promote it.",
-      confidence,
+      explanation: item.explanation,
+      confidence: item.confidence,
       sourceSnapshotId: graph.sourceSnapshotId,
-      origin: relationshipType === "IMPLEMENTS" ? "repository-product-term-overlap" : "repository-test-product-term-overlap",
-    }));
-  };
-
-  for (const productNode of productNodes.sort((left, right) => left.nodeId.localeCompare(right.nodeId))) {
-    const productRevision = currentRevisionByLogical.get(productNode.nodeId);
-    if (!productRevision?.semantic) continue;
-    const productTerms = terms(productNode.key, productRevision.semantic.name, productRevision.semantic.description);
-    const implementationMatches = [];
-    for (const sourceNode of implementationNodes) {
-      const sourceRevision = currentRevisionByLogical.get(sourceNode.nodeId);
-      if (!sourceRevision) continue;
-      const overlapTerms = intersection(productTerms, terms(sourceNode.path, sourceNode.name, sourceNode.symbolKind));
-      if (!overlapTerms.length) continue;
-      const base = sourceNode.kind === "Symbol" ? 0.5 : 0.35;
-      implementationMatches.push({ sourceNode, sourceRevision, overlapTerms, confidence: Math.min(0.95, base + overlapTerms.length * 0.08) });
-    }
-    implementationMatches.sort((left, right) => right.confidence - left.confidence || left.sourceNode.nodeId.localeCompare(right.sourceNode.nodeId));
-    for (const match of implementationMatches.slice(0, 8)) addCandidate({ productNode, productRevision, relationshipType: "IMPLEMENTS", ...match });
-
-    const testMatches = [];
-    for (const sourceNode of testNodes) {
-      const sourceRevision = currentRevisionByLogical.get(sourceNode.nodeId);
-      if (!sourceRevision) continue;
-      const overlapTerms = intersection(productTerms, terms(sourceNode.path));
-      if (!overlapTerms.length) continue;
-      testMatches.push({ sourceNode, sourceRevision, overlapTerms, confidence: Math.min(0.95, 0.5 + overlapTerms.length * 0.08) });
-    }
-    testMatches.sort((left, right) => right.confidence - left.confidence || left.sourceNode.nodeId.localeCompare(right.sourceNode.nodeId));
-    for (const match of testMatches.slice(0, 5)) addCandidate({ productNode, productRevision, relationshipType: "VERIFIED_BY", ...match });
-
-    if (!implementationMatches.length && !testMatches.length) {
-      unknowns.push(unknownArtifact(graph.sourceSnapshotId, `unmapped:${productNode.nodeId}`,
-        `No bounded lexical evidence currently proposes an implementation or verification mapping for ${productNode.kind} ${productRevision.semantic.name || productNode.key}.`));
-    }
-  }
-
+      origin: "fresh-head-semantic-mapping-proposal",
+    });
+  });
   const deduplicated = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
-  return { candidates: [...deduplicated.values()], evidence: [...evidenceById.values()], unknowns };
+  if (deduplicated.size !== candidates.length) fail("Feature mapping proposal contains duplicate candidates.", "DUPLICATE_FEATURE_MAPPING_PROPOSAL");
+  return { candidates: [...deduplicated.values()], evidence: [...evidenceById.values()], unknowns: [] };
 }
 
 function buildReviewDecision({ candidateSet, disposition, acceptedCandidateIds, rejectedCandidateIds, rationale }) {
@@ -406,7 +385,7 @@ async function rebuildWithProjection({ projectRoot, projectId, currentProductMod
   });
 }
 
-export async function startFeatureMapping({ root = "." } = {}) {
+export async function startFeatureMapping({ root = ".", semanticProposal = null } = {}) {
   const inspected = readyProject(root, "feature mapping start");
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("Feature mapping cannot change reviewed relationships while a Run is active or awaiting review.", "FEATURE_MAPPING_RUN_CONFLICT");
@@ -417,17 +396,17 @@ export async function startFeatureMapping({ root = "." } = {}) {
     ? verifyState(readJson(currentStateFile, "Feature mapping state pointer"), { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId })
     : null;
   if (previousState?.phase === "awaiting-review") {
-    fail("The current Feature mapping candidate set requires review before inference can restart.", "FEATURE_MAPPING_REVIEW_REQUIRED");
+    fail("The current Feature mapping candidate set requires review before a new proposal can start.", "FEATURE_MAPPING_REVIEW_REQUIRED");
   }
   const indexed = await buildWorldModel({ root: projectRoot, persist: true });
-  const inferred = inferCandidates(indexed.snapshot);
+  const proposed = candidatesFromSemanticProposal(semanticProposal, indexed.snapshot);
   const candidateSet = candidateSetArtifact({
     project: inspected.project,
     sessionId: inspected.state.sessionId,
     worldModel: indexed.snapshot,
-    candidates: inferred.candidates,
-    evidence: inferred.evidence,
-    unknowns: inferred.unknowns,
+    candidates: proposed.candidates,
+    evidence: proposed.evidence,
+    unknowns: proposed.unknowns,
   });
   const projected = await rebuildWithProjection({
     projectRoot,
@@ -497,7 +476,7 @@ export async function reviewFeatureMapping({ root = ".", candidateSetId, disposi
     || currentWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId
     || currentWorld.snapshot.productModel.productModelId !== candidateSet.productModelId
     || currentWorld.snapshot.productModel.productModelHash !== candidateSet.productModelHash) {
-    fail("Repository evidence or Product Canon changed after mapping inference; re-index and create a new candidate set.", "FEATURE_MAPPING_SOURCE_DRIFT");
+    fail("Repository evidence or Product Canon changed after mapping proposal; re-index and create a new candidate set.", "FEATURE_MAPPING_SOURCE_DRIFT");
   }
   const normalizedDisposition = requiredText(disposition, "Review disposition").toLocaleLowerCase();
   if (!["accept-all", "accept-selection", "reject"].includes(normalizedDisposition)) {
@@ -560,7 +539,7 @@ export function inspectFeatureMapping({ root = "." } = {}) {
       status: "not_started",
       projectId: inspected.project.projectId,
       sessionId: inspected.state.sessionId,
-      nextAction: "Run feature-mapping-start after Product Canon and World Model are available.",
+      nextAction: "Have fresh HEAD inspect the current graph, then run feature-mapping-start with a semantic proposal.",
     };
   }
   const state = verifyState(readJson(file, "Feature mapping state pointer"), { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId });

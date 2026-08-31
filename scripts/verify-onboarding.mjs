@@ -66,6 +66,39 @@ function productDocument({ suffix = "" } = {}) {
   };
 }
 
+function semanticProductProposal(root, relativePath, document = productDocument()) {
+  const world = inspectWorldModel({ root });
+  assert.equal(world.status, "current");
+  const file = world.snapshot.files.find((item) => item.path === relativePath);
+  assert.ok(file);
+  const symbol = file.symbols[0] || null;
+  const evidence = {
+    path: relativePath,
+    line: symbol?.line || 1,
+    contentDigest: file.digest,
+    ...(symbol ? { symbol: { name: symbol.name, kind: symbol.kind, line: symbol.line } } : {}),
+  };
+  const arrays = {
+    FeatureGroup: "featureGroups",
+    Capability: "capabilities",
+    Feature: "features",
+    Requirement: "requirements",
+    Constraint: "constraints",
+    Decision: "decisions",
+  };
+  return {
+    schemaVersion: 1,
+    sourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+    candidates: Object.entries(arrays).flatMap(([productKind, field]) => document[field].map((proposedEntity) => ({
+      productKind,
+      proposedEntity,
+      evidence: [evidence],
+      explanation: "Fresh HEAD proposes this product concept from current repository evidence; Core only validates and gates it.",
+      confidence: 0.8,
+    }))),
+  };
+}
+
 async function verifyExistingProjectPromotion() {
   const root = temporaryProject("existing");
   write(root, "README.md", "# Request Service\n\nObserved repository documentation.\n");
@@ -77,7 +110,18 @@ async function verifyExistingProjectPromotion() {
   assert.equal(initial.status, "initialized");
   assert.equal(initial.sessionRecord.identityBoundary, "project-scoped-head-session-not-provider-conversation");
 
-  const started = await startOnboarding({ root, mode: "existing", sourceScope: { excludeRoots: [".omo"] } });
+  const discovery = await startOnboarding({ root, mode: "existing", sourceScope: { excludeRoots: [".omo"] } });
+  assert.equal(discovery.status, "awaiting_onboarding_evidence");
+  assert.equal(discovery.candidateSet.candidates.length, 0);
+  assert.match(discovery.candidateSet.unknowns[0].statement, /semantic product candidates are required/i);
+  const driftedProposal = semanticProductProposal(root, "src/service.mjs");
+  driftedProposal.candidates[0].evidence[0].contentDigest = "0".repeat(64);
+  await rejectsCode(() => startOnboarding({ root, mode: "existing", semanticProposal: driftedProposal }), "ONBOARDING_SEMANTIC_EVIDENCE_DRIFT");
+  const started = await startOnboarding({
+    root,
+    mode: "existing",
+    semanticProposal: semanticProductProposal(root, "src/service.mjs"),
+  });
   assert.equal(started.status, "awaiting_onboarding_review");
   assert.equal(started.storageSelection.mode, "local");
   assert.deepEqual(started.sourceScope.excludeRoots, [".omo"]);
@@ -85,18 +129,17 @@ async function verifyExistingProjectPromotion() {
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "FeatureGroup"), true);
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Capability"), true);
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Feature"), true);
-  assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Capability" && candidate.proposedEntity.name === "Request Delivery"), true);
-  assert.equal(started.candidateSet.candidates.filter((candidate) => candidate.productKind === "Feature").every((candidate) => candidate.proposedEntity.featureGroupKeys.length === 0), true);
-  assert.equal(started.candidateSet.candidates.some((candidate) => /close|logging/iu.test(candidate.proposedEntity.name)), false);
-  assert.equal(started.candidateSet.evidence.some((record) => /closeWindow|configure_process_logging/iu.test(record.statement)), false);
-  assert.equal(started.candidateSet.evidence.some((record) => record.sourceKind === "repository-test-symbol"), true);
+  assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Capability" && candidate.proposedEntity.name === "Serve"), true);
+  assert.equal(started.candidateSet.candidates.filter((candidate) => candidate.productKind === "Feature").every((candidate) => candidate.proposedEntity.featureGroupKeys.length === 1), true);
+  assert.equal(started.candidateSet.candidates.every((candidate) => candidate.origin === "fresh-head-semantic-proposal"), true);
+  assert.equal(started.candidateSet.evidence.every((record) => record.contentDigest && record.path === "src/service.mjs"), true);
   assert.equal(started.candidateSet.candidates.every((candidate) => candidate.instructionAuthority === false && candidate.promotionAuthority === false), true);
   assert.equal(normalizeProductModelDocument().features.length, 0);
   const candidateGraph = inspectWorldModel({ root });
   assert.equal(candidateGraph.status, "current");
   assert.equal(candidateGraph.snapshot.files.some((file) => file.path.startsWith(".omo/")), false);
   assert.deepEqual(candidateGraph.snapshot.repositoryScan.sourceScope.excludeRoots, [".omo"]);
-  assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingCandidateSetCount, 1);
+  assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingCandidateSetCount, 2);
   assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingCandidateCount, started.candidateSet.candidates.length);
   assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingReviewDecisionCount, 0);
   const candidateId = started.candidateSet.candidates[0].candidateId;
@@ -189,6 +232,25 @@ async function verifyExistingProjectPromotion() {
   const capsule = compileContext({ root, task: "Explain the accepted product capability.", budget: 32_768, persist: false }).capsule;
   assert.equal(capsule.productContext.length > 0, true);
   assert.equal(capsule.productContext.every((item) => item.trustBoundary === "derived-projection-of-user-owned-product-canon"), true);
+  const anchoredProductContext = compileContext({
+    root,
+    task: "Resolve opaque ticket omega without relying on vocabulary overlap.",
+    evidenceNeeds: [{ id: "accepted-capability", kind: "product-context", entityKeys: ["capability:serve"] }],
+  }).capsule;
+  assert.equal(anchoredProductContext.coverageAssessment.status, "coverage-complete");
+  assert.equal(anchoredProductContext.productContext.some((item) => item.entities.some((entity) => entity.semantic?.key === "capability:serve" || entity.key === "capability:serve")), true);
+  const multipleProductKeys = compileContext({
+    root,
+    task: "Resolve opaque ticket sigma without relying on vocabulary overlap.",
+    evidenceNeeds: [{
+      id: "accepted-product-entities",
+      kind: "product-context",
+      entityKeys: ["capability:serve", "feature:serve"],
+      minimumItems: 2,
+    }],
+  }).capsule;
+  assert.equal(multipleProductKeys.coverageAssessment.status, "coverage-complete");
+  assert.equal(multipleProductKeys.coverageAssessment.proofs.find((item) => item.evidenceNeedId === "accepted-product-entities").includedEvidence.length >= 2, true);
   const previousRevision = JSON.parse(fs.readFileSync(path.join(
     root,
     ".head",
@@ -249,15 +311,6 @@ async function verifyNewProjectBriefAndRevision() {
   assert.notEqual(revised.candidateSet.candidateSetId, started.candidateSet.candidateSetId);
   assert.equal(revised.candidateSet.parentCandidateSetIds.includes(started.candidateSet.candidateSetId), true);
   assert.equal(revised.candidateSet.producerReviewDecisionId, revised.reviewDecision.reviewDecisionId);
-  const legacySuccessor = structuredClone(revised.candidateSet);
-  legacySuccessor.protocol.version = "0.2.0";
-  legacySuccessor.reviewDecisionId = legacySuccessor.producerReviewDecisionId;
-  delete legacySuccessor.producerReviewDecisionId;
-  delete legacySuccessor.candidateSetId;
-  delete legacySuccessor.candidateSetHash;
-  legacySuccessor.candidateSetHash = onboardingDigest(onboardingCanonicalJson(legacySuccessor));
-  legacySuccessor.candidateSetId = `onboarding-candidates-${legacySuccessor.candidateSetHash.slice(0, 24)}`;
-  assert.equal(verifyOnboardingCandidateSetForProjection(legacySuccessor).protocol.version, "0.2.0");
   const awaitingReview = inspectOnboarding({ root });
   assert.equal(awaitingReview.status, "awaiting_review");
   assert.equal(awaitingReview.reviewLineage.producerReviewDecisionId, revised.reviewDecision.reviewDecisionId);
@@ -345,6 +398,34 @@ async function verifyEmptyEvidenceAndAddition() {
   assert.equal(inspectOnboarding({ root }).status, "ready");
 }
 
+async function verifySemanticNeutralityAndRetiredCandidateProtocols() {
+  const root = temporaryProject("semantic-neutrality");
+  write(root, "src/storage.mjs", [
+    "export function writeFileEntry() {}",
+    "export function saveFileEntry() {}",
+    "export function persistFileEntry() {}",
+    "export function exportFileEntry() {}",
+    "",
+  ].join("\n"));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const awaitingEvidence = await startOnboarding({ root, mode: "existing" });
+  assert.equal(awaitingEvidence.status, "awaiting_onboarding_evidence");
+  assert.equal(awaitingEvidence.candidateSet.candidates.length, 0);
+  assert.equal(awaitingEvidence.candidateSet.unknowns.some((item) => /semantic product candidates/i.test(item.statement)), true);
+
+  const current = await startOnboarding({ root, semanticProposal: semanticProductProposal(root, "src/storage.mjs") });
+  const retired = structuredClone(current.candidateSet);
+  retired.protocol.version = "0.3.0";
+  delete retired.candidateSetId;
+  delete retired.candidateSetHash;
+  retired.candidateSetHash = onboardingDigest(onboardingCanonicalJson(retired));
+  retired.candidateSetId = `onboarding-candidates-${retired.candidateSetHash.slice(0, 24)}`;
+  assert.throws(
+    () => verifyOnboardingCandidateSetForProjection(retired, retired.projectId),
+    { code: "INVALID_ONBOARDING_PROJECTION_CANDIDATE_SET" },
+  );
+}
+
 async function verifySuccessorSelectionAndRejection() {
   const selectionRoot = temporaryProject("successor-selection");
   initializeProject({ root: selectionRoot, pluginRoot, runtimes: ["codex"] });
@@ -405,7 +486,8 @@ async function verifyRejection() {
   const root = temporaryProject("reject");
   write(root, "src/reject.mjs", "export function rejectMe() {}\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const started = await startOnboarding({ root });
+  await startOnboarding({ root });
+  const started = await startOnboarding({ root, semanticProposal: semanticProductProposal(root, "src/reject.mjs") });
   const rejected = await reviewOnboarding({
     root,
     candidateSetId: started.candidateSet.candidateSetId,
@@ -416,8 +498,9 @@ async function verifyRejection() {
   const status = inspectOnboarding({ root });
   assert.equal(status.status, "rejected");
   assert.equal(status.productModel.features.length, 0);
-  const restarted = await startOnboarding({ root });
-  assert.equal(restarted.candidateSet.candidateSetId, started.candidateSet.candidateSetId);
+  const restarted = await startOnboarding({ root, semanticProposal: semanticProductProposal(root, "src/reject.mjs") });
+  assert.notEqual(restarted.candidateSet.candidateSetId, started.candidateSet.candidateSetId);
+  assert.deepEqual(restarted.candidateSet.parentCandidateSetIds, [started.candidateSet.candidateSetId]);
   const capability = restarted.candidateSet.candidates.find((candidate) => candidate.productKind === "Capability");
   const selected = await reviewOnboarding({
     root,
@@ -529,18 +612,19 @@ async function verifyLegacyMigrationAndReadOnlyMcp() {
   const started = await runCommand(["onboarding-start", root]);
   assert.equal(started.state.migration, "legacy-missing-state-v1");
   assert.equal(started.state.sessionId, initial.state.sessionId);
-  assert.equal((await runCommand(["onboarding-status", root])).state.candidateSetId, started.candidateSet.candidateSetId);
+  const proposed = await startOnboarding({ root, semanticProposal: semanticProductProposal(root, "src/legacy.mjs") });
+  assert.equal((await runCommand(["onboarding-status", root])).state.candidateSetId, proposed.candidateSet.candidateSetId);
   const mcp = await dispatchMcp({
     jsonrpc: "2.0",
     id: 1,
     method: "tools/call",
     params: { name: "head_onboarding_status", arguments: { project_root: root } },
   });
-  assert.equal(mcp.result.structuredContent.state.candidateSetId, started.candidateSet.candidateSetId);
+  assert.equal(mcp.result.structuredContent.state.candidateSetId, proposed.candidateSet.candidateSetId);
   assert.equal(mcp.result.structuredContent.authority.candidates, "non-authoritative-until-review");
   const accepted = await reviewOnboarding({
     root,
-    candidateSetId: started.candidateSet.candidateSetId,
+    candidateSetId: proposed.candidateSet.candidateSetId,
     disposition: "accept-all",
     rationale: "Create Product Canon from the reviewed legacy-migration batch.",
   });
@@ -552,6 +636,7 @@ try {
   const existing = await verifyExistingProjectPromotion();
   const brief = await verifyNewProjectBriefAndRevision();
   await verifyEmptyEvidenceAndAddition();
+  await verifySemanticNeutralityAndRetiredCandidateProtocols();
   await verifySuccessorSelectionAndRejection();
   await verifyRejection();
   await verifyExistingCanonSkip();
@@ -561,10 +646,12 @@ try {
   process.stdout.write(`${JSON.stringify({
     status: "verified",
     scenarios: [
-      "existing-project-inference-and-promotion",
+      "existing-project-semantic-proposal-and-promotion",
       "post-ready-world-drift-disclosure",
       "new-project-brief-revision-and-promotion",
       "empty-evidence-user-seed",
+      "helper-symbols-do-not-become-product-taxonomy",
+      "retired-lexical-candidate-protocols-rejected",
       "successor-selection-and-phase-aware-ready-status",
       "successor-rejection-and-phase-aware-rejected-status",
       "successor-producer-review-missing-fail-closed",

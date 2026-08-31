@@ -105,7 +105,7 @@ export function usage({ all = false } = {}) {
       "head onboarding-review-read <project> --review <onboarding-review-decision-id>",
       "head source-scope-set <project> --input <source-scope.json>",
       "head source-scope-status <project>",
-      "head feature-mapping-start <project>",
+      "head feature-mapping-start <project> [--input <semantic-mapping-proposal.json>]",
       "head feature-mapping-status <project>",
       "head feature-mapping-review <project> --input <review.json>",
       "head feature-mapping-candidates <project> --candidate-set <feature-mapping-candidate-set-id>",
@@ -344,7 +344,7 @@ export function runCommand(argv = process.argv.slice(2)) {
     if (inspected.status === "not_initialized") throw new Error("HEAD Agent Core is not initialized.");
     return readRepositorySourceScope({ projectRoot: inspected.project.projectRoot });
   }
-  if (command === "feature-mapping-start") return startFeatureMapping({ root });
+  if (command === "feature-mapping-start") return startFeatureMapping({ root, semanticProposal: options.input ? inputJson(options, "Feature mapping semantic proposal") : null });
   if (command === "feature-mapping-status") return inspectFeatureMapping({ root });
   if (command === "feature-mapping-review") return reviewFeatureMapping({ ...inputJson(options, "Feature mapping ReviewDecision"), root });
   if (command === "feature-mapping-candidates") return readFeatureMappingCandidateSet({ root, candidateSetId: options["candidate-set"] });

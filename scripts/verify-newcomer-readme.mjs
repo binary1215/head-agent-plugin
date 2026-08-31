@@ -11,6 +11,7 @@ const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-newcomer-"
 const projectRoot = path.join(scratchRoot, "sample-project");
 const installRoot = path.join(scratchRoot, "user-data", "head-agent-core");
 const binDirectory = path.join(scratchRoot, "user-home", ".local", "bin");
+const proposalFile = path.join(scratchRoot, "onboarding-proposal.json");
 const reviewFile = path.join(scratchRoot, "onboarding-review.json");
 const maximumOutputBytes = 8 * 1024 * 1024;
 
@@ -128,11 +129,11 @@ function assertReadmeContract() {
 try {
   assertReadmeContract();
   fs.mkdirSync(path.join(projectRoot, "src"), { recursive: true });
-  fs.writeFileSync(path.join(projectRoot, "README.md"), "# Camera workspace\n\nCapture frames and calibrate a camera before inspection.\n", "utf8");
-  fs.writeFileSync(path.join(projectRoot, "src", "camera-service.mjs"), [
-    "export function captureFrame(device) { return device.readFrame(); }",
-    "export function calibrateCamera(samples) { return { sampleCount: samples.length, calibrated: samples.length > 2 }; }",
-    "export function inspectFrame(frame) { return { accepted: frame.sharpness > 0.8 }; }",
+  fs.writeFileSync(path.join(projectRoot, "README.md"), "# Request workspace\n\nAccept and validate a request before publishing its receipt.\n", "utf8");
+  fs.writeFileSync(path.join(projectRoot, "src", "request-service.mjs"), [
+    "export function acceptRequest(queue) { return queue.take(); }",
+    "export function validateRequest(fields) { return { fieldCount: fields.length, valid: fields.length > 2 }; }",
+    "export function publishReceipt(request) { return { accepted: request.valid === true }; }",
     "",
   ].join("\n"), "utf8");
 
@@ -151,7 +152,8 @@ try {
   assert.equal(installed.native.status, "javascript-fallback");
   assert.equal(installed.native.deliveryStatus, "disabled");
   assert.equal(installed.project.onboardingAction, "started");
-  assert.equal(installed.project.onboarding.candidateCount > 0, true);
+  assert.equal(installed.project.status, "product_evidence_required");
+  assert.equal(installed.project.onboarding.candidateCount, 0);
   assert.equal(installed.project.onboarding.storageMode, "local");
   assert.equal(fs.existsSync(path.join(projectRoot, ".git")), false);
 
@@ -159,6 +161,33 @@ try {
   assert.equal(version.version, installed.version);
   const doctor = await runGlobal(["doctor", projectRoot]);
   assert.equal(doctor.project.projectRoot, fs.realpathSync(projectRoot));
+  const evidenceRequired = await runGlobal(["onboarding-status", projectRoot]);
+  assert.equal(evidenceRequired.status, "awaiting_evidence");
+  fs.writeFileSync(proposalFile, `${JSON.stringify({
+    mode: "existing",
+    semanticProposal: {
+      schemaVersion: 1,
+      sourceSnapshotId: evidenceRequired.state.sourceSnapshotId,
+      candidates: [
+        {
+          productKind: "Capability",
+          proposedEntity: { key: "capability:requests", name: "Request processing", description: "Accept current user requests." },
+          evidence: [{ path: "src/request-service.mjs", line: 1 }],
+          explanation: "Fresh HEAD semantic proposal for the newcomer flow.",
+          confidence: 0.8,
+        },
+        {
+          productKind: "Feature",
+          proposedEntity: { key: "feature:accept-request", name: "Accept a request", description: "Accept one current user request.", featureGroupKeys: [], capabilityKeys: ["capability:requests"], governedBy: [] },
+          evidence: [{ path: "src/request-service.mjs", line: 1 }],
+          explanation: "Fresh HEAD semantic proposal for the newcomer flow.",
+          confidence: 0.8,
+        },
+      ],
+    },
+  }, null, 2)}\n`, "utf8");
+  const proposed = await runGlobal(["onboarding-start", projectRoot, "--input", proposalFile]);
+  assert.equal(proposed.status, "awaiting_onboarding_review");
   const pending = await runGlobal(["onboarding-status", projectRoot]);
   assert.equal(pending.status, "awaiting_review");
   assert.match(pending.state.candidateSetId, /^onboarding-candidates-[a-f0-9]{24}$/u);
@@ -184,7 +213,7 @@ try {
   const world = await runGlobal(["world-status", projectRoot]);
   assert.equal(world.status, "current");
   assert.equal(world.snapshot.temporalProvenanceGraph.summary.featureCount > 0, true);
-  const context = await runGlobal(["context-preview", projectRoot, "--task", "Find camera capture and calibration evidence", "--budget", "32768"]);
+  const context = await runGlobal(["context-preview", projectRoot, "--task", "Find request acceptance and validation evidence", "--budget", "32768"]);
   assert.equal(context.status, "preview");
   assert.equal("file" in context, false);
   assert.equal(context.capsule.productContext.length > 0, true);

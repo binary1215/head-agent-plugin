@@ -42,21 +42,22 @@ initialized
        -> ready
 ```
 
-저장소 및 brief 분석은 `instructionAuthority: false`와
+Fresh HEAD semantic proposal과 user-owned brief는 `instructionAuthority: false`와
 `promotionAuthority: false`를 지닌 `OnboardingCandidateSet` evidence를
-생성합니다. `decisionScope: "product-canon-bootstrap"`인 명시적
+생성합니다. Core는 symbol name, repository path, README heading 또는 lexical rule에서
+product meaning을 추론하지 않습니다. 제안된 source path, digest, line, optional symbol,
+Product Model reference와 resource bound를 현재 World Model에 대조해 검증합니다.
+`decisionScope: "product-canon-bootstrap"`인 명시적
 `ReviewDecision`만 Product Canon을 작성할 수 있습니다. candidate는 절대 변경되거나
 라벨이 바뀌지 않습니다. revision은 새로운 identity를 가진 후속 candidate를 생성하며,
 수락은 별도의 Canon과 변경 불가능한 decision receipt를 생성합니다.
 
-Candidate protocol `0.3.0`은 project, Session, mode, 정확한 SourceSnapshot,
-Product Model input, candidates, Evidence, Unknowns, ancestry, producer
-ReviewDecision 및 producer policy로부터 candidate-set identity를 도출합니다. 같은
-evidence를 거부 후 다시 빌드해도 materialized-view 포인터에 authority review를
-결합하지 않고 같은 candidate identity가 생성되도록, 파생된 World Model ID는 의도적으로
-제외합니다. digest 유효 `0.1.0` 및 `0.2.0` candidate set은 계속 읽을 수 있습니다.
-그들의 legacy `reviewDecisionId`는 후속 candidate를 생성한 review로만 해석되며,
-그 후속 candidate에 대한 latest review로는 절대 해석되지 않습니다.
+Candidate protocol `0.4.0`은 project, Session, mode, 정확한 SourceSnapshot,
+Product Model input, bounded semantic proposal, 검증된 Evidence, Unknowns, ancestry,
+producer ReviewDecision 및 producer policy로부터 candidate-set identity를 도출합니다.
+파생 World Model ID는 materialized-view pointer에 authority review를 결합하지 않도록
+제외합니다. 폐기된 lexical-inference protocol의 candidate set은 거부하며,
+현재 SourceSnapshot에 결속된 fresh HEAD semantic proposal로 다시 만들어야 합니다.
 
 ## 공개 initialize 및 resume 경로
 
@@ -69,7 +70,9 @@ tool을 호출하고, 해결되지 않은 중요한 선택지만 질문한 다�
 - 명시적이며 evidence-linked candidate 결정을 위한 `head_onboarding_review`
 - 파생되고 복구 가능한 문서 view를 위한 `head_markdown_projection_build`
 
-Skill은 두 번째 온보딩 protocol을 만들지 않습니다. 사용자 ReviewDecision을 추론하거나,
+Skill은 두 번째 온보딩 protocol을 만들지 않습니다. provider HEAD는 현재 repository
+evidence를 검사하고 typed `semantic_proposal`을 작성할 수 있지만, Core가 이를 검증하고
+gate하며 사용자가 여전히 ReviewDecision을 소유합니다. Skill은 사용자 ReviewDecision을 추론하거나,
 source scope를 넓히거나, GraphDB credential을 저장할 수 없습니다. MCP를 사용할 수
 없다면 아래 CLI가 동등한 복구 및 자동화 surface입니다.
 
@@ -104,18 +107,14 @@ node scripts/head.mjs onboarding-start C:\path\to\project
 node scripts/head.mjs onboarding-status C:\path\to\project
 ```
 
-기존 프로젝트는 코드와 문서를 먼저 index합니다. Inference `0.3.0`은 지원되는 고유
-source/test symbol을 최대 24개까지 순위화하고, 이를 최대 16개의 bounded behavior
-concept로 cluster합니다. 전체 candidate set은 candidate 200개, evidence record
-250개, Unknown 100개로 계속 제한됩니다. 공개 source function과 action 지향 name은
-test double, fixture, serialization helper, generic lifecycle method, logging setup,
-UI close/click handler 및 알파벳 순서에서 우연히 앞선 항목보다 높은 순위를 받습니다.
-관련 symbol은 함수마다 중복된 Capability/Feature 쌍을 만드는 대신 하나의 Capability
-candidate와 하나의 대표적인 구체적 Feature candidate를 공유합니다. 이 clustering은
-review batch를 개선하지만 inference를 Product Canon으로 만들지는 않습니다. README나
-product-doc heading은 FeatureGroup을 제안할 수 있지만, instruction file과 directory
-name은 taxonomy를 정의할 수 없으며 추론된 group은 Features에 자동으로 연결되지
-않습니다. 누락되거나 제외되었거나 불충분한 evidence는 명시적 Unknown으로 남습니다.
+기존 프로젝트는 코드와 문서를 먼저 index합니다. user brief나 fresh HEAD semantic
+proposal이 없으면 온보딩은 명시적 Unknown과 함께 `awaiting-evidence`에서 멈추며,
+코드 어휘로 product concept를 만들어 내지 않습니다. proposal은 최대 200개의
+candidate를 담고 candidate마다 현재 source citation 1~8개를 가져야 하며, 전체 set은
+evidence record 250개와 Unknown 100개로 제한됩니다. citation은 정확한 project-relative
+path와 유효한 line을 명시하고, 정확한 indexed symbol 및 optimistic freshness guard인 digest를 선택적으로 추가할 수 있습니다. Core는 항상 검증된 현재 World digest를 직접 결속합니다.
+stale, hallucinated, scope 밖, 과대 또는 구조적으로 잘못된 proposal은 fail closed됩니다.
+유효한 proposal도 명시적인 user review 전까지 P3 candidate evidence입니다.
 
 ### 저장소 source scope
 
