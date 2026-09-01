@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test --test-isolation=none --test-concurrency=1 test/*.test.mjs",
-    "check": "npm test",
+    "check": "npm test && npm run benchmark:prepared-traversal -- --iterations 3",
     "benchmark:repository-scan": "node scripts/benchmark-repository-scan.mjs",
     "benchmark:prepared-traversal": "node scripts/benchmark-prepared-traversal.mjs",
     "benchmark:arcadedb-query-batch": "node scripts/benchmark-arcadedb-query-batch.mjs",

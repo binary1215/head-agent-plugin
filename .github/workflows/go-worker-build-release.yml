@@ -281,7 +281,7 @@ jobs:
         run: node scripts/verify-arcadedb-incremental-sync.mjs
 
       - name: Verify prepared traversal cost identity and no-full-read boundary
-        run: node scripts/benchmark-prepared-traversal.mjs --iterations 3
+        run: npm run benchmark:prepared-traversal -- --iterations 3
 
       - name: Verify provider-neutral runtime adapter contract matrix
         run: node scripts/verify-runtime-adapters.mjs
