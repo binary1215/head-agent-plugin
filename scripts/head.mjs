@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { compileContext, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
-import { previewContextWorkflow } from "./lib/context-workflow.mjs";
+import { prepareContextWorkflow, previewContextWorkflow } from "./lib/context-workflow.mjs";
 import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSnapshot, readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
@@ -187,6 +187,7 @@ export function usage({ all = false } = {}) {
       "head run-integrate-checkpoint <project> --input <integration.json>",
       "head run-integration-read <project> --review <review-decision-id>",
       "head context-preview <project> --task <text> [--budget <tokens>] [--evidence-needs <json-file>]",
+      "head context-prepare <project> --task <text> [--budget <tokens>]",
       "head context-compile <project> --task <text> [--budget <tokens>] [--evidence-needs <json-file>]",
       "head context-read <project> --capsule <capsule-id>",
       "head lineage-read <project> --artifact <lineage-artifact-id>",
@@ -527,6 +528,7 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "run-review") return reviewRun({ ...inputJson(options, "ReviewDecision"), root });
   if (command === "run-integrate-checkpoint") return integrateReviewedRunCheckpoint({ ...inputJson(options, "Run result integration"), root });
   if (command === "run-integration-read") return readRunResultIntegration({ root, reviewDecisionId: options.review });
+  if (command === "context-prepare") return prepareContextWorkflow({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget) });
   if (command === "context-preview") return previewContextWorkflow({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options) });
   if (command === "context-compile") return compileContext({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options), persist: true });
   if (command === "context-read") return readContextCapsule({ root, capsuleId: options.capsule });

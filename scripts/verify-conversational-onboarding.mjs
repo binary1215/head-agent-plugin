@@ -201,9 +201,21 @@ try {
   assert.equal(documents.status, "projected");
   assert.equal(documents.authority, "rebuildable-derived-human-view-not-project-canon");
 
+  const contextTask = "Locate request acceptance and validation evidence";
+  const preparation = await tool("head_context_prepare", {
+    project_root: projectRoot,
+    task: contextTask,
+    budget: 32_768,
+  });
+  assert.equal(preparation.status, "prepared");
+  assert.equal(preparation.preparation.status, "ready_for_head_evidence_proposal");
+  assert.equal(preparation.preparation.conversation.userInput, "task-text-only");
+  assert.equal(preparation.preparation.authority.selectsEvidenceNeeds, false);
+  assert.equal(preparation.preparation.authority.writesRecoveryDirection, false);
+
   const context = await tool("head_context_preview", {
     project_root: projectRoot,
-    task: "Locate request acceptance and validation evidence",
+    task: contextTask,
     budget: 32_768,
   });
   assert.equal(context.status, "preview");

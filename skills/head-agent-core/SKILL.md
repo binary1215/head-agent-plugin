@@ -69,10 +69,15 @@ lane; tool availability does not.
 
 ## Context and execution
 
-For context-sensitive work, call live `head_context_preview` first with the
-task text held byte-identical. Verify identity, freshness, evidence coverage,
-and semantic sufficiency separately. Persist a Capsule only when the Run or
-recovery boundary needs it.
+For context-sensitive work, call live `head_context_prepare` first with only the
+user's task text. Do not ask the user to write EvidenceNeed JSON. Read its
+bounded current identities and discovery material, inspect the repository when
+the required evidence is absent, and perform the semantic task analysis as
+HEAD. Author task-required EvidenceNeeds and any exact current graph anchors in
+the conversation, then call `head_context_preview` with the task text held
+byte-identical. Verify identity, freshness, evidence coverage, and semantic
+sufficiency separately. Persist a Capsule only when the Run or recovery
+boundary needs it.
 
 Read the returned `workflow` before consuming the Capsule. HEAD—not the tool—
 performs semantic task analysis and chooses task-required EvidenceNeeds,

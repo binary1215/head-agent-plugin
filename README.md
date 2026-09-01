@@ -61,8 +61,11 @@ This restores the work direction, not a transcript or a model persona. See
 
 ### Give each task bounded, reviewable context
 
-More context is not always better. HEAD performs the semantic task analysis and
-can name exact repository paths, Product entities, and current graph node anchors in task-local EvidenceNeeds. The Context
+More context is not always better. The user can state the task in ordinary
+language; the provider-neutral HEAD performs semantic task analysis and authors
+task-local EvidenceNeeds in the conversation. It can name exact repository
+paths, Product entities, and current graph node anchors without asking the user
+to write JSON. The Context
 Compiler then verifies what was actually included under a fixed budget while
 recording exclusions and stale coverage. Lexical overlap remains fallback
 discovery/ranking only; Core no longer chooses a semantic graph anchor from the
@@ -273,7 +276,22 @@ Top-level status is deliberately actionable: `core_ready`,
 `product_refresh_required`, or `core_drifted`. The exact lower-level onboarding
 state remains visible under `readiness.product.onboardingStatus`.
 
-### Guided World-to-Context preview
+### Conversational Context preparation and preview
+
+Start with the typed `head_context_prepare` tool in conversation, or the same
+Core operation from the CLI:
+
+```powershell
+head-agent context-prepare C:\path\to\project --task "<task>"
+```
+
+This task-only, non-persisted P4 projection returns the current Project,
+World Model, and GraphSnapshot binding plus bounded lexical discovery material
+and exact node identities. The user does not write `EvidenceNeed[]`. HEAD uses
+ordinary semantic reasoning and repository inspection to author the structured
+proposal, then gives that proposal to the existing preview verifier. Core does
+not select evidence kinds or anchors, and absence from the lexical candidate
+view never means irrelevance.
 
 Use the typed `head_context_preview` tool in conversation, or the same Core
 operation from the CLI:
@@ -305,7 +323,7 @@ states are:
 - `ready_for_head_semantic_assessment`: inclusion coverage is complete, but HEAD
   must still judge semantic sufficiency.
 
-The guide never invents EvidenceNeeds, refreshes the World, persists the preview
+The preparation and preview guides never invent EvidenceNeeds, refresh the World, persist the preview
 Capsule, grants execution authority, or converts `coverage-complete` into
 approval. Automatic expansion is a bounded read-only retry across the fixed
 32K, 64K, 128K, 256K, and 512K tiers—not a provider call, open-ended context

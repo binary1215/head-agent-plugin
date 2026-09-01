@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.2+codex.20260901062120",
+  "version": "0.3.0-beta.3+codex.20260901080714",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -73,6 +73,7 @@
       "MATERIALIZED_AS and REFERENCES Relations",
       "Context Continuity",
       "Context Compilation",
+      "Task-only Conversational Context Preparation",
       "HEAD-defined Evidence Needs with Reproducible Inclusion Proof",
       "HEAD-proposed Exact Graph Anchors with Current Lineage Fences",
       "Lexical Graph Discovery without Semantic Sufficiency Claims",
@@ -168,6 +169,7 @@
       "Recover the current HEAD direction from fixed Project, Session, and checkpoint artifacts after context loss.",
       "Prepare and verify an intentional compaction without treating the provider summary as recovery authority.",
       "Inspect the Graph and record boundary without treating derived projections as Canon or unique recovery state.",
+      "Prepare bounded current Context evidence from only my task, then author EvidenceNeeds and exact graph anchors in the conversation without asking me for JSON.",
       "Propose exact current graph anchors for this task, then let Core verify only bounded inclusion and lineage.",
       "Dispatch a bounded worker outcome without widening its authorization or allowing it to approve itself.",
       "Inspect provider-specific capabilities while preserving provider-neutral Core semantics.",

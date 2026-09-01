@@ -5,7 +5,7 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.14.0";
+export const CONTEXT_COMPILER_VERSION = "0.15.0";
 export const CONTEXT_COVERAGE_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
@@ -945,24 +945,39 @@ function selectCandidates(candidates, budget, baseTokens, needs) {
     includedIds.add(selected.id);
     used += selected.approxTokens;
   }
-  for (const candidate of eligible) {
-    if (includedIds.has(candidate.id) || used + candidate.approxTokens > budget) continue;
-    included.push(candidate);
-    includedIds.add(candidate.id);
-    used += candidate.approxTokens;
+  if (!needs.length) {
+    for (const candidate of eligible) {
+      if (includedIds.has(candidate.id) || used + candidate.approxTokens > budget) continue;
+      included.push(candidate);
+      includedIds.add(candidate.id);
+      used += candidate.approxTokens;
+    }
   }
-  const excluded = candidates.filter((candidate) => !includedIds.has(candidate.id)).map((candidate) => ({
-    id: candidate.id,
-    kind: candidate.kind,
-    reason: "context-budget",
-    score: candidate.score,
-    classification: candidate.record.classification || null,
-    recordDigest: digest(canonicalJson(candidate.record)),
-    freshness: candidate.record.freshness || null,
-    trustBoundary: candidate.record.trustBoundary || null,
-    evidenceNeedIds: Object.entries(candidate.evidenceNeedMatches).filter(([, items]) => items.length).map(([needId]) => needId).sort(),
-    expansionPath: "recompile-with-an-explicit-budget-or-use-bounded-expansion",
-  }));
+  const excluded = candidates.filter((candidate) => !includedIds.has(candidate.id)).map((candidate) => {
+    const evidenceNeedIds = Object.entries(candidate.evidenceNeedMatches).filter(([, items]) => items.length).map(([needId]) => needId).sort();
+    const stillNeeded = needs.some((need) => evidenceNeedIds.includes(need.id) && selectedEvidenceCount(included, need.id) < need.minimumItems);
+    const reason = !needs.length || stillNeeded
+      ? "context-budget"
+      : evidenceNeedIds.length
+        ? "evidence-coverage-satisfied"
+        : "outside-head-evidence-contract";
+    return {
+      id: candidate.id,
+      kind: candidate.kind,
+      reason,
+      score: candidate.score,
+      classification: candidate.record.classification || null,
+      recordDigest: digest(canonicalJson(candidate.record)),
+      freshness: candidate.record.freshness || null,
+      trustBoundary: candidate.record.trustBoundary || null,
+      evidenceNeedIds,
+      expansionPath: reason === "context-budget"
+        ? "recompile-with-an-explicit-budget-or-use-bounded-expansion"
+        : reason === "evidence-coverage-satisfied"
+          ? "increase-the-head-defined-minimum-only-if-semantic-assessment-requires-more"
+          : "add-or-revise-a-head-owned-evidence-need-only-after-semantic-analysis",
+    };
+  });
   return { included, excluded, used };
 }
 

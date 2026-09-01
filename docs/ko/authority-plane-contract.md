@@ -41,6 +41,7 @@ context와 조정에도 같은 규칙이 적용됩니다.
   생성할 수 없습니다.
 - Capsule은 지시 및 승격 권한이 false인 제한된 그래프 순회만 포함할 수 있습니다.
 - 지속되지 않는 ContextWorkflowProjection은 새로운 의미 artifact가 아니라 하나의 Capsule preview에 관한 조언용 UX입니다. 이는 P4 비증폭 제약을 따르며, 입증된 `context-budget` 제외에 대해서만 다음 고정 tier에서 동일한 읽기 전용 compile을 반복할 수 있습니다. 그러나 EvidenceNeeds를 선택하거나, 512K를 초과하거나, provider를 호출하거나, 상태를 변경하거나, 의미적 충분성을 평가하거나, 승인을 부여하거나, 복구 방향을 쓸 수는 없습니다.
+- 지속되지 않는 ContextPreparationProjection은 의미 추론이 아니라 P4 candidate visibility입니다. task text만 받아 제한된 현재 identity와 lexical discovery material을 보여주고 provider HEAD가 사용자 JSON 없이 구조화 proposal을 작성하게 합니다. EvidenceNeeds나 graph anchor를 선택하거나 provider/session identity를 영속화하거나 P2 방향을 쓸 수 없습니다. 이후 preview는 Project/World/Graph drift를 다시 검증합니다.
 - 검토되지 않은 후보는 기본 traversal과 compilation에서 제외된 상태로 유지됩니다.
 - provider 요약, continuity view, inbox message와 reply는 checkpoint 필드를 변경하거나 ReviewDecision을 만들 수 없습니다.
 - 원격 GraphDB는 검증된 query를 가속할 수 있지만, 로컬 규범 레코드와 복구 레코드가 손실된 뒤 Product Canon을 재구성할 수는 없습니다.

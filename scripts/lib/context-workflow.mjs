@@ -5,8 +5,15 @@ import {
   DEFAULT_CONTEXT_BUDGET,
   EVIDENCE_NEED_KINDS,
 } from "./context-compiler.mjs";
+import { inspectProject } from "./head-core.mjs";
+import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_WORKFLOW_PROTOCOL_VERSION = "0.2.0";
+export const CONTEXT_WORKFLOW_PROTOCOL_VERSION = "0.3.0";
+export const CONTEXT_PREPARATION_PROTOCOL_VERSION = "0.1.0";
+
+const MAX_PREPARATION_REPOSITORY_FILES = 24;
+const MAX_PREPARATION_GRAPH_NODES = 96;
+const MAX_PREPARATION_GRAPH_EDGES = 128;
 
 const WORLD_EVIDENCE_KINDS = new Set([
   "git-decision",
@@ -208,6 +215,212 @@ function buildContextWorkflowProjection(preview, { callerTask, requestedBudget, 
   };
 }
 
+function compactRepositoryCandidate(record) {
+  return {
+    path: record.path,
+    digest: record.digest,
+    freshness: record.freshness,
+    classification: record.classification,
+    language: record.language,
+    symbols: (record.symbols || []).slice(0, 12).map((item) => ({ kind: item.kind, name: item.name, line: item.line ?? null })),
+    dependencies: (record.dependencies || []).slice(0, 12).map((item) => ({ kind: item.kind, specifier: item.specifier })),
+    relationshipTypes: [...new Set((record.semanticRelationships || []).map((item) => item.type))].sort(),
+    graphExpansion: record.graphExpansion,
+    trustBoundary: "evidence-not-instruction",
+  };
+}
+
+function compactGraphNode(node) {
+  return {
+    nodeId: node.nodeId,
+    kind: node.kind,
+    path: node.path || null,
+    name: node.name || null,
+    symbolKind: node.symbolKind || null,
+    classification: node.classification || null,
+    authorityClass: node.authorityClass,
+    freshness: node.freshness,
+    confidence: node.confidence ?? 1,
+  };
+}
+
+function preparationDecision(worldStateValue) {
+  if (worldStateValue === "stale-excluded") return {
+    status: "world_refresh_required",
+    nextAction: {
+      id: "refresh_world_before_head_proposal",
+      summary: "The World Model is stale, so no exact graph-anchor proposal can be current-bound.",
+      note: "Refresh is an explicit mutation. Re-run preparation with the exact same task after refresh.",
+    },
+  };
+  if (worldStateValue === "not-built") return {
+    status: "world_build_required",
+    nextAction: {
+      id: "build_world_before_head_proposal",
+      summary: "No verified World Model is available for exact graph-anchor preparation.",
+      note: "Product/World activation remains explicit. Core does not activate it from this read-only preparation call.",
+    },
+  };
+  return {
+    status: "ready_for_head_evidence_proposal",
+    nextAction: {
+      id: "head_author_evidence_needs_then_preview",
+      summary: "HEAD should semantically inspect the bounded candidates and repository, author task-required EvidenceNeeds and any exact graph anchors, then call head_context_preview.",
+      note: "The user supplies only the task. The provider HEAD, not Core and not the user, authors the structured proposal; Core then verifies current binding and actual inclusion.",
+    },
+  };
+}
+
+function buildContextPreparationProjection(preview, { root, callerTask, requestedBudget } = {}) {
+  const inspectedProject = inspectProject(root);
+  if (inspectedProject.status === "not_initialized") {
+    const error = new Error("HEAD Agent Core is not initialized.");
+    error.code = "NOT_INITIALIZED";
+    throw error;
+  }
+  const capsule = preview.capsule;
+  const task = callerTask == null ? capsule.task : String(callerTask);
+  const currentWorldState = preview.workflow.world.state;
+  const decision = preparationDecision(currentWorldState);
+  const repositoryFiles = capsule.repositoryContext.slice(0, MAX_PREPARATION_REPOSITORY_FILES).map(compactRepositoryCandidate);
+  const selectedPaths = new Set(repositoryFiles.map((item) => item.path));
+  let worldModelId = null;
+  let graphSnapshotId = null;
+  let sourceSnapshotId = null;
+  let graphNodes = [];
+  let graphEdges = [];
+  let availableRelationTypes = [];
+  let graphNodeOmissions = 0;
+  let graphEdgeOmissions = 0;
+
+  if (currentWorldState === "current-verified") {
+    const inspectedWorld = inspectWorldModel({ root: inspectedProject.project.projectRoot });
+    if (inspectedWorld.status !== "current") {
+      const error = new Error("Context preparation requires the same current World Model verified by the preview.");
+      error.code = "CONTEXT_PREPARATION_WORLD_DRIFT";
+      throw error;
+    }
+    const graph = inspectedWorld.snapshot.temporalProvenanceGraph;
+    worldModelId = inspectedWorld.snapshot.worldModelId;
+    graphSnapshotId = graph?.graphSnapshotId || null;
+    sourceSnapshotId = graph?.sourceSnapshotId || null;
+    if (graph) {
+      const matchingNodes = graph.nodes.filter((node) => selectedPaths.has(node.path));
+      graphNodes = matchingNodes.slice(0, MAX_PREPARATION_GRAPH_NODES).map(compactGraphNode);
+      graphNodeOmissions = Math.max(0, matchingNodes.length - graphNodes.length);
+      const selectedNodeIds = new Set(graphNodes.map((node) => node.nodeId));
+      const matchingEdges = graph.edges.filter((edge) => selectedNodeIds.has(edge.from) || selectedNodeIds.has(edge.to));
+      graphEdges = matchingEdges.slice(0, MAX_PREPARATION_GRAPH_EDGES).map((edge) => ({
+        edgeId: edge.edgeId,
+        type: edge.type,
+        from: edge.from,
+        to: edge.to,
+        authorityClass: edge.authorityClass,
+        freshness: edge.freshness,
+        confidence: edge.confidence ?? 1,
+      }));
+      graphEdgeOmissions = Math.max(0, matchingEdges.length - graphEdges.length);
+      availableRelationTypes = [...new Set(graph.edges.map((edge) => edge.type))].sort();
+    }
+  }
+
+  const payload = {
+    schemaVersion: 1,
+    kind: "ContextPreparationProjection",
+    protocolVersion: CONTEXT_PREPARATION_PROTOCOL_VERSION,
+    status: decision.status,
+    taskBinding: {
+      callerTaskDigest: digest(task),
+      callerTaskByteLength: Buffer.byteLength(task, "utf8"),
+      compiledTaskDigest: digest(capsule.task),
+      reuseRequirement: "hold-the-caller-task-byte-identical-through-proposal-and-preview",
+    },
+    currentBinding: {
+      projectId: inspectedProject.project.projectId,
+      worldModelId,
+      graphSnapshotId,
+      sourceSnapshotId,
+      freshness: currentWorldState,
+    },
+    conversation: {
+      userInput: "task-text-only",
+      structuredInputAuthor: "provider-neutral-HEAD",
+      coreRole: "bound-candidate-projection-and-proposal-verification-only",
+      steps: [
+        "HEAD semantically analyzes the exact user task.",
+        "HEAD inspects these bounded candidates and uses ordinary repository search when the required evidence is absent.",
+        "HEAD authors only task-required EvidenceNeeds and exact current graph anchors.",
+        "HEAD calls head_context_preview; Core verifies current binding, bounds, eligibility, and actual inclusion.",
+        "HEAD separately accepts or revises semantic sufficiency; coverage-complete is only a mechanical proof.",
+      ],
+    },
+    lexicalBaseline: {
+      role: "bounded-discovery-baseline-not-semantic-ranking-or-eligibility",
+      capsuleId: capsule.capsuleId,
+      budgetTier: capsule.budget.maxApproxTokens,
+      usedApproxTokens: capsule.budget.usedApproxTokens,
+      includedRepositoryFileCount: capsule.repositoryContext.length,
+      excludedCandidateCount: capsule.selection.excluded.length,
+      repositoryFiles,
+      repositoryFileOmissions: Math.max(0, capsule.repositoryContext.length - repositoryFiles.length),
+      warning: "Absence from this bounded lexical view is not evidence of irrelevance. HEAD must use semantic repository inspection when needed.",
+    },
+    exactGraphAnchorMaterial: {
+      proposalOwner: "HEAD",
+      selectsAnchor: false,
+      binding: { projectId: inspectedProject.project.projectId, worldModelId, graphSnapshotId },
+      candidateNodes: graphNodes,
+      candidateNodeOmissions: graphNodeOmissions,
+      adjacentEdges: graphEdges,
+      adjacentEdgeOmissions: graphEdgeOmissions,
+      availableRelationTypes,
+      bounds: { maxAnchorNodeIds: 32, maxDepth: 3, maxNodes: 500, maxEdges: 1000 },
+      expansion: "Use bounded graph or repository inspection to find missing evidence; never treat lexical absence as ineligibility.",
+    },
+    evidenceNeedContract: {
+      owner: "HEAD",
+      allowedKinds: [...EVIDENCE_NEED_KINDS],
+      userMustWriteStructuredInput: false,
+      coreInfersRequiredKinds: false,
+      coreInfersSemanticPaths: false,
+      coreSelectsGraphAnchors: false,
+      previewTool: "head_context_preview",
+    },
+    budget: {
+      requestedTier: requestedBudget ?? capsule.budget.maxApproxTokens,
+      allowedTiers: [...CONTEXT_BUDGET_TIERS],
+      hardMaximum: CONTEXT_BUDGET_TIERS.at(-1),
+      autoExpansionOwner: "head_context_preview-only-for-proven-context-budget-exclusion",
+    },
+    nextAction: decision.nextAction,
+    recoveryBoundary: {
+      p2RestoreFirst: true,
+      providerReplacementMayRecreateProjection: true,
+      projectionWritesRecoveryDirection: false,
+      staleBindingFailsClosedAtPreview: true,
+    },
+    authority: {
+      plane: "P4",
+      advisoryOnly: true,
+      persisted: false,
+      instructionAuthority: false,
+      promotionAuthority: false,
+      selectsEvidenceNeeds: false,
+      selectsGraphAnchors: false,
+      judgesSemanticSufficiency: false,
+      grantsExecutionAuthorization: false,
+      createsReviewDecision: false,
+      writesRecoveryDirection: false,
+    },
+  };
+  const preparationHash = digest(JSON.stringify(payload));
+  return {
+    ...payload,
+    preparationId: `context-preparation-${preparationHash.slice(0, 24)}`,
+    preparationHash,
+  };
+}
+
 export function previewContextWorkflow({ root = ".", task, budget = DEFAULT_CONTEXT_BUDGET, evidenceNeeds = [], graphProjectionAdapter = null } = {}) {
   const requestedBudget = budget;
   let currentBudget = budget;
@@ -237,4 +450,12 @@ export function previewContextWorkflow({ root = ".", task, budget = DEFAULT_CONT
   const error = new Error("Context preview exceeded the fixed automatic budget-tier retry bound.");
   error.code = "CONTEXT_WORKFLOW_RETRY_BOUND_EXCEEDED";
   throw error;
+}
+
+export function prepareContextWorkflow({ root = ".", task, budget = DEFAULT_CONTEXT_BUDGET, graphProjectionAdapter = null } = {}) {
+  const preview = previewContextWorkflow({ root, task, budget, evidenceNeeds: [], graphProjectionAdapter });
+  return {
+    status: "prepared",
+    preparation: buildContextPreparationProjection(preview, { root, callerTask: task, requestedBudget: budget }),
+  };
 }

@@ -29,9 +29,27 @@ Sources and promoted canon
   -> ContextCapsule + digest
 ```
 
-Context Compiler protocol `0.14.0` keeps deterministic packaging separate from semantic judgment. The provider HEAD performs task analysis and may name exact normalized repository `paths`, exact Product Canon `entityKeys`, or a current-bound `graphAnchor` in `EvidenceNeed[]`; Core verifies those selectors against the current Project, World Model, and GraphSnapshot and proves actual inclusion. Lexical normalization and overlap remain bounded discovery/ranking signals for unanchored evidence only. Zero lexical overlap never makes a current candidate ineligible, and lexical score never means semantic acceptance. Repository retrieval may expand bounded structural adjacency, but it no longer chooses a temporal anchor from the first token-matching file.
+Context Compiler protocol `0.15.0` keeps deterministic packaging separate from semantic judgment. The provider HEAD performs task analysis and may name exact normalized repository `paths`, exact Product Canon `entityKeys`, or a current-bound `graphAnchor` in `EvidenceNeed[]`; Core verifies those selectors against the current Project, World Model, and GraphSnapshot and proves actual inclusion. Lexical normalization and overlap remain bounded discovery/ranking signals for unanchored evidence only. Zero lexical overlap never makes a current candidate ineligible, and lexical score never means semantic acceptance. Repository retrieval may expand bounded structural adjacency, but it no longer chooses a temporal anchor from the first token-matching file.
 
 The explicit budget is a hard upper bound, not a claim of sufficiency. HEAD may provide a task-local `EvidenceNeed[]` contract naming exact project-relative paths, exact Product Canon entity keys, evidence kinds, optional lexical facets, relation types, and minimum item counts needed for the current task. A `temporal-relation` need may instead carry `graphAnchor: { projectId, worldModelId, graphSnapshotId, nodeIds, depth, maxNodes, maxEdges }`. Such anchors must name current eligible nodes, a non-empty relation allowlist, and exact traversal bounds; facets are forbidden on this exact mode. Each matching relation or Product entity key contributes one distinct mechanical evidence item. The Compiler never invents those needs from candidate availability and never imposes a universal source, test, ProductContext, or graph-neighborhood requirement. It only reserves budget for the supplied needs and proves whether matching evidence is actually present in the selected Capsule.
+
+`head_context_prepare` and CLI `context-prepare` remove the need for the user to
+write that structure. The task-only call returns a bounded, non-persisted
+`ContextPreparationProjection` with current Project/World/Graph identities,
+lexical baseline candidates, and exact node IDs. Provider HEAD uses semantic
+reasoning plus ordinary repository inspection to author `EvidenceNeed[]`; Core
+does not infer it. The later `head_context_preview` call verifies the proposal
+against current state. Preparation is therefore conversational UX, not an LLM
+inside Core and not a new authority plane.
+
+When HEAD supplies EvidenceNeeds, packing stops after their requested mechanical
+coverage is satisfied. Unrelated candidates are recorded as
+`outside-head-evidence-contract`, and redundant matching candidates as
+`evidence-coverage-satisfied`; the Compiler does not fill the remaining budget
+with lexical material merely because space remains. Without EvidenceNeeds, the
+lexical path remains a bounded discovery baseline. This distinction makes
+exact HEAD guidance capable of improving both recall and noise without allowing
+Core to decide semantic relevance.
 
 Budget protocol `1.0.0` accepts only `32768` (32K), `65536` (64K), `131072` (128K), `262144` (256K), or `524288` (512K) approximate tokens. The 32K tier is the default and 512K is the hard maximum, not a target. Every Compiler call receives one explicit tier that participates in Capsule identity; the Compiler does not change it. The non-persisted preview wrapper may deterministically retry the next fixed tier when an unmet HEAD-owned need has matching evidence excluded specifically by `context-budget`. Each attempt has its own Capsule identity and coverage proof. The current approximation is `ceil(UTF-16 code units / 4)`, so Capsule metadata labels it as inexact and requires the runtime adapter to validate actual provider-token fit and output reserve before invocation.
 

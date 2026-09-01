@@ -5,10 +5,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, compileContext, requireSufficientContextCapsule } from "../scripts/lib/context-compiler.mjs";
-import { previewContextWorkflow } from "../scripts/lib/context-workflow.mjs";
+import { prepareContextWorkflow, previewContextWorkflow } from "../scripts/lib/context-workflow.mjs";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
-import { buildWorldModel } from "../scripts/lib/world-model.mjs";
+import { buildWorldModel, readWorldModel } from "../scripts/lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
+import { runCommand } from "../scripts/head.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 
@@ -16,6 +17,20 @@ function temporaryProject() {
   const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
   return fs.mkdtempSync(path.join(parent, "head-context-sufficiency-test-"));
+}
+
+function managedTreeSnapshot(root) {
+  const headRoot = path.join(root, ".head");
+  const result = {};
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else result[path.relative(headRoot, absolute).replaceAll("\\", "/")] = fs.readFileSync(absolute, "utf8");
+    }
+  };
+  visit(headRoot);
+  return result;
 }
 
 test("HEAD defines task evidence needs and Compiler proves only actual inclusion", async (t) => {
@@ -305,4 +320,127 @@ test("Context budget uses fixed approximate-token tiers from 32K through 512K", 
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("task-only Context preparation is a bounded P4 projection and CLI/MCP share its identity", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "test"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "router.mjs"), "export function route(value) { return value; }\n");
+  fs.writeFileSync(path.join(root, "test", "router.test.mjs"), "import { route } from '../src/router.mjs';\nexport const result = route('ok');\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  await buildWorldModel({ root });
+  const before = managedTreeSnapshot(root);
+  const task = "Repair the current command routing behavior";
+
+  const direct = prepareContextWorkflow({ root, task });
+  const after = managedTreeSnapshot(root);
+  assert.deepEqual(after, before);
+  assert.equal(direct.status, "prepared");
+  assert.equal(direct.preparation.status, "ready_for_head_evidence_proposal");
+  assert.equal(direct.preparation.conversation.userInput, "task-text-only");
+  assert.equal(direct.preparation.conversation.structuredInputAuthor, "provider-neutral-HEAD");
+  assert.equal(direct.preparation.evidenceNeedContract.userMustWriteStructuredInput, false);
+  assert.equal(direct.preparation.exactGraphAnchorMaterial.selectsAnchor, false);
+  assert.equal(direct.preparation.authority.plane, "P4");
+  assert.equal(direct.preparation.authority.persisted, false);
+  assert.equal(direct.preparation.authority.selectsEvidenceNeeds, false);
+  assert.equal(direct.preparation.authority.writesRecoveryDirection, false);
+  assert.equal(direct.preparation.recoveryBoundary.p2RestoreFirst, true);
+  assert.equal(direct.preparation.lexicalBaseline.repositoryFiles.some((item) => item.path === "src/router.mjs"), true);
+  assert.equal(direct.preparation.exactGraphAnchorMaterial.candidateNodes.some((item) => item.path === "src/router.mjs"), true);
+  assert.equal(Buffer.byteLength(JSON.stringify(direct.preparation), "utf8") < 64 * 1024, true);
+  assert.equal(/providerSession|threadId|pane|socket|pid|Herdr/i.test(JSON.stringify(direct.preparation)), false);
+
+  const throughMcp = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "head_context_prepare", arguments: { project_root: root, task } },
+  });
+  const throughCli = runCommand(["context-prepare", root, "--task", task]);
+  assert.equal(throughMcp.result.structuredContent.preparation.preparationId, direct.preparation.preparationId);
+  assert.equal(throughCli.preparation.preparationId, direct.preparation.preparationId);
+
+  const anchorNode = direct.preparation.exactGraphAnchorMaterial.candidateNodes.find((item) => item.path === "src/router.mjs");
+  fs.appendFileSync(path.join(root, "src", "router.mjs"), "export const changed = true;\n");
+  const stale = prepareContextWorkflow({ root, task });
+  assert.equal(stale.preparation.status, "world_refresh_required");
+  assert.equal(stale.preparation.exactGraphAnchorMaterial.candidateNodes.length, 0);
+  assert.throws(() => previewContextWorkflow({
+    root,
+    task,
+    evidenceNeeds: [{
+      id: "stale-anchor",
+      kind: "temporal-relation",
+      relationTypes: ["CONTAINS"],
+      graphAnchor: {
+        projectId: direct.preparation.currentBinding.projectId,
+        worldModelId: direct.preparation.currentBinding.worldModelId,
+        graphSnapshotId: direct.preparation.currentBinding.graphSnapshotId,
+        nodeIds: [anchorNode.nodeId],
+        depth: 1,
+        maxNodes: 16,
+        maxEdges: 24,
+      },
+    }],
+  }), { code: "GRAPH_ANCHOR_WORLD_MODEL_STALE" });
+  assert.deepEqual(managedTreeSnapshot(root), after);
+});
+
+test("HEAD exact graph evidence improves annotated recall and lowers lexical filler noise", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "test"), { recursive: true });
+  const groundTruthPath = "src/zz-opaque-engine.mjs";
+  fs.writeFileSync(path.join(root, groundTruthPath), "export function zed(value) { return value === 'fault' ? 'recovered' : value; }\n");
+  fs.writeFileSync(path.join(root, "test", "zz-opaque-engine.test.mjs"), "import { zed } from '../src/zz-opaque-engine.mjs';\nexport const result = zed('fault');\n");
+  for (let index = 0; index < 240; index += 1) {
+    const suffix = String(index).padStart(3, "0");
+    fs.writeFileSync(path.join(root, "src", `command-routing-guide-${suffix}.mjs`), `export function publicCommandRoutingGuide${suffix}() { return '${"advisory ".repeat(12)}'; }\n`);
+  }
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  await buildWorldModel({ root });
+  const task = "Repair the public command routing failure";
+  const baseline = compileContext({ root, task, budget: 32_768, persist: false });
+  const world = readWorldModel({ root }).snapshot;
+  const anchor = world.temporalProvenanceGraph.nodes.find((node) => node.kind === "FileRevision" && node.path === groundTruthPath);
+  assert.ok(anchor);
+  const exact = compileContext({
+    root,
+    task,
+    budget: 32_768,
+    persist: false,
+    evidenceNeeds: [{
+      id: "annotated-implementation-lineage",
+      kind: "temporal-relation",
+      relationTypes: ["DECLARES"],
+      minimumItems: 1,
+      rationale: "Fresh HEAD identified the exact implementation lineage after semantic repository inspection.",
+      graphAnchor: {
+        projectId: world.projectId,
+        worldModelId: world.worldModelId,
+        graphSnapshotId: world.temporalProvenanceGraph.graphSnapshotId,
+        nodeIds: [anchor.nodeId],
+        depth: 1,
+        maxNodes: 12,
+        maxEdges: 16,
+      },
+    }],
+  });
+  const baselinePaths = new Set(baseline.capsule.repositoryContext.map((item) => item.path));
+  const exactPaths = new Set([
+    ...exact.capsule.repositoryContext.map((item) => item.path),
+    ...exact.capsule.graphTraversalEvidence.flatMap((item) => item.nodes.map((node) => node.path).filter(Boolean)),
+  ]);
+  const recall = (paths) => paths.has(groundTruthPath) ? 1 : 0;
+  const noise = (paths) => paths.size ? [...paths].filter((item) => item !== groundTruthPath).length / paths.size : 0;
+  assert.equal(recall(baselinePaths), 0);
+  assert.equal(recall(exactPaths), 1);
+  assert.equal(noise(exactPaths) < noise(baselinePaths), true);
+  assert.equal(exact.capsule.coverageAssessment.status, "coverage-complete");
+  assert.equal(exact.capsule.selection.excluded.some((item) => item.reason === "outside-head-evidence-contract"), true);
+  assert.equal(exact.capsule.budget.usedApproxTokens < baseline.capsule.budget.usedApproxTokens, true);
 });

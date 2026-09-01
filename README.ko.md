@@ -61,8 +61,9 @@ AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으�
 
 ### 범위가 명확하고 검토 가능한 컨텍스트를 전달합니다
 
-컨텍스트는 많다고 항상 좋은 것이 아닙니다. HEAD가 task의 의미를 분석하고
-task-local EvidenceNeeds에 정확한 repository path, Product entity, 현재 graph node anchor를 지정할 수 있습니다. Context
+컨텍스트는 많다고 항상 좋은 것이 아닙니다. 사용자는 task를 자연어로 말하면 됩니다.
+provider-neutral HEAD가 대화 안에서 task의 의미를 분석하고 task-local EvidenceNeeds를 작성하며,
+사용자에게 JSON을 요구하지 않고 정확한 repository path, Product entity, 현재 graph node anchor를 지정할 수 있습니다. Context
 Compiler는 정해진 예산 안에서 실제 포함 여부를 검증하고 제외 정보와 stale coverage를
 기록합니다. lexical overlap은 discovery/fallback ranking일 뿐입니다. Core는 첫 일치 단어로 semantic graph anchor를 고르거나, 현재 file을 탈락시키거나 sufficiency를 선언하지 않습니다.
 
@@ -267,7 +268,21 @@ head-agent status C:\path\to\project
 `product_refresh_required`, `core_drifted`를 사용하며, 세부 온보딩 상태는
 `readiness.product.onboardingStatus`에 그대로 남습니다.
 
-### World에서 Context까지 안내되는 미리보기
+### 대화형 Context 준비와 미리보기
+
+대화에서는 먼저 typed `head_context_prepare`에 사용자의 task만 전달합니다.
+CLI에서는 같은 Core 동작을 다음처럼 사용할 수 있습니다.
+
+```powershell
+head-agent context-prepare C:\path\to\project --task "<task>"
+```
+
+이 task-only 비영속 P4 projection은 현재 Project·World Model·GraphSnapshot
+binding, 제한된 lexical discovery material과 exact node identity를 반환합니다.
+사용자는 `EvidenceNeed[]`를 작성하지 않습니다. HEAD가 일반 semantic reasoning과
+repository inspection으로 구조화 proposal을 작성하고 기존 preview verifier에
+전달합니다. Core는 evidence kind나 anchor를 선택하지 않으며 lexical candidate
+view에 없다는 사실은 무관하다는 뜻이 아닙니다.
 
 대화에서는 typed `head_context_preview`를 사용하고, CLI에서는 같은 Core
 동작을 다음처럼 사용할 수 있습니다.
@@ -298,7 +313,7 @@ head-agent context-preview C:\path\to\project `
 - `ready_for_head_semantic_assessment`: 포함 coverage는 완전하지만 의미적
   충분성은 여전히 HEAD가 판단해야 합니다.
 
-안내 계층은 EvidenceNeed를 만들어내거나, World를 갱신하거나, 미리보기
+준비 및 미리보기 안내 계층은 EvidenceNeed를 만들어내거나, World를 갱신하거나, 미리보기
 Capsule을 저장하거나, 실행 권한을 부여하거나, `coverage-complete`를 승인으로
 바꾸지 않습니다. 자동 확대는 32K·64K·128K·256K·512K 사이의 읽기 전용
 재시도일 뿐이며, 제공자 호출·무제한 컨텍스트 증가·충분성 판정이 아닙니다.

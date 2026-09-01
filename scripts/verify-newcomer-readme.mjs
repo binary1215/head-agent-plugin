@@ -95,6 +95,7 @@ function assertReadmeContract() {
     '"disposition": "accept-all"',
     "head-agent onboarding-review",
     "head-agent world-status",
+    "head-agent context-prepare",
     "head-agent context-preview",
     "head-agent world-docs-build",
     "head-agent resume",
@@ -213,7 +214,13 @@ try {
   const world = await runGlobal(["world-status", projectRoot]);
   assert.equal(world.status, "current");
   assert.equal(world.snapshot.temporalProvenanceGraph.summary.featureCount > 0, true);
-  const context = await runGlobal(["context-preview", projectRoot, "--task", "Find request acceptance and validation evidence", "--budget", "32768"]);
+  const contextTask = "Find request acceptance and validation evidence";
+  const preparation = await runGlobal(["context-prepare", projectRoot, "--task", contextTask, "--budget", "32768"]);
+  assert.equal(preparation.status, "prepared");
+  assert.equal(preparation.preparation.status, "ready_for_head_evidence_proposal");
+  assert.equal(preparation.preparation.conversation.userInput, "task-text-only");
+  assert.equal(preparation.preparation.authority.selectsEvidenceNeeds, false);
+  const context = await runGlobal(["context-preview", projectRoot, "--task", contextTask, "--budget", "32768"]);
   assert.equal(context.status, "preview");
   assert.equal("file" in context, false);
   assert.equal(context.capsule.productContext.length > 0, true);

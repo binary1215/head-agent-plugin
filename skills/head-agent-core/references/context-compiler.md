@@ -29,6 +29,14 @@ Canonical sources and promoted knowledge
 
 HEAD owns the whole outcome and determines whether the compiled world is sufficient. For each task, HEAD should first perform semantic task analysis and may define an explicit `EvidenceNeed[]` contract with exact project-relative `paths`, exact Product Canon `entityKeys`, evidence kind, relation types, and minimum item counts. For `temporal-relation`, HEAD may add an exact `graphAnchor` bound to the current `projectId`, `worldModelId`, and `graphSnapshotId`, plus one to 32 exact `nodeIds` and explicit `depth`, `maxNodes`, and `maxEdges`. Core verifies current eligibility and actual bounded inclusion only. Do not combine lexical facets with exact graph anchors. Lexical overlap is discovery/fallback ranking only: zero overlap never makes a current candidate ineligible. The compiler must not choose graph anchors or infer required evidence kinds from available candidates.
 
+Begin this authoring flow with `head_context_prepare`, passing only the exact
+user task. The returned `ContextPreparationProjection` is bounded P4 candidate
+visibility, not a semantic proposal. Use its current binding and node identities
+plus ordinary repository inspection to author the structure yourself as HEAD;
+do not ask the user to write JSON and do not treat omission from the lexical
+baseline as irrelevance. Then pass the byte-identical task and your proposal to
+`head_context_preview`.
+
 Inspect `capsule.coverageAssessment` before consuming a Capsule. `not-requested` means HEAD supplied no mechanical evidence requirements; it is not a sufficiency judgment. For supplied needs, use a Capsule for consequential execution only when `status` is `coverage-complete` and `mechanicalCoverageSatisfied` is true, then make the separate HEAD-owned semantic acceptance decision. A `coverage-incomplete` Capsule remains a reproducible diagnostic: follow its unmet EvidenceNeeds through bounded expansion, gather missing evidence, or change HEAD's requirement only when the original requirement was wrong. Never treat a full budget, a valid digest, successful persistence, or the deprecated `capsule.sufficiency` compatibility field as semantic sufficiency.
 
 `head_context_preview` and CLI `context-preview` add a non-persisted

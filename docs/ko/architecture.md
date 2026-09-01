@@ -71,6 +71,8 @@ Context Compiler는 정식 프로젝트 지식과 HEAD 실행 사이에 위치�
 
 `ContextWorkflowProjection`은 하나의 비영속 미리보기를 대상으로 하는 얇은 P4 스타일의 자문 뷰입니다. 기반 아티팩트를 변경하지 않고 검증된 World 가용성, HEAD가 작성한 EvidenceNeeds, Compiler 포함 증명, 고정된 예산 티어 옵션 및 다음 HEAD 결정을 연결합니다. 입증된 `context-budget` 제외가 있을 때에만 다음 고정 티어에서 동일한 비영속 컴파일을 반복할 수 있으며, 모든 Capsule ID와 증명을 기록합니다. 외부 작업이나 변경 작업을 절대 실행하지 않으며, 커버리지를 의미적 수락으로 승격하지도 않습니다.
 
+그 앞의 `ContextPreparationProjection`도 비영속 P4입니다. 사용자의 task text만 받아 현재 Project/World/Graph binding, 제한된 lexical discovery baseline과 provider HEAD가 검사할 exact node identity를 보여줍니다. EvidenceNeeds를 작성하거나 anchor를 선택하거나 provider를 호출하지 않으며 lexical 후보에 없다는 사실을 무관하다는 뜻으로 해석하지 않습니다. HEAD가 대화 안에서 구조화 proposal을 작성하고 기존 preview verifier에 제출합니다. provider 교체 후 이 projection을 다시 만들 수 있지만 P2 recovery direction을 쓸 수 없고, 오래된 World 또는 Graph binding은 fail closed됩니다.
+
 ```text
 Canonical sources -> Snapshot -> HEAD EvidenceNeeds -> verified packing/budget -> ContextCapsule -> HEAD/Executor
        ^                                                        |

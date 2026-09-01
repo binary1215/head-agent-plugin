@@ -29,9 +29,13 @@ Sources and promoted canon
   -> ContextCapsule + digest
 ```
 
-Context Compiler protocol `0.14.0`은 결정적 packaging과 semantic judgment를 분리합니다. provider HEAD가 task analysis를 수행하고 `EvidenceNeed[]`에 정확한 repository `paths`, Product Canon `entityKeys` 또는 현재 상태에 결속된 `graphAnchor`를 지정할 수 있습니다. Core는 이를 현재 Project·World Model·GraphSnapshot에 대조하고 실제 포함만 증명합니다. lexical normalization과 overlap은 anchor가 없는 evidence의 공개된 discovery/ranking fallback일 뿐입니다. repository retrieval은 더 이상 첫 token-matching file을 temporal anchor로 선택하지 않습니다.
+Context Compiler protocol `0.15.0`은 결정적 packaging과 semantic judgment를 분리합니다. provider HEAD가 task analysis를 수행하고 `EvidenceNeed[]`에 정확한 repository `paths`, Product Canon `entityKeys` 또는 현재 상태에 결속된 `graphAnchor`를 지정할 수 있습니다. Core는 이를 현재 Project·World Model·GraphSnapshot에 대조하고 실제 포함만 증명합니다. lexical normalization과 overlap은 anchor가 없는 evidence의 공개된 discovery/ranking fallback일 뿐입니다. repository retrieval은 더 이상 첫 token-matching file을 temporal anchor로 선택하지 않습니다.
 
 명시적 budget은 엄격한 상한이며 충분하다는 주장이 아닙니다. 이 `EvidenceNeed[]` 계약에서 `temporal-relation` need는 `graphAnchor: { projectId, worldModelId, graphSnapshotId, nodeIds, depth, maxNodes, maxEdges }`를 가질 수 있습니다. exact anchor에는 현재 적격 node, 비어 있지 않은 relation allowlist와 정확한 traversal bound가 필요하며 facet을 함께 쓸 수 없습니다. 일치하는 relation 또는 Product entity key마다 독립된 기계적 evidence item이 됩니다. Compiler는 이러한 need를 스스로 만들지 않고 실제 포함만 입증합니다.
+
+`head_context_prepare`와 CLI `context-prepare`는 사용자가 이 구조를 직접 작성하지 않게 합니다. task-only 호출은 현재 Project/World/Graph identity, lexical baseline candidate와 exact node ID를 포함한 제한적이고 비영속적인 `ContextPreparationProjection`을 반환합니다. provider HEAD가 semantic reasoning과 일반 repository inspection으로 `EvidenceNeed[]`를 작성하며 Core는 이를 추론하지 않습니다. 이어지는 `head_context_preview`가 현재 상태에 대해 proposal을 검증합니다. 따라서 preparation은 Core 내부 LLM이나 새 authority plane이 아니라 대화형 UX입니다.
+
+HEAD가 EvidenceNeeds를 제공한 경우 packing은 요구된 mechanical coverage가 충족되면 멈춥니다. 무관한 candidate는 `outside-head-evidence-contract`, 이미 충분한 중복 candidate는 `evidence-coverage-satisfied`로 기록되며, 남은 공간이 있다는 이유로 lexical material로 budget을 채우지 않습니다. EvidenceNeeds가 없을 때 lexical path는 제한된 discovery baseline으로 남습니다. 이 구분 덕분에 Core가 semantic relevance를 결정하지 않으면서도 exact HEAD guidance가 recall과 noise를 모두 개선할 수 있습니다.
 
 Budget protocol `1.0.0`은 대략적인 token 수로 `32768`(32K), `65536`(64K), `131072`(128K), `262144`(256K), `524288`(512K)만 받습니다. 32K tier가 기본값이고 512K는 목표가 아니라 엄격한 최대값입니다. 모든 Compiler call은 Capsule identity에 참여하는 명시적 tier 하나를 받으며, Compiler는 이를 변경하지 않습니다. HEAD가 소유한 충족되지 않은 need에 대해 일치하는 증거가 명확히 `context-budget` 때문에 제외된 경우에만, 지속되지 않는 preview wrapper가 다음 고정 tier를 결정적으로 다시 시도할 수 있습니다. 각 시도에는 자체 Capsule identity와 coverage proof가 있습니다. 현재 근삿값은 `ceil(UTF-16 code units / 4)`이므로 Capsule metadata는 이를 부정확하다고 표시하며, 호출 전에 runtime adapter가 실제 provider-token 적합성과 output reserve를 검증해야 합니다.
 

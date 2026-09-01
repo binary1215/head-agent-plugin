@@ -111,7 +111,10 @@ After a ready review:
 
 1. call `head_world_model` for its bounded, fully verified status projection and
    `head_graph_projection_status`; never request the complete World Model through MCP;
-2. call `head_context_preview` with a concrete user task and a bounded budget;
+2. call `head_context_prepare` with only a concrete user task, author any
+   task-required EvidenceNeeds as HEAD, then call `head_context_preview` with
+   the byte-identical task and a bounded budget; never ask the user to write
+   structured Context input;
 3. call `head_markdown_projection_build`, then
    `head_markdown_projection_status`;
 4. call `head_onboarding_guide` once more and report its Project/Session IDs,

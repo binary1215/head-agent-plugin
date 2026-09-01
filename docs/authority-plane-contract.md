@@ -72,6 +72,12 @@ The same rule applies in context and coordination:
   only for proven `context-budget` exclusion, but cannot select EvidenceNeeds,
   exceed 512K, invoke a provider, mutate state, assess semantic sufficiency,
   grant authorization, or write recovery direction;
+- the non-persisted ContextPreparationProjection is P4 candidate visibility,
+  not semantic inference: it accepts task text only, exposes bounded current
+  identities and lexical discovery material, and lets provider HEAD author the
+  structured proposal without requiring user JSON. It cannot choose
+  EvidenceNeeds or graph anchors, persist provider/session identity, or write
+  P2 direction. Any later preview revalidates Project/World/Graph drift;
 - unreviewed candidates remain excluded from default traversal and compilation;
 - provider summaries, continuity views, inbox messages, and replies cannot change
   checkpoint fields or create a ReviewDecision;

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
-import { previewContextWorkflow } from "./lib/context-workflow.mjs";
+import { prepareContextWorkflow, previewContextWorkflow } from "./lib/context-workflow.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
 import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
@@ -387,6 +387,21 @@ export const tools = [
       required: ["project_root", "vcs_evidence_id"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "head_context_prepare",
+    description: "Prepare bounded current World/Graph evidence for one task using task text only. This read-only P4 projection helps the provider-neutral HEAD author EvidenceNeeds and exact graph anchors in conversation; Core selects neither and writes no authority or recovery state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        task: { type: "string", minLength: 1 },
+        budget: { type: "integer", enum: CONTEXT_BUDGET_TIERS, default: DEFAULT_CONTEXT_BUDGET },
+      },
+      required: ["project_root", "task"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_context_preview",
@@ -1334,6 +1349,8 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           ? inspectChangeSets({ root: args.project_root })
         : name === "head_vcs_evidence"
           ? readVcsEvidence({ root: args.project_root, vcsEvidenceId: args.vcs_evidence_id })
+        : name === "head_context_prepare"
+          ? prepareContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET })
         : name === "head_context_preview"
           ? previewContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET, evidenceNeeds: args.evidence_needs || [] })
           : name === "head_context_capsule"

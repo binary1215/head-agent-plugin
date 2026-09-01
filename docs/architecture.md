@@ -111,6 +111,15 @@ exclusion, recording every Capsule identity and proof. It never executes an
 external or mutating operation and never promotes coverage into semantic
 acceptance.
 
+The preceding `ContextPreparationProjection` is also non-persisted P4. It takes
+only the user's task text and exposes the current Project/World/Graph binding,
+a bounded lexical discovery baseline, and exact node identities for provider
+HEAD inspection. It does not author EvidenceNeeds, choose an anchor, call a
+provider, or interpret lexical absence as irrelevance. HEAD authors the
+structured proposal inside the conversation and submits it to the unchanged
+preview verifier. A provider replacement may recreate this projection, but it
+cannot write P2 recovery direction; stale World or Graph binding fails closed.
+
 ```text
 Canonical sources -> Snapshot -> HEAD EvidenceNeeds -> verified packing/budget -> ContextCapsule -> HEAD/Executor
        ^                                                        |
