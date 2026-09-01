@@ -322,6 +322,26 @@ test("Context budget uses fixed approximate-token tiers from 32K through 512K", 
   }
 });
 
+test("Core-only Context preparation explains the explicit Product/World path without activating it", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "router.mjs"), "export function route(value) { return value; }\n");
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const before = managedTreeSnapshot(root);
+
+  const prepared = prepareContextWorkflow({ root, task: "Repair the current command routing behavior" });
+
+  assert.deepEqual(managedTreeSnapshot(root), before);
+  assert.equal(prepared.preparation.status, "world_build_required");
+  assert.equal(prepared.preparation.nextAction.entrypoint.requiresExplicitActivation, true);
+  assert.equal(prepared.preparation.nextAction.entrypoint.mcpTool, "head_project_initialize_or_resume");
+  assert.deepEqual(prepared.preparation.nextAction.entrypoint.mcpArguments, { profile: "product" });
+  assert.equal(prepared.preparation.authority.persisted, false);
+  assert.equal(prepared.preparation.authority.promotionAuthority, false);
+  assert.equal(prepared.preparation.authority.instructionAuthority, false);
+});
+
 test("task-only Context preparation is a bounded P4 projection and CLI/MCP share its identity", async (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -339,6 +359,8 @@ test("task-only Context preparation is a bounded P4 projection and CLI/MCP share
   assert.deepEqual(after, before);
   assert.equal(direct.status, "prepared");
   assert.equal(direct.preparation.status, "ready_for_head_evidence_proposal");
+  assert.equal(direct.preparation.nextAction.entrypoint.mcpTool, "head_context_preview");
+  assert.equal(direct.preparation.nextAction.entrypoint.requiresHeadSemanticProposal, true);
   assert.equal(direct.preparation.conversation.userInput, "task-text-only");
   assert.equal(direct.preparation.conversation.structuredInputAuthor, "provider-neutral-HEAD");
   assert.equal(direct.preparation.evidenceNeedContract.userMustWriteStructuredInput, false);
@@ -367,6 +389,8 @@ test("task-only Context preparation is a bounded P4 projection and CLI/MCP share
   fs.appendFileSync(path.join(root, "src", "router.mjs"), "export const changed = true;\n");
   const stale = prepareContextWorkflow({ root, task });
   assert.equal(stale.preparation.status, "world_refresh_required");
+  assert.equal(stale.preparation.nextAction.entrypoint.requiresExplicitMutation, true);
+  assert.equal(stale.preparation.nextAction.entrypoint.mcpTool, null);
   assert.equal(stale.preparation.exactGraphAnchorMaterial.candidateNodes.length, 0);
   assert.throws(() => previewContextWorkflow({
     root,

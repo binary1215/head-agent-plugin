@@ -256,7 +256,7 @@ test("checkpoint recovery remains sufficient after ResultPacket evidence is dele
   abortCompaction({ root, epochId: prepared.epoch.epochId, reason: "fixture cleanup" });
 });
 
-test("CLI and MCP expose advanced explicit compaction recovery without provider invocation", async (t) => {
+test("CLI default help exposes safe compaction status while mutations remain advanced", async (t) => {
   const root = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const inputFile = path.join(root, "compact-prepare.json");
@@ -264,7 +264,8 @@ test("CLI and MCP expose advanced explicit compaction recovery without provider 
   const prepared = runCommand(["compact-prepare", root, "--input", inputFile]);
   assert.equal(prepared.epoch.runtime, "manual");
   assert.equal(runCommand(["compact-status", root]).epoch.state, "prepared");
-  assert.equal(runCommand(["help"]).commands.some((command) => command.includes("compact-")), false);
+  assert.equal(runCommand(["help"]).commands.some((command) => command.includes("compact-status")), true);
+  assert.equal(runCommand(["help"]).commands.some((command) => command.includes("compact-prepare")), false);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("compact-prepare")), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_compact_prepare"), true);
   const status = await dispatch({

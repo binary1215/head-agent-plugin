@@ -281,6 +281,8 @@ test("defaults to the constitutional core without activating Product or Graph go
   const absent = inspectProjectExperience({ root });
   assert.equal(absent.status, "not_initialized");
   assert.equal(absent.nextAction.id, "initialize_core");
+  assert.equal(absent.readiness.context.state, "blocked");
+  assert.equal(absent.runtime.activePackageVersion, pluginVersion);
   assert.equal(absent.authority.mutatesProject, false);
 
   const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
@@ -292,9 +294,21 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.deepEqual(first.readiness, {
     core: { state: "ready", managedProjectionDriftCount: 0 },
     product: { state: "not_activated", governanceActivated: false, onboardingStatus: "initialized" },
+    context: {
+      state: "curated-only",
+      repositoryEvidence: "requires-explicit-product-world",
+      worldModelId: null,
+      entrypoint: {
+        cli: "head-agent context-prepare <project> --task <exact-task>",
+        mcpTool: "head_context_prepare",
+      },
+    },
   });
   assert.equal(first.nextAction.id, "work_directly");
   assert.equal(first.capabilities.find((item) => item.id === "product-governance").availability, "available-not-activated");
+  assert.equal(first.capabilities.find((item) => item.id === "context-compiler").availability, "requires-explicit-product-world");
+  assert.equal(first.runtime.activePackageVersion, pluginVersion);
+  assert.equal(first.runtime.providerSessionIdentityPersisted, false);
   assert.equal(first.authority.activatesCapabilities, false);
   assert.equal(first.authority.grantsAuthorization, false);
   assert.equal(first.onboarding.status, "initialized");
@@ -325,6 +339,36 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(mcpStatus.result.structuredContent.status, "core_ready");
   assert.deepEqual(mcpStatus.result.structuredContent.readiness, projected.readiness);
   assert.equal(Buffer.byteLength(JSON.stringify(mcpStatus.result.structuredContent), "utf8") < 64 * 1024, true);
+  const mcpContract = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: "active-package-contract",
+    method: "tools/call",
+    params: { name: "head_core_contract", arguments: {} },
+  });
+  assert.equal(mcpContract.result.structuredContent.runtime.activePackageVersion, pluginVersion);
+  assert.equal(mcpContract.result.structuredContent.runtime.providerSessionIdentityPersisted, false);
+
+  const humanStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root], { encoding: "utf8" });
+  assert.equal(humanStatus.status, 0, humanStatus.stderr);
+  assert.match(humanStatus.stdout, /HEAD Core: ready/u);
+  assert.match(humanStatus.stdout, /Product governance: not activated/u);
+  assert.match(humanStatus.stdout, /Context: curated evidence only/u);
+  assert.equal(humanStatus.stdout.includes(`Active package: ${pluginVersion}`), true);
+  assert.equal(humanStatus.stdout.trimStart().startsWith("{"), false);
+
+  const jsonStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root, "--json"], { encoding: "utf8" });
+  assert.equal(jsonStatus.status, 0, jsonStatus.stderr);
+  assert.equal(JSON.parse(jsonStatus.stdout).runtime.activePackageVersion, pluginVersion);
+
+  const humanHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help"], { encoding: "utf8" });
+  assert.equal(humanHelp.status, 0, humanHelp.stderr);
+  assert.match(humanHelp.stdout, /Core-first by default/u);
+  assert.match(humanHelp.stdout, /head context-prepare/u);
+  assert.equal(humanHelp.stdout.trimStart().startsWith("{"), false);
+
+  const jsonHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help", "--json"], { encoding: "utf8" });
+  assert.equal(jsonHelp.status, 0, jsonHelp.stderr);
+  assert.equal(JSON.parse(jsonHelp.stdout).surface, "light-default");
 });
 
 test("requires an explicit product profile before applying onboarding input", async (t) => {
@@ -722,6 +766,7 @@ test("detects managed file drift and blocks canonical mutation", (t) => {
   assert.equal(experience.status, "core_drifted");
   assert.equal(experience.readiness.product.state, "inspection_blocked");
   assert.equal(experience.readiness.product.governanceActivated, null);
+  assert.equal(experience.readiness.context.state, "blocked");
   assert.equal(experience.nextAction.id, "review_managed_projection_drift");
   assert.equal(experience.nextAction.entrypoint.note.includes("explicit repair"), true);
   assert.equal(experience.capabilities.every((item) => item.availability === "blocked-until-core-ready"), true);

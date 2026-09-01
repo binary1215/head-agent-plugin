@@ -31,6 +31,7 @@ import { initializeOrResumeProject, inspectProjectExperience } from "./lib/proje
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
+import { formatCliResult } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
@@ -193,14 +194,12 @@ export function usage({ all = false } = {}) {
       "head lineage-read <project> --artifact <lineage-artifact-id>",
     ];
   const defaultCommands = [
-    "head init <project> [--runtime claude,codex,opencode] [--profile core|product]  # core is the default",
-    "head resume <project> [--runtime claude,codex,opencode] [--profile core|product]  # product is explicit",
+    "head init <project> [--runtime claude,codex,opencode]  # small Core is the default",
+    "head resume <project> [--runtime claude,codex,opencode]",
     "head status <project>",
-    "head product-note <project> --input <note.json>",
-    "head operating-lane-recommend <project> --input <risk.json>  # optional advisory",
-    "head product-operating-status <project> [--fresh]",
-    "head product-initiative-propose <project> --input <initiative.json>  # durable product action only",
-    "head product-initiative-review <project> --input <review.json>  # explicit user decision",
+    "head context-prepare <project> --task <exact-task>",
+    "head resume <project> --profile product  # explicit Product/World activation",
+    "head compact-status <project>",
     "head help-all  # advanced, compatibility, audit, and recovery commands",
   ];
   return {
@@ -538,8 +537,12 @@ export function runCommand(argv = process.argv.slice(2)) {
 
 const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
-  Promise.resolve().then(() => runCommand()).then((result) => {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  const directArgs = process.argv.slice(2);
+  const jsonOutput = directArgs.includes("--json");
+  const normalizedArgs = directArgs.filter((item) => item !== "--json");
+  const directCommand = normalizedArgs[0] || "help";
+  Promise.resolve().then(() => runCommand(normalizedArgs)).then((result) => {
+    process.stdout.write(jsonOutput ? `${JSON.stringify(result, null, 2)}\n` : formatCliResult(directCommand, result));
   }).catch((error) => {
     process.stdout.write(`${JSON.stringify({ status: "failed", code: error.code || "HEAD_CLI_ERROR", error: error.message }, null, 2)}\n`);
     process.exitCode = 1;

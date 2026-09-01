@@ -49,10 +49,17 @@ resume its state machine.
 
 After initialization, resume, compaction recovery, or provider replacement,
 call `head_project_status` before choosing a deeper mechanism. Read
-`readiness.core`, `readiness.product`, `nextAction`, and `capabilities`
+`readiness.core`, `readiness.product`, `readiness.context`, `runtime`,
+`nextAction`, and `capabilities`
 together. This projection is guidance only: never treat it as activation,
 authorization, review, or recovery direction. `profile` describes the current
 operation; do not infer a persisted active profile from it.
+
+When the user says only "set up", "initialize", or "onboard HEAD", choose the
+Core profile. Ask about Product/World activation only when repository semantics,
+governed projections, or exact graph-backed evidence are actually required.
+The Context readiness projection may report `curated-only`; that is a usable,
+honest state, not permission to activate Product/World automatically.
 
 ## Choose the lightest sufficient lane
 

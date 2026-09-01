@@ -42,6 +42,14 @@ does not infer it. The later `head_context_preview` call verifies the proposal
 against current state. Preparation is therefore conversational UX, not an LLM
 inside Core and not a new authority plane.
 
+The readiness/status surface distinguishes four Context states without changing
+project state: `blocked`, `curated-only`, `repository-ready`, and
+`world-refresh-required`. `curated-only` is the honest Core-only state. If the
+task needs repository World evidence, preparation returns
+`world_build_required` and the exact explicit Product-profile entrypoint; it
+never performs that activation itself. A stale World is excluded and returns an
+explicit refresh entrypoint instead of being reused.
+
 When HEAD supplies EvidenceNeeds, packing stops after their requested mechanical
 coverage is satisfied. Unrelated candidates are recorded as
 `outside-head-evidence-contract`, and redundant matching candidates as

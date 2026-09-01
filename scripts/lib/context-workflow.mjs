@@ -251,6 +251,11 @@ function preparationDecision(worldStateValue) {
       id: "refresh_world_before_head_proposal",
       summary: "The World Model is stale, so no exact graph-anchor proposal can be current-bound.",
       note: "Refresh is an explicit mutation. Re-run preparation with the exact same task after refresh.",
+      entrypoint: {
+        cli: "head-agent world-refresh <project>",
+        mcpTool: null,
+        requiresExplicitMutation: true,
+      },
     },
   };
   if (worldStateValue === "not-built") return {
@@ -259,6 +264,13 @@ function preparationDecision(worldStateValue) {
       id: "build_world_before_head_proposal",
       summary: "No verified World Model is available for exact graph-anchor preparation.",
       note: "Product/World activation remains explicit. Core does not activate it from this read-only preparation call.",
+      entrypoint: {
+        cli: "head-agent resume <project> --profile product",
+        mcpTool: "head_project_initialize_or_resume",
+        mcpArguments: { profile: "product" },
+        followUpTool: "head_onboarding_guide",
+        requiresExplicitActivation: true,
+      },
     },
   };
   return {
@@ -267,6 +279,10 @@ function preparationDecision(worldStateValue) {
       id: "head_author_evidence_needs_then_preview",
       summary: "HEAD should semantically inspect the bounded candidates and repository, author task-required EvidenceNeeds and any exact graph anchors, then call head_context_preview.",
       note: "The user supplies only the task. The provider HEAD, not Core and not the user, authors the structured proposal; Core then verifies current binding and actual inclusion.",
+      entrypoint: {
+        mcpTool: "head_context_preview",
+        requiresHeadSemanticProposal: true,
+      },
     },
   };
 }

@@ -167,11 +167,11 @@ codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplac
 codex plugin add head-agent-core@head-agent-plugin
 ```
 
-Start a new Codex task so the installed Skill and MCP server are loaded, then
-ask:
+Restart Codex after installation, start a new task so the installed Skill and
+MCP server are loaded, then ask:
 
 ```text
-Initialize or resume HEAD Agent onboarding for this project.
+Initialize or resume the small HEAD Core for this project and report readiness.
 ```
 
 The marketplace install does not initialize a project, contact GraphDB, choose
@@ -185,11 +185,11 @@ claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
 claude plugin install head-agent-core@head-agent-plugin
 ```
 
-Start a new Claude Code session so the installed Skill and `head_core` MCP
-server are loaded, then ask:
+Restart Claude Code after installation so the installed Skill and `head_core`
+MCP server are loaded, then ask:
 
 ```text
-Initialize or resume HEAD Agent onboarding for this project.
+Initialize or resume the small HEAD Core for this project and report readiness.
 ```
 
 Claude Code copies the plugin into its versioned cache. The generated Claude
@@ -263,7 +263,10 @@ at any time:
 head-agent status C:\path\to\project
 ```
 
-The result separates `readiness.core` from `readiness.product`, names one
+The human-readable default shows Core, optional Product governance, Context
+readiness, the active package version, and one next action. Add `--json` for the
+stable machine-readable projection. That projection separates
+`readiness.core`, `readiness.product`, and `readiness.context`, names one
 `nextAction`, and lists optional capabilities with their real prerequisites.
 For example, Product appears as `available-not-activated`, while bounded workers
 appear as `requires-active-run-authorization`. This is a non-persisted advisory
@@ -292,6 +295,11 @@ ordinary semantic reasoning and repository inspection to author the structured
 proposal, then gives that proposal to the existing preview verifier. Core does
 not select evidence kinds or anchors, and absence from the lexical candidate
 view never means irrelevance.
+
+If Product/World has not been activated, preparation returns
+`world_build_required` with the exact optional Product-profile entrypoint. It
+does not activate or index the repository by itself. Core-only work remains a
+valid `curated-only` Context state.
 
 Use the typed `head_context_preview` tool in conversation, or the same Core
 operation from the CLI:

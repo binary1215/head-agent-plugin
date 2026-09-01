@@ -162,11 +162,11 @@ codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplac
 codex plugin add head-agent-core@head-agent-plugin
 ```
 
-설치된 Skill과 MCP 서버를 불러오도록 새 Codex 작업을 시작한 뒤 다음과 같이
-요청하세요.
+설치 후 Codex를 재시작하고, 설치된 Skill과 MCP 서버를 불러오도록 새 작업을
+시작한 뒤 다음과 같이 요청하세요.
 
 ```text
-이 프로젝트의 HEAD Agent 온보딩을 초기화하거나 재개해 줘.
+이 프로젝트의 작은 HEAD Core를 초기화하거나 재개하고 준비 상태를 알려 줘.
 ```
 
 마켓플레이스 설치 자체는 프로젝트를 초기화하거나 GraphDB에 접속하거나
@@ -181,11 +181,11 @@ claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
 claude plugin install head-agent-core@head-agent-plugin
 ```
 
-설치된 Skill과 `head_core` MCP 서버를 불러오도록 새 Claude Code 세션을 시작한
-뒤 다음과 같이 요청하세요.
+설치 후 Claude Code를 재시작해 Skill과 `head_core` MCP 서버를 불러온 뒤
+다음과 같이 요청하세요.
 
 ```text
-이 프로젝트의 HEAD Agent 온보딩을 초기화하거나 재개해 줘.
+이 프로젝트의 작은 HEAD Core를 초기화하거나 재개하고 준비 상태를 알려 줘.
 ```
 
 Claude Code는 플러그인을 버전별 캐시에 복사합니다. 따라서 생성된 Claude
@@ -255,7 +255,10 @@ head-agent init C:\path\to\project --runtime claude,codex,opencode
 head-agent status C:\path\to\project
 ```
 
-결과는 `readiness.core`와 `readiness.product`를 분리하고, 지금 수행할
+기본 사람용 출력은 Core, 선택적인 Product 거버넌스, Context 준비도, 현재
+활성 패키지 버전과 다음 행동 하나를 보여줍니다. 안정적인 기계 판독 결과가
+필요하면 `--json`을 붙입니다. 이 투영은 `readiness.core`,
+`readiness.product`, `readiness.context`를 분리하고, 지금 수행할
 `nextAction` 하나와 실제 선행조건이 붙은 선택 기능 목록을 보여줍니다. 예를
 들어 Product는 `available-not-activated`, bounded worker는
 `requires-active-run-authorization`으로 표시됩니다. 이 결과는 저장되지 않는
@@ -283,6 +286,11 @@ binding, 제한된 lexical discovery material과 exact node identity를 반환�
 repository inspection으로 구조화 proposal을 작성하고 기존 preview verifier에
 전달합니다. Core는 evidence kind나 anchor를 선택하지 않으며 lexical candidate
 view에 없다는 사실은 무관하다는 뜻이 아닙니다.
+
+Product/World가 활성화되지 않았다면 준비 결과는 정확한 선택적 Product profile
+진입점과 함께 `world_build_required`를 반환합니다. 이 조회가 저장소를 자동으로
+인덱싱하거나 활성화하지는 않습니다. Core-only 작업은 `curated-only` Context
+상태에서도 정상적으로 계속할 수 있습니다.
 
 대화에서는 typed `head_context_preview`를 사용하고, CLI에서는 같은 Core
 동작을 다음처럼 사용할 수 있습니다.

@@ -1,8 +1,16 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
 import { inspectOnboarding, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 
-export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.3.0";
+export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.4.0";
+
+const packageVersion = JSON.parse(fs.readFileSync(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json"),
+  "utf8",
+)).version;
 
 const PROJECT_PROFILES = new Set(["core", "product"]);
 
@@ -109,6 +117,45 @@ function productReadiness(status) {
   };
 }
 
+function contextReadiness({ coreState, productState, onboardingInspection = null }) {
+  const entrypoint = {
+    cli: "head-agent context-prepare <project> --task <exact-task>",
+    mcpTool: "head_context_prepare",
+  };
+  if (coreState !== "ready") return {
+    state: "blocked",
+    repositoryEvidence: "blocked-until-core-ready",
+    worldModelId: null,
+    entrypoint,
+  };
+  if (productState === "refresh_required") return {
+    state: "world-refresh-required",
+    repositoryEvidence: "stale-excluded",
+    worldModelId: onboardingInspection?.state?.worldModelId || null,
+    entrypoint,
+  };
+  if (onboardingInspection?.state?.worldModelId) return {
+    state: "repository-ready",
+    repositoryEvidence: "available-current-world",
+    worldModelId: onboardingInspection.state.worldModelId,
+    entrypoint,
+  };
+  return {
+    state: "curated-only",
+    repositoryEvidence: "requires-explicit-product-world",
+    worldModelId: null,
+    entrypoint,
+  };
+}
+
+function runtimeProjection() {
+  return {
+    activePackageVersion: packageVersion,
+    reloadPolicy: "restart-host-after-install-or-upgrade",
+    providerSessionIdentityPersisted: false,
+  };
+}
+
 function entrypoint(action) {
   const entries = {
     initialize_core: {
@@ -146,8 +193,8 @@ function entrypoint(action) {
       note: "The current typed MCP surface is read-only for refresh state; use the explicit CLI mutation entrypoint.",
     },
     work_with_product_context: {
-      cli: "head-agent context-preview <project> --task <exact-task> --budget <tier>",
-      mcpTool: "head_context_preview",
+      cli: "head-agent context-prepare <project> --task <exact-task>",
+      mcpTool: "head_context_prepare",
     },
     inspect_product_governance: {
       cli: "head-agent onboarding-status <project>",
@@ -157,7 +204,7 @@ function entrypoint(action) {
   return entries[action];
 }
 
-function capabilityGuide({ coreState, productState, runtimes = [] }) {
+function capabilityGuide({ coreState, productState, contextState, runtimes = [] }) {
   const coreAvailable = coreState === "ready";
   const blocked = coreAvailable ? null : "blocked-until-core-ready";
   return [
@@ -175,9 +222,9 @@ function capabilityGuide({ coreState, productState, runtimes = [] }) {
     },
     {
       id: "context-compiler",
-      availability: blocked || "available-on-demand",
+      availability: blocked || contextState.repositoryEvidence,
       useWhen: "The exact task needs reproducible minimum-sufficient evidence or a durable Run Capsule.",
-      entrypoint: "head_context_preview",
+      entrypoint: "head_context_prepare",
     },
     {
       id: "durable-run",
@@ -210,6 +257,7 @@ function capabilityGuide({ coreState, productState, runtimes = [] }) {
 function projectExperience(projectInspection, onboardingInspection = null) {
   if (projectInspection.status === "not_initialized") {
     const action = "initialize_core";
+    const context = contextReadiness({ coreState: "not_initialized", productState: "unavailable" });
     return {
       kind: "HeadProjectExperienceProjection",
       protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
@@ -218,9 +266,11 @@ function projectExperience(projectInspection, onboardingInspection = null) {
       readiness: {
         core: { state: "not_initialized", managedProjectionDriftCount: 0 },
         product: { state: "unavailable", governanceActivated: false, onboardingStatus: null },
+        context,
       },
       nextAction: { id: action, summary: "Initialize the constitutional Core and one canonical Project/Session before using optional capabilities.", entrypoint: entrypoint(action) },
-      capabilities: capabilityGuide({ coreState: "not_initialized", productState: "unavailable" }),
+      capabilities: capabilityGuide({ coreState: "not_initialized", productState: "unavailable", contextState: context }),
+      runtime: runtimeProjection(),
       authority: { advisoryOnly: true, persisted: false, mutatesProject: false, activatesCapabilities: false, grantsAuthorization: false },
     };
   }
@@ -232,6 +282,7 @@ function projectExperience(projectInspection, onboardingInspection = null) {
     summary: "Managed project projections have drifted. Product readiness is not inferred until Core integrity is restored.",
   };
   const coreState = projectInspection.status === "ready" ? "ready" : "drifted";
+  const context = contextReadiness({ coreState, productState: product.state, onboardingInspection });
   const action = coreState === "ready" ? product.action : "review_managed_projection_drift";
   return {
     kind: "HeadProjectExperienceProjection",
@@ -247,13 +298,15 @@ function projectExperience(projectInspection, onboardingInspection = null) {
         governanceActivated: onboardingInspection ? !["initialized", "migration_required"].includes(onboardingInspection.status) : null,
         onboardingStatus: onboardingInspection?.status || null,
       },
+      context,
     },
     nextAction: {
       id: action,
       summary: coreState === "ready" ? product.summary : "Review managed-file drift before any mutating HEAD operation. No automatic repair is attempted.",
       entrypoint: entrypoint(action),
     },
-    capabilities: capabilityGuide({ coreState, productState: product.state, runtimes: projectInspection.project.runtimes }),
+    capabilities: capabilityGuide({ coreState, productState: product.state, contextState: context, runtimes: projectInspection.project.runtimes }),
+    runtime: runtimeProjection(),
     authority: { advisoryOnly: true, persisted: false, mutatesProject: false, activatesCapabilities: false, grantsAuthorization: false },
   };
 }

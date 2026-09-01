@@ -75,11 +75,12 @@ function commandArgument(value) {
 }
 
 async function runGlobal(args, expectedExitCode = 0) {
+  const machineArgs = args.includes("--json") ? args : [...args, "--json"];
   if (process.platform !== "win32") {
-    return parseResult(await spawnCaptured(path.join(binDirectory, "head-agent"), args, { cwd: scratchRoot }), expectedExitCode);
+    return parseResult(await spawnCaptured(path.join(binDirectory, "head-agent"), machineArgs, { cwd: scratchRoot }), expectedExitCode);
   }
   const command = path.join(binDirectory, "head-agent.cmd");
-  const commandLine = `""${command}" ${args.map(commandArgument).join(" ")}"`;
+  const commandLine = `""${command}" ${machineArgs.map(commandArgument).join(" ")}"`;
   return parseResult(await spawnCaptured(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", commandLine], {
     cwd: scratchRoot,
     windowsVerbatimArguments: true,

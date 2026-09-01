@@ -55,7 +55,7 @@ export const tools = [
   },
   {
     name: "head_project_status",
-    description: "Read a bounded Core/Product readiness, next-action, capability, and Session/Run projection without modifying the project or activating any capability.",
+    description: "Read bounded Core, optional Product/World, Context, active-package, next-action, capability, and Session/Run readiness without modifying the project or activating any capability.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
@@ -1297,7 +1297,14 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
     const name = request.params?.name;
     const args = request.params?.arguments || {};
     const value = await (name === "head_core_contract"
-      ? coreContract()
+      ? {
+        ...coreContract(),
+        runtime: {
+          activePackageVersion: packageVersion,
+          reloadPolicy: "restart-host-after-install-or-upgrade",
+          providerSessionIdentityPersisted: false,
+        },
+      }
       : name === "head_project_status"
         ? inspectProjectExperience({ root: args.project_root })
       : name === "head_onboarding_guide"

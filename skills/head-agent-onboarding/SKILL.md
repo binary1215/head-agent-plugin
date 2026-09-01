@@ -1,9 +1,16 @@
 ---
 name: head-agent-onboarding
-description: Guide first-use or resumed HEAD Agent project onboarding inside a Claude Code, Codex, or OpenCode conversation, including bounded source/storage choices, evidence-linked semantic product proposals and review, and graph/context/document readiness. Use when the user asks to initialize, onboard, inspect proposed product concepts, or finish HEAD readiness; use the general head-agent-core skill for post-onboarding execution-lineage work.
+description: Explicitly activate or resume optional HEAD Product, World, Graph, or governed-document onboarding inside Claude Code, Codex, or OpenCode, including bounded source/storage choices and evidence-linked semantic proposals and review. Do not use for general HEAD setup; use the general head-agent-core skill for Core-first initialization, ordinary work, Context preparation, recovery, and execution-lineage work.
 ---
 
 # HEAD Agent conversational onboarding
+
+This skill is the explicit Product/World governance path, not the generic setup
+path. If "onboard" merely means installing HEAD or starting ordinary work,
+stop here and use the general `head-agent-core` skill with `profile: "core"`.
+Enter this skill only when the user asks for reviewed Product meaning, World or
+Graph construction, governed document projections, or equivalent protected
+outcomes. Never infer activation from tool availability or a Context request.
 
 Operate onboarding through the plugin's typed MCP tools. The conversation
 explains state and collects user choices; Core validates and performs every
@@ -12,7 +19,8 @@ for the normal path.
 
 ## Start or resume
 
-1. Call `head_onboarding_guide` for the exact project root.
+1. Confirm the request is for the optional Product/World governance path, then
+   call `head_onboarding_guide` for the exact project root.
 2. If status is `not_initialized`, infer only safe defaults:
    - existing project when repository evidence already exists;
    - local storage unless the user explicitly selects GraphDB;
