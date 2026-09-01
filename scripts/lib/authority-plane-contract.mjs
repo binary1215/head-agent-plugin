@@ -102,6 +102,8 @@ const ARTIFACT_PLANES = Object.freeze({
   WorkerWaveStatusProjection: "P4",
   WorkerWaveResultProjection: "P4",
   ObservationStatusProjection: "P4",
+  ObservationSourceDiscoveryProjection: "P4",
+  ObservationPreparationProjection: "P4",
 
   ProcessId: "P5",
   ControlToken: "P5",

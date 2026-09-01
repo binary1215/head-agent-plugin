@@ -138,9 +138,15 @@ Use the common Observation surface only when a current task actually needs a
 durable cross-Run, rebuttal/audit, handoff, or context-loss record of structured
 external facts. The mere existence of build, delivery, analytics, support, or
 runtime data does not justify ingestion; keep ordinary inspection ephemeral.
-Use `head_observation_query` to discover bounded exact IDs and
-`head_observation_read` to inspect a selected record. Inspect
-`head_observation_sources` only when adapter capability is unknown. A real Host
+After HEAD determines one exact task-required Observation `typeKey`, call
+`head_observation_prepare` first. It returns bounded current exact IDs before
+matching configured Host sources without judging sufficiency, selecting a source,
+or collecting. Inspect a returned existing record with `head_observation_read` and
+reuse it when HEAD determines that its time scope and content are semantically
+sufficient. Use `head_observation_query` for additional exact-ID paging and
+`head_observation_sources` only for configured-source paging, filtering, or
+adapter diagnosis. Follow a stale source cursor's disclosed first-page
+resynchronization automatically; do not turn it into a user decision. A real Host
 adapter owns source access, binding, digests, coverage, and the Host provenance
 confirmation; do not ask the user to compose those fields or to attest to a
 machine observation. `head_observation_ingest` is the advanced Host/CI boundary
@@ -155,6 +161,24 @@ ProductHypothesis that cites the exact Observation IDs. Never auto-create a
 ProductSignal, candidate, ReviewDecision, Canon mutation, or P2 recovery
 direction from an adapter payload. Read `../../docs/observation-adapters.md`
 before adding an Observation adapter.
+
+Source-specific collection belongs behind a process-local Host adapter registry;
+authentication, pagination, rate limits, webhook acknowledgement, cursors, and
+provider identity stay outside the project. The generic
+`observation-file-ingest` CLI is a one-shot Host/CI reference for an already
+prepared bounded JSON event. Do not route its file path through MCP or ask the
+user to author its source configuration. It does not replace a configured Host
+integration, scheduler, or remote connector.
+
+When `head_observation_prepare` shows no semantically sufficient current record,
+select a configured source only if the current task requires a durable current
+Observation. Prefer a `ready` Host availability hint but treat it only as P5
+operational evidence, not semantic relevance or freshness proof. Then call
+`head_observation_collect_source` with the opaque Project-bound source ID. Do not
+ask the user for a path, binding, descriptor, digest, coverage claim, credential
+reference, provider identity, or source alias. If no configured source is
+available, disclose the optional adapter gap and continue without Observation
+persistence unless that exact evidence is required.
 
 For Product-to-code or Product-to-test mapping, inspect the current World and
 Graph, then use `head_feature_mapping_propose` with exact current Product and

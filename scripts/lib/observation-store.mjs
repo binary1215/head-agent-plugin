@@ -70,7 +70,7 @@ function readDirectory(projectRoot, relative, label) {
   });
 }
 
-function readyProject(root) {
+export function assertObservationProjectReady(root) {
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail(`Project must be ready for Observation use; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   return inspected;
@@ -182,14 +182,14 @@ export function loadObservationArtifacts({ projectRoot, projectId } = {}) {
 }
 
 export function registerObservationType({ root = ".", descriptor } = {}) {
-  const inspected = readyProject(root);
+  const inspected = assertObservationProjectReady(root);
   const normalized = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor) : createObservationTypeDescriptor(descriptor);
   const persisted = persistCreateOnly(inspected.project.projectRoot, OBSERVATION_DESCRIPTOR_DIRECTORY, `${normalized.descriptorId}.json`, normalized);
   return { ...persisted, descriptor: normalized };
 }
 
 export function recordCollectedObservation({ root = ".", descriptor, input, adapterDescriptor, sourceScopeDigest } = {}) {
-  const inspected = readyProject(root);
+  const inspected = assertObservationProjectReady(root);
   const registered = registerObservationType({ root: inspected.project.projectRoot, descriptor }).descriptor;
   const record = createObservationRecord({
     projectId: inspected.project.projectId,
@@ -231,7 +231,7 @@ export function recordCollectedObservation({ root = ".", descriptor, input, adap
 }
 
 export function recordDerivedObservation({ root = ".", descriptor, input } = {}) {
-  const inspected = readyProject(root);
+  const inspected = assertObservationProjectReady(root);
   const registered = registerObservationType({ root: inspected.project.projectRoot, descriptor }).descriptor;
   const current = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
   const byId = new Map(current.observations.map((record) => [record.observationId, record]));
@@ -246,7 +246,7 @@ export function recordDerivedObservation({ root = ".", descriptor, input } = {})
 }
 
 export function readObservation({ root = ".", observationId } = {}) {
-  const inspected = readyProject(root);
+  const inspected = assertObservationProjectReady(root);
   const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
   const observation = artifacts.observations.find((item) => item.observationId === observationId) || null;
   const derivedObservation = artifacts.derivedObservations.find((item) => item.derivedObservationId === observationId) || null;

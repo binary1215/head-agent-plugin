@@ -22,9 +22,10 @@ import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorizat
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
-import { ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
+import { collectRegisteredObservation, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
+import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
@@ -1171,9 +1172,42 @@ export const tools = [
   },
   {
     name: "head_observation_sources",
-    description: "List provider-neutral Observation adapter capabilities without reading an external source, resolving credentials, or activating Product governance.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    description: "Page and exactly filter provider-neutral Host-injected Observation source IDs with bounded descriptor shape and Host-local availability hints. Stale read-only cursors restart at the first page with disclosure; no external source is read.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 },
+      type_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      adapter_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      availability: { type: "string", enum: ["unknown", "ready", "auth-missing", "rate-limited", "unavailable"] },
+      limit: { type: "integer", minimum: 1, maximum: 64 },
+      projection_id: { type: "string", pattern: "^observation-source-projection-[a-f0-9]{24}$" },
+      cursor: { type: "string", pattern: "^observation-source-[a-f0-9]{24}$" },
+    }, required: ["project_root"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_observation_prepare",
+    description: "Prepare one reuse-first, non-persisted Observation view for an exact type selected by provider HEAD. It returns existing current Observation IDs before configured source IDs and never judges sufficiency, selects a source, collects data, or asks the user for provenance JSON.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 },
+      type_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      subject_type: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      subject_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      adapter_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      observed_after: { type: "string", format: "date-time" },
+      observed_before: { type: "string", format: "date-time" },
+      existing_limit: { type: "integer", minimum: 1, maximum: 100 },
+      source_limit: { type: "integer", minimum: 1, maximum: 64 },
+      source_availability: { type: "string", enum: ["unknown", "ready", "auth-missing", "rate-limited", "unavailable"] },
+      source_projection_id: { type: "string", pattern: "^observation-source-projection-[a-f0-9]{24}$" },
+      source_cursor: { type: "string", pattern: "^observation-source-[a-f0-9]{24}$" },
+    }, required: ["project_root", "type_key"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_observation_collect_source",
+    description: "Collect one configured Host source by its bounded opaque source ID. The trusted Host owns paths, credentials, descriptor, scope, and provenance; this tool accepts none of them and records only non-authoritative P3 Observation evidence.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, source_id: { type: "string", pattern: "^observation-source-[a-f0-9]{24}$" } }, required: ["project_root", "source_id"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "head_observation_collect",
@@ -1455,7 +1489,7 @@ function continueSessionFromMcp(args, coordinationWorkspaceHost) {
   });
 }
 
-export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null } = {}) {
+export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null } = {}) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
       return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: packageVersion } });
@@ -1686,7 +1720,11 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                           : name === "head_release_status"
                             ? inspectReleaseObservations({ root: args.project_root })
                           : name === "head_observation_sources"
-                            ? inspectObservationSources()
+                            ? inspectObservationSources({ root: args.project_root, registry: observationRegistry, typeKey: args.type_key || "", adapterKey: args.adapter_key || "", availabilityState: args.availability || "", limit: args.limit ?? 64, projectionId: args.projection_id || "", cursor: args.cursor || "" })
+                          : name === "head_observation_prepare"
+                            ? prepareObservationEvidence({ root: args.project_root, registry: observationRegistry, typeKey: args.type_key, subjectType: args.subject_type || "", subjectKey: args.subject_key || "", adapterKey: args.adapter_key || "", observedAfter: args.observed_after || "", observedBefore: args.observed_before || "", existingLimit: args.existing_limit ?? 20, sourceLimit: args.source_limit ?? 20, sourceAvailability: args.source_availability || "", sourceProjectionId: args.source_projection_id || "", sourceCursor: args.source_cursor || "" })
+                          : name === "head_observation_collect_source"
+                            ? collectRegisteredObservation({ root: args.project_root, registry: observationRegistry, sourceId: args.source_id })
                           : name === "head_observation_collect" || name === "head_observation_ingest"
                             ? (requireMcpConfirmation(args.confirm_host_observation, "Observation collection requires explicit confirmation that the payload came from the exact Host source binding.", "OBSERVATION_HOST_CONFIRMATION_REQUIRED"), ingestStructuredObservation({ root: args.project_root, binding: observationBindingFromMcp(args.binding), descriptor: observationDescriptorFromMcp(args.descriptor), input: observationInputFromMcp(args.observation) }))
                           : name === "head_observation_derive"
@@ -1710,12 +1748,12 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
   }
 }
 
-export function serveMcp({ coordinationWorkspaceHost = null } = {}) {
+export function serveMcp({ coordinationWorkspaceHost = null, observationRegistry = null } = {}) {
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   input.on("line", async (line) => {
     if (!line.trim()) return;
     let response;
-    try { response = await dispatch(JSON.parse(line), { coordinationWorkspaceHost }); }
+    try { response = await dispatch(JSON.parse(line), { coordinationWorkspaceHost, observationRegistry }); }
     catch (error) { response = failure(null, `Parse error: ${error.message}`); }
     if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
   });

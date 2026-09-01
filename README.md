@@ -119,7 +119,7 @@ product decision. See [Feature mapping](docs/feature-mapping.md).
 | Several agents blur responsibility | Bounded execution, result evidence, and independent review stay distinct while HEAD integrates them into one outcome. |
 | Parallel workers are hard to scan at a glance | A provider-neutral launch wave shows requested, started, returned, waiting, succeeded, and failed workers without merging their authorizations or treating wave completion as approval. |
 | Git and deployment history must be typed by hand | Provider-neutral observations turn current product refs and host-reported deployment results into immutable P3 evidence, while only an approved successful exact-commit/ref match becomes a non-authoritative ReleaseObservation. |
-| Every product exposes different operational data | A common evidence-only Observation contract accepts closed product-specific schemas, proves coverage and replay, and leaves product interpretation to HEAD instead of hard-coding domain vocabulary in Core. |
+| Every product exposes different operational data | A Project-bound Host registry lets HEAD collect a configured source by opaque ID, while product-specific adapters normalize it into one evidence-only contract and Core proves coverage and replay. |
 
 > A conventional coding agent optimizes the current task. HEAD Agent Core
 > optimizes for many tasks to accumulate into the same reviewed product
@@ -723,6 +723,7 @@ Status labels are evidence claims, not roadmap promises:
 | Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | **Available** |
 | Runtime evidence | Claude Code live model-call conformance | **Experimental** |
 | Release evidence | provider-neutral Git ref, deployment-result, and release observations | **Available** |
+| Common observations | reuse-first exact evidence preparation plus paged Host source discovery and opaque-ID collection | **Available** |
 | Workers | bounded dispatch, wait, result, review, integration | **Available** |
 | Coordination | durable role messaging and exact-endpoint host delivery | **Available** |
 | Projection | local graph and Markdown | **Available** |

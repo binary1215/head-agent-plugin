@@ -7,10 +7,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
-import { ingestStructuredObservation } from "../scripts/lib/observation-adapter.mjs";
+import {
+  JsonEventFileObservationAdapter,
+  ObservationAdapterRegistry,
+  collectObservation,
+  ingestJsonObservationEventFile,
+  ingestStructuredObservation,
+  inspectObservationSources,
+} from "../scripts/lib/observation-adapter.mjs";
 import { createObservationTypeDescriptor } from "../scripts/lib/observation-contract.mjs";
 import { inspectObservations, loadObservationProjection, queryObservations } from "../scripts/lib/observation-projection.mjs";
 import { recordDerivedObservation } from "../scripts/lib/observation-store.mjs";
+import { prepareObservationEvidence } from "../scripts/lib/observation-workflow.mjs";
 import { recordProductHypothesis, recordProductSignal } from "../scripts/lib/product-operating-loop.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { runCommand } from "../scripts/head.mjs";
@@ -52,6 +60,41 @@ function binding() {
     sourceScopeDigest: sha("bounded-source-scope"),
     credentialReferenceNames: ["HEAD_TEST_SOURCE_TOKEN"],
   };
+}
+
+function fileBinding(source = "bounded-ci-event-file") {
+  return {
+    adapterKey: "head.json-event-file-observation",
+    adapterVersion: "0.1.0",
+    sourceScopeDigest: sha(source),
+    credentialReferenceNames: ["HEAD_TEST_CI_TOKEN"],
+  };
+}
+
+function event({ eventKey = "build-42", subjectType = "example.ci.target", payload = { succeeded: true } } = {}) {
+  return {
+    schemaVersion: 1,
+    eventKey,
+    subject: { type: subjectType, key: "app" },
+    form: "event",
+    temporalScope: { observedAt: "2026-09-01T01:00:00.000Z", start: null, end: null },
+    coverage: coverage(),
+    payload,
+  };
+}
+
+function projectArtifactText(root) {
+  const pending = [path.join(root, ".head")];
+  const content = [];
+  while (pending.length) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(target);
+      else if (entry.isFile()) content.push(fs.readFileSync(target, "utf8"));
+    }
+  }
+  return content.join("\n");
 }
 
 function input({ suffix, subjectType, payload, form = "event", coverageValue = coverage() }) {
@@ -99,6 +142,212 @@ test("uses one evidence-only contract across unrelated typed product observation
   const replay = await ingestStructuredObservation({ root, binding: binding(), descriptor: descriptor(cases[0].key, cases[0].fields), input: input({ suffix: 0, subjectType: cases[0].type, payload: cases[0].payload }) });
   assert.equal(replay.status, "existing");
   assert.equal(replay.observation.observationId, observations[0].observationId);
+});
+
+test("collects product-shaped CI events through a process-local Host registry without persisting Host secrets", async (t) => {
+  const root = fixture();
+  const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(hostRoot, { recursive: true, force: true }));
+  const eventFile = path.join(hostRoot, "ci-event.json");
+  const rawEventKey = "provider-build-run-42";
+  const rawCredentialReference = "HEAD_TEST_CI_TOKEN";
+  fs.writeFileSync(eventFile, JSON.stringify(event({ eventKey: rawEventKey })));
+  const type = descriptor("example.ci.build-result", [{ key: "succeeded", type: "boolean", required: true }], ["event"]);
+  const canonFile = path.join(root, ".head", "context", "product-model.json");
+  const sessionFile = path.join(root, ".head", "sessions", "current.json");
+  const canonBefore = fs.readFileSync(canonFile, "utf8");
+  const sessionBefore = fs.readFileSync(sessionFile, "utf8");
+
+  const registry = new ObservationAdapterRegistry();
+  const registered = registry.register({
+    projectRoot: root,
+    sourceKey: "ci-main",
+    binding: fileBinding(),
+    descriptor: type,
+    adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }),
+  });
+  assert.equal(registered.stateLocation, "host-local-outside-project");
+  assert.equal(registered.productMeaningAssigned, false);
+  assert.equal(registry.inspect({ root }).configuredSourceCount, 1);
+  const collected = await registry.collect({ root, sourceKey: "ci-main" });
+  assert.equal(collected.status, "recorded");
+  assert.equal(collected.observation.typeKey, "example.ci.build-result");
+  assert.equal(collected.authority.productCanonMutated, false);
+  assert.equal(fs.readFileSync(canonFile, "utf8"), canonBefore);
+  assert.equal(fs.readFileSync(sessionFile, "utf8"), sessionBefore);
+  const persisted = projectArtifactText(root);
+  assert.equal(persisted.includes(eventFile), false);
+  assert.equal(persisted.includes(rawEventKey), false);
+  assert.equal(persisted.includes(rawCredentialReference), false);
+  assert.equal(persisted.includes("ci-main"), false);
+
+  const replay = await registry.collect({ root, sourceKey: "ci-main" });
+  assert.equal(replay.status, "existing");
+  fs.writeFileSync(eventFile, JSON.stringify(event({ eventKey: rawEventKey, payload: { succeeded: false } })));
+  await assert.rejects(() => registry.collect({ root, sourceKey: "ci-main" }), (error) => error.code === "DIVERGENT_OBSERVATION_REPLAY");
+});
+
+test("bounds Host source projection without imposing an arbitrary registration gate", async (t) => {
+  const root = fixture();
+  const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(hostRoot, { recursive: true, force: true }));
+  const eventFile = path.join(hostRoot, "event.json");
+  fs.writeFileSync(eventFile, JSON.stringify(event()));
+  const type = descriptor("example.ci.build-result", [{ key: "succeeded", type: "boolean", required: true }], ["event"]);
+  const adapter = new JsonEventFileObservationAdapter({ descriptor: type, eventFile });
+  const registry = new ObservationAdapterRegistry();
+  registry.register({ projectRoot: root, sourceKey: "ci-main", binding: fileBinding(), descriptor: type, adapter });
+  assert.throws(() => registry.register({ projectRoot: root, sourceKey: "ci-main", binding: fileBinding(), descriptor: type, adapter }), { code: "DUPLICATE_OBSERVATION_ADAPTER_SOURCE" });
+  await assert.rejects(() => registry.collect({ root, sourceKey: "missing" }), (error) => error.code === "OBSERVATION_ADAPTER_SOURCE_NOT_FOUND");
+  assert.throws(() => new JsonEventFileObservationAdapter({ descriptor: type, eventFile: "relative-event.json" }), { code: "INVALID_OBSERVATION_EVENT_FILE" });
+  assert.throws(() => new JsonEventFileObservationAdapter({ descriptor: type, eventFile, maxBytes: 512 * 1024 + 1 }), { code: "INVALID_OBSERVATION_EVENT_FILE_BOUND" });
+  const tiny = new ObservationAdapterRegistry();
+  tiny.register({ projectRoot: root, sourceKey: "tiny", binding: fileBinding("tiny"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile, maxBytes: 1 }) });
+  await assert.rejects(() => tiny.collect({ root, sourceKey: "tiny" }), (error) => error.code === "UNSAFE_OBSERVATION_EVENT_FILE");
+  fs.writeFileSync(eventFile, JSON.stringify({ ...event(), unexpected: true }));
+  await assert.rejects(() => registry.collect({ root, sourceKey: "ci-main" }), (error) => error.code === "INVALID_OBSERVATION_SOURCE_EVENT");
+
+  const bounded = new ObservationAdapterRegistry();
+  for (let index = 0; index < 80; index += 1) bounded.register({
+    projectRoot: root,
+    sourceKey: `source-${index}`,
+    binding: fileBinding(`scope-${index}`),
+    descriptor: type,
+    adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }),
+    availability: index % 2 ? { state: "ready", observedAt: "2026-09-01T01:00:00.000Z" } : { state: "unavailable", observedAt: "2026-09-01T01:00:00.000Z", reasonCode: "maintenance" },
+  });
+  const status = bounded.inspect({ root });
+  assert.equal(status.configuredSourceCount, 80);
+  assert.equal(status.sources.length, 64);
+  assert.equal(status.bounded.returnedSourceCount, 64);
+  assert.equal(status.bounded.omittedSourceCount, 16);
+  assert.equal(bounded.inspect({ root, limit: 10 }).sources.length, 10);
+  assert.throws(() => bounded.inspect({ root, limit: 65 }), { code: "INVALID_OBSERVATION_ADAPTER_INSPECTION_LIMIT" });
+  const readyPage = bounded.inspect({ root, availabilityState: "ready", limit: 10 });
+  assert.equal(readyPage.matchingSourceCount, 40);
+  assert.equal(readyPage.sources.every((source) => source.availability.state === "ready"), true);
+  assert.equal(readyPage.sources.every((source) => source.shape.typeKey === "example.ci.build-result"), true);
+  assert.equal(readyPage.sources.every((source) => source.shape.semanticAuthority === false), true);
+  assert.equal(readyPage.nextCursor.projectionId, readyPage.projectionId);
+  const secondPage = bounded.inspect({ root, availabilityState: "ready", limit: 10, projectionId: readyPage.nextCursor.projectionId, cursor: readyPage.nextCursor.sourceId });
+  assert.equal(secondPage.sources.length, 10);
+  assert.notEqual(secondPage.sources[0].sourceId, readyPage.sources[0].sourceId);
+  bounded.register({ projectRoot: root, sourceKey: "source-new", binding: fileBinding("scope-new"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }), availability: { state: "ready" } });
+  const resynchronized = bounded.inspect({ root, availabilityState: "ready", limit: 10, projectionId: readyPage.nextCursor.projectionId, cursor: readyPage.nextCursor.sourceId });
+  assert.equal(resynchronized.resynchronization.occurred, true);
+  assert.equal(resynchronized.resynchronization.restartedAtFirstPage, true);
+  assert.equal(resynchronized.matchingSourceCount, 41);
+  assert.throws(() => bounded.inspect({ root, projectionId: readyPage.projectionId }), { code: "INVALID_OBSERVATION_ADAPTER_INSPECTION_CURSOR" });
+  assert.throws(() => bounded.inspect({ root, availabilityState: "healthy" }), { code: "INVALID_OBSERVATION_ADAPTER_INSPECTION_FILTER" });
+  assert.throws(() => bounded.register({ projectRoot: root, sourceKey: "invalid-availability", binding: fileBinding("invalid-availability"), descriptor: type, adapter, availability: { state: "ready", reasonCode: "not-ready" } }), { code: "INVALID_OBSERVATION_SOURCE_AVAILABILITY" });
+  const wideType = descriptor("example.wide.event", Array.from({ length: 20 }, (_, index) => ({ key: `field-${index}`, type: "boolean", required: false })), ["event"]);
+  bounded.register({ projectRoot: root, sourceKey: "wide-source", binding: fileBinding("wide-source"), descriptor: wideType, adapter: new JsonEventFileObservationAdapter({ descriptor: wideType, eventFile }) });
+  const wide = bounded.inspect({ root, typeKey: "example.wide.event" });
+  assert.equal(wide.matchingSourceCount, 1);
+  assert.equal(wide.sources[0].shape.fields.length, 16);
+  assert.equal(wide.sources[0].shape.omittedFieldCount, 4);
+});
+
+test("exposes the JSON event-file reference adapter through the advanced Host CLI only", async (t) => {
+  const root = fixture();
+  const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(hostRoot, { recursive: true, force: true }));
+  const eventFile = path.join(hostRoot, "release-event.json");
+  const configFile = path.join(hostRoot, "source.json");
+  const type = descriptor("example.release.health", [{ key: "healthy", type: "boolean", required: true }], ["event"]);
+  fs.writeFileSync(eventFile, JSON.stringify(event({ eventKey: "release-17", subjectType: "example.release", payload: { healthy: true } })));
+  fs.writeFileSync(configFile, JSON.stringify({ binding: fileBinding("release-health"), descriptor: type, eventFile }));
+  const result = await runCommand(["observation-file-ingest", root, "--input", configFile]);
+  assert.equal(result.observation.typeKey, "example.release.health");
+  const sources = inspectObservationSources();
+  assert.equal(sources.adapters.some((adapterValue) => adapterValue.adapterKey === "head.json-event-file-observation"), true);
+  assert.equal(sources.registry.persisted, false);
+  assert.equal(mcpTools.some((tool) => tool.name === "head_observation_file_ingest"), false);
+
+  const replay = await ingestJsonObservationEventFile({ root, sourceKey: "release-health", binding: fileBinding("release-health"), descriptor: type, eventFile });
+  assert.equal(replay.status, "existing");
+});
+
+test("preflights the local project before a Host adapter can perform external collection", async () => {
+  const missingRoot = path.join(testParent, `head-agent-observation-missing-${crypto.randomUUID()}`);
+  const type = createObservationTypeDescriptor(descriptor("example.preflight.event", [{ key: "value", type: "integer", required: true }], ["event"]));
+  let collectCalled = false;
+  const adapter = {
+    describe: () => ({
+      adapterKey: binding().adapterKey,
+      adapterVersion: binding().adapterVersion,
+      descriptorId: type.descriptorId,
+      descriptorHash: type.descriptorHash,
+      authority: "observed-evidence-only",
+      providerNeutral: true,
+      persistsCredentials: false,
+      persistsProviderIdentity: false,
+      executesProjectCode: false,
+    }),
+    collect: () => { collectCalled = true; return input({ suffix: "preflight", subjectType: "example.preflight", payload: { value: 1 } }); },
+  };
+  await assert.rejects(() => collectObservation({ root: missingRoot, binding: binding(), descriptor: type, adapter }), (error) => error.code === "PROJECT_NOT_FOUND");
+  assert.equal(collectCalled, false);
+});
+
+test("lets CLI and MCP collect a Host-injected source by opaque ID without user-authored provenance", async (t) => {
+  const root = fixture();
+  const otherRoot = fixture();
+  const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(otherRoot, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(hostRoot, { recursive: true, force: true }));
+  const eventFile = path.join(hostRoot, "configured-event.json");
+  const type = descriptor("example.configured.health", [{ key: "healthy", type: "boolean", required: true }], ["event"]);
+  fs.writeFileSync(eventFile, JSON.stringify(event({ eventKey: "configured-9", subjectType: "example.configured.target", payload: { healthy: true } })));
+  const registry = new ObservationAdapterRegistry();
+  const registered = registry.register({ projectRoot: root, sourceKey: "configured-health", binding: fileBinding("configured-health"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }) });
+  const otherRegistered = registry.register({ projectRoot: otherRoot, sourceKey: "configured-health", binding: fileBinding("configured-health"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }) });
+  assert.notEqual(otherRegistered.sourceId, registered.sourceId);
+  await assert.rejects(() => registry.collect({ root: otherRoot, sourceId: registered.sourceId }), (error) => error.code === "OBSERVATION_ADAPTER_SOURCE_PROJECT_MISMATCH");
+
+  const beforeCollection = prepareObservationEvidence({ root, registry, typeKey: "example.configured.health" });
+  assert.equal(beforeCollection.existing.returned, 0);
+  assert.equal(beforeCollection.configuredSources.matchingSourceCount, 1);
+  assert.equal(beforeCollection.workflow.nextAction, "head-may-collect-one-source-if-durable-current-evidence-is-required");
+
+  const cliSources = runCommand(["observation-sources", root], { observationRegistry: registry });
+  assert.equal(cliSources.registry.configuredSourceCount, 1);
+  assert.equal(cliSources.registry.sources[0].sourceId, registered.sourceId);
+  const cliCollected = await runCommand(["observation-source-collect", root, "--source", registered.sourceId], { observationRegistry: registry });
+  assert.equal(cliCollected.observation.typeKey, "example.configured.health");
+  const artifactsBeforePrepare = projectArtifactText(root);
+  const prepared = prepareObservationEvidence({ root, registry, typeKey: "example.configured.health", sourceLimit: 10 });
+  assert.equal(prepared.existing.returned, 1);
+  assert.equal(prepared.configuredSources.matchingSourceCount, 1);
+  assert.equal(prepared.workflow.nextAction, "head-assess-existing-observations");
+  assert.equal(prepared.workflow.semanticSufficiencyAssessed, false);
+  assert.equal(prepared.persisted, false);
+  assert.match(prepared.preparationId, /^observation-preparation-[a-f0-9]{24}$/);
+  assert.equal(prepareObservationEvidence({ root, registry, typeKey: "example.configured.health", sourceLimit: 10 }).preparationId, prepared.preparationId);
+  assert.equal(projectArtifactText(root), artifactsBeforePrepare);
+
+  const mcpSources = await dispatchMcp({ jsonrpc: "2.0", id: 20, method: "tools/call", params: { name: "head_observation_sources", arguments: { project_root: root } } }, { observationRegistry: registry });
+  assert.equal(mcpSources.result.structuredContent.registry.sources[0].sourceId, registered.sourceId);
+  const mcpCollected = await dispatchMcp({ jsonrpc: "2.0", id: 21, method: "tools/call", params: { name: "head_observation_collect_source", arguments: { project_root: root, source_id: registered.sourceId } } }, { observationRegistry: registry });
+  assert.equal(mcpCollected.result.structuredContent.status, "existing");
+  assert.equal(mcpCollected.result.structuredContent.observation.observationId, cliCollected.observation.observationId);
+  const unavailable = await dispatchMcp({ jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "head_observation_collect_source", arguments: { project_root: root, source_id: registered.sourceId } } });
+  assert.match(unavailable.error.message, /No trusted Host Observation adapter registry/);
+  const sourceTool = mcpTools.find((tool) => tool.name === "head_observation_collect_source");
+  assert.deepEqual(Object.keys(sourceTool.inputSchema.properties).sort(), ["project_root", "source_id"]);
+  const mcpPrepared = await dispatchMcp({ jsonrpc: "2.0", id: 23, method: "tools/call", params: { name: "head_observation_prepare", arguments: { project_root: root, type_key: "example.configured.health" } } }, { observationRegistry: registry });
+  assert.equal(mcpPrepared.result.structuredContent.existing.returned, 1);
+  assert.equal(mcpPrepared.result.structuredContent.configuredSources.sources[0].sourceId, registered.sourceId);
+  const prepareTool = mcpTools.find((tool) => tool.name === "head_observation_prepare");
+  assert.equal(prepareTool.annotations.readOnlyHint, true);
+  assert.equal(prepareTool.inputSchema.required.includes("type_key"), true);
+  const sourcesTool = mcpTools.find((tool) => tool.name === "head_observation_sources");
+  assert.deepEqual(["cursor", "projection_id"].every((key) => Object.hasOwn(sourcesTool.inputSchema.properties, key)), true);
+  assert.equal(projectArtifactText(root), artifactsBeforePrepare);
 });
 
 test("fails closed for divergent replay, false completeness, and schema or adapter authority drift", async (t) => {

@@ -115,7 +115,7 @@ HEAD는 검토된 Feature와 Capability가 어떤 파일, 심볼, 테스트와 �
 | 여러 에이전트 사이에서 책임이 흐려짐 | 제한된 실행, 결과 증거, 독립 검토를 구분하면서 HEAD가 하나의 전체 결과로 통합합니다. |
 | 병렬 워커의 진행 상황을 한눈에 보기 어려움 | 공급자 중립적인 launch wave가 요청·시작·반환·대기·성공·실패를 보여주되, 워커별 권한을 합치거나 wave 완료를 승인으로 취급하지 않습니다. |
 | Git 및 배포 이력을 사람이 직접 입력해야 함 | 공급자 중립 관측이 현재 product ref와 호스트가 보고한 배포 결과를 불변 P3 evidence로 만들며, 승인·성공·정확한 commit/ref 일치가 모두 확인될 때만 권한 없는 ReleaseObservation을 만듭니다. |
-| 제품마다 운영 데이터 형태가 다름 | 공통 evidence-only Observation 계약이 닫힌 제품별 schema를 받아 coverage와 replay를 증명하고, domain vocabulary를 Core에 하드코딩하지 않은 채 제품 해석은 HEAD에 맡깁니다. |
+| 제품마다 운영 데이터 형태가 다름 | Project-bound Host registry를 통해 HEAD가 configured source를 opaque ID로 collect하고, 제품별 adapter는 하나의 evidence-only 계약으로 normalize하며 Core는 coverage와 replay를 증명합니다. |
 
 > 일반적인 코딩 에이전트가 현재 작업을 최적화한다면, HEAD Agent Core는
 > 여러 작업이 검토된 하나의 제품 방향으로 축적되도록 최적화합니다.
@@ -707,6 +707,7 @@ HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정�
 | 런타임 증거 | 세 런타임 결정론적 fixture 및 로컬 CLI 기능 probe | **사용 가능** |
 | 런타임 증거 | Claude Code 실제 모델 호출 적합성 | **실험적** |
 | 릴리스 증거 | 공급자 중립 Git ref, deployment-result 및 release observation | **사용 가능** |
+| 공통 관측 | 기존 exact evidence 우선 준비, Host source 페이지 탐색, opaque ID 수집 | **사용 가능** |
 | 워커 | 범위가 제한된 전달, 대기, 결과, 검토, 통합 | **사용 가능** |
 | 역할 통신 | 지속 가능한 역할 메시징과 정확한 엔드포인트 전달 | **사용 가능** |
 | 프로젝션 | 로컬 그래프와 Markdown | **사용 가능** |

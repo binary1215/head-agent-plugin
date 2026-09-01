@@ -30,9 +30,10 @@ import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/rep
 import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
-import { ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
+import { collectRegisteredObservation, ingestJsonObservationEventFile, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
+import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
@@ -129,8 +130,11 @@ export function usage({ all = false } = {}) {
       "head release-observe <project> --input <deployment-result.json>",
       "head release-status <project>",
       "head observation-sources <project>",
+      "head observation-prepare <project> --type-key <key> [--subject-type <key>] [--subject-key <key>] [--adapter-key <key>] [--observed-after <timestamp>] [--observed-before <timestamp>] [--source-availability <state>] [--existing-limit <1-100>] [--source-limit <1-64>] [--source-projection <id> --source-cursor <source-id>]",
+      "head observation-source-collect <project> --source <observation-source-id>",
       "head observation-collect <project> --input <observation.json>",
       "head observation-ingest <project> --input <observation.json>",
+      "head observation-file-ingest <project> --input <host-source.json>",
       "head observation-derive <project> --input <derived-observation.json>",
       "head observation-read <project> --observation <observation-id>",
       "head observation-query <project> [--type-key <key>] [--subject-type <key>] [--subject-key <key>] [--adapter-key <key>] [--observed-after <timestamp>] [--observed-before <timestamp>] [--record-kind <all|observed|derived>] [--limit <1-100>] [--projection <observation-projection-id> --cursor <observation-id>]",
@@ -256,7 +260,7 @@ function evidenceNeedsInput(options) {
   return Array.isArray(value) ? value : value?.evidenceNeeds ?? value;
 }
 
-export function runCommand(argv = process.argv.slice(2)) {
+export function runCommand(argv = process.argv.slice(2), { observationRegistry = null } = {}) {
   const { command, root, options } = parse(argv);
   if (command === "help" || command === "--help" || command === "-h") return usage();
   if (command === "help-all") return usage({ all: true });
@@ -380,10 +384,46 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "product-operating-status") return inspectProductOperatingLoop({ root, fresh: options.fresh === true });
   if (command === "release-observe") return observeReleaseState({ root, input: inputJson(options, "DeploymentResultObservation") });
   if (command === "release-status") return inspectReleaseObservations({ root });
-  if (command === "observation-sources") return inspectObservationSources();
+  if (command === "observation-sources") return inspectObservationSources({
+    root,
+    registry: observationRegistry,
+    typeKey: options["type-key"] || "",
+    adapterKey: options["adapter-key"] || "",
+    availabilityState: options.availability || "",
+    limit: options.limit == null ? undefined : Number(options.limit),
+    projectionId: options.projection || "",
+    cursor: options.cursor || "",
+  });
+  if (command === "observation-prepare") return prepareObservationEvidence({
+    root,
+    registry: observationRegistry,
+    typeKey: options["type-key"],
+    subjectType: options["subject-type"] || "",
+    subjectKey: options["subject-key"] || "",
+    adapterKey: options["adapter-key"] || "",
+    observedAfter: options["observed-after"] || "",
+    observedBefore: options["observed-before"] || "",
+    existingLimit: options["existing-limit"] == null ? 20 : Number(options["existing-limit"]),
+    sourceLimit: options["source-limit"] == null ? 20 : Number(options["source-limit"]),
+    sourceAvailability: options["source-availability"] || "",
+    sourceProjectionId: options["source-projection"] || "",
+    sourceCursor: options["source-cursor"] || "",
+  });
+  if (command === "observation-source-collect") return collectRegisteredObservation({ root, registry: observationRegistry, sourceId: options.source });
   if (command === "observation-collect" || command === "observation-ingest") {
     const value = inputJson(options, "Observation collection");
     return ingestStructuredObservation({ root, binding: value.binding, descriptor: value.descriptor, input: value.input });
+  }
+  if (command === "observation-file-ingest") {
+    const value = inputJson(options, "Host JSON Observation source");
+    return ingestJsonObservationEventFile({
+      root,
+      sourceKey: value.sourceKey,
+      binding: value.binding,
+      descriptor: value.descriptor,
+      eventFile: value.eventFile,
+      maxBytes: value.maxBytes,
+    });
   }
   if (command === "observation-derive") {
     const value = inputJson(options, "Derived Observation");

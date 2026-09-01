@@ -50,6 +50,8 @@ test("freezes the five semantic authority planes separately from Distribution an
   assert.equal(artifactAuthorityBoundary("WorkerWaveStatusProjection").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("WorkerWaveResultProjection").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("ObservationStatusProjection").planeId, "P4");
+  assert.equal(artifactAuthorityBoundary("ObservationSourceDiscoveryProjection").planeId, "P4");
+  assert.equal(artifactAuthorityBoundary("ObservationPreparationProjection").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("CoordinationInbox").planeId, "P5");
   assert.equal(artifactAuthorityBoundary("ContinuationOutcome").planeId, "P5");
   assert.equal(artifactAuthorityBoundary("BoundedWorkerWaitOutcome").planeId, "P5");
