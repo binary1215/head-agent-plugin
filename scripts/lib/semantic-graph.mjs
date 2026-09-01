@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { extractSemanticSourceFacts } from "./source-analysis.mjs";
+import { verifySourceRelationEvidenceSet } from "./source-relation-evidence.mjs";
 
-export const SEMANTIC_GRAPH_VERSION = "0.2.0";
+export const SEMANTIC_GRAPH_VERSION = "0.3.0";
 
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
@@ -55,7 +56,7 @@ function edgeRecord(type, from, to, evidence, detail = {}) {
   return { id: identity("semantic-edge", payload), ...payload };
 }
 
-export function buildSemanticGraph({ files, sources }) {
+export function buildSemanticGraph({ files, sources, sourceRelationEvidence = null }) {
   const filesByPath = new Map(files.map((file) => [file.path, file]));
   const nodes = [];
   const edges = [];
@@ -157,13 +158,55 @@ export function buildSemanticGraph({ files, sources }) {
     }
   }
 
+  const currentManifest = files.map((file) => ({ path: file.path, digest: file.digest, language: file.language }));
+  const verifiedRelationEvidence = sourceRelationEvidence
+    ? verifySourceRelationEvidenceSet(sourceRelationEvidence, { files: currentManifest })
+    : null;
+  const endpointNode = (endpoint) => {
+    if (endpoint.kind === "file") return nodeByFile.get(endpoint.path) || null;
+    if (endpoint.kind === "external") return externalNode(endpoint.specifier);
+    return (symbolNodesByFile.get(endpoint.path) || []).find((symbol) => symbol.name === endpoint.name
+      && symbol.symbolKind === endpoint.symbolKind && symbol.line === endpoint.line) || null;
+  };
+  if (verifiedRelationEvidence) for (const relation of verifiedRelationEvidence.relations) {
+    const from = endpointNode(relation.from);
+    const to = endpointNode(relation.to);
+    if (!from || !to) {
+      const error = new Error(`AST source relation endpoints are absent from the current semantic graph: ${relation.relationId}`);
+      error.code = "SOURCE_RELATION_EVIDENCE_ENDPOINT_MISSING";
+      throw error;
+    }
+    edges.push(edgeRecord(relation.type, from.id, to.id, relation.evidence, {
+      confidence: relation.confidence,
+      evidenceSource: {
+        kind: "language-ast-adapter",
+        analyzer: verifiedRelationEvidence.analyzer,
+        evidenceSetId: verifiedRelationEvidence.evidenceSetId,
+        relationId: relation.relationId,
+        authority: verifiedRelationEvidence.authority,
+      },
+    }));
+  }
+
   nodes.sort((left, right) => left.id.localeCompare(right.id));
   edges.sort((left, right) => left.id.localeCompare(right.id));
   const payload = {
     kind: "RepositorySemanticGraph",
     protocol: { name: "head-agent-core-semantic-graph", version: SEMANTIC_GRAPH_VERSION },
     authority: "derived-evidence-only",
-    accuracy: "heuristic-not-ast-complete",
+    accuracy: verifiedRelationEvidence ? "heuristic-fallback-plus-source-separated-ast-evidence" : "heuristic-not-ast-complete",
+    sourceRelationEvidence: verifiedRelationEvidence ? {
+      status: "provided",
+      evidenceSetId: verifiedRelationEvidence.evidenceSetId,
+      evidenceSetHash: verifiedRelationEvidence.evidenceSetHash,
+      analyzer: verifiedRelationEvidence.analyzer,
+      relationCount: verifiedRelationEvidence.relations.length,
+      authority: verifiedRelationEvidence.authority,
+    } : {
+      status: "not-provided",
+      fallback: "heuristic-source-analysis-retained",
+      authority: "none",
+    },
     nodes,
     edges,
     summary: {
@@ -174,6 +217,7 @@ export function buildSemanticGraph({ files, sources }) {
       externalDependencyNodeCount: nodes.filter((node) => node.kind === "ExternalDependency").length,
       importEdgeCount: edges.filter((edge) => edge.type === "IMPORTS").length,
       callEdgeCount: edges.filter((edge) => edge.type === "CALLS").length,
+      astEvidenceEdgeCount: edges.filter((edge) => edge.evidenceSource?.kind === "language-ast-adapter").length,
       unresolvedImportCount,
       unresolvedCallCount,
     },

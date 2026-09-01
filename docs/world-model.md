@@ -146,7 +146,7 @@ The adapter descriptor and physical source path live only in the World Model poi
 - semantic HEAD lifecycle state including current plan, active Run/contract, pending review, and required plan action;
 - added, changed, and removed path calculation;
 - file-level freshness;
-- Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, pre-indexed semantic adjacency, one deterministic task-relevant temporal anchor, bounded ProductContext projections, GraphSnapshot/TraversalQuery/result digests, and World Model ID.
+- Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, pre-indexed structural adjacency, bounded ProductContext projections, and separate HEAD-exact `GraphTraversalEvidence` bound to current Project/World/Graph identities. The Compiler no longer selects a temporal anchor from lexical task overlap.
 
 Managed root projections and these directories are excluded: `.head`, `.git`, VCS metadata, dependency/vendor directories, generated build outputs, caches (including uv and pytest caches), virtual environments, coverage outputs, and tool-owned evidence projections such as `.omo`. Symlinks and unsupported/binary or oversized files are skipped and counted. A user-selected source scope may additionally include or exclude normalized project-relative roots without changing Product Canon.
 

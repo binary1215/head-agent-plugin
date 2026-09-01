@@ -69,13 +69,15 @@ verifier는 digest mismatch, 지원되지 않는 node 또는 relation type, 중�
 
 ## 결정론적 제한 순회
 
-`queryTemporalProvenanceGraph`는 먼저 전체 GraphSnapshot을 검증한 다음 정규화된 `TraversalQuery`를 구성합니다. query는 다음을 기록합니다.
+`queryTemporalProvenanceGraph`는 먼저 전체 GraphSnapshot을 검증한 다음 temporal traversal protocol `0.2.0`을 구성합니다. anchor mode는 명시적 검색용 `lexical-discovery`와 HEAD가 의미 분석 후 제공하는 `exact-head-proposed` 중 하나입니다. exact mode는 1~32개의 고유 node ID와 현재 `expectedGraphSnapshotId`를 요구하며, 모든 anchor가 요청한 kind·authority·freshness·confidence·candidate policy를 충족해야 합니다.
 
 - node-kind, relation, authority-class 및 freshness allowlist
 - minimum confidence
 - CandidateSet, candidate, Evidence, Unknown, ProductConceptReference, ProductInitiativeCandidate 및 ProductFeatureCandidate node를 기본적으로 제외하고 명시적 `includeUnreviewedCandidates` opt-in 제공
 - maximum depth, node count 및 edge count
 - anchor ID 및 결정론적 순서
+
+lexical discovery는 task relevance를 증명하지 않습니다. exact anchor는 relation이나 bound를 확대하지 않으며 stale, missing, cross-snapshot 또는 ineligible anchor는 fail closed됩니다. 어느 mode도 Product Canon, ReviewDecision 또는 P2 recovery direction을 쓸 수 없습니다.
 
 result는 graph, query 및 result ID와 hash, 선택된 node와 edge, inclusion reason, exclusion count 및 truncation을 기록합니다. 이후 backend가 이 algorithm을 가속할 수 있지만 allowlist를 넓히거나, semantic result의 순서를 바꾸거나, stale evidence를 허용하거나, digest를 변경해서는 안 됩니다.
 
@@ -85,6 +87,7 @@ result는 graph, query 및 result ID와 hash, 선택된 node와 edge, inclusion 
 node scripts/head.mjs world-index <project> --parent-snapshot <id,id>
 node scripts/head.mjs world-index <project> --revision-parents <json-file>
 node scripts/head.mjs world-temporal <project> --query <text> --kind File,FileRevision --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
+node scripts/head.mjs world-temporal <project> --anchor-ids <node-id,node-id> --graph-snapshot <graph-snapshot-id> --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
 node scripts/head.mjs world-temporal <project> --query <candidate-id> --kind FeatureMappingCandidate,FeatureMappingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
 node scripts/head.mjs world-temporal <project> --query <change-set-id> --relations CHANGES,IMPACTS,SUPERSEDES --depth 3 --limit 200 --edge-limit 400
 node scripts/head.mjs world-temporal <project> --query <change-set-id> --relations MATERIALIZED_AS,REFERENCES --depth 2 --limit 200 --edge-limit 400
@@ -92,10 +95,10 @@ node scripts/head.mjs world-temporal <project> --query <change-set-id> --relatio
 
 `--revision-parents`는 key가 현재 logical entity ID이고 value가 parent Revision ID array인 JSON object를 읽습니다. read-only MCP tool `head_temporal_graph`는 `include_unreviewed_candidates`를 통해 동일한 제한 순회를 노출합니다. 둘 다 stale World Model을 거부합니다. ReviewDecision 및 ProductModelRevision receipt는 일반적인 reviewed traversal에서 계속 표시됩니다. unreviewed candidate surface에는 명시적 opt-in이 필요하며, opt-in하더라도 권한에는 영향을 주지 않습니다.
 
-Context Compiler는 `GraphProjectionAdapter`를 통해 제한된 per-file temporal expansion을 수행하고 포함된 repository candidate에 GraphSnapshot, SourceSnapshot, TraversalQuery 및 traversal result digest를 기록합니다. Local JSON 및 in-memory adapter는 정확한 reference result를 반환해야 합니다. 결과가 없으면 이를 공개한 상태로 내장된 recoverable graph를 fallback으로 사용하지만, stale하거나 충돌하는 projection은 fail closed 처리됩니다. Adapter identity는 Capsule identity 바깥에 유지됩니다. [`graph-projection-adapter.md`](graph-projection-adapter.md)를 참조하세요.
+Context Compiler는 task-token overlap으로 temporal anchor를 추론하지 않습니다. HEAD가 `temporal-relation` EvidenceNeed에 현재 exact `graphAnchor`를 붙이면 Core는 Project·World Model·GraphSnapshot·node eligibility·relation allowlist·traversal bound를 검증한 뒤 별도 `GraphTraversalEvidence` carrier를 만듭니다. Local JSON, in-memory 및 활성 ArcadeDB adapter는 정확한 reference result를 반환해야 하며 adapter identity는 Capsule identity 바깥에 유지됩니다. [`graph-projection-adapter.md`](graph-projection-adapter.md)를 참조하세요.
 
 active deterministic Markdown renderer는 indexing 후 `DocumentProjectionAdapter`를 통해 검증된 이 graph를 사용합니다. canonical edge direction을 보존하고, relation endpoint를 node page에 연결하며, 정확한 GraphSnapshot 및 SourceSnapshot ID를 기록합니다. 생성된 page는 human view일 뿐이며, 절대 Context Compiler input으로 다시 순회되지 않습니다. 편집된 page는 비권위적 `DocumentChangeCandidateSet` evidence가 됩니다. 명시적 review는 이후 child graph로 projection되며, application receipt가 실제 application outcome을 결합한 다음 그다음 audit child graph가 해당 receipt를 projection합니다. 이 two-stage boundary는 동일한 GraphSnapshot의 이름을 가진 receipt에 GraphSnapshot hash가 종속되는 문제를 방지합니다. Context Compiler는 document candidate surface를 opt-in하지 않습니다. [`document-projection-adapter.md`](document-projection-adapter.md) 및 [`document-change-review.md`](document-change-review.md)를 참조하세요.
 
 ## 유보된 경계
 
-이 alpha는 아직 commit-to-ChangeSet matching, 프로젝트 전체 execution lineage 또는 model conformance를 추론하지 않으며, 구현된 review scope를 넘어 general candidate를 승격하지도 않습니다. Local/in-memory GraphProjectionAdapter 및 DocumentProjectionAdapter conformance boundary는 구현하지만 remote GraphDB, Obsidian 또는 Notion backend는 구현하지 않습니다. 명시적인 document-candidate review/application 및 이후 audit projection은 활성화되어 있지만 prose에서 product meaning을 절대 추론하지 않습니다. 또한 이 시스템은 여전히 parent revision이나 ChangeSet ancestry를 추론하거나, merge를 수행하거나, candidate를 자동으로 승격하거나, current-state pointer를 Canon으로 취급하지 않습니다.
+이 beta는 아직 commit-to-ChangeSet matching이나 프로젝트 전체 execution lineage를 추론하지 않으며 구현된 review scope를 넘어 general candidate를 승격하지 않습니다. Local/in-memory 및 명시적으로 활성화된 ArcadeDB GraphProjectionAdapter는 구현되어 있습니다. Obsidian, Notion과 ArcadeDB 이외의 remote graph transport는 유보됩니다. 이 시스템은 parent revision이나 ChangeSet ancestry를 추론하거나, merge를 수행하거나, candidate를 자동 승격하거나, current-state pointer를 Canon으로 취급하지 않습니다.

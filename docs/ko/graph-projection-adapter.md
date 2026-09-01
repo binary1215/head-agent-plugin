@@ -70,7 +70,7 @@ World Model indexing은 불변 World Model snapshot을 쓰고 검증한 뒤, gra
 
 ## Query 및 fallback 동작
 
-Temporal query는 먼저 내장된 복구 가능 GraphSnapshot에서 결정론적 reference contract를 계산합니다. 현재 adapter query는 GraphSnapshot, query, result identity, ordering, bound, inclusion 및 exclusion reason을 포함해 canonical `TemporalTraversalResult`와 정확히 동일한 결과를 반환해야 합니다.
+Temporal traversal protocol `0.2.0`은 먼저 내장된 복구 가능 GraphSnapshot에서 결정론적 reference contract를 계산합니다. lexical discovery와 exact HEAD-proposed anchor는 상호 배타적입니다. exact mode는 1~32개의 적격 node ID를 현재 GraphSnapshot에 결속하고 caller의 relation·authority·freshness·confidence·depth·node·edge·candidate policy를 확대할 수 없습니다. 현재 adapter query는 GraphSnapshot, query, result identity, ordering, bound, inclusion 및 exclusion reason을 포함해 canonical `TemporalTraversalResult`와 정확히 동일한 결과를 반환해야 합니다.
 
 - 현재 adapter: adapter를 통해 query하고 semantic mismatch가 하나라도 있으면 거부합니다.
 - 구체화된 adapter pointer가 없음: 내장 graph를 사용하고 `GRAPH_PROJECTION_NOT_MATERIALIZED`를 공개합니다.
@@ -111,7 +111,7 @@ server response는 evidence이지 semantic authority가 아닙니다. client는 
 
 `PreparedTraversalCostEvidence` 프로토콜 `0.1.0`은 정확한 GraphSnapshot과 `PreparedTraversalRequest`에서 콘텐츠 기반으로 파생됩니다. 그 payload model은 정규화된 UTF-8 canonical-JSON response component인 identity envelope, graph manifest, bounded expansion, complete GraphSnapshot, complete topology record를 계산합니다. prepared total에는 identity envelope, manifest, bounded expansion만 포함됩니다. 보수적인 full-reload baseline은 complete snapshot 하나와 complete topology record set 하나를 추가합니다. 이는 재현 가능한 logical transport-cost evidence이지 HTTP framing, compression, database cache state 또는 wall-clock latency에 관한 주장이 아닙니다.
 
-`benchmarks/prepared-traversal-v1` 아래의 검토된 64-file fixture는 graph, request, result, cost-evidence identity를 고정합니다. GraphSnapshot에 P1-P5 권위 경계와 Product Operating summary field를 포함한 상태에서 prepared bytes 20,478 대 baseline 834,638 bytes를 기록하여 814,160 bytes, 즉 9,754 basis points를 절감합니다. 다음 명령으로 실행합니다.
+`benchmarks/prepared-traversal-v1` 아래의 검토된 64-file fixture는 graph, request, result, cost-evidence identity를 고정합니다. GraphSnapshot에 P1-P5 권위 경계와 현재 summary field를 포함한 상태에서 prepared bytes 20,491 대 baseline 836,589 bytes를 기록하여 816,098 bytes, 즉 9,755 basis points를 절감합니다. 다음 명령으로 실행합니다.
 
 ```text
 npm run benchmark:prepared-traversal -- --iterations 7

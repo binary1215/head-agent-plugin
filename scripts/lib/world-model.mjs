@@ -11,6 +11,7 @@ import {
   verifyGitDecisionHistory,
 } from "./git-history.mjs";
 import { buildSemanticGraph, querySemanticGraph, SEMANTIC_GRAPH_VERSION, verifySemanticGraph } from "./semantic-graph.mjs";
+import { collectSourceRelationEvidence, SOURCE_RELATION_EVIDENCE_VERSION } from "./source-relation-evidence.mjs";
 import { normalizeProductModelDocument, PRODUCT_MODEL_RELATIVE_PATH, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
 import { assertProjectionDidNotMutateCanon } from "./authority-plane-contract.mjs";
 import { loadOnboardingGraphProjection, ONBOARDING_GRAPH_PROJECTION_VERSION } from "./onboarding-projection.mjs";
@@ -69,7 +70,7 @@ import {
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
-export const WORLD_MODEL_VERSION = "0.14.0";
+export const WORLD_MODEL_VERSION = "0.15.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 export const WORLD_MODEL_STATUS_PROJECTION_VERSION = "0.1.0";
 export const WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES = 512 * 1024;
@@ -505,10 +506,11 @@ function indexerState() {
     gitHistoryAdapterVersion: GIT_HISTORY_ADAPTER_VERSION,
     externalRuntimeStateVersion: EXTERNAL_RUNTIME_STATE_VERSION,
     runtimeStateAdapterVersion: RUNTIME_STATE_ADAPTER_VERSION,
+    sourceRelationEvidenceVersion: SOURCE_RELATION_EVIDENCE_VERSION,
   };
 }
 
-function sourceDigestFor(files, sourceScope, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, productOperatingProjection, releaseObservationProjection, git, runtimeState, externalRuntimeState, indexer, parentSourceSnapshotIds = [], revisionParentIds = {}) {
+function sourceDigestFor(files, sourceScope, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, productOperatingProjection, releaseObservationProjection, git, runtimeState, externalRuntimeState, indexer, sourceRelationEvidenceHash = null, parentSourceSnapshotIds = [], revisionParentIds = {}) {
   return digest(canonicalJson({
     files,
     sourceScope: { sourceScopeId: sourceScope.sourceScopeId, sourceScopeHash: sourceScope.sourceScopeHash },
@@ -540,6 +542,7 @@ function sourceDigestFor(files, sourceScope, productModel, onboardingProjection,
     git,
     runtimeState,
     externalRuntimeState: externalRuntimeState.runtimeStateHash,
+    sourceRelationEvidenceHash,
     indexer,
     temporalParents: { parentSourceSnapshotIds, revisionParentIds },
   }));
@@ -666,6 +669,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     runtimeState,
     externalRuntimeState,
     indexerState(),
+    stored.snapshot.semanticGraph?.sourceRelationEvidence?.evidenceSetHash || null,
     stored.snapshot.temporalProvenanceGraph?.parentSourceSnapshotIds || [],
     stored.snapshot.temporalProvenanceGraph?.revisionParentIds || {},
   );
@@ -853,6 +857,7 @@ async function buildWorldModelLocked({
   graphProjectionAdapter = null,
   gitHistoryAdapter = null,
   runtimeStateAdapter = null,
+  sourceRelationEvidenceAdapter = null,
   computeAdapter = null,
   onboardingProjectionInput = null,
   featureMappingProjectionInput = null,
@@ -912,7 +917,13 @@ async function buildWorldModelLocked({
   const indexer = indexerState();
   const externalRuntimeResult = buildExternalRuntimeState({ projectRoot: project.projectRoot, adapter: runtimeStateAdapter });
   const externalRuntimeState = externalRuntimeResult.runtimeState;
-  const semanticGraph = buildSemanticGraph({ files: scan.files });
+  const sourceRelationResult = await collectSourceRelationEvidence({
+    projectId: project.projectId,
+    projectRoot: project.projectRoot,
+    files: scan.files.map((file) => ({ path: file.path, digest: file.digest, language: file.language })),
+    adapter: sourceRelationEvidenceAdapter,
+  });
+  const semanticGraph = buildSemanticGraph({ files: scan.files, sourceRelationEvidence: sourceRelationResult.evidence });
   const temporalProvenanceGraph = buildTemporalProvenanceGraph({
     projectId: project.projectId,
     files: scan.files,
@@ -941,6 +952,7 @@ async function buildWorldModelLocked({
     runtimeState,
     externalRuntimeState,
     indexer,
+    sourceRelationResult.evidence?.evidenceSetHash || null,
     temporalProvenanceGraph.parentSourceSnapshotIds,
     temporalProvenanceGraph.revisionParentIds,
   );
@@ -974,7 +986,9 @@ async function buildWorldModelLocked({
       repositoryScan: "compute-adapter-validated-relative-path-digest-and-source-facts",
       symbols: "heuristic-javascript-typescript-python-markdown-with-content-derived-identities",
       dependencies: "heuristic-module-resolution-and-package-manifests",
-      semanticGraph: "heuristic-file-symbol-import-call-graph-with-evidence-locations",
+      semanticGraph: sourceRelationResult.evidence
+        ? "heuristic-fallback-plus-source-separated-language-ast-import-call-evidence"
+        : "heuristic-file-symbol-import-call-graph-with-evidence-locations",
       temporalProvenanceGraph: "content-addressed-file-symbol-test-revisions-with-multiple-parent-dag",
       productModel: "user-owned-feature-capability-requirement-constraint-decision-canon-projected-into-temporal-graph",
       onboardingProjection: "immutable-candidates-evidence-unknowns-reviews-and-product-model-revision-receipts-projected-without-authority-escalation",
@@ -1121,8 +1135,8 @@ async function buildWorldModelLocked({
   if (!persist) return {
     status: "preview",
     snapshot,
-    sourceAdapters: { compute: selectedRepositoryScanExecution.diagnostics },
-    sourceDiagnostics: { compute: selectedRepositoryScanExecution.diagnostics },
+    sourceAdapters: { compute: selectedRepositoryScanExecution.diagnostics, sourceRelationEvidence: sourceRelationResult.diagnostics },
+    sourceDiagnostics: { compute: selectedRepositoryScanExecution.diagnostics, sourceRelationEvidence: sourceRelationResult.diagnostics },
   };
 
   if (expectedWorldModelId && worldModelId !== expectedWorldModelId) {
@@ -1192,6 +1206,7 @@ async function buildWorldModelLocked({
         workerSha256: selectedRepositoryScanExecution.diagnostics.workerSha256 || "",
       },
       runtimeState: externalRuntimeResult.adapter,
+      sourceRelationEvidence: sourceRelationResult.diagnostics,
       graphProjection: {
         ...graphProjection.adapter,
         pointerId: graphProjection.pointer.pointerId,
@@ -1223,11 +1238,13 @@ async function buildWorldModelLocked({
       gitHistory: gitHistoryResult.adapter,
       runtimeState: externalRuntimeResult.adapter,
       graphProjection: pointer.sourceAdapters.graphProjection,
+      sourceRelationEvidence: pointer.sourceAdapters.sourceRelationEvidence,
     },
     sourceDiagnostics: {
       compute: selectedRepositoryScanExecution.diagnostics,
       gitHistory: gitHistoryResult.diagnostics,
       runtimeState: externalRuntimeResult.diagnostics,
+      sourceRelationEvidence: sourceRelationResult.diagnostics,
     },
   };
 }
@@ -1256,7 +1273,9 @@ export function queryWorldModel({ root = ".", query, depth = 1, maxResults = 100
 
 export function queryWorldTemporalGraph({
   root = ".",
-  query,
+  query = null,
+  anchorIds = null,
+  expectedGraphSnapshotId = null,
   kinds = null,
   relations = null,
   authorityClasses = ["canon-projected", "reviewed", "derived", "heuristic", "runtime-observed"],
@@ -1278,6 +1297,8 @@ export function queryWorldTemporalGraph({
     adapter: graphProjectionAdapter,
     query: {
       query,
+      anchorIds,
+      expectedGraphSnapshotId,
       kinds,
       relations,
       authorityClasses,

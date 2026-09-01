@@ -410,6 +410,21 @@ export const tools = [
               entityKeys: { type: "array", maxItems: 32, description: "Exact Product Canon entity keys selected by HEAD for product-context evidence. Core verifies actual current inclusion; keys never grant authority.", items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } },
               facets: { type: "array", maxItems: 16, items: { type: "string", minLength: 1 } },
               relationTypes: { type: "array", maxItems: 16, items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,63}$" } },
+              graphAnchor: {
+                type: "object",
+                description: "Exact task-local graph anchors proposed by HEAD after semantic analysis. Core only verifies current Project/World/Graph binding and bounded inclusion; the proposal has no Canon, instruction, review, or recovery authority.",
+                properties: {
+                  projectId: { type: "string", minLength: 1, maxLength: 256 },
+                  worldModelId: { type: "string", pattern: "^world-model-[a-f0-9]{24}$" },
+                  graphSnapshotId: { type: "string", pattern: "^graph-snapshot-[a-f0-9]{24}$" },
+                  nodeIds: { type: "array", minItems: 1, maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 256 } },
+                  depth: { type: "integer", minimum: 1, maximum: 3 },
+                  maxNodes: { type: "integer", minimum: 1, maximum: 500 },
+                  maxEdges: { type: "integer", minimum: 1, maximum: 1000 }
+                },
+                required: ["projectId", "worldModelId", "graphSnapshotId", "nodeIds", "depth", "maxNodes", "maxEdges"],
+                additionalProperties: false
+              },
               minimumItems: { type: "integer", minimum: 1, maximum: 20, default: 1 },
               rationale: { type: "string", maxLength: 500 }
             },
@@ -927,12 +942,14 @@ export const tools = [
   },
   {
     name: "head_temporal_graph",
-    description: "Run a deterministic allowlisted traversal over the current rebuildable temporal provenance GraphSnapshot, including Product Canon projections, without granting the graph canon or promotion authority.",
+    description: "Run a deterministic allowlisted traversal over the current rebuildable temporal provenance GraphSnapshot. Use exact_anchor_ids plus expected_graph_snapshot_id for HEAD-proposed semantic anchors; query is lexical discovery fallback only and never proves semantic relevance. Neither mode grants Canon, review, instruction, or recovery authority.",
     inputSchema: {
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
         query: { type: "string", minLength: 1 },
+        exact_anchor_ids: { type: "array", minItems: 1, maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 256 } },
+        expected_graph_snapshot_id: { type: "string", pattern: "^graph-snapshot-[a-f0-9]{24}$" },
         kinds: { type: "array", items: { type: "string" }, uniqueItems: true },
         relation_types: { type: "array", items: { type: "string" }, uniqueItems: true },
         depth: { type: "integer", minimum: 0, maximum: 3, default: 1 },
@@ -941,7 +958,11 @@ export const tools = [
         min_confidence: { type: "number", minimum: 0, maximum: 1, default: 0 },
         include_unreviewed_candidates: { type: "boolean", default: false }
       },
-      required: ["project_root", "query"],
+      required: ["project_root"],
+      oneOf: [
+        { required: ["query"] },
+        { required: ["exact_anchor_ids", "expected_graph_snapshot_id"] }
+      ],
       additionalProperties: false
     }
   },
@@ -1413,6 +1434,8 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                         ? queryWorldTemporalGraph({
                           root: args.project_root,
                           query: args.query,
+                          anchorIds: args.exact_anchor_ids || null,
+                          expectedGraphSnapshotId: args.expected_graph_snapshot_id || null,
                           kinds: args.kinds || null,
                           relations: args.relation_types || null,
                           includeUnreviewedCandidates: args.include_unreviewed_candidates ?? false,

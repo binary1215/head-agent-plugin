@@ -10,6 +10,7 @@ import { emptyProductModelDocument, normalizeProductModelDocument } from "./prod
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
 export const TEMPORAL_PROVENANCE_VERSION = "0.11.0";
+export const TEMPORAL_TRAVERSAL_VERSION = "0.2.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -3112,7 +3113,9 @@ function searchable(node) {
 }
 
 export function queryTemporalProvenanceGraph(graph, {
-  query,
+  query = null,
+  anchorIds = null,
+  expectedGraphSnapshotId = null,
   kinds = null,
   relations = null,
   authorityClasses = ["canon-projected", "reviewed", "derived", "heuristic", "runtime-observed"],
@@ -3125,7 +3128,20 @@ export function queryTemporalProvenanceGraph(graph, {
 } = {}) {
   verifyTemporalProvenanceGraph(graph);
   const normalizedQuery = String(query || "").trim().toLocaleLowerCase();
-  if (!normalizedQuery) fail("Temporal graph query is required.", "TEMPORAL_QUERY_REQUIRED");
+  const exactAnchorIds = anchorIds == null ? [] : anchorIds;
+  if (!Array.isArray(exactAnchorIds)
+    || exactAnchorIds.some((nodeId) => typeof nodeId !== "string" || !nodeId.trim() || nodeId.length > 256)) {
+    fail("Temporal exact anchorIds must be bounded non-empty strings.", "INVALID_TEMPORAL_EXACT_ANCHORS");
+  }
+  if (exactAnchorIds.length > 32 || new Set(exactAnchorIds).size !== exactAnchorIds.length) {
+    fail("Temporal exact anchorIds must be unique and contain at most 32 entries.", "INVALID_TEMPORAL_EXACT_ANCHORS");
+  }
+  const exactAnchorMode = exactAnchorIds.length > 0;
+  if (exactAnchorMode && normalizedQuery) fail("Temporal traversal accepts either query or exact anchorIds, not both.", "AMBIGUOUS_TEMPORAL_ANCHOR_MODE");
+  if (!exactAnchorMode && !normalizedQuery) fail("Temporal graph query or exact anchorIds are required.", "TEMPORAL_QUERY_REQUIRED");
+  if (exactAnchorMode && (!expectedGraphSnapshotId || expectedGraphSnapshotId !== graph.graphSnapshotId)) {
+    fail("Temporal exact anchors must bind to the current GraphSnapshot.", "TEMPORAL_GRAPH_SNAPSHOT_MISMATCH");
+  }
   const allowedKinds = normalizeAllowlist(kinds, TEMPORAL_NODE_KINDS, "kinds");
   const allowedRelations = normalizeAllowlist(relations, TEMPORAL_RELATION_TYPES, "relations");
   const allowedAuthorityClasses = normalizeAllowlist(authorityClasses, [...AUTHORITY_CLASSES], "authorityClasses");
@@ -3155,10 +3171,21 @@ export function queryTemporalProvenanceGraph(graph, {
     && allowedFreshness.includes(edge.freshness) && confidenceOf(edge) >= safeMinimumConfidence;
   const eligibleNodes = graph.nodes.filter(nodeEligible);
   const eligibleNodeIds = new Set(eligibleNodes.map((node) => node.nodeId));
-  const matching = eligibleNodes.filter((node) => searchable(node).includes(normalizedQuery));
+  const nodesById = new Map(graph.nodes.map((node) => [node.nodeId, node]));
+  const normalizedExactAnchorIds = [...exactAnchorIds].sort();
+  if (exactAnchorMode) {
+    const missing = normalizedExactAnchorIds.filter((nodeId) => !nodesById.has(nodeId));
+    if (missing.length) fail(`Temporal exact anchors are absent from the current GraphSnapshot: ${missing.join(", ")}`, "TEMPORAL_EXACT_ANCHOR_NOT_FOUND");
+    const ineligible = normalizedExactAnchorIds.filter((nodeId) => !eligibleNodeIds.has(nodeId));
+    if (ineligible.length) fail(`Temporal exact anchors are outside the requested authority, freshness, scope, or candidate policy: ${ineligible.join(", ")}`, "TEMPORAL_EXACT_ANCHOR_INELIGIBLE");
+  }
+  const matching = exactAnchorMode
+    ? normalizedExactAnchorIds.map((nodeId) => nodesById.get(nodeId))
+    : eligibleNodes.filter((node) => searchable(node).includes(normalizedQuery));
+  if (exactAnchorMode && matching.length > safeMaxNodes) fail("Temporal exact anchors exceed maxNodes.", "TEMPORAL_EXACT_ANCHOR_LIMIT");
   const anchors = matching.slice(0, safeMaxNodes);
   const selected = new Set(anchors.map((node) => node.nodeId));
-  const inclusionReasons = new Map(anchors.map((node) => [node.nodeId, "query-match"]));
+  const inclusionReasons = new Map(anchors.map((node) => [node.nodeId, exactAnchorMode ? "exact-head-anchor" : "lexical-discovery-match"]));
   let frontier = new Set(selected);
   const selectedEdges = [];
   let nodeLimitExcluded = Math.max(0, matching.length - anchors.length);
@@ -3183,8 +3210,10 @@ export function queryTemporalProvenanceGraph(graph, {
   const nodes = graph.nodes.filter((node) => selected.has(node.nodeId));
   selectedEdges.sort((left, right) => left.edgeId.localeCompare(right.edgeId));
   const traversalQuery = {
+    anchorMode: exactAnchorMode ? "exact-head-proposed" : "lexical-discovery",
     normalizedQuery,
     anchorIds: anchors.map((node) => node.nodeId),
+    expectedGraphSnapshotId: exactAnchorMode ? graph.graphSnapshotId : null,
     allowedKinds,
     allowedRelations,
     allowedAuthorityClasses,
@@ -3199,7 +3228,7 @@ export function queryTemporalProvenanceGraph(graph, {
   const queryHash = digest(canonicalJson(traversalQuery));
   const resultPayload = {
     kind: "TemporalTraversalResult",
-    protocol: { name: "head-agent-core-temporal-traversal", version: TEMPORAL_PROVENANCE_VERSION },
+    protocol: { name: "head-agent-core-temporal-traversal", version: TEMPORAL_TRAVERSAL_VERSION },
     graphSnapshotId: graph.graphSnapshotId,
     graphSnapshotHash: graph.graphSnapshotHash,
     sourceSnapshotId: graph.sourceSnapshotId,
@@ -3210,7 +3239,7 @@ export function queryTemporalProvenanceGraph(graph, {
     edges: selectedEdges,
     inclusion: nodes.map((node) => ({ nodeId: node.nodeId, reason: inclusionReasons.get(node.nodeId) || "connected-selected-endpoint" })),
     exclusion: {
-      unmatchedNodeCount: graph.nodes.filter((node) => nodeEligible(node) && !searchable(node).includes(normalizedQuery) && !selected.has(node.nodeId)).length,
+      unmatchedNodeCount: exactAnchorMode ? 0 : graph.nodes.filter((node) => nodeEligible(node) && !searchable(node).includes(normalizedQuery) && !selected.has(node.nodeId)).length,
       disallowedNodeCount: graph.nodes.filter((node) => !nodeEligible(node)).length,
       disallowedEdgeCount: graph.edges.filter((edge) => !edgeEligible(edge)).length,
       nodeLimitExcluded,

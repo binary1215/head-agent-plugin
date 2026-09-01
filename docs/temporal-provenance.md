@@ -69,13 +69,15 @@ The verifier rejects digest mismatch, unsupported node or relation types, duplic
 
 ## Deterministic bounded traversal
 
-`queryTemporalProvenanceGraph` first verifies the complete GraphSnapshot, then constructs a normalized `TraversalQuery`. The query records:
+`queryTemporalProvenanceGraph` first verifies the complete GraphSnapshot, then constructs temporal traversal protocol `0.2.0`. It has two mutually exclusive anchor modes: `lexical-discovery` for explicit search, and `exact-head-proposed` for semantic anchors supplied by HEAD. Exact mode requires one to 32 unique node IDs plus the current `expectedGraphSnapshotId`; every anchor must exist and satisfy the requested kind, authority, freshness, confidence, and candidate policy. The query records:
 
 - node-kind, relation, authority-class, and freshness allowlists;
 - minimum confidence;
 - default exclusion of CandidateSet, candidate, Evidence, Unknown, ProductConceptReference, ProductInitiativeCandidate, and ProductFeatureCandidate nodes, with an explicit `includeUnreviewedCandidates` opt-in;
 - maximum depth, node count, and edge count;
 - anchor identities and deterministic ordering.
+
+Lexical discovery never proves task relevance. Exact anchors do not widen relations or bounds, and stale, missing, cross-snapshot, or ineligible anchors fail closed. Neither mode can write Product Canon, a ReviewDecision, or P2 recovery direction.
 
 The result records graph, query, and result IDs and hashes; selected nodes and edges; inclusion reasons; exclusion counts; and truncation. A backend may accelerate this algorithm later but may not widen the allowlists, reorder semantic results, admit stale evidence, or alter the digest.
 
@@ -85,6 +87,7 @@ The result records graph, query, and result IDs and hashes; selected nodes and e
 node scripts/head.mjs world-index <project> --parent-snapshot <id,id>
 node scripts/head.mjs world-index <project> --revision-parents <json-file>
 node scripts/head.mjs world-temporal <project> --query <text> --kind File,FileRevision --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
+node scripts/head.mjs world-temporal <project> --anchor-ids <node-id,node-id> --graph-snapshot <graph-snapshot-id> --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
 node scripts/head.mjs world-temporal <project> --query <candidate-id> --kind FeatureMappingCandidate,FeatureMappingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
 node scripts/head.mjs world-temporal <project> --query <change-set-id> --relations CHANGES,IMPACTS,SUPERSEDES --depth 3 --limit 200 --edge-limit 400
 node scripts/head.mjs world-temporal <project> --query <change-set-id> --relations MATERIALIZED_AS,REFERENCES --depth 2 --limit 200 --edge-limit 400
@@ -92,10 +95,10 @@ node scripts/head.mjs world-temporal <project> --query <change-set-id> --relatio
 
 `--revision-parents` reads a JSON object whose keys are current logical entity IDs and whose values are arrays of parent Revision IDs. The read-only MCP tool `head_temporal_graph` exposes the same bounded traversal through `include_unreviewed_candidates`. Both reject a stale World Model. ReviewDecision and ProductModelRevision receipts remain visible under normal reviewed traversal; the unreviewed candidate surface requires explicit opt-in and still has no authority effect.
 
-The Context Compiler performs bounded per-file temporal expansion through `GraphProjectionAdapter` and records the GraphSnapshot, SourceSnapshot, TraversalQuery, and traversal result digests in included repository candidates. Local JSON and in-memory adapters must return the exact reference result; absence falls back to the embedded recoverable graph with disclosure, while stale or conflicting projections fail closed. Adapter identity remains outside Capsule identity. See [`graph-projection-adapter.md`](graph-projection-adapter.md).
+The Context Compiler does not infer temporal anchors from task-token overlap. HEAD may attach an exact current `graphAnchor` to a `temporal-relation` EvidenceNeed; Core then emits a separate `GraphTraversalEvidence` carrier only after verifying Project, World Model, GraphSnapshot, node eligibility, relation allowlist, and traversal bounds. Local JSON, in-memory, and activated ArcadeDB adapters must return the exact reference result. Adapter identity remains outside Capsule identity. See [`graph-projection-adapter.md`](graph-projection-adapter.md).
 
 The active deterministic Markdown renderer consumes this verified graph through `DocumentProjectionAdapter` after indexing. It preserves canonical edge direction, links relation endpoints to node pages, and records the exact GraphSnapshot and SourceSnapshot identities. Generated pages are human views only and are never traversed back into Context Compiler input. Edited pages become non-authoritative `DocumentChangeCandidateSet` evidence. Explicit reviews are projected into a later child graph; an application receipt binds the actual application outcome, then a subsequent audit child graph projects that receipt. This two-stage boundary avoids a GraphSnapshot hash depending on a receipt that names the same GraphSnapshot. Context Compiler does not opt into the document candidate surface. See [`document-projection-adapter.md`](document-projection-adapter.md) and [`document-change-review.md`](document-change-review.md).
 
 ## Deferred boundaries
 
-This alpha does not yet infer commit-to-ChangeSet matching, project complete execution lineage, model conformance, or promote general candidates beyond the implemented review scopes. It implements local/in-memory GraphProjectionAdapter and DocumentProjectionAdapter conformance boundaries but not a remote GraphDB, Obsidian, or Notion backend. Explicit document-candidate review/application and later audit projection are active but never infer product meaning from prose. The system still does not infer parent revisions or ChangeSet ancestry, perform merges, automatically promote candidates, or treat current-state pointers as canon.
+This beta does not infer commit-to-ChangeSet matching, project-complete execution lineage, or promote general candidates beyond implemented review scopes. Local/in-memory and explicitly activated ArcadeDB GraphProjectionAdapter paths are implemented; Obsidian, Notion, and non-ArcadeDB remote graph transports remain deferred. Explicit document-candidate review/application and later audit projection are active but never infer product meaning from prose. The system still does not infer parent revisions or ChangeSet ancestry, perform merges, automatically promote candidates, or treat current-state pointers as canon.

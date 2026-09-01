@@ -69,7 +69,7 @@ World Model indexing writes and verifies the immutable World Model snapshot, mat
 
 ## Query and fallback behavior
 
-Temporal queries first compute the deterministic reference contract from the embedded recoverable GraphSnapshot. A current adapter query must return the exact same canonical `TemporalTraversalResult`, including GraphSnapshot, query, result identities, ordering, bounds, inclusion, and exclusion reasons.
+Temporal traversal protocol `0.2.0` first computes the deterministic reference contract from the embedded recoverable GraphSnapshot. Lexical discovery and exact HEAD-proposed anchors are mutually exclusive. Exact mode binds one to 32 eligible node IDs to the current GraphSnapshot and cannot widen the caller's relation, authority, freshness, confidence, depth, node, edge, or candidate policy. A current adapter query must return the exact same canonical `TemporalTraversalResult`, including GraphSnapshot, query, result identities, ordering, bounds, inclusion, and exclusion reasons.
 
 - current adapter: query through the adapter and reject any semantic mismatch;
 - no materialized adapter pointer: use the embedded graph and disclose `GRAPH_PROJECTION_NOT_MATERIALIZED`;
@@ -110,7 +110,7 @@ The server response is evidence, not semantic authority. The client requires the
 
 `PreparedTraversalCostEvidence` protocol `0.1.0` is content-derived from the exact GraphSnapshot and `PreparedTraversalRequest`. Its payload model counts normalized UTF-8 canonical-JSON response components: the identity envelope, graph manifest, bounded expansion, complete GraphSnapshot, and complete topology records. The prepared total contains only the identity envelope, manifest, and bounded expansion. The conservative full-reload baseline adds one complete snapshot and one complete topology record set. This is reproducible logical transport-cost evidence, not a claim about HTTP framing, compression, database cache state, or wall-clock latency.
 
-The reviewed 64-file fixture under `benchmarks/prepared-traversal-v1` fixes graph, request, result, and cost-evidence identities. With the P1-P5 authority boundary and Product Operating summary fields included in the GraphSnapshot, it records 20,478 prepared bytes versus an 834,638-byte baseline, saving 814,160 bytes or 9,754 basis points. Run it with:
+The reviewed 64-file fixture under `benchmarks/prepared-traversal-v1` fixes graph, request, result, and cost-evidence identities. With the P1-P5 authority boundary and current summary fields included in the GraphSnapshot, it records 20,491 prepared bytes versus an 836,589-byte baseline, saving 816,098 bytes or 9,755 basis points. Run it with:
 
 ```text
 npm run benchmark:prepared-traversal -- --iterations 7

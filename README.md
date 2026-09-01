@@ -62,10 +62,11 @@ This restores the work direction, not a transcript or a model persona. See
 ### Give each task bounded, reviewable context
 
 More context is not always better. HEAD performs the semantic task analysis and
-can name exact repository paths in task-local EvidenceNeeds. The Context
+can name exact repository paths, Product entities, and current graph node anchors in task-local EvidenceNeeds. The Context
 Compiler then verifies what was actually included under a fixed budget while
 recording exclusions and stale coverage. Lexical overlap remains fallback
-ranking only; it never makes a current file ineligible or declares sufficiency.
+discovery/ranking only; Core no longer chooses a semantic graph anchor from the
+first matching word, makes a current file ineligible, or declares sufficiency.
 
 The resulting Context Capsule is content-derived and reproducible. The same
 verified inputs, compiler version, task, and budget produce the same identity;
@@ -448,8 +449,10 @@ context window, and output reserve before invocation.
 HEAD decides which evidence the current task actually requires. It can pass
 task-local `EvidenceNeed[]` entries with exact repository `paths` for source or
 test evidence, exact Product Canon `entityKeys` for Product Context, or specific
-graph relations; the Compiler does not invent a universal test rule or infer
-semantics from word overlap.
+graph relations plus exact current `graphAnchor` node IDs and traversal bounds;
+the Compiler does not invent a universal test rule or infer semantics from word
+overlap. Stale, cross-project, hidden-candidate, tampered, or enlarged graph
+anchors fail closed.
 It emits a reproducible `coverageAssessment` proving only whether matching
 evidence was included. The later ExecutionContract records HEAD's separate
 semantic acceptance with the exact need-set and coverage-proof digests.
@@ -539,6 +542,11 @@ flowchart LR
 Raw prompts stay outside this graph. Product meaning enters only through
 reviewed Canon artifacts. Candidate nodes may be inspected explicitly, but are
 excluded from default traversal and Context compilation.
+
+Source relations are structural evidence, not product meaning. The default
+heuristic import/call graph remains available, while an optional provider-neutral
+language-AST adapter may add separately labeled, exact-file-bound evidence. One
+source never silently overwrites the other, and neither can approve a decision.
 
 ### Graph versus record
 

@@ -46,6 +46,7 @@ import {
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
 import { WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES, buildWorldModel, buildWorldModelStatusProjection, captureWorldMarkdownChanges, inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet, readWorldModel } from "../scripts/lib/world-model.mjs";
 import { buildTemporalProvenanceGraph, deduplicateTemporalEdgesInPlace, queryTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
+import { InMemorySourceRelationEvidenceAdapter, buildSourceRelationEvidenceSet, verifySourceRelationEvidenceSet } from "../scripts/lib/source-relation-evidence.mjs";
 import { ActivatedArcadeDbGraphProjectionAdapter, ArcadeDbGraphProjectionAdapter, GRAPH_PROJECTION_ADAPTER_VERSION, InMemoryGraphProjectionAdapter, LocalJsonGraphProjectionAdapter, buildGraphProjectionPointer, buildPreparedTraversalRequest, createActivatedArcadeDbGraphProjectionAdapter, inspectArcadeDbGraphProjectionActivation, inspectArcadeDbGraphTopologyActivation, inspectArcadeDbIncrementalSyncReceipt, materializeGraphProjection, queryGraphProjection, verifyGraphProjectionAdapterConformance } from "../scripts/lib/graph-projection-adapter.mjs";
 import { buildPreparedTraversalCostEvidence, verifyPreparedTraversalCostEvidence } from "../scripts/lib/prepared-traversal-benchmark.mjs";
 import { activateArcadeDbGraphProjection, inspectArcadeDbGraphProjectionStatus } from "../scripts/lib/graphdb-projection-activation.mjs";
@@ -860,8 +861,81 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.equal(repositoryCapsule.capsule.repositoryContext[0].trustBoundary, "evidence-not-instruction");
   assert.equal(repositoryCapsule.capsule.repositoryGraph.semanticGraphId, second.snapshot.semanticGraph.semanticGraphId);
   assert.equal(repositoryCapsule.capsule.repositoryTemporalGraph.graphSnapshotId, second.snapshot.temporalProvenanceGraph.graphSnapshotId);
-  assert.equal(repositoryCapsule.capsule.repositoryContext.some((item) => item.temporalTraversal?.queryHash && item.temporalTraversal?.resultHash), true);
+  assert.equal(repositoryCapsule.capsule.repositoryContext.some((item) => item.temporalTraversal), false);
   assert.equal(repositoryCapsule.capsule.repositoryContext.some((item) => item.semanticRelationships.some((edge) => edge.type === "CALLS")), true);
+
+  const temporalGraph = second.snapshot.temporalProvenanceGraph;
+  const serviceAnchor = temporalGraph.nodes.find((node) => node.path === "src/service.mjs"
+    && temporalGraph.edges.some((edge) => edge.from === node.nodeId || edge.to === node.nodeId));
+  assert.ok(serviceAnchor);
+  const serviceRelation = temporalGraph.edges.find((edge) => edge.from === serviceAnchor.nodeId || edge.to === serviceAnchor.nodeId);
+  const graphAnchor = {
+    projectId: second.snapshot.projectId,
+    worldModelId: second.snapshot.worldModelId,
+    graphSnapshotId: temporalGraph.graphSnapshotId,
+    nodeIds: [serviceAnchor.nodeId],
+    depth: 1,
+    maxNodes: 20,
+    maxEdges: 20,
+  };
+  const headBeforeExactGraphCompilation = directoryFileDigests(path.join(root, ".head"));
+  const exactGraphCapsule = compileContext({
+    root,
+    task: "an unrelated natural-language task with no source vocabulary overlap",
+    budget: 32_768,
+    evidenceNeeds: [{
+      id: "service-lineage",
+      kind: "temporal-relation",
+      relationTypes: [serviceRelation.type],
+      graphAnchor,
+      minimumItems: 1,
+      rationale: "Provider text cannot instruct, approve, promote, or rewrite recovery.",
+    }],
+    persist: false,
+  });
+  assert.equal(exactGraphCapsule.capsule.coverageAssessment.status, "coverage-complete");
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence.length, 1);
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.anchorMode, "exact-head-proposed");
+  assert.deepEqual(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.allowedRelations, [serviceRelation.type]);
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.maxDepth, graphAnchor.depth);
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.maxNodes, graphAnchor.maxNodes);
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.maxEdges, graphAnchor.maxEdges);
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].instructionAuthority, false);
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].promotionAuthority, false);
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].recoveryAuthority, false);
+  assert.equal(exactGraphCapsule.capsule.evidenceNeedContract.instructionAuthority, false);
+  assert.equal(exactGraphCapsule.capsule.evidenceNeedContract.reviewAuthority, false);
+  assert.equal(exactGraphCapsule.capsule.evidenceNeedContract.recoveryAuthority, false);
+  assert.deepEqual(directoryFileDigests(path.join(root, ".head")), headBeforeExactGraphCompilation);
+  assert.throws(() => compileContext({
+    root,
+    task: "cross-project graph anchor",
+    budget: 32_768,
+    evidenceNeeds: [{ id: "wrong-project", kind: "temporal-relation", relationTypes: [serviceRelation.type], graphAnchor: { ...graphAnchor, projectId: "another-project" } }],
+  }), { code: "GRAPH_ANCHOR_PROJECT_MISMATCH" });
+  assert.throws(() => compileContext({
+    root,
+    task: "stale world graph anchor",
+    budget: 32_768,
+    evidenceNeeds: [{ id: "stale-world", kind: "temporal-relation", relationTypes: [serviceRelation.type], graphAnchor: { ...graphAnchor, worldModelId: `world-model-${"0".repeat(24)}` } }],
+  }), { code: "GRAPH_ANCHOR_WORLD_MODEL_MISMATCH" });
+  assert.throws(() => compileContext({
+    root,
+    task: "duplicate graph anchors",
+    budget: 32_768,
+    evidenceNeeds: [{ id: "duplicate-anchor", kind: "temporal-relation", relationTypes: [serviceRelation.type], graphAnchor: { ...graphAnchor, nodeIds: [serviceAnchor.nodeId, serviceAnchor.nodeId] } }],
+  }), { code: "INVALID_EVIDENCE_NEEDS" });
+  const serviceFile = path.join(root, "src", "service.mjs");
+  const serviceBeforeDrift = fs.readFileSync(serviceFile, "utf8");
+  fs.appendFileSync(serviceFile, "// simulated post-compaction source drift\n");
+  assert.throws(() => compileContext({
+    root,
+    task: "stale graph anchor after context replacement",
+    budget: 32_768,
+    evidenceNeeds: [{ id: "post-compaction-stale", kind: "temporal-relation", relationTypes: [serviceRelation.type], graphAnchor }],
+  }), { code: "GRAPH_ANCHOR_WORLD_MODEL_STALE" });
+  fs.writeFileSync(serviceFile, serviceBeforeDrift);
+  assert.equal(inspectWorldModel({ root }).status, "current");
 
   const neighborhood = queryWorldModel({ root, query: "serve", depth: 1, maxResults: 20 });
   assert.equal(neighborhood.status, "current");
@@ -884,6 +958,83 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   stored.summary.fileCount += 1;
   fs.writeFileSync(second.file, `${JSON.stringify(stored, null, 2)}\n`);
   assert.throws(() => readWorldModel({ root }), { code: "WORLD_MODEL_DIGEST_MISMATCH" });
+});
+
+test("adds optional source-separated AST relation evidence without replacing the heuristic fallback", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  const targetSource = "export function target() { return true; }\n";
+  const callerSource = "import { target } from './target.mjs';\nexport function invoke() { return target(); }\n";
+  fs.writeFileSync(path.join(root, "src", "target.mjs"), targetSource);
+  fs.writeFileSync(path.join(root, "src", "caller.mjs"), callerSource);
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const callerDigest = crypto.createHash("sha256").update(Buffer.from(callerSource)).digest("hex");
+  const adapter = new InMemorySourceRelationEvidenceAdapter({
+    analyzer: { name: "fixture-javascript-ast", version: "1.0.0", method: "ast" },
+    relations: [{
+      type: "CALLS",
+      from: { kind: "symbol", path: "src/caller.mjs", name: "invoke", symbolKind: "function", line: 2 },
+      to: { kind: "symbol", path: "src/target.mjs", name: "target", symbolKind: "function", line: 1 },
+      evidence: { path: "src/caller.mjs", line: 2, digest: callerDigest },
+      language: "javascript",
+    }],
+  });
+  const indexed = await buildWorldModel({ root, sourceRelationEvidenceAdapter: adapter });
+  const astEdges = indexed.snapshot.semanticGraph.edges.filter((edge) => edge.evidenceSource?.kind === "language-ast-adapter");
+  assert.equal(astEdges.length, 1);
+  assert.equal(astEdges[0].confidence, "ast-derived-structural-evidence");
+  assert.equal(astEdges[0].evidenceSource.authority, "derived-structural-evidence-only");
+  assert.equal(indexed.snapshot.semanticGraph.accuracy, "heuristic-fallback-plus-source-separated-ast-evidence");
+  assert.equal(indexed.snapshot.semanticGraph.summary.astEvidenceEdgeCount, 1);
+  assert.equal(indexed.snapshot.semanticGraph.edges.some((edge) => edge.type === "CALLS" && edge.confidence === "heuristic"), true);
+  assert.equal(inspectWorldModel({ root }).status, "current");
+  assert.equal(indexed.pointer.sourceAdapters.sourceRelationEvidence.status, "collected");
+  assert.equal(Object.hasOwn(indexed.snapshot.semanticGraph.sourceRelationEvidence, "providerSessionId"), false);
+
+  const evidence = adapter.collect({
+    projectId: indexed.snapshot.projectId,
+    files: indexed.snapshot.files.map((file) => ({ path: file.path, digest: file.digest, language: file.language })),
+  });
+  assert.equal(verifySourceRelationEvidenceSet(evidence).instructionAuthority, false);
+  assert.throws(() => buildSourceRelationEvidenceSet({
+    projectId: indexed.snapshot.projectId,
+    files: evidence.files,
+    analyzer: { name: "invalid", version: "1", method: "prompt" },
+    relations: [],
+  }), { code: "INVALID_SOURCE_RELATION_EVIDENCE" });
+  assert.throws(() => verifySourceRelationEvidenceSet({ ...evidence, providerSessionId: "must-not-persist" }), { code: "INVALID_SOURCE_RELATION_EVIDENCE" });
+
+  const staleFiles = evidence.files.map((file) => file.path === "src/caller.mjs" ? { ...file, digest: "0".repeat(64) } : file);
+  const staleEvidence = buildSourceRelationEvidenceSet({
+    projectId: indexed.snapshot.projectId,
+    files: staleFiles,
+    analyzer: evidence.analyzer,
+    relations: [{
+      type: "CALLS",
+      from: { kind: "symbol", path: "src/caller.mjs", name: "invoke", symbolKind: "function", line: 2 },
+      to: { kind: "symbol", path: "src/target.mjs", name: "target", symbolKind: "function", line: 1 },
+      evidence: { path: "src/caller.mjs", line: 2, digest: "0".repeat(64) },
+      language: "javascript",
+    }],
+  });
+  await assert.rejects(buildWorldModel({
+    root,
+    persist: false,
+    sourceRelationEvidenceAdapter: { adapterKind: "stale-ast-fixture", collect: () => staleEvidence },
+  }), { code: "SOURCE_RELATION_EVIDENCE_SOURCE_MISMATCH" });
+
+  const missingEndpointAdapter = new InMemorySourceRelationEvidenceAdapter({
+    analyzer: { name: "fixture-javascript-ast", version: "1.0.0", method: "ast" },
+    relations: [{
+      type: "CALLS",
+      from: { kind: "symbol", path: "src/caller.mjs", name: "missing", symbolKind: "function", line: 2 },
+      to: { kind: "symbol", path: "src/target.mjs", name: "target", symbolKind: "function", line: 1 },
+      evidence: { path: "src/caller.mjs", line: 2, digest: callerDigest },
+      language: "javascript",
+    }],
+  });
+  await assert.rejects(buildWorldModel({ root, persist: false, sourceRelationEvidenceAdapter: missingEndpointAdapter }), { code: "SOURCE_RELATION_EVIDENCE_ENDPOINT_MISSING" });
 });
 
 test("separates Host operational refs from product Git freshness while preserving branch, remote, and tag drift", async (t) => {
@@ -1506,6 +1657,45 @@ test("builds deterministic Git-independent temporal provenance with multiple par
   assert.equal(queryA.resultId, queryB.resultId);
   assert.equal(queryA.edges.every((edge) => ["CURRENT_REVISION", "HAS_REVISION", "DECLARES"].includes(edge.type)), true);
   assert.equal(queryA.traversalQuery.includeUnreviewedCandidates, false);
+  const changedFile = changed.nodes.find((node) => node.kind === "File" && node.path === "src/service.mjs");
+  const exact = queryTemporalProvenanceGraph(changed, {
+    anchorIds: [changedFile.nodeId],
+    expectedGraphSnapshotId: changed.graphSnapshotId,
+    relations: ["CURRENT_REVISION", "HAS_REVISION", "DECLARES"],
+    depth: 2,
+    maxNodes: 20,
+    maxEdges: 40,
+  });
+  assert.equal(exact.traversalQuery.anchorMode, "exact-head-proposed");
+  assert.equal(exact.traversalQuery.normalizedQuery, "");
+  assert.equal(exact.inclusion.find((item) => item.nodeId === changedFile.nodeId).reason, "exact-head-anchor");
+  assert.throws(() => queryTemporalProvenanceGraph(changed, {
+    query: "service",
+    anchorIds: [changedFile.nodeId],
+    expectedGraphSnapshotId: changed.graphSnapshotId,
+  }), { code: "AMBIGUOUS_TEMPORAL_ANCHOR_MODE" });
+  assert.throws(() => queryTemporalProvenanceGraph(changed, {
+    anchorIds: [changedFile.nodeId],
+    expectedGraphSnapshotId: first.graphSnapshotId,
+  }), { code: "TEMPORAL_GRAPH_SNAPSHOT_MISMATCH" });
+  assert.throws(() => queryTemporalProvenanceGraph(changed, {
+    anchorIds: ["missing-exact-node"],
+    expectedGraphSnapshotId: changed.graphSnapshotId,
+  }), { code: "TEMPORAL_EXACT_ANCHOR_NOT_FOUND" });
+  const wideLexicalGraph = buildTemporalProvenanceGraph({
+    projectId: "project-wide-lexical-traversal",
+    files: Array.from({ length: 40 }, (_, index) => ({
+      path: `wide/component-${String(index).padStart(2, "0")}.mjs`,
+      digest: crypto.createHash("sha256").update(`wide-${index}`).digest("hex"),
+      language: "javascript",
+      classification: "source",
+      symbols: [],
+    })),
+  });
+  const wideLexicalResult = queryTemporalProvenanceGraph(wideLexicalGraph, { query: "wide/component", depth: 0, maxNodes: 100, maxEdges: 0 });
+  assert.equal(wideLexicalResult.traversalQuery.anchorMode, "lexical-discovery");
+  assert.equal(wideLexicalResult.traversalQuery.anchorIds.length, 80);
+  assert.doesNotThrow(() => buildPreparedTraversalRequest({ graph: wideLexicalGraph, result: wideLexicalResult }));
   const tampered = clone(changed);
   tampered.nodes.find((node) => node.kind === "File").path = "tampered.mjs";
   assert.throws(() => verifyTemporalProvenanceGraph(tampered), { code: "TEMPORAL_GRAPH_DIGEST_MISMATCH" });
@@ -1532,6 +1722,32 @@ test("builds deterministic Git-independent temporal provenance with multiple par
     params: { name: "head_temporal_graph", arguments: { project_root: root, query: "service.mjs", depth: 1, node_limit: 30, edge_limit: 50 } },
   });
   assert.equal(mcpTemporal.result.structuredContent.graphSnapshotId, indexed.snapshot.temporalProvenanceGraph.graphSnapshotId);
+  const indexedFile = indexed.snapshot.temporalProvenanceGraph.nodes.find((node) => node.kind === "File" && node.path === "src/service.mjs");
+  const mcpExactTemporal = await dispatchMcp({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "head_temporal_graph", arguments: {
+      project_root: root,
+      exact_anchor_ids: [indexedFile.nodeId],
+      expected_graph_snapshot_id: indexed.snapshot.temporalProvenanceGraph.graphSnapshotId,
+      relation_types: ["HAS_REVISION", "CURRENT_REVISION"],
+      depth: 1,
+      node_limit: 30,
+      edge_limit: 50,
+    } },
+  });
+  assert.equal(mcpExactTemporal.result.structuredContent.traversalQuery.anchorMode, "exact-head-proposed");
+  const cliExactTemporal = runCommand([
+    "world-temporal", root,
+    "--anchor-ids", indexedFile.nodeId,
+    "--graph-snapshot", indexed.snapshot.temporalProvenanceGraph.graphSnapshotId,
+    "--relations", "HAS_REVISION,CURRENT_REVISION",
+    "--depth", "1",
+    "--limit", "30",
+    "--edge-limit", "50",
+  ]);
+  assert.equal(cliExactTemporal.resultId, mcpExactTemporal.result.structuredContent.resultId);
 });
 
 test("materializes and queries temporal graphs through an authority-free replaceable adapter", async (t) => {
@@ -2399,6 +2615,23 @@ test("promotes document edits only through explicit structured Product Canon rev
     includeUnreviewedCandidates: true,
   });
   assert.equal(visibleDocumentCandidate.nodes.some((node) => node.kind === "DocumentChangeCandidate"), true);
+  const currentDocumentGraph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.throws(() => queryWorldTemporalGraph({
+    root,
+    anchorIds: [captured.candidateSet.candidates[0].candidateId],
+    expectedGraphSnapshotId: currentDocumentGraph.graphSnapshotId,
+    freshness: ["historical"],
+    depth: 0,
+  }), { code: "TEMPORAL_EXACT_ANCHOR_INELIGIBLE" });
+  const exactVisibleDocumentCandidate = queryWorldTemporalGraph({
+    root,
+    anchorIds: [captured.candidateSet.candidates[0].candidateId],
+    expectedGraphSnapshotId: currentDocumentGraph.graphSnapshotId,
+    freshness: ["historical"],
+    includeUnreviewedCandidates: true,
+    depth: 0,
+  });
+  assert.equal(exactVisibleDocumentCandidate.nodes.some((node) => node.kind === "DocumentChangeCandidate"), true);
   assert.equal(inspectDocumentChangeReviewStatus({ root, candidateSetId: captured.candidateSet.candidateSetId }).status, "applied");
   assert.equal(readDocumentChangeApplicationReceipt({ root, applicationReceiptId: applied.applicationReceipt.applicationReceiptId }).applicationReceipt.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
   assert.equal(runCommand(["world-docs-application-read", root, "--application", applied.applicationReceipt.applicationReceiptId]).applicationReceipt.applicationReceiptId, applied.applicationReceipt.applicationReceiptId);

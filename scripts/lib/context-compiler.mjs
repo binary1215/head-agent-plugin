@@ -5,7 +5,7 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.13.0";
+export const CONTEXT_COMPILER_VERSION = "0.14.0";
 export const CONTEXT_COVERAGE_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
@@ -27,8 +27,6 @@ const MAX_REPOSITORY_GRAPH_EXPANSIONS = 32;
 const MAX_CONTEXT_SYMBOLS_PER_FILE = 12;
 const MAX_CONTEXT_DEPENDENCIES_PER_FILE = 12;
 const MAX_CONTEXT_RELATIONSHIPS_PER_FILE = 4;
-const MAX_REPOSITORY_TEMPORAL_ENTITIES = 4;
-const MAX_REPOSITORY_TEMPORAL_RELATIONSHIPS = 6;
 const MAX_PRODUCT_CONTEXT_ENTITIES = 24;
 const MAX_PRODUCT_CONTEXT_RELATIONSHIPS = 48;
 
@@ -159,8 +157,10 @@ function compactTraversalMetadata(traversal) {
     resultId: traversal.resultId,
     resultHash: traversal.resultHash,
     traversalQuerySummary: {
+      anchorMode: query.anchorMode,
       normalizedQuery: query.normalizedQuery,
       anchorIds: compactList(query.anchorIds),
+      expectedGraphSnapshotId: query.expectedGraphSnapshotId,
       allowedKinds: compactList(query.allowedKinds),
       allowedRelations: query.allowedRelations || [],
       allowedAuthorityClasses: query.allowedAuthorityClasses || [],
@@ -327,11 +327,10 @@ function queryTemporalProjection(worldModel, graphProjectionAdapter, query) {
   }).result;
 }
 
-function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, budget = DEFAULT_CONTEXT_BUDGET) {
+function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET) {
   if (!worldModel || worldModel.status !== "current") return [];
   const taskTerms = terms(task);
   const graph = worldModel.snapshot.semanticGraph || null;
-  const temporalGraph = worldModel.snapshot.temporalProvenanceGraph || null;
   const nodes = new Map((graph?.nodes || []).map((node) => [node.id, node]));
   const nodeReference = (node) => node ? {
     id: node.id,
@@ -389,21 +388,8 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
     if (expandedPaths.size >= expansionLimit) break;
     expandedPaths.add(item.file.path);
   }
-  const temporalAnchorPath = ranked.find((item) => item.relevance > 0)?.file.path || "";
-  const sharedTemporalTraversal = temporalGraph && temporalAnchorPath ? queryTemporalProjection(worldModel, graphProjectionAdapter, {
-    query: temporalAnchorPath,
-    relations: ["CONTAINS", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "CHANGES"],
-    authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
-    freshness: ["current"],
-    minConfidence: 0,
-    includeUnreviewedCandidates: false,
-    depth: 2,
-    maxNodes: 50,
-    maxEdges: 100,
-  }) : null;
   return ranked.map(({ file, relevance: lightweightRelevance, matchedTerms: lightweightMatches, pathMatchedTerms, importance, score: lightweightScore }) => {
     const expanded = expandedPaths.has(file.path);
-    const temporalTraversal = file.path === temporalAnchorPath ? sharedTemporalTraversal : null;
     const allRelationships = (expanded ? relationshipEdgesByPath.get(file.path) || [] : []).map((edge) => ({
       id: edge.id,
       type: edge.type,
@@ -430,25 +416,12 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
       ...file.symbols.map((item) => `${item.kind} ${item.name}`),
       ...file.dependencies.map((item) => `${item.kind} ${item.specifier}`),
       ...relationships.flatMap((item) => [item.type, item.from?.path, item.from?.name, item.to?.path, item.to?.name, item.to?.specifier]).filter(Boolean),
-      ...(temporalTraversal?.nodes || []).flatMap((item) => [item.kind, item.path, item.name, item.symbolKind]).filter(Boolean),
     ].join(" ");
     const matches = expanded ? matchedTerms(taskTerms, terms(body)) : lightweightMatches;
     const relevance = matches.length;
     const score = expanded ? relevance * 25 + pathMatchedTerms.length * 10 + importance * 4 : lightweightScore;
     const symbols = rankBounded(file.symbols, taskTerms, (item) => `${item.kind} ${item.name}`, MAX_CONTEXT_SYMBOLS_PER_FILE);
     const dependencies = rankBounded(file.dependencies, taskTerms, (item) => `${item.kind} ${item.specifier}`, MAX_CONTEXT_DEPENDENCIES_PER_FILE);
-    const allTemporalEntities = temporalTraversal?.nodes || [];
-    const temporalEntities = rankBounded(allTemporalEntities, taskTerms, (item) => [
-      item.kind,
-      item.key,
-      item.path,
-      item.name,
-      item.symbolKind,
-    ].filter(Boolean).join(" "), MAX_REPOSITORY_TEMPORAL_ENTITIES);
-    const temporalEntityIds = new Set(temporalEntities.map((item) => item.nodeId || item.id));
-    const allTemporalRelationships = temporalTraversal?.edges || [];
-    const temporalRelationships = allTemporalRelationships.filter((edge) => temporalEntityIds.has(edge.from) || temporalEntityIds.has(edge.to))
-      .slice(0, MAX_REPOSITORY_TEMPORAL_RELATIONSHIPS);
     const record = {
       kind: "RepositoryFile",
       path: file.path,
@@ -463,16 +436,9 @@ function repositoryCandidates(worldModel, task, graphProjectionAdapter = null, b
         symbols: Math.max(0, file.symbols.length - symbols.length),
         dependencies: Math.max(0, file.dependencies.length - dependencies.length),
         semanticRelationships: Math.max(0, allRelationships.length - relationships.length),
-        temporalEntities: Math.max(0, allTemporalEntities.length - temporalEntities.length),
-        temporalRelationships: Math.max(0, allTemporalRelationships.length - temporalRelationships.length),
       },
       semanticGraphId: graph?.semanticGraphId || null,
-      temporalEntities,
-      temporalRelationships,
-      temporalTraversal: compactTraversalMetadata(temporalTraversal),
-      graphExpansion: temporalTraversal
-        ? "bounded-temporal-anchor"
-        : expanded ? "bounded-semantic-adjacency" : "not-expanded-by-relevance-bound",
+      graphExpansion: expanded ? "bounded-semantic-adjacency" : "not-expanded-by-relevance-bound",
       worldModelId: worldModel.snapshot.worldModelId,
       trustBoundary: "evidence-not-instruction",
     };
@@ -599,6 +565,67 @@ function productContextCandidates(worldModel, task, graphProjectionAdapter = nul
     .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
+function graphTraversalCandidates(worldModel, evidenceNeeds, graphProjectionAdapter = null) {
+  const anchoredNeeds = evidenceNeeds.filter((need) => need.kind === "temporal-relation" && need.graphAnchor);
+  if (!anchoredNeeds.length) return [];
+  if (!worldModel || worldModel.status !== "current") {
+    fail("HEAD graph anchors require a current digest-verified World Model.", "GRAPH_ANCHOR_WORLD_MODEL_STALE");
+  }
+  const snapshot = worldModel.snapshot;
+  const graph = snapshot.temporalProvenanceGraph;
+  if (!graph) fail("HEAD graph anchors require a current temporal GraphSnapshot.", "GRAPH_ANCHOR_GRAPH_NOT_BUILT");
+  return anchoredNeeds.map((need) => {
+    const proposal = need.graphAnchor;
+    if (proposal.projectId !== snapshot.projectId) fail(`Evidence need ${need.id} graphAnchor belongs to another Project.`, "GRAPH_ANCHOR_PROJECT_MISMATCH");
+    if (proposal.worldModelId !== snapshot.worldModelId) fail(`Evidence need ${need.id} graphAnchor is stale for the current World Model.`, "GRAPH_ANCHOR_WORLD_MODEL_MISMATCH");
+    if (proposal.graphSnapshotId !== graph.graphSnapshotId) fail(`Evidence need ${need.id} graphAnchor is stale for the current GraphSnapshot.`, "GRAPH_ANCHOR_GRAPH_SNAPSHOT_MISMATCH");
+    const traversal = queryTemporalProjection(worldModel, graphProjectionAdapter, {
+      anchorIds: proposal.nodeIds,
+      expectedGraphSnapshotId: proposal.graphSnapshotId,
+      relations: need.relationTypes,
+      authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic", "runtime-observed"],
+      freshness: ["current"],
+      minConfidence: 0,
+      includeUnreviewedCandidates: false,
+      depth: proposal.depth,
+      maxNodes: proposal.maxNodes,
+      maxEdges: proposal.maxEdges,
+    });
+    const nodePaths = new Map(traversal.nodes.map((node) => [node.nodeId, node.path || null]));
+    const relationships = traversal.edges.map((edge) => ({
+      ...edge,
+      endpointPaths: [...new Set([nodePaths.get(edge.from), nodePaths.get(edge.to)].filter(Boolean))].sort(),
+    }));
+    const record = {
+      kind: "GraphTraversalEvidence",
+      evidenceNeedId: need.id,
+      graphAnchorProposal: proposal,
+      projectId: snapshot.projectId,
+      worldModelId: snapshot.worldModelId,
+      graphSnapshotId: graph.graphSnapshotId,
+      nodes: traversal.nodes,
+      relationships,
+      temporalTraversal: compactTraversalMetadata(traversal),
+      authority: "derived-evidence-only",
+      instructionAuthority: false,
+      promotionAuthority: false,
+      recoveryAuthority: false,
+      semanticAcceptance: "HEAD-only",
+      trustBoundary: "provider-proposal-validated-as-current-bounded-evidence-not-instruction",
+    };
+    return {
+      id: `graph-traversal-evidence:${need.id}:${traversal.resultId}`,
+      kind: "GraphTraversalEvidence",
+      score: 100,
+      relevance: 0,
+      matchedTerms: [],
+      importance: 5,
+      approxTokens: approxTokens(canonicalJson(record)),
+      record,
+    };
+  }).sort((left, right) => left.id.localeCompare(right.id));
+}
+
 function gitDecisionCandidates(worldModel, task, historyClass) {
   if (!worldModel || worldModel.status !== "current" || historyClass === "NONE") return [];
   const history = worldModel.snapshot.gitDecisionHistory;
@@ -692,7 +719,7 @@ function normalizeEvidenceNeeds(evidenceNeeds) {
   if (evidenceNeeds == null) return [];
   if (!Array.isArray(evidenceNeeds)) fail("HEAD evidence needs must be an array.", "INVALID_EVIDENCE_NEEDS");
   if (evidenceNeeds.length > 32) fail("HEAD evidence needs may contain at most 32 items.", "INVALID_EVIDENCE_NEEDS");
-  const allowedKeys = new Set(["id", "kind", "paths", "entityKeys", "facets", "relationTypes", "minimumItems", "rationale"]);
+  const allowedKeys = new Set(["id", "kind", "paths", "entityKeys", "facets", "relationTypes", "graphAnchor", "minimumItems", "rationale"]);
   const knownKinds = new Set(EVIDENCE_NEED_KINDS);
   const seen = new Set();
   const normalized = evidenceNeeds.map((value, index) => {
@@ -737,11 +764,42 @@ function normalizeEvidenceNeeds(evidenceNeeds) {
     if (relationTypes.length && !["semantic-relation", "temporal-relation"].includes(kind)) {
       fail(`Evidence need ${id} may use relationTypes only with a relation kind.`, "INVALID_EVIDENCE_NEEDS");
     }
+    let graphAnchor = null;
+    if (value.graphAnchor != null) {
+      if (kind !== "temporal-relation" || !value.graphAnchor || typeof value.graphAnchor !== "object" || Array.isArray(value.graphAnchor)) {
+        fail(`Evidence need ${id} may use graphAnchor only with temporal-relation evidence.`, "INVALID_EVIDENCE_NEEDS");
+      }
+      const graphAnchorKeys = new Set(["projectId", "worldModelId", "graphSnapshotId", "nodeIds", "depth", "maxNodes", "maxEdges"]);
+      const unsupported = Object.keys(value.graphAnchor).filter((key) => !graphAnchorKeys.has(key));
+      if (unsupported.length) fail(`Evidence need ${id} graphAnchor has unsupported fields: ${unsupported.sort().join(", ")}.`, "INVALID_EVIDENCE_NEEDS");
+      const projectId = String(value.graphAnchor.projectId || "").trim();
+      const worldModelId = String(value.graphAnchor.worldModelId || "").trim();
+      const graphSnapshotId = String(value.graphAnchor.graphSnapshotId || "").trim();
+      const rawNodeIds = value.graphAnchor.nodeIds;
+      const nodeIds = Array.isArray(rawNodeIds) ? rawNodeIds.map((nodeId) => typeof nodeId === "string" ? nodeId.trim() : nodeId) : rawNodeIds;
+      const depth = Number(value.graphAnchor.depth);
+      const maxNodes = Number(value.graphAnchor.maxNodes);
+      const maxEdges = Number(value.graphAnchor.maxEdges);
+      if (!projectId || projectId.length > 256
+        || !/^world-model-[a-f0-9]{24}$/.test(worldModelId)
+        || !/^graph-snapshot-[a-f0-9]{24}$/.test(graphSnapshotId)
+        || !Array.isArray(nodeIds) || nodeIds.length < 1 || nodeIds.length > 32
+        || nodeIds.some((nodeId) => typeof nodeId !== "string" || !nodeId.trim() || nodeId.length > 256)
+        || new Set(nodeIds).size !== nodeIds.length
+        || !Number.isInteger(depth) || depth < 1 || depth > 3
+        || !Number.isInteger(maxNodes) || maxNodes < nodeIds.length || maxNodes > 500
+        || !Number.isInteger(maxEdges) || maxEdges < 1 || maxEdges > 1000
+        || relationTypes.length < 1 || facets.length > 0) {
+        fail(`Evidence need ${id} graphAnchor must be exact, current-bindable, relation-bounded, and within traversal limits.`, "INVALID_EVIDENCE_NEEDS");
+      }
+      const proposal = { projectId, worldModelId, graphSnapshotId, nodeIds: [...nodeIds].sort(), depth, maxNodes, maxEdges };
+      graphAnchor = { ...proposal, proposalDigest: digest(canonicalJson(proposal)) };
+    }
     const minimumItems = value.minimumItems == null ? 1 : Number(value.minimumItems);
     if (!Number.isInteger(minimumItems) || minimumItems < 1 || minimumItems > 20) fail(`Evidence need ${id} minimumItems must be an integer from 1 to 20.`, "INVALID_EVIDENCE_NEEDS");
     const rationale = value.rationale == null ? "" : String(value.rationale).trim();
     if (rationale.length > 500) fail(`Evidence need ${id} rationale must be at most 500 characters.`, "INVALID_EVIDENCE_NEEDS");
-    return { id, kind, paths, entityKeys, facets, relationTypes, minimumItems, rationale };
+    return { id, kind, paths, entityKeys, facets, relationTypes, graphAnchor, minimumItems, rationale };
   });
   return normalized.sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -754,6 +812,9 @@ function evidenceNeedContract(task, evidenceNeeds) {
     taskDigest: digest(task.trim()),
     needs,
     productCanonAuthority: false,
+    instructionAuthority: false,
+    reviewAuthority: false,
+    recoveryAuthority: false,
   };
   return {
     ...contract,
@@ -781,7 +842,8 @@ function evidenceItem(candidate, { id = candidate.id, kind, path = null, relatio
 function candidateEvidenceMatches(candidate, need) {
   const record = candidate.record;
   const candidateBody = canonicalJson(record);
-  if (need.paths.length && (!record.path || !need.paths.includes(record.path))) return [];
+  if (need.paths.length && candidate.kind !== "GraphTraversalEvidence" && (!record.path || !need.paths.includes(record.path))) return [];
+  if (candidate.kind === "GraphTraversalEvidence" && record.evidenceNeedId !== need.id) return [];
   let matchedEntityKeys = [];
   if (need.entityKeys.length) {
     if (candidate.kind !== "ProductContext") return [];
@@ -820,10 +882,11 @@ function candidateEvidenceMatches(candidate, need) {
     ? (candidate.kind === "RepositoryFile" ? record.semanticRelationships || [] : [])
     : candidate.kind === "RepositoryFile"
       ? record.temporalRelationships || []
-      : candidate.kind === "ProductContext" ? record.relationships || [] : [];
+      : ["ProductContext", "GraphTraversalEvidence"].includes(candidate.kind) ? record.relationships || [] : [];
   return relationValues.filter((relation) => {
     const relationType = String(relation.type || "").toUpperCase();
     if (need.relationTypes.length && !need.relationTypes.includes(relationType)) return false;
+    if (need.paths.length && !(relation.endpointPaths || []).some((item) => need.paths.includes(item))) return false;
     return facetMatch(`${record.path || ""} ${canonicalJson(relation)}`, need.facets);
   }).map((relation, index) => {
     const relationType = String(relation.type || "").toUpperCase();
@@ -1013,7 +1076,8 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
   const candidates = [
     ...activeCandidates(sources.knowledge, task, historyClass),
     ...productContextCandidates(sources.worldModel, task, graphProjectionAdapter, needContract.needs),
-    ...repositoryCandidates(sources.worldModel, task, graphProjectionAdapter, maxApproxTokens),
+    ...graphTraversalCandidates(sources.worldModel, needContract.needs, graphProjectionAdapter),
+    ...repositoryCandidates(sources.worldModel, task, maxApproxTokens),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
   ].sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
@@ -1057,6 +1121,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     productContext: selection.included.filter((item) => item.kind === "ProductContext").map((item) => item.record),
     gitDecisionEvidence: selection.included.filter((item) => item.kind === "GitDecisionEvidence").map((item) => item.record),
     runtimeStateEvidence: selection.included.filter((item) => item.kind === "RuntimeStateEvidence").map((item) => item.record),
+    graphTraversalEvidence: selection.included.filter((item) => item.kind === "GraphTraversalEvidence").map((item) => item.record),
     repositoryGraph: sources.worldModel?.status === "current" && sources.worldModel.snapshot.semanticGraph ? {
       semanticGraphId: sources.worldModel.snapshot.semanticGraph.semanticGraphId,
       accuracy: sources.worldModel.snapshot.semanticGraph.accuracy,

@@ -158,7 +158,7 @@ export function usage({ all = false } = {}) {
       "head world-docs-refresh-status <project>",
       "head world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>",
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
-      "head world-temporal <project> --query <text> [--kind <kind,kind>] [--relations <type,type>] [--include-candidates <true|false>] [--depth <0-3>] [--limit <1-500>] [--edge-limit <0-1000>] [--min-confidence <0-1>]",
+      "head world-temporal <project> (--query <discovery-text> | --anchor-ids <node-id,node-id> --graph-snapshot <graph-snapshot-id>) [--kind <kind,kind>] [--relations <type,type>] [--include-candidates <true|false>] [--depth <0-3>] [--limit <1-500>] [--edge-limit <0-1000>] [--min-confidence <0-1>]",
       "head world-history <project> [--query <text>] [--limit <1-500>]",
       "head world-runtime <project> [--query <text>] [--runtime <name>] [--state <state>] [--kind <kind>] [--limit <1-500>]",
       "head checkpoint <project> --summary <text> [--next <text>]",
@@ -445,6 +445,8 @@ export function runCommand(argv = process.argv.slice(2)) {
   if (command === "world-temporal") return queryWorldTemporalGraph({
     root,
     query: options.query,
+    anchorIds: options["anchor-ids"] ? options["anchor-ids"].split(",").map((item) => item.trim()).filter(Boolean) : null,
+    expectedGraphSnapshotId: options["graph-snapshot"] || null,
     kinds: options.kind ? options.kind.split(",").map((item) => item.trim()).filter(Boolean) : null,
     relations: options.relations ? options.relations.split(",").map((item) => item.trim()).filter(Boolean) : null,
     includeUnreviewedCandidates: options["include-candidates"] === "true",

@@ -62,10 +62,9 @@ AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으�
 ### 범위가 명확하고 검토 가능한 컨텍스트를 전달합니다
 
 컨텍스트는 많다고 항상 좋은 것이 아닙니다. HEAD가 task의 의미를 분석하고
-task-local EvidenceNeeds에 정확한 repository path를 지정할 수 있습니다. Context
+task-local EvidenceNeeds에 정확한 repository path, Product entity, 현재 graph node anchor를 지정할 수 있습니다. Context
 Compiler는 정해진 예산 안에서 실제 포함 여부를 검증하고 제외 정보와 stale coverage를
-기록합니다. lexical overlap은 fallback ranking일 뿐이며, 현재 file을 탈락시키거나
-sufficiency를 선언하지 않습니다.
+기록합니다. lexical overlap은 discovery/fallback ranking일 뿐입니다. Core는 첫 일치 단어로 semantic graph anchor를 고르거나, 현재 file을 탈락시키거나 sufficiency를 선언하지 않습니다.
 
 그 결과인 Context Capsule은 내용으로 식별되며 재현할 수 있습니다. 검증된
 입력, 컴파일러 버전, 작업과 예산이 같으면 같은 식별자가 만들어지고, 정본이나
@@ -439,8 +438,7 @@ Context Compiler는 명시적인 예산 안에서 작업과 관련된 증거를 
 
 현재 작업에 실제로 필요한 증거는 HEAD가 정합니다. HEAD는 source 또는 test
 증거에는 정확한 repository `paths`, Product Context에는 정확한 Product Canon
-`entityKeys`, 그 밖에는 특정 그래프 관계를 task-local `EvidenceNeed[]`로 지정할 수 있으며, Compiler가 모든 작업에 테스트를 일률적으로
-요구하거나 단어 overlap으로 의미를 추론하지 않습니다. Compiler는 일치하는 증거가 실제 Capsule에 포함됐는지만
+`entityKeys`, 그 밖에는 특정 graph relation과 현재 exact `graphAnchor` node ID 및 traversal bound를 task-local `EvidenceNeed[]`로 지정할 수 있습니다. stale, cross-project, hidden-candidate, tampered 또는 확대된 graph anchor는 fail closed됩니다. Compiler는 모든 작업에 test를 일률적으로 요구하거나 단어 overlap으로 의미를 추론하지 않으며, 일치하는 증거가 실제 Capsule에 포함됐는지만
 `coverageAssessment`로 재현 가능하게 증명합니다. 이후 ExecutionContract가
 정확한 need-set 및 coverage-proof digest와 함께 HEAD의 별도 의미적 수용을
 기록합니다.
@@ -530,6 +528,11 @@ flowchart LR
 원시 프롬프트는 이 그래프 밖에 남습니다. 제품 의미는 검토된 Canon
 아티팩트를 통해서만 들어옵니다. 후보 노드는 명시적으로 검사할 수 있지만
 기본 탐색과 Context 컴파일에서는 제외됩니다.
+
+source relation은 제품 의미가 아니라 structural evidence입니다. 기본 heuristic
+import/call graph는 유지되고, 선택적인 provider-neutral 언어 AST adapter가 현재
+file manifest에 결속된 별도 label의 evidence를 추가할 수 있습니다. 어느 source도
+다른 source를 조용히 덮어쓰지 않으며 decision을 승인할 수 없습니다.
 
 ### 그래프와 기록의 경계
 

@@ -76,8 +76,12 @@ recovery boundary needs it.
 
 Read the returned `workflow` before consuming the Capsule. HEAD—not the tool—
 performs semantic task analysis and chooses task-required EvidenceNeeds,
-including exact repository paths and Product Canon entity keys when known. Lexical overlap is fallback ranking
-only and never candidate eligibility. The read-only preview automatically retries
+including exact repository paths and Product Canon entity keys when known. For
+temporal relations, HEAD may propose exact current node IDs bound to the returned
+Project, World Model, and GraphSnapshot with explicit relation, depth, node, and
+edge bounds. Never let Core choose a semantic graph anchor from token overlap.
+Lexical overlap is discovery/fallback ranking only and never candidate eligibility
+or semantic sufficiency. The read-only preview automatically retries
 the same task and EvidenceNeeds at the next fixed tier only when matching
 evidence was excluded by `context-budget`; inspect `attemptedTiers`, Capsule IDs,
 and coverage-proof digests. It stops on missing or stale World, genuinely missing

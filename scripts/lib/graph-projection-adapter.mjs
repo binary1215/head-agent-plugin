@@ -1291,7 +1291,9 @@ function unfilteredTraversalRadius(graph, anchorIds, maxDepth) {
 
 function traversalOptionsFromQuery(query) {
   return {
-    query: query.normalizedQuery,
+    query: query.anchorMode === "lexical-discovery" ? query.normalizedQuery : null,
+    anchorIds: query.anchorMode === "exact-head-proposed" ? [...query.anchorIds] : null,
+    expectedGraphSnapshotId: query.expectedGraphSnapshotId,
     kinds: [...query.allowedKinds],
     relations: [...query.allowedRelations],
     authorityClasses: [...query.allowedAuthorityClasses],
@@ -1381,7 +1383,7 @@ export function verifyPreparedTraversalRequest(document, { graph = null, result 
   ], "Prepared traversal request", "INVALID_PREPARED_TRAVERSAL_REQUEST");
   const query = document?.traversalQuery;
   if (query && typeof query === "object" && !Array.isArray(query)) assertFields(query, [
-    "normalizedQuery", "anchorIds", "allowedKinds", "allowedRelations", "allowedAuthorityClasses", "allowedFreshness",
+    "anchorMode", "normalizedQuery", "anchorIds", "expectedGraphSnapshotId", "allowedKinds", "allowedRelations", "allowedAuthorityClasses", "allowedFreshness",
     "minConfidence", "includeUnreviewedCandidates", "maxDepth", "maxNodes", "maxEdges", "ordering",
   ], "Prepared traversal query", "INVALID_PREPARED_TRAVERSAL_REQUEST");
   const expansion = document?.expansion;
@@ -1398,9 +1400,16 @@ export function verifyPreparedTraversalRequest(document, { graph = null, result 
     || !/^graph-snapshot-[a-f0-9]{24}$/.test(document.graphSnapshotId || "")
     || !/^[a-f0-9]{64}$/.test(document.graphSnapshotHash || "")
     || !/^source-snapshot-[a-f0-9]{24}$/.test(document.sourceSnapshotId || "")
-    || !query || typeof query.normalizedQuery !== "string" || !query.normalizedQuery
-    || !Array.isArray(query.anchorIds) || query.anchorIds.length > 500
-    || query.anchorIds.some((nodeId) => typeof nodeId !== "string" || !nodeId)
+    || !query || !["lexical-discovery", "exact-head-proposed"].includes(query.anchorMode)
+    || typeof query.normalizedQuery !== "string"
+    || (query.anchorMode === "lexical-discovery" && !query.normalizedQuery)
+    || (query.anchorMode === "exact-head-proposed" && query.normalizedQuery !== "")
+    || !Array.isArray(query.anchorIds) || query.anchorIds.length > (query.anchorMode === "exact-head-proposed" ? 32 : 500)
+    || (query.anchorMode === "exact-head-proposed" && query.anchorIds.length < 1)
+    || query.anchorIds.some((nodeId) => typeof nodeId !== "string" || !nodeId || nodeId.length > 256)
+    || new Set(query.anchorIds).size !== query.anchorIds.length
+    || (query.anchorMode === "exact-head-proposed" && query.expectedGraphSnapshotId !== document.graphSnapshotId)
+    || (query.anchorMode === "lexical-discovery" && query.expectedGraphSnapshotId !== null)
     || !Array.isArray(query.allowedKinds) || !Array.isArray(query.allowedRelations)
     || !Array.isArray(query.allowedAuthorityClasses) || !Array.isArray(query.allowedFreshness)
     || !Number.isFinite(query.minConfidence) || query.minConfidence < 0 || query.minConfidence > 1

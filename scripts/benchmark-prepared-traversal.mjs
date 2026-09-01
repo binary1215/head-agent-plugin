@@ -258,8 +258,9 @@ async function runFixture(iterations, queryText) {
   if (request.traversalQuery.anchorIds.length === 0) fail("Benchmark query must resolve at least one graph anchor.", "BENCHMARK_QUERY_HAS_NO_ANCHOR");
   const costEvidence = buildPreparedTraversalCostEvidence({ graph, request });
   const expected = JSON.parse(fs.readFileSync(expectedFixtureFile, "utf8"));
-  if (graphProjectionCanonicalJson(expected) !== graphProjectionCanonicalJson(fixtureExpectation({ graph, request, result, costEvidence }))) {
-    fail("Prepared traversal benchmark no longer matches the reviewed fixture identity.", "BENCHMARK_FIXTURE_IDENTITY_DRIFT");
+  const actualExpectation = fixtureExpectation({ graph, request, result, costEvidence });
+  if (graphProjectionCanonicalJson(expected) !== graphProjectionCanonicalJson(actualExpectation)) {
+    fail(`Prepared traversal benchmark no longer matches the reviewed fixture identity. Actual: ${JSON.stringify(actualExpectation)}`, "BENCHMARK_FIXTURE_IDENTITY_DRIFT");
   }
   const selection = buildStorageSelection({
     projectId: graph.projectId,
