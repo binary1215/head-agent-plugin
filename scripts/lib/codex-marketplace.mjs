@@ -39,6 +39,17 @@ function readJson(file, code) {
   }
 }
 
+function validateCodexPluginInterface(manifest) {
+  const prompts = manifest?.interface?.defaultPrompt;
+  if (!Array.isArray(prompts) || prompts.length < 1 || prompts.length > 3
+    || prompts.some((prompt) => typeof prompt !== "string" || !prompt.trim() || prompt.length > 128)) {
+    fail(
+      "HEAD_CODEX_MARKETPLACE_DEFAULT_PROMPTS_INVALID",
+      "Codex plugin defaultPrompt must contain one to three non-empty prompts of at most 128 characters each.",
+    );
+  }
+}
+
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
@@ -161,6 +172,7 @@ export function buildCodexMarketplaceSnapshot({
   if (fs.existsSync(output)) fail("HEAD_CODEX_MARKETPLACE_OUTPUT_EXISTS", "Marketplace output root already exists.");
   const pluginManifest = readJson(path.join(source, ".codex-plugin", "plugin.json"), "HEAD_CODEX_MARKETPLACE_PLUGIN_INVALID");
   marketplaceName(pluginManifest.name);
+  validateCodexPluginInterface(pluginManifest);
 
   fs.mkdirSync(path.dirname(output), { recursive: true });
   const temporary = fs.mkdtempSync(`${output}.stage-`);
@@ -248,6 +260,7 @@ export function verifyCodexMarketplaceSnapshot({
   }
   const manifest = readJson(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "HEAD_CODEX_MARKETPLACE_PLUGIN_INVALID");
   const pkg = readJson(path.join(pluginRoot, "package.json"), "HEAD_CODEX_MARKETPLACE_PLUGIN_INVALID");
+  validateCodexPluginInterface(manifest);
   if (manifest.name !== entry.name || manifest.version !== pkg.version) {
     fail("HEAD_CODEX_MARKETPLACE_PLUGIN_MISMATCH", "Marketplace entry, plugin manifest, and package metadata do not match.");
   }

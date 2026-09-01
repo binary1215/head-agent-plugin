@@ -33,7 +33,18 @@ if (providedRoot) {
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, "node_modules")), false);
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, ".git")), false);
     assert.equal(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "LICENSE"), "utf8").startsWith("MIT License\n"), true);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".codex-plugin", "plugin.json"), "utf8")).license, "MIT");
+    const pluginManifestFile = path.join(snapshotRoot, "plugins", built.pluginName, ".codex-plugin", "plugin.json");
+    const pluginManifestBytes = fs.readFileSync(pluginManifestFile, "utf8");
+    assert.equal(JSON.parse(pluginManifestBytes).license, "MIT");
+
+    const excessivePrompts = JSON.parse(pluginManifestBytes);
+    excessivePrompts.interface.defaultPrompt.push("This fourth prompt must fail closed before Codex silently ignores it.");
+    fs.writeFileSync(pluginManifestFile, `${JSON.stringify(excessivePrompts, null, 2)}\n`, "utf8");
+    assert.throws(
+      () => verifyCodexMarketplaceSnapshot({ root: snapshotRoot }),
+      { code: "HEAD_CODEX_MARKETPLACE_DEFAULT_PROMPTS_INVALID" },
+    );
+    fs.writeFileSync(pluginManifestFile, pluginManifestBytes, "utf8");
 
     const unexpectedDirectory = path.join(snapshotRoot, "plugins", built.pluginName, "unexpected-empty-directory");
     fs.mkdirSync(unexpectedDirectory);
@@ -61,6 +72,7 @@ if (providedRoot) {
       pluginFileCount: built.pluginFileCount,
       pathEscapeRejected: true,
       unexpectedTreeContentRejected: true,
+      invalidDefaultPromptsRejected: true,
       excludedDevelopmentTrees: true,
       credentialInputsAccepted: false,
       sourceAllowlistOnly: true,

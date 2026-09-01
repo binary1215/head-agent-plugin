@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.3+codex.20260901080714",
+  "version": "0.3.0-beta.4+codex.20260901083632",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -160,20 +160,8 @@
     ],
     "defaultPrompt": [
       "Initialize or resume this project with the small provider-neutral HEAD core.",
-      "Inspect Core and Product readiness, the next action, and optional capability prerequisites without activating or authorizing anything.",
-      "Preview exact-task context, automatically expand fixed budget tiers only for proven context-budget exclusion, and distinguish mechanical coverage from HEAD-owned semantic sufficiency.",
-      "Explicitly activate Product onboarding and prepare an evidence-linked candidate batch without changing Product Canon.",
-      "Choose the lightest safe Observe, Session, Run, or Authority lane for this task.",
-      "Preview minimum sufficient context for this exact task and report coverage separately from semantic sufficiency.",
-      "Create and execute one durable whole-plan Run, then return its ResultPacket for Fresh HEAD review.",
-      "Recover the current HEAD direction from fixed Project, Session, and checkpoint artifacts after context loss.",
-      "Prepare and verify an intentional compaction without treating the provider summary as recovery authority.",
-      "Inspect the Graph and record boundary without treating derived projections as Canon or unique recovery state.",
-      "Prepare bounded current Context evidence from only my task, then author EvidenceNeeds and exact graph anchors in the conversation without asking me for JSON.",
-      "Propose exact current graph anchors for this task, then let Core verify only bounded inclusion and lineage.",
-      "Dispatch a bounded worker outcome without widening its authorization or allowing it to approve itself.",
-      "Inspect provider-specific capabilities while preserving provider-neutral Core semantics.",
-      "Observe host deployment results against exact current product Git refs without granting deployment, Product Canon, or recovery authority."
+      "Inspect Core and Product readiness and report the next safe action without activating or authorizing anything.",
+      "Prepare exact-task Context from my task only; HEAD authors EvidenceNeeds and graph anchors without asking me for JSON."
     ],
     "brandColor": "#234E70"
   }
