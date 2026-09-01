@@ -1,9 +1,22 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildCodexMarketplaceSnapshot, verifyCodexMarketplaceSnapshot } from "./lib/codex-marketplace.mjs";
+
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
 
 const rootIndex = process.argv.indexOf("--root");
 const providedRoot = rootIndex === -1 ? "" : process.argv[rootIndex + 1] || "";
@@ -12,6 +25,7 @@ const expectedRepository = repositoryIndex === -1 ? null : process.argv[reposito
 const marketplaceIndex = process.argv.indexOf("--expected-marketplace-name");
 const expectedMarketplaceName = marketplaceIndex === -1 ? null : process.argv[marketplaceIndex + 1] || "";
 const allowLegacyBytePreservation = process.argv.includes("--allow-legacy-byte-preservation");
+const allowLegacyInterfaceForOwnership = process.argv.includes("--allow-legacy-interface-for-ownership");
 const requireNativeBundle = process.argv.includes("--require-native");
 
 if (providedRoot) {
@@ -20,6 +34,7 @@ if (providedRoot) {
     expectedRepository,
     expectedMarketplaceName,
     allowLegacyBytePreservation,
+    allowLegacyInterfaceForOwnership,
     requireNativeBundle,
   }), null, 2)}\n`);
 } else {
@@ -36,6 +51,54 @@ if (providedRoot) {
     const pluginManifestFile = path.join(snapshotRoot, "plugins", built.pluginName, ".codex-plugin", "plugin.json");
     const pluginManifestBytes = fs.readFileSync(pluginManifestFile, "utf8");
     assert.equal(JSON.parse(pluginManifestBytes).license, "MIT");
+
+    const legacySnapshotRoot = path.join(temporaryRoot, "legacy-interface-snapshot");
+    fs.cpSync(snapshotRoot, legacySnapshotRoot, { recursive: true, errorOnExist: true });
+    const legacyPluginRoot = path.join(legacySnapshotRoot, "plugins", built.pluginName);
+    const legacyPluginManifestFile = path.join(legacyPluginRoot, ".codex-plugin", "plugin.json");
+    const legacyPluginManifest = JSON.parse(fs.readFileSync(legacyPluginManifestFile, "utf8"));
+    legacyPluginManifest.interface.defaultPrompt.push("A fourth legacy prompt that the current Codex interface must reject.");
+    const legacyPluginManifestBytes = Buffer.from(`${JSON.stringify(legacyPluginManifest, null, 2)}\n`, "utf8");
+    fs.writeFileSync(legacyPluginManifestFile, legacyPluginManifestBytes);
+
+    const legacyDistributionFile = path.join(legacyPluginRoot, "distribution-manifest.json");
+    const legacyDistribution = JSON.parse(fs.readFileSync(legacyDistributionFile, "utf8"));
+    const legacyManifestEntry = legacyDistribution.files.find((file) => file.path === ".codex-plugin/plugin.json");
+    assert.ok(legacyManifestEntry);
+    legacyManifestEntry.bytes = legacyPluginManifestBytes.byteLength;
+    legacyManifestEntry.sha256 = sha256(legacyPluginManifestBytes);
+    const legacyDistributionIdentity = {
+      protocolVersion: legacyDistribution.protocolVersion,
+      name: legacyDistribution.name,
+      version: legacyDistribution.version,
+      files: legacyDistribution.files,
+    };
+    legacyDistribution.releaseId = `release-${sha256(Buffer.from(canonical(legacyDistributionIdentity))).slice(0, 24)}`;
+    fs.writeFileSync(legacyDistributionFile, `${JSON.stringify(legacyDistribution, null, 2)}\n`, "utf8");
+
+    const legacyMarkerFile = path.join(legacySnapshotRoot, ".head-agent-marketplace-generated.json");
+    const legacyMarker = JSON.parse(fs.readFileSync(legacyMarkerFile, "utf8"));
+    legacyMarker.distributionReleaseId = legacyDistribution.releaseId;
+    const legacyMarkerIdentity = { ...legacyMarker };
+    delete legacyMarkerIdentity.snapshotId;
+    legacyMarker.snapshotId = `codex-marketplace-${sha256(Buffer.from(canonical(legacyMarkerIdentity))).slice(0, 24)}`;
+    fs.writeFileSync(legacyMarkerFile, `${JSON.stringify(legacyMarker, null, 2)}\n`, "utf8");
+
+    assert.throws(
+      () => verifyCodexMarketplaceSnapshot({ root: legacySnapshotRoot }),
+      { code: "HEAD_CODEX_MARKETPLACE_DEFAULT_PROMPTS_INVALID" },
+    );
+    assert.throws(
+      () => verifyCodexMarketplaceSnapshot({ root: legacySnapshotRoot, allowLegacyInterfaceForOwnership: true }),
+      { code: "HEAD_CODEX_MARKETPLACE_LEGACY_INTERFACE_SCOPE" },
+    );
+    const legacyOwnership = verifyCodexMarketplaceSnapshot({
+      root: legacySnapshotRoot,
+      expectedRepository: "local",
+      expectedMarketplaceName: built.marketplaceName,
+      allowLegacyInterfaceForOwnership: true,
+    });
+    assert.equal(legacyOwnership.pluginInterface, "legacy_nonconforming_ownership_only");
 
     const excessivePrompts = JSON.parse(pluginManifestBytes);
     excessivePrompts.interface.defaultPrompt.push("This fourth prompt must fail closed before Codex silently ignores it.");
@@ -73,6 +136,8 @@ if (providedRoot) {
       pathEscapeRejected: true,
       unexpectedTreeContentRejected: true,
       invalidDefaultPromptsRejected: true,
+      legacyPromptOwnershipMigrationVerified: true,
+      legacyPromptMigrationRequiresExpectedIdentity: true,
       excludedDevelopmentTrees: true,
       credentialInputsAccepted: false,
       sourceAllowlistOnly: true,

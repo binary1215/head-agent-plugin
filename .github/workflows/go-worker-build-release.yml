@@ -634,7 +634,8 @@ jobs:
                 --root "${previous_root}" \
                 --expected-repository "${GITHUB_REPOSITORY}" \
                 --expected-marketplace-name "head-agent-plugin" \
-                --allow-legacy-byte-preservation
+                --allow-legacy-byte-preservation \
+                --allow-legacy-interface-for-ownership
             fi
           fi
           echo "expected_sha=${expected_sha}" >> "${GITHUB_OUTPUT}"

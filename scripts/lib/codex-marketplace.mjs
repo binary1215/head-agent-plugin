@@ -208,9 +208,16 @@ export function verifyCodexMarketplaceSnapshot({
   expectedRepository = null,
   expectedMarketplaceName = null,
   allowLegacyBytePreservation = false,
+  allowLegacyInterfaceForOwnership = false,
   requireNativeBundle = false,
 } = {}) {
   if (!root) fail("HEAD_CODEX_MARKETPLACE_VERIFY_ARGUMENTS", "Marketplace root is required.");
+  if (allowLegacyInterfaceForOwnership && (!expectedRepository || !expectedMarketplaceName)) {
+    fail(
+      "HEAD_CODEX_MARKETPLACE_LEGACY_INTERFACE_SCOPE",
+      "Legacy interface migration is only allowed while verifying one expected repository and marketplace name for branch ownership.",
+    );
+  }
   const marketplaceRoot = path.resolve(root);
   const rootEntries = fs.readdirSync(marketplaceRoot).sort();
   const hasGitAttributes = rootEntries.includes(".gitattributes");
@@ -260,7 +267,13 @@ export function verifyCodexMarketplaceSnapshot({
   }
   const manifest = readJson(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "HEAD_CODEX_MARKETPLACE_PLUGIN_INVALID");
   const pkg = readJson(path.join(pluginRoot, "package.json"), "HEAD_CODEX_MARKETPLACE_PLUGIN_INVALID");
-  validateCodexPluginInterface(manifest);
+  let pluginInterface = "current";
+  try {
+    validateCodexPluginInterface(manifest);
+  } catch (error) {
+    if (!allowLegacyInterfaceForOwnership || error.code !== "HEAD_CODEX_MARKETPLACE_DEFAULT_PROMPTS_INVALID") throw error;
+    pluginInterface = "legacy_nonconforming_ownership_only";
+  }
   if (manifest.name !== entry.name || manifest.version !== pkg.version) {
     fail("HEAD_CODEX_MARKETPLACE_PLUGIN_MISMATCH", "Marketplace entry, plugin manifest, and package metadata do not match.");
   }
@@ -331,6 +344,7 @@ export function verifyCodexMarketplaceSnapshot({
     snapshotId: marker.snapshotId,
     sourceRepository: marker.sourceRepository,
     sourceCommit: marker.sourceCommit,
+    pluginInterface,
     bytePreservation: hasGitAttributes ? "git_attributes_exact" : "legacy_migration_only",
     pluginFileCount: distribution.files.length,
     nativeBundleId: nativeBundle?.nativeBundleId || null,
