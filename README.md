@@ -65,8 +65,10 @@ More context is not always better. The user can state the task in ordinary
 language; the provider-neutral HEAD performs semantic task analysis and authors
 task-local EvidenceNeeds in the conversation. It can name exact repository
 paths, Product entities, and current graph node anchors without asking the user
-to write JSON. The Context
-Compiler then verifies what was actually included under a fixed budget while
+to write JSON, choose a graph ID, or manage a token tier. Status, preparation,
+repository inspection, and preview are internal HEAD steps rather than a setup
+wizard the user must operate. The Context Compiler then verifies what was
+actually included under a fixed budget while
 recording exclusions and stale coverage. Lexical overlap remains fallback
 discovery/ranking only; Core no longer chooses a semantic graph anchor from the
 first matching word, makes a current file ineligible, or declares sufficiency.
@@ -281,8 +283,14 @@ state remains visible under `readiness.product.onboardingStatus`.
 
 ### Conversational Context preparation and preview
 
-Start with the typed `head_context_prepare` tool in conversation, or the same
-Core operation from the CLI:
+In conversation, describe the task once. The HEAD Skill calls
+`head_context_prepare`, performs semantic repository inspection, authors any
+task-required `EvidenceNeed[]`, and calls `head_context_preview` without asking
+the user to operate those steps. Missing or stale optional World evidence does
+not block direct work, and justified budget expansion is automatic.
+
+The same Core operations remain available from the CLI for automation and
+diagnosis:
 
 ```powershell
 head-agent context-prepare C:\path\to\project --task "<task>"
@@ -304,8 +312,8 @@ is offered only as an optional escalation after HEAD or the user determines that
 the task needs that evidence; preparation never activates or indexes the
 repository by itself.
 
-Use the typed `head_context_preview` tool in conversation, or the same Core
-operation from the CLI:
+Advanced automation may call the preview directly with HEAD-authored structured
+input:
 
 ```powershell
 head-agent context-preview C:\path\to\project `
@@ -313,6 +321,9 @@ head-agent context-preview C:\path\to\project `
   --budget 32768 `
   --evidence-needs .\evidence-needs.json
 ```
+
+CLI output is concise and human-readable by default. Add `--json` to either
+command for the complete Capsule, identities, exclusions, and coverage proof.
 
 The preview still returns the deterministic Capsule content, and now adds a
 small read-only `workflow` projection. It reports whether the World Model is

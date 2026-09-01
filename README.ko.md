@@ -63,8 +63,10 @@ AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으�
 
 컨텍스트는 많다고 항상 좋은 것이 아닙니다. 사용자는 task를 자연어로 말하면 됩니다.
 provider-neutral HEAD가 대화 안에서 task의 의미를 분석하고 task-local EvidenceNeeds를 작성하며,
-사용자에게 JSON을 요구하지 않고 정확한 repository path, Product entity, 현재 graph node anchor를 지정할 수 있습니다. Context
-Compiler는 정해진 예산 안에서 실제 포함 여부를 검증하고 제외 정보와 stale coverage를
+사용자에게 JSON, graph ID 또는 token tier 선택을 요구하지 않고 정확한 repository path,
+Product entity, 현재 graph node anchor를 지정할 수 있습니다. status, preparation,
+repository inspection과 preview는 사용자가 조작하는 설정 마법사가 아니라 HEAD 내부
+절차입니다. Context Compiler는 정해진 예산 안에서 실제 포함 여부를 검증하고 제외 정보와 stale coverage를
 기록합니다. lexical overlap은 discovery/fallback ranking일 뿐입니다. Core는 첫 일치 단어로 semantic graph anchor를 고르거나, 현재 file을 탈락시키거나 sufficiency를 선언하지 않습니다.
 
 그 결과인 Context Capsule은 내용으로 식별되며 재현할 수 있습니다. 검증된
@@ -273,8 +275,13 @@ head-agent status C:\path\to\project
 
 ### 대화형 Context 준비와 미리보기
 
-대화에서는 먼저 typed `head_context_prepare`에 사용자의 task만 전달합니다.
-CLI에서는 같은 Core 동작을 다음처럼 사용할 수 있습니다.
+대화에서는 사용자가 task를 한 번만 설명합니다. HEAD Skill이
+`head_context_prepare`를 호출하고, repository를 의미적으로 검사해 필요한
+`EvidenceNeed[]`를 작성한 뒤, 사용자가 내부 단계를 조작하지 않아도
+`head_context_preview`까지 이어갑니다. 선택적 World evidence가 없거나 stale이어도
+직접 작업은 막히지 않으며, 근거가 있는 budget 확장은 자동입니다.
+
+자동화와 진단을 위해서는 같은 Core 동작을 CLI에서도 사용할 수 있습니다.
 
 ```powershell
 head-agent context-prepare C:\path\to\project --task "<task>"
@@ -294,8 +301,8 @@ evidence를 사용할 수 없다는 점은 공개하지만, 일반 repository in
 명시적 Product profile 진입점을 선택적 확장으로 제시하며, preparation이 저장소를
 자동으로 인덱싱하거나 활성화하지는 않습니다.
 
-대화에서는 typed `head_context_preview`를 사용하고, CLI에서는 같은 Core
-동작을 다음처럼 사용할 수 있습니다.
+고급 자동화에서는 HEAD가 작성한 structured input으로 preview를 직접 호출할 수
+있습니다.
 
 ```powershell
 head-agent context-preview C:\path\to\project `
@@ -303,6 +310,9 @@ head-agent context-preview C:\path\to\project `
   --budget 32768 `
   --evidence-needs .\evidence-needs.json
 ```
+
+CLI는 기본적으로 짧고 사람이 읽기 쉬운 결과를 보여줍니다. 전체 Capsule, identity,
+exclusion과 coverage proof가 필요하면 명령에 `--json`을 추가합니다.
 
 미리보기는 기존의 결정론적 Capsule 내용을 그대로 반환하면서, 작은 읽기 전용
 `workflow` 투영을 추가합니다. World Model이 current·미구축·stale 제외 중

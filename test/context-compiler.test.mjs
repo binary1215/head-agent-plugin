@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, compileContext, requireSufficientContextCapsule } from "../scripts/lib/context-compiler.mjs";
@@ -270,6 +271,10 @@ test("Context workflow automatically retries only justified fixed budget tiers",
   });
   assert.equal(throughMcp.result.structuredContent.capsule.capsuleId, constrained.capsule.capsuleId);
   assert.deepEqual(throughMcp.result.structuredContent.workflow.budget.attemptedTiers, [32_768, 65_536]);
+  assert.match(throughMcp.result.content[0].text, /requested evidence is included/u);
+  assert.match(throughMcp.result.content[0].text, /Automatic expansion: 32,768 → 65,536/u);
+  assert.match(throughMcp.result.content[0].text, /User action: none/u);
+  assert.equal(throughMcp.result.content[0].text.trimStart().startsWith("{"), false);
 
   const expanded = previewContextWorkflow({ root, task, budget: 65_536, evidenceNeeds: needs });
   assert.equal(expanded.workflow.status, "ready_for_head_semantic_assessment");
@@ -389,6 +394,19 @@ test("task-only Context preparation is a bounded P4 projection and CLI/MCP share
   const throughCli = runCommand(["context-prepare", root, "--task", task]);
   assert.equal(throughMcp.result.structuredContent.preparation.preparationId, direct.preparation.preparationId);
   assert.equal(throughCli.preparation.preparationId, direct.preparation.preparationId);
+  assert.match(throughMcp.result.content[0].text, /User action: none/u);
+  assert.match(throughMcp.result.content[0].text, /run the preview itself/u);
+  assert.equal(throughMcp.result.content[0].text.trimStart().startsWith("{"), false);
+
+  const humanCli = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "context-prepare", root, "--task", task], { encoding: "utf8" });
+  assert.equal(humanCli.status, 0, humanCli.stderr);
+  assert.match(humanCli.stdout, /current repository evidence is ready/u);
+  assert.match(humanCli.stdout, /You do not need to write EvidenceNeed JSON/u);
+  assert.equal(humanCli.stdout.trimStart().startsWith("{"), false);
+
+  const jsonCli = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "context-prepare", root, "--task", task, "--json"], { encoding: "utf8" });
+  assert.equal(jsonCli.status, 0, jsonCli.stderr);
+  assert.equal(JSON.parse(jsonCli.stdout).preparation.preparationId, direct.preparation.preparationId);
 
   const anchorNode = direct.preparation.exactGraphAnchorMaterial.candidateNodes.find((item) => item.path === "src/router.mjs");
   fs.appendFileSync(path.join(root, "src", "router.mjs"), "export const changed = true;\n");

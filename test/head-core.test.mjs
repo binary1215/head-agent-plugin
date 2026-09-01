@@ -339,6 +339,8 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(mcpStatus.result.structuredContent.status, "core_ready");
   assert.deepEqual(mcpStatus.result.structuredContent.readiness, projected.readiness);
   assert.equal(Buffer.byteLength(JSON.stringify(mcpStatus.result.structuredContent), "utf8") < 64 * 1024, true);
+  assert.match(mcpStatus.result.content[0].text, /HEAD is ready — describe the task/u);
+  assert.equal(mcpStatus.result.content[0].text.trimStart().startsWith("{"), false);
   const mcpContract = await dispatchMcp({
     jsonrpc: "2.0",
     id: "active-package-contract",
@@ -350,6 +352,7 @@ test("defaults to the constitutional core without activating Product or Graph go
 
   const humanStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root], { encoding: "utf8" });
   assert.equal(humanStatus.status, 0, humanStatus.stderr);
+  assert.match(humanStatus.stdout, /HEAD is ready — describe the task/u);
   assert.match(humanStatus.stdout, /HEAD Core: ready/u);
   assert.match(humanStatus.stdout, /Product governance: not activated/u);
   assert.match(humanStatus.stdout, /Context: curated evidence only/u);
@@ -363,12 +366,22 @@ test("defaults to the constitutional core without activating Product or Graph go
   const humanHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help"], { encoding: "utf8" });
   assert.equal(humanHelp.status, 0, humanHelp.stderr);
   assert.match(humanHelp.stdout, /Core-first by default/u);
+  assert.match(humanHelp.stdout, /describe the task in ordinary language/u);
   assert.match(humanHelp.stdout, /head context-prepare/u);
   assert.equal(humanHelp.stdout.trimStart().startsWith("{"), false);
 
   const jsonHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help", "--json"], { encoding: "utf8" });
   assert.equal(jsonHelp.status, 0, jsonHelp.stderr);
   assert.equal(JSON.parse(jsonHelp.stdout).surface, "light-default");
+
+  const humanFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root], { encoding: "utf8" });
+  assert.notEqual(humanFailure.status, 0);
+  assert.match(humanFailure.stdout, /HEAD could not complete that step/u);
+  assert.equal(humanFailure.stdout.trimStart().startsWith("{"), false);
+
+  const jsonFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root, "--json"], { encoding: "utf8" });
+  assert.notEqual(jsonFailure.status, 0);
+  assert.equal(JSON.parse(jsonFailure.stdout).code, "HEAD_CLI_ERROR");
 });
 
 test("requires an explicit product profile before applying onboarding input", async (t) => {

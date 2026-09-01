@@ -35,6 +35,15 @@ Context Compiler protocol `0.15.0`은 결정적 packaging과 semantic judgment�
 
 `head_context_prepare`와 CLI `context-prepare`는 사용자가 이 구조를 직접 작성하지 않게 합니다. task-only 호출은 현재 Project/World/Graph identity, lexical baseline candidate와 exact node ID를 포함한 제한적이고 비영속적인 `ContextPreparationProjection`을 반환합니다. provider HEAD가 semantic reasoning과 일반 repository inspection으로 `EvidenceNeed[]`를 작성하며 Core는 이를 추론하지 않습니다. 이어지는 `head_context_preview`가 현재 상태에 대해 proposal을 검증합니다. 따라서 preparation은 Core 내부 LLM이나 새 authority plane이 아니라 대화형 UX입니다.
 
+일반적인 대화 흐름은 user intent에서 HEAD action으로 한 번에 이어집니다. 사용자는
+task를 한 번만 말하고, Skill이 status와 preparation을 수행하며, HEAD가 repository를
+검사해 필요한 proposal을 작성한 뒤, preview가 같은 task를 유지하면서 근거가 있을
+때에만 고정 budget tier를 자동 확장합니다. 이 내부 절차를 연속적인 설정 질문으로
+바꾸지 않습니다. 선택적인 World evidence가 없거나 오래돼도 직접 작업은 중단하지
+않습니다. 해당 task에 governed·reproducible Capsule evidence가 실제로 필요할 때만
+Product/World를 안내합니다. CLI와 MCP는 자동화·감사를 위한 전체 structured output을
+계속 제공하고, 기본 text는 짧은 결과와 다음 행동만 보여줍니다.
+
 Context Preparation protocol `0.2.0`은 선택적인 World evidence를 사용할 수 없는
 상태와 그것을 활성화해야 한다는 의미 판단을 구분합니다.
 

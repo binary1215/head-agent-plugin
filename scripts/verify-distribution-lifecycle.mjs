@@ -70,18 +70,20 @@ function runNode(args) {
 
 function runGlobal(args) {
   const command = process.platform === "win32" ? path.join(binDirectory, "head-agent.cmd") : path.join(binDirectory, "head-agent");
+  const machineArgs = args.includes("--json") ? args : [...args, "--json"];
   const result = process.platform === "win32"
-    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" ${args.map((item) => `"${item}"`).join(" ")}"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
-    : spawnSync(command, args, { encoding: "utf8", shell: false });
+    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" ${machineArgs.map((item) => `"${item}"`).join(" ")}"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
+    : spawnSync(command, machineArgs, { encoding: "utf8", shell: false });
   assert.equal(result.status, 0, result.stderr || result.error?.message || result.stdout);
   return JSON.parse(result.stdout);
 }
 
 function runGlobalFailure(args) {
   const command = process.platform === "win32" ? path.join(binDirectory, "head-agent.cmd") : path.join(binDirectory, "head-agent");
+  const machineArgs = args.includes("--json") ? args : [...args, "--json"];
   const result = process.platform === "win32"
-    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" ${args.map((item) => `"${item}"`).join(" ")}"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
-    : spawnSync(command, args, { encoding: "utf8", shell: false });
+    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" ${machineArgs.map((item) => `"${item}"`).join(" ")}"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
+    : spawnSync(command, machineArgs, { encoding: "utf8", shell: false });
   assert.notEqual(result.status, 0);
   return JSON.parse(result.stdout);
 }

@@ -23,6 +23,7 @@ import { readRuntimeInvocationResult } from "./lib/runtime-run-result-applicatio
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
+import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
@@ -390,7 +391,7 @@ export const tools = [
   },
   {
     name: "head_context_prepare",
-    description: "Prepare bounded current World/Graph evidence for one task using task text only. This read-only P4 projection helps the provider-neutral HEAD author EvidenceNeeds and exact graph anchors in conversation; Core selects neither and writes no authority or recovery state.",
+    description: "Prepare bounded current World/Graph evidence from the user's task text only. Continue the conversation without asking the user for EvidenceNeed JSON, graph IDs, or a budget: provider-neutral HEAD performs semantic inspection, authors any task-required proposal, and calls preview itself. Core selects no meaning and writes no authority or recovery state.",
     inputSchema: {
       type: "object",
       properties: {
@@ -405,7 +406,7 @@ export const tools = [
   },
   {
     name: "head_context_preview",
-    description: "Preview a deterministic Context Capsule plus a read-only World→EvidenceNeed→coverage→budget→HEAD-assessment workflow. It automatically retries fixed tiers up to 512K only for proven context-budget exclusion; it writes nothing, never invents EvidenceNeeds, and never judges semantic sufficiency.",
+    description: "Preview a deterministic Context Capsule after HEAD has authored any task-required EvidenceNeeds. Keep the user's task byte-identical and continue without asking the user to choose a budget: the read-only wrapper automatically retries fixed tiers up to 512K only for proven context-budget exclusion. It writes nothing, invents no meaning, and never judges semantic sufficiency.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1518,7 +1519,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                           : name === "head_continuity_snapshot"
                             ? buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());
-    const response = success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+    const response = success(id, { content: [{ type: "text", text: formatMcpToolContent(name, value) }], structuredContent: value });
     if (name === "head_world_model" && Buffer.byteLength(JSON.stringify(response), "utf8") > WORLD_MODEL_STATUS_MCP_MAX_BYTES) {
       throw new Error(`head_world_model response exceeds ${WORLD_MODEL_STATUS_MCP_MAX_BYTES} bytes.`);
     }

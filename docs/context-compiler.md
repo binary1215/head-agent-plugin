@@ -42,6 +42,17 @@ does not infer it. The later `head_context_preview` call verifies the proposal
 against current state. Preparation is therefore conversational UX, not an LLM
 inside Core and not a new authority plane.
 
+The normal conversational flow is intentionally one-way from user intent to
+HEAD action: the user states the task once; the Skill performs status and
+preparation, HEAD inspects the repository and authors any required proposal,
+and preview preserves the same task while expanding the fixed budget tier only
+when justified. These internal steps should not become a sequence of setup
+questions. Missing or stale optional World evidence does not interrupt direct
+work. Product/World is surfaced only when the task truly needs governed,
+reproducible Capsule evidence. CLI and MCP retain full structured output for
+automation and audit, while their default text is a short outcome and next-step
+summary.
+
 Context Preparation protocol `0.2.0` distinguishes unavailable optional World
 evidence from a semantic requirement to activate it.
 

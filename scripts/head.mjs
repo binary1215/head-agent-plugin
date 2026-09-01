@@ -31,7 +31,7 @@ import { initializeOrResumeProject, inspectProjectExperience } from "./lib/proje
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
-import { formatCliResult } from "./lib/cli-presentation.mjs";
+import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
@@ -544,7 +544,8 @@ if (invokedDirectly) {
   Promise.resolve().then(() => runCommand(normalizedArgs)).then((result) => {
     process.stdout.write(jsonOutput ? `${JSON.stringify(result, null, 2)}\n` : formatCliResult(directCommand, result));
   }).catch((error) => {
-    process.stdout.write(`${JSON.stringify({ status: "failed", code: error.code || "HEAD_CLI_ERROR", error: error.message }, null, 2)}\n`);
+    const failure = { status: "failed", code: error.code || "HEAD_CLI_ERROR", error: error.message };
+    process.stdout.write(jsonOutput ? `${JSON.stringify(failure, null, 2)}\n` : formatCliError(error));
     process.exitCode = 1;
   });
 }

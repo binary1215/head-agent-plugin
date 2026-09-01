@@ -68,6 +68,29 @@ task requires World construction. Present the explicit Product-profile path only
 as an optional escalation after HEAD or the user determines that the task needs
 that evidence. Core must not make that semantic selection.
 
+## Conversation UX
+
+Treat the authority model and typed operations as HEAD's internal work, not as
+forms the user must fill in. For an ordinary request, let the user describe the
+task once in natural language, then carry that exact task through status,
+preparation, semantic repository inspection, and preview without asking the
+user to choose a token tier, EvidenceNeed kind, repository path, entity key, or
+graph node ID. Do not ask about an optional profile before semantic task analysis
+has established a real need for that wider scope.
+
+Do not narrate every internal readiness state or tool call. Continue the task
+directly when Core-only context is usable. When a current World exists, use it
+without asking for a setup choice; when it is absent or stale, use ordinary
+repository inspection and mention Product/World only if a reproducible governed
+Capsule is actually necessary. Let the read-only preview perform its justified
+budget expansion automatically. Ask the user only when an existing authority or
+scope boundary genuinely requires their decision, such as Product Canon review,
+external mutation, destructive work, or an ambiguous project root.
+
+Lead the response with the work outcome. Keep P1-P5 names, digests, budgets,
+candidate IDs, and full JSON available for audit and diagnosis, but do not make
+them prerequisites for normal use.
+
 ## Choose the lightest sufficient lane
 
 - **Observe**: read, explain, compare, or advise. Do not create durable HEAD
