@@ -180,6 +180,34 @@ reference, provider identity, or source alias. If no configured source is
 available, disclose the optional adapter gap and continue without Observation
 persistence unless that exact evidence is required.
 
+When approved Product Canon may have drifted from code or external evidence,
+keep Conformance reconciliation non-blocking. Call `head_conformance_prepare`
+without asking the user for Canon keys, graph IDs, digests, or JSON. Provider
+HEAD performs the semantic comparison and cites one or more exact current
+source, ChangeSet, Observation, or optional Graph anchors; Core only verifies
+those anchors through `head_conformance_propose`. Lexical overlap, test or
+document presence, Graph availability, connector availability, coverage class,
+risk hint, and queue length never determine candidate eligibility or ordinary-
+work blocking. Missing optional evidence is a disclosure.
+
+Read `head_conformance_queue` in bounded pages and summarize Findings at natural
+work boundaries instead of interrupting every change. A Finding is P3 candidate
+evidence, not a violation or decision. Source or Canon drift means
+`needs-recheck`, never automatic resolution. Provider HEAD may submit a fresh
+`head_conformance_resolution_propose`, but close or dismiss an exact Finding
+only after the user's natural-language disposition by calling
+`head_conformance_disposition` with explicit confirmation. Requests for a code
+fix still enter the normal execution lane; requests for Canon revision still
+enter the existing exact candidate and user ReviewDecision path.
+
+Optional Host triggers remain process-local P5. Default opportunistic use runs
+at a conversational boundary and invokes no background provider. Monitor mode
+and provider assessment require explicit user opt-in. Duplicate triggers
+converge, refresh triggers coalesce with disclosed coverage, and an uncertain
+provider outcome must not auto-replay. Missing Host composition never blocks
+ordinary HEAD work. Read `../../docs/conformance-reconciliation.md` before
+changing this subsystem.
+
 For Product-to-code or Product-to-test mapping, inspect the current World and
 Graph, then use `head_feature_mapping_propose` with exact current Product and
 source/test node identities. Do not derive mappings from names or token overlap.

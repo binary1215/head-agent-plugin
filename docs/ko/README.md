@@ -30,6 +30,7 @@
 
 - [Execution Lineage 계약과 Run 수명주기](execution-lineage.md)
 - [공급자 중립 ChangeSet과 검토된 영향](change-sets.md)
+- [비차단 Conformance 재정](conformance-reconciliation.md)
 - [대화 압축 복구](compaction-recovery.md)
 - [Session 복원과 검토 결과 통합](session-recovery.md)
 - [공급자 중립 지속 역할 조정](role-coordination.md)

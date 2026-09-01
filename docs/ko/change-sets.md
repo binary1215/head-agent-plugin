@@ -110,4 +110,4 @@ VCS evidence attachment input:
 
 ## 유예된 경계
 
-CI 또는 filesystem event로부터 ChangeSet 자동 생성, 추론된 commit-to-ChangeSet matching, 일반 execution-lineage graph projection, merge automation, imported ticket/backlog adapter, conformance finding, document review receipt를 이후 graph에 projection하는 작업, Obsidian/Notion projection 및 GraphDB acceleration은 계속 유예됩니다. 명시적 DocumentChangeCandidate review/application은 활성화되어 있지만 ChangeSet을 생성하거나 ChangeSet authority를 변경하지 않습니다.
+CI 또는 filesystem event로부터 ChangeSet 자동 생성, 추론된 commit-to-ChangeSet matching, 일반 execution-lineage graph projection, merge automation, imported ticket/backlog adapter, document review receipt를 이후 graph에 projection하는 작업, Obsidian/Notion projection 및 GraphDB acceleration은 계속 유예됩니다. 비차단 공급자 HEAD Conformance candidate는 별도의 P3/P4/P5 subsystem으로 활성화되며 이 blocking impact-review state pointer를 재사용하지 않습니다. [Conformance 재정](conformance-reconciliation.md)을 참고하세요. 명시적 DocumentChangeCandidate review/application은 활성화되어 있지만 ChangeSet을 생성하거나 ChangeSet authority를 변경하지 않습니다.

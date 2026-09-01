@@ -45,6 +45,9 @@ test("freezes the five semantic authority planes separately from Distribution an
   assert.equal(artifactAuthorityBoundary("ObservationRecord").planeId, "P3");
   assert.equal(artifactAuthorityBoundary("DerivedObservationRecord").planeId, "P3");
   assert.equal(artifactAuthorityBoundary("ObservationCollectionReceipt").planeId, "P3");
+  assert.equal(artifactAuthorityBoundary("ConformanceFindingCandidate").planeId, "P3");
+  assert.equal(artifactAuthorityBoundary("ConformanceDispositionReceipt").planeId, "P3");
+  assert.equal(artifactAuthorityBoundary("ConformanceResolutionCandidate").planeId, "P3");
   assert.equal(artifactAuthorityBoundary("GraphSnapshot").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("SessionRestoreProjection").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("WorkerWaveStatusProjection").planeId, "P4");
@@ -52,11 +55,16 @@ test("freezes the five semantic authority planes separately from Distribution an
   assert.equal(artifactAuthorityBoundary("ObservationStatusProjection").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("ObservationSourceDiscoveryProjection").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("ObservationPreparationProjection").planeId, "P4");
+  assert.equal(artifactAuthorityBoundary("ConformancePreparationProjection").planeId, "P4");
+  assert.equal(artifactAuthorityBoundary("ConformanceQueueProjection").planeId, "P4");
+  assert.equal(artifactAuthorityBoundary("ConformanceTriggerBatchProjection").planeId, "P4");
+  assert.equal(artifactAuthorityBoundary("ConformanceFindingGraphProjection").planeId, "P4");
   assert.equal(artifactAuthorityBoundary("CoordinationInbox").planeId, "P5");
   assert.equal(artifactAuthorityBoundary("ContinuationOutcome").planeId, "P5");
   assert.equal(artifactAuthorityBoundary("BoundedWorkerWaitOutcome").planeId, "P5");
   assert.equal(artifactAuthorityBoundary("BoundedWorkerWaveWaitOutcome").planeId, "P5");
   assert.equal(artifactAuthorityBoundary("ObservationSourceBinding").planeId, "P5");
+  assert.equal(artifactAuthorityBoundary("ConformanceTriggerBinding").planeId, "P5");
   verifyArtifactAuthorityBoundary("GraphSnapshot", artifactAuthorityBoundary("GraphSnapshot"));
   verifyArtifactAuthorityBoundary("ResultPacket", { ...artifactAuthorityBoundary("ResultPacket"), contractVersion: "0.1.0" });
 });

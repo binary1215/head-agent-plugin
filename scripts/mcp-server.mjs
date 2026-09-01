@@ -26,6 +26,7 @@ import { collectRegisteredObservation, ingestStructuredObservation, inspectObser
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
+import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
@@ -100,6 +101,41 @@ const observationInputSchema = {
     source_event_key_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, source_evidence_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, coverage: observationCoverageSchema, payload: { type: "object" },
   },
   required: ["subject", "form", "temporal_scope", "source_event_key_digest", "source_evidence_digest", "coverage", "payload"], additionalProperties: false,
+};
+const nullableIdentity = (pattern) => ({ anyOf: [{ type: "string", pattern }, { type: "null" }] });
+const conformanceBaselineSchema = {
+  type: "object",
+  properties: {
+    product_model_id: { type: "string", pattern: "^product-model-[a-f0-9]{24}$" },
+    product_model_hash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    world_model_id: nullableIdentity("^world-model-[a-f0-9]{24}$"),
+    world_model_hash: nullableIdentity("^[a-f0-9]{64}$"),
+    source_snapshot_id: nullableIdentity("^source-snapshot-[a-f0-9]{24}$"),
+    graph_snapshot_id: nullableIdentity("^graph-snapshot-[a-f0-9]{24}$"),
+  },
+  required: ["product_model_id", "product_model_hash", "world_model_id", "world_model_hash", "source_snapshot_id", "graph_snapshot_id"], additionalProperties: false,
+};
+const conformanceEvidenceAnchorSchema = {
+  type: "object",
+  properties: {
+    kind: { type: "string", enum: ["source", "change", "observation", "graph"] },
+    path: { type: "string", minLength: 1 }, file_digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    start_line: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] }, end_line: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] }, excerpt_digest: nullableIdentity("^[a-f0-9]{64}$"),
+    revision_id: { anyOf: [{ type: "string", minLength: 1 }, { type: "null" }] }, symbol_id: { anyOf: [{ type: "string", minLength: 1 }, { type: "null" }] },
+    change_set_id: { type: "string", pattern: "^change-set-[a-f0-9]{24}$" }, change_set_hash: { type: "string", pattern: "^[a-f0-9]{64}$" }, change_id: { type: "string", pattern: "^change-record-[a-f0-9]{24}$" },
+    observation_id: { type: "string", pattern: "^(?:observation|derived-observation)-[a-f0-9]{24}$" }, observation_hash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    graph_snapshot_id: { type: "string", pattern: "^graph-snapshot-[a-f0-9]{24}$" }, node_id: { type: "string", minLength: 1 },
+  },
+  required: ["kind"], additionalProperties: false,
+};
+const conformanceFindingInputSchema = {
+  type: "object",
+  properties: {
+    canon_anchor: { type: "object", properties: { entity_kind: { type: "string", enum: ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"] }, entity_key: { type: "string", minLength: 1 } }, required: ["entity_kind", "entity_key"], additionalProperties: false },
+    evidence_anchors: { type: "array", minItems: 1, maxItems: 64, items: conformanceEvidenceAnchorSchema },
+    claim: { type: "object", properties: { kind: { type: "string", enum: ["potential-conflict", "possible-conformance-gap"] }, summary: { type: "string", minLength: 1 }, rationale: { type: "string", minLength: 1 }, risk_hint: { type: "string", enum: ["unknown", "low", "medium", "high"] } }, required: ["kind", "summary", "rationale", "risk_hint"], additionalProperties: false },
+  },
+  required: ["canon_anchor", "evidence_anchors", "claim"], additionalProperties: false,
 };
 export const tools = [
   {
@@ -441,6 +477,50 @@ export const tools = [
       required: ["project_root", "vcs_evidence_id"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "head_conformance_prepare",
+    description: "Prepare bounded current Product Canon and optional World identities for provider HEAD semantic drift analysis. The user supplies no JSON or graph IDs; Core chooses no meaning, writes nothing, and never blocks ordinary work.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, limit: { type: "integer", minimum: 1, maximum: 64, default: 32 }, projection_id: { type: "string" }, cursor: { type: "string" } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_conformance_propose",
+    description: "Record one or more provider-HEAD semantic Conformance candidates only after Core verifies exact current Canon and evidence anchors. Candidates are P3 evidence, never violations, decisions, execution authority, recovery direction, or ordinary-work gates.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, baseline: conformanceBaselineSchema, findings: { type: "array", minItems: 1, maxItems: 64, items: conformanceFindingInputSchema } }, required: ["project_root", "baseline", "findings"], additionalProperties: false },
+  },
+  {
+    name: "head_conformance_queue",
+    description: "Read a bounded, paginated P4 Conformance queue. Missing Graph or optional sources, partial coverage, risk hints, and open findings never block ordinary work.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, status: { type: "string", enum: ["all", "open", "acknowledged", "deferred", "action-requested", "needs-recheck", "resolution-proposed", "closed-dismissed", "closed-resolved"], default: "all" }, risk_hint: { type: "string", enum: ["", "unknown", "low", "medium", "high"], default: "" }, limit: { type: "integer", minimum: 1, maximum: 64, default: 25 }, projection_id: { type: "string" }, cursor: { type: "string", pattern: "^conformance-finding-[a-f0-9]{24}$" } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_conformance_read",
+    description: "Read and digest-verify one exact Conformance Finding, its non-authoritative resolutions, and exact-finding dispositions.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, finding_id: { type: "string", pattern: "^conformance-finding-[a-f0-9]{24}$" } }, required: ["project_root", "finding_id"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_conformance_disposition",
+    description: "Record a user-confirmed disposition for one exact Finding. It may request a normal fix or Canon-revision flow but cannot authorize execution, create a Product ReviewDecision, mutate Canon, or write recovery direction.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, finding_id: { type: "string", pattern: "^conformance-finding-[a-f0-9]{24}$" }, disposition: { type: "string", enum: ["acknowledge", "defer", "dismiss", "request-code-fix", "request-canon-revision", "accept-resolution"] }, rationale: { type: "string", minLength: 1 }, defer_until: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] }, resolution_id: { anyOf: [{ type: "string", pattern: "^conformance-resolution-[a-f0-9]{24}$" }, { type: "null" }] }, confirm_user_disposition: { type: "boolean" } }, required: ["project_root", "finding_id", "disposition", "rationale", "confirm_user_disposition"], additionalProperties: false },
+  },
+  {
+    name: "head_conformance_resolution_propose",
+    description: "Record a provider-HEAD resolution candidate against a fresh exact baseline. It does not close the Finding; only a later explicit exact-finding disposition can do so.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, finding_id: { type: "string", pattern: "^conformance-finding-[a-f0-9]{24}$" }, baseline: conformanceBaselineSchema, evidence_anchors: { type: "array", minItems: 1, maxItems: 64, items: conformanceEvidenceAnchorSchema }, assessment: { type: "string", enum: ["appears-resolved", "still-present", "uncertain"] }, rationale: { type: "string", minLength: 1 } }, required: ["project_root", "finding_id", "baseline", "evidence_anchors", "assessment", "rationale"], additionalProperties: false },
+  },
+  {
+    name: "head_conformance_trigger_status",
+    description: "Read one optional Host-local Conformance trigger binding. It is P5 operational state and does not imply Product meaning, source completeness, or authority.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, source_id: { type: "string", pattern: "^conformance-trigger-source-[a-f0-9]{24}$" } }, required: ["project_root", "source_id"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_conformance_trigger_prepare",
+    description: "Prepare the next bounded Host-local trigger batch and current read-only Conformance baseline. It invokes no provider, creates no Finding, and does not auto-replay an uncertain assessment.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, source_id: { type: "string", pattern: "^conformance-trigger-source-[a-f0-9]{24}$" }, limit: { type: "integer", minimum: 1, maximum: 64, default: 64 } }, required: ["project_root", "source_id"], additionalProperties: false },
   },
   {
     name: "head_context_prepare",
@@ -1372,6 +1452,32 @@ function observationInputFromMcp(value) {
   };
 }
 
+function conformanceBaselineFromMcp(value) {
+  return {
+    productModelId: value.product_model_id,
+    productModelHash: value.product_model_hash,
+    worldModelId: value.world_model_id,
+    worldModelHash: value.world_model_hash,
+    sourceSnapshotId: value.source_snapshot_id,
+    graphSnapshotId: value.graph_snapshot_id,
+  };
+}
+
+function conformanceEvidenceAnchorFromMcp(value) {
+  if (value.kind === "source") return { kind: value.kind, path: value.path, fileDigest: value.file_digest, startLine: value.start_line ?? null, endLine: value.end_line ?? null, excerptDigest: value.excerpt_digest ?? null, revisionId: value.revision_id ?? null, symbolId: value.symbol_id ?? null };
+  if (value.kind === "change") return { kind: value.kind, changeSetId: value.change_set_id, changeSetHash: value.change_set_hash, changeId: value.change_id };
+  if (value.kind === "observation") return { kind: value.kind, observationId: value.observation_id, observationHash: value.observation_hash };
+  return { kind: value.kind, graphSnapshotId: value.graph_snapshot_id, nodeId: value.node_id };
+}
+
+function conformanceFindingFromMcp(value) {
+  return {
+    canonAnchor: { entityKind: value.canon_anchor.entity_kind, entityKey: value.canon_anchor.entity_key },
+    evidenceAnchors: value.evidence_anchors.map(conformanceEvidenceAnchorFromMcp),
+    claim: { kind: value.claim.kind, summary: value.claim.summary, rationale: value.claim.rationale, riskHint: value.claim.risk_hint },
+  };
+}
+
 function compactReviewResult(result) {
   const latestReviewDecisionId = result.state.latestReviewDecisionId ?? result.state.reviewDecisionId ?? null;
   return {
@@ -1489,7 +1595,7 @@ function continueSessionFromMcp(args, coordinationWorkspaceHost) {
   });
 }
 
-export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null } = {}) {
+export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null } = {}) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
       return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: packageVersion } });
@@ -1560,6 +1666,22 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           ? inspectChangeSets({ root: args.project_root })
         : name === "head_vcs_evidence"
           ? readVcsEvidence({ root: args.project_root, vcsEvidenceId: args.vcs_evidence_id })
+        : name === "head_conformance_prepare"
+          ? prepareConformanceAssessment({ root: args.project_root, limit: args.limit ?? 32, projectionId: args.projection_id || "", cursor: args.cursor || "" })
+        : name === "head_conformance_propose"
+          ? proposeConformanceFindings({ root: args.project_root, baseline: conformanceBaselineFromMcp(args.baseline), findings: args.findings.map(conformanceFindingFromMcp) })
+        : name === "head_conformance_queue"
+          ? inspectConformanceQueue({ root: args.project_root, status: args.status || "all", riskHint: args.risk_hint || "", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "" })
+        : name === "head_conformance_read"
+          ? readConformanceFinding({ root: args.project_root, findingId: args.finding_id })
+        : name === "head_conformance_disposition"
+          ? recordConformanceDisposition({ root: args.project_root, findingId: args.finding_id, disposition: args.disposition, rationale: args.rationale, deferUntil: args.defer_until ?? null, resolutionId: args.resolution_id ?? null, confirmUserDisposition: args.confirm_user_disposition })
+        : name === "head_conformance_resolution_propose"
+          ? proposeConformanceResolution({ root: args.project_root, findingId: args.finding_id, baseline: conformanceBaselineFromMcp(args.baseline), evidenceAnchors: args.evidence_anchors.map(conformanceEvidenceAnchorFromMcp), assessment: args.assessment, rationale: args.rationale })
+        : name === "head_conformance_trigger_status"
+          ? (conformanceTriggerRegistry ? conformanceTriggerRegistry.inspect({ root: args.project_root, sourceId: args.source_id }) : { status: "optional-host-adapter-unavailable", ordinaryWorkBlocked: false, authority: "P5-capability-disclosure-only" })
+        : name === "head_conformance_trigger_prepare"
+          ? (conformanceTriggerRegistry ? conformanceTriggerRegistry.prepare({ root: args.project_root, sourceId: args.source_id, limit: args.limit ?? 64 }) : { status: "optional-host-adapter-unavailable", ordinaryWorkBlocked: false, authority: "P5-capability-disclosure-only" })
         : name === "head_context_prepare"
           ? prepareContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET })
         : name === "head_context_preview"
@@ -1748,12 +1870,12 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
   }
 }
 
-export function serveMcp({ coordinationWorkspaceHost = null, observationRegistry = null } = {}) {
+export function serveMcp({ coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null } = {}) {
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   input.on("line", async (line) => {
     if (!line.trim()) return;
     let response;
-    try { response = await dispatch(JSON.parse(line), { coordinationWorkspaceHost, observationRegistry }); }
+    try { response = await dispatch(JSON.parse(line), { coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry }); }
     catch (error) { response = failure(null, `Parse error: ${error.message}`); }
     if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
   });

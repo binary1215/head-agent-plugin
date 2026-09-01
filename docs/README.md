@@ -30,6 +30,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 
 - [Execution Lineage contract and Run lifecycle](execution-lineage.md)
 - [Provider-neutral ChangeSet and reviewed impact](change-sets.md)
+- [Non-blocking Conformance reconciliation](conformance-reconciliation.md)
 - [Compaction recovery](compaction-recovery.md)
 - [Session restore and reviewed-result integration](session-recovery.md)
 - [Provider-neutral durable role coordination](role-coordination.md)

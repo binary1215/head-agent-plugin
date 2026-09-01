@@ -116,6 +116,7 @@ HEAD는 검토된 Feature와 Capability가 어떤 파일, 심볼, 테스트와 �
 | 병렬 워커의 진행 상황을 한눈에 보기 어려움 | 공급자 중립적인 launch wave가 요청·시작·반환·대기·성공·실패를 보여주되, 워커별 권한을 합치거나 wave 완료를 승인으로 취급하지 않습니다. |
 | Git 및 배포 이력을 사람이 직접 입력해야 함 | 공급자 중립 관측이 현재 product ref와 호스트가 보고한 배포 결과를 불변 P3 evidence로 만들며, 승인·성공·정확한 commit/ref 일치가 모두 확인될 때만 권한 없는 ReleaseObservation을 만듭니다. |
 | 제품마다 운영 데이터 형태가 다름 | Project-bound Host registry를 통해 HEAD가 configured source를 opaque ID로 collect하고, 제품별 adapter는 하나의 evidence-only 계약으로 normalize하며 Core는 coverage와 replay를 증명합니다. |
+| 릴리스 사이에 코드와 검토된 정책이 어긋남 | 공급자 HEAD가 증거가 연결된 Conformance Finding을 비차단 queue에 제안하고, Core는 exact anchor와 replay를 검증하며, disposition 또는 fresh resolution 수락은 사용자만 수행합니다. Graph나 connector data가 없어도 disclosure일 뿐 일반 작업의 gate가 되지 않습니다. |
 
 > 일반적인 코딩 에이전트가 현재 작업을 최적화한다면, HEAD Agent Core는
 > 여러 작업이 검토된 하나의 제품 방향으로 축적되도록 최적화합니다.
@@ -772,6 +773,7 @@ HEAD Agent Core Plugin은
 - [Product Operating Loop](docs/ko/product-operating-loop.md)
 - [Release observation](docs/ko/release-observation.md)
 - [공통 Observation 계약](docs/ko/observation-adapters.md)
+- [비차단 Conformance 재정](docs/ko/conformance-reconciliation.md)
 - [증분 갱신](docs/ko/incremental-refresh.md)
 - [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)
 - [Session 복구](docs/ko/session-recovery.md)

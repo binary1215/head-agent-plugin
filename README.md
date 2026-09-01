@@ -120,6 +120,7 @@ product decision. See [Feature mapping](docs/feature-mapping.md).
 | Parallel workers are hard to scan at a glance | A provider-neutral launch wave shows requested, started, returned, waiting, succeeded, and failed workers without merging their authorizations or treating wave completion as approval. |
 | Git and deployment history must be typed by hand | Provider-neutral observations turn current product refs and host-reported deployment results into immutable P3 evidence, while only an approved successful exact-commit/ref match becomes a non-authoritative ReleaseObservation. |
 | Every product exposes different operational data | A Project-bound Host registry lets HEAD collect a configured source by opaque ID, while product-specific adapters normalize it into one evidence-only contract and Core proves coverage and replay. |
+| Code and reviewed policy drift apart between releases | Provider HEAD proposes evidence-linked Conformance Findings into a non-blocking queue; Core verifies exact anchors and replay while only the user can disposition or accept a fresh resolution. Missing Graph or connector data remains a disclosure, not a gate on ordinary work. |
 
 > A conventional coding agent optimizes the current task. HEAD Agent Core
 > optimizes for many tasks to accumulate into the same reviewed product
@@ -792,6 +793,7 @@ Additional references:
 - [Product Operating Loop](docs/product-operating-loop.md)
 - [Release observation](docs/release-observation.md)
 - [Common Observation contract](docs/observation-adapters.md)
+- [Non-blocking Conformance reconciliation](docs/conformance-reconciliation.md)
 - [Incremental refresh](docs/incremental-refresh.md)
 - [Compaction recovery](docs/compaction-recovery.md)
 - [Session recovery](docs/session-recovery.md)

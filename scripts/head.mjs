@@ -34,6 +34,7 @@ import { collectRegisteredObservation, ingestJsonObservationEventFile, ingestStr
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
+import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
@@ -124,6 +125,12 @@ export function usage({ all = false } = {}) {
       "head change-impact-review-read <project> --review <change-impact-review-decision-id>",
       "head change-set-vcs-attach <project> --input <vcs-evidence.json>",
       "head change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>",
+      "head conformance-prepare <project> [--limit <1-64>] [--projection <projection-id> --cursor <kind:key>]",
+      "head conformance-propose <project> --input <provider-head-proposal.json>",
+      "head conformance-queue <project> [--status <state>] [--risk-hint <level>] [--limit <1-64>] [--projection <projection-id> --cursor <finding-id>]",
+      "head conformance-read <project> --finding <conformance-finding-id>",
+      "head conformance-disposition <project> --input <user-confirmed-disposition.json>",
+      "head conformance-resolution-propose <project> --input <provider-head-resolution.json>",
       "head operating-lane-recommend <project> --input <risk.json>",
       "head product-note <project> --input <note.json>",
       "head product-signal-record <project> --input <signal.json>",
@@ -374,6 +381,12 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (command === "change-impact-review-read") return readChangeImpactReviewDecision({ root, reviewDecisionId: options.review });
   if (command === "change-set-vcs-attach") return attachVcsEvidence({ ...inputJson(options, "VCS evidence attachment"), root });
   if (command === "change-set-vcs-read") return readVcsEvidence({ root, vcsEvidenceId: options["vcs-evidence"] });
+  if (command === "conformance-prepare") return prepareConformanceAssessment({ root, limit: options.limit == null ? 32 : Number(options.limit), projectionId: options.projection || "", cursor: options.cursor || "" });
+  if (command === "conformance-propose") return proposeConformanceFindings({ ...inputJson(options, "Conformance provider-HEAD proposal"), root });
+  if (command === "conformance-queue") return inspectConformanceQueue({ root, status: options.status || "all", riskHint: options["risk-hint"] || "", limit: options.limit == null ? 25 : Number(options.limit), projectionId: options.projection || "", cursor: options.cursor || "" });
+  if (command === "conformance-read") return readConformanceFinding({ root, findingId: options.finding });
+  if (command === "conformance-disposition") return recordConformanceDisposition({ ...inputJson(options, "Conformance user disposition"), root });
+  if (command === "conformance-resolution-propose") return proposeConformanceResolution({ ...inputJson(options, "Conformance provider-HEAD resolution"), root });
   if (command === "operating-lane-recommend") return recommendOperatingLane({ ...inputJson(options, "Operating lane risk input"), root });
   if (command === "product-note") return prepareProductLearningNote({ ...inputJson(options, "Product learning note"), root });
   if (command === "product-signal-record") return recordProductSignal({ ...inputJson(options, "ProductSignal"), root });
