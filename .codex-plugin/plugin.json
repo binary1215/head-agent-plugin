@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.5+codex.20260901084746",
+  "version": "0.3.0-beta.6+codex.20260901132926",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -32,6 +32,7 @@
       "Compaction and Provider-independent Recovery",
       "Durable Runs with Fresh HEAD Review",
       "Provider-neutral Bounded Worker Waves",
+      "Provider-neutral Common Observation Evidence",
       "Rebuildable World Graph and Markdown Projections",
       "Claude Code, Codex, and OpenCode Runtime Adapters",
       "Integrity-verified Native Distribution"

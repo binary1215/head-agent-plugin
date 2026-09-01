@@ -78,6 +78,8 @@ test("records Git refs and an approved successful deployment as P3 release evide
   assert.equal(fs.readFileSync(sessionPointerFile, "utf8"), sessionBefore);
 
   const projection = inspectReleaseObservations({ root }).projection;
+  assert.equal(projection.commonObservationContract.role, "domain-specialization-with-exact-git-and-approved-deployment-lineage");
+  assert.equal(projection.commonObservationContract.genericReplacement, false);
   assert.equal(projection.releases.length, 1);
   assert.equal(projection.deploymentResults.length, 1);
   const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;

@@ -29,7 +29,7 @@ Sources and promoted canon
   -> ContextCapsule + digest
 ```
 
-Context Compiler protocol `0.15.0`은 결정적 packaging과 semantic judgment를 분리합니다. provider HEAD가 task analysis를 수행하고 `EvidenceNeed[]`에 정확한 repository `paths`, Product Canon `entityKeys` 또는 현재 상태에 결속된 `graphAnchor`를 지정할 수 있습니다. Core는 이를 현재 Project·World Model·GraphSnapshot에 대조하고 실제 포함만 증명합니다. lexical normalization과 overlap은 anchor가 없는 evidence의 공개된 discovery/ranking fallback일 뿐입니다. repository retrieval은 더 이상 첫 token-matching file을 temporal anchor로 선택하지 않습니다.
+Context Compiler protocol `0.16.0`은 결정적 packaging과 semantic judgment를 분리합니다. provider HEAD가 task analysis를 수행하고 `EvidenceNeed[]`에 정확한 repository `paths`, Product Canon `entityKeys`, 현재 상태에 결속된 `graphAnchor` 또는 immutable `observationIds`를 지정할 수 있습니다. Core는 이를 현재 Project·World Model·GraphSnapshot·common Observation projection에 대조하고 실제 포함만 증명합니다. lexical normalization과 overlap은 anchor가 없는 evidence의 공개된 discovery/ranking fallback일 뿐입니다. repository retrieval은 더 이상 첫 token-matching file을 temporal anchor로 선택하지 않습니다.
 
 명시적 budget은 엄격한 상한이며 충분하다는 주장이 아닙니다. 이 `EvidenceNeed[]` 계약에서 `temporal-relation` need는 `graphAnchor: { projectId, worldModelId, graphSnapshotId, nodeIds, depth, maxNodes, maxEdges }`를 가질 수 있습니다. exact anchor에는 현재 적격 node, 비어 있지 않은 relation allowlist와 정확한 traversal bound가 필요하며 facet을 함께 쓸 수 없습니다. 일치하는 relation 또는 Product entity key마다 독립된 기계적 evidence item이 됩니다. Compiler는 이러한 need를 스스로 만들지 않고 실제 포함만 입증합니다.
 
@@ -93,6 +93,8 @@ HEAD가 소유한 input 예시:
 ```
 
 HEAD가 해당 작업에 `repository-test` need를 추가할 때만 test를 요청합니다. document는 `repository-source` need를 충족할 수 없고, relationship need는 포함된 carrier candidate를 통해 실제로 포함된 relationship record로만 충족됩니다.
+
+Common Observation record는 lexical candidate가 되지 않습니다. HEAD는 kind `observation`과 정확한 `observationIds`를 사용해야 하며, Core는 해당 current immutable record만 `ObservationEvidence`로 포함합니다. descriptor, payload, coverage와 P4 projection은 evidence로 남고 product meaning, semantic sufficiency, instruction authority 또는 recovery direction을 제공할 수 없습니다. [`observation-adapters.md`](observation-adapters.md)를 참고하세요.
 
 ## 신뢰와 권한
 

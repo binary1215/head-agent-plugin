@@ -22,6 +22,9 @@ import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorizat
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
+import { ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
+import { inspectObservations } from "./lib/observation-projection.mjs";
+import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
@@ -48,6 +51,55 @@ import fs from "node:fs";
 const protocolVersion = "2024-11-05";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageVersion = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8")).version;
+const observationFieldSchema = {
+  type: "object",
+  properties: {
+    key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$" },
+    type: { type: "string", enum: ["string", "stable-key", "timestamp", "sha256", "boolean", "integer", "nonnegative-integer", "bounded-number", "enum", "array"] },
+    required: { type: "boolean" }, min: { type: "number" }, max: { type: "number" }, enum: { type: "array", maxItems: 64 },
+    items_type: { type: "string", enum: ["string", "stable-key", "timestamp", "sha256", "boolean", "integer", "nonnegative-integer", "bounded-number", "enum"] },
+    max_items: { type: "integer", minimum: 0, maximum: 1024 },
+  },
+  required: ["key", "type", "required"], additionalProperties: false,
+};
+const observationDescriptorSchema = {
+  type: "object",
+  properties: {
+    type_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+    type_version: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" },
+    forms: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", enum: ["event", "snapshot", "aggregate"] } },
+    payload_schema: { type: "object", properties: { fields: { type: "array", maxItems: 128, items: observationFieldSchema }, additional_fields: { const: false } }, required: ["fields", "additional_fields"], additionalProperties: false },
+  },
+  required: ["type_key", "type_version", "forms", "payload_schema"], additionalProperties: false,
+};
+const observationCoverageSchema = {
+  type: "object",
+  properties: {
+    state: { type: "string", enum: ["complete", "sampled", "partial", "unknown"] }, basis: { type: "string", minLength: 1 },
+    query_digest: { anyOf: [{ type: "string", pattern: "^[a-f0-9]{64}$" }, { type: "null" }] }, examined_count: { type: "integer", minimum: 0 },
+    source_reported_total: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] }, omitted_count: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] },
+    cursor_start_digest: { anyOf: [{ type: "string", pattern: "^[a-f0-9]{64}$" }, { type: "null" }] }, cursor_end_digest: { anyOf: [{ type: "string", pattern: "^[a-f0-9]{64}$" }, { type: "null" }] },
+  },
+  required: ["state", "basis", "query_digest", "examined_count", "source_reported_total", "omitted_count", "cursor_start_digest", "cursor_end_digest"], additionalProperties: false,
+};
+const observationBindingSchema = {
+  type: "object",
+  properties: {
+    adapter_key: { const: "head.structured-host-observation" }, adapter_version: { const: "0.1.0" }, source_scope_digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    credential_reference_names: { type: "array", maxItems: 16, uniqueItems: true, items: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,127}$" } },
+  },
+  required: ["adapter_key", "adapter_version", "source_scope_digest", "credential_reference_names"], additionalProperties: false,
+};
+const observationInputSchema = {
+  type: "object",
+  properties: {
+    subject: { type: "object", properties: { type: { type: "string", minLength: 1 }, key: { type: "string", minLength: 1 } }, required: ["type", "key"], additionalProperties: false },
+    form: { type: "string", enum: ["event", "snapshot", "aggregate"] },
+    temporal_scope: { type: "object", properties: { observed_at: { type: "string", format: "date-time" }, start: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] }, end: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] } }, required: ["observed_at", "start", "end"], additionalProperties: false },
+    source_event_key_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, source_evidence_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, coverage: observationCoverageSchema, payload: { type: "object" },
+  },
+  required: ["subject", "form", "temporal_scope", "source_event_key_digest", "source_evidence_digest", "coverage", "payload"], additionalProperties: false,
+};
 export const tools = [
   {
     name: "head_core_contract",
@@ -421,9 +473,10 @@ export const tools = [
             type: "object",
             properties: {
               id: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" },
-              kind: { type: "string", enum: ["claim", "decision", "git-decision", "product-context", "repository-file", "repository-source", "repository-test", "runtime-state", "semantic-relation", "temporal-relation", "unknown"] },
+              kind: { type: "string", enum: ["claim", "decision", "git-decision", "observation", "product-context", "repository-file", "repository-source", "repository-test", "runtime-state", "semantic-relation", "temporal-relation", "unknown"] },
               paths: { type: "array", maxItems: 32, description: "Exact normalized project-relative repository paths selected by HEAD after semantic task analysis. Core verifies actual current inclusion; paths never grant authority.", items: { type: "string", minLength: 1 } },
               entityKeys: { type: "array", maxItems: 32, description: "Exact Product Canon entity keys selected by HEAD for product-context evidence. Core verifies actual current inclusion; keys never grant authority.", items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } },
+              observationIds: { type: "array", minItems: 1, maxItems: 32, uniqueItems: true, description: "Exact immutable Observation identities selected by HEAD. Core verifies current existence and actual inclusion without lexical matching or semantic promotion.", items: { type: "string", pattern: "^(observation|derived-observation)-[a-f0-9]{24}$" } },
               facets: { type: "array", maxItems: 16, items: { type: "string", minLength: 1 } },
               relationTypes: { type: "array", maxItems: 16, items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,63}$" } },
               graphAnchor: {
@@ -1072,8 +1125,8 @@ export const tools = [
   },
   {
     name: "head_product_hypothesis_record",
-    description: "Record an immutable hypothesis linked to ProductSignals; it remains non-authoritative.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, statement: { type: "string", minLength: 1 }, rationale: { type: "string" }, signal_ids: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: "^product-signal-[a-f0-9]{24}$" } } }, required: ["project_root", "statement", "signal_ids"], additionalProperties: false },
+    description: "Record an immutable non-authoritative hypothesis linked to ProductSignals and/or exact common Observation identities.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, statement: { type: "string", minLength: 1 }, rationale: { type: "string" }, signal_ids: { type: "array", uniqueItems: true, items: { type: "string", pattern: "^product-signal-[a-f0-9]{24}$" } }, observation_ids: { type: "array", uniqueItems: true, items: { type: "string", pattern: "^(observation|derived-observation)-[a-f0-9]{24}$" } } }, required: ["project_root", "statement"], additionalProperties: false },
   },
   {
     name: "head_product_initiative_propose",
@@ -1115,6 +1168,49 @@ export const tools = [
     name: "head_release_status",
     description: "Read digest-verified P3 BranchState, DeploymentResult, and Release observations. The projection is evidence-only and has no Product Canon, execution, or recovery authority.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+  },
+  {
+    name: "head_observation_sources",
+    description: "List provider-neutral Observation adapter capabilities without reading an external source, resolving credentials, or activating Product governance.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_observation_collect",
+    description: "Collect one bounded host-supplied typed Observation through an exact source binding. The result is P3 evidence only and cannot create ProductSignal, ReviewDecision, Product Canon, or recovery direction.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, binding: observationBindingSchema, descriptor: observationDescriptorSchema, observation: observationInputSchema, confirm_host_observation: { type: "boolean" } }, required: ["project_root", "binding", "descriptor", "observation", "confirm_host_observation"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "head_observation_ingest",
+    description: "Ingest one bounded CI or Host Observation using the same Core identity and authority contract as collection. Explicit host-source confirmation is required.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, binding: observationBindingSchema, descriptor: observationDescriptorSchema, observation: observationInputSchema, confirm_host_observation: { type: "boolean" } }, required: ["project_root", "binding", "descriptor", "observation", "confirm_host_observation"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "head_observation_derive",
+    description: "Record a deterministic P3 derived Observation from exact existing Observation IDs and an algorithm digest. It cannot assert causality or Product success.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, descriptor: observationDescriptorSchema,
+      subject: { type: "object", properties: { type: { type: "string", minLength: 1 }, key: { type: "string", minLength: 1 } }, required: ["type", "key"], additionalProperties: false },
+      temporal_scope: observationInputSchema.properties.temporal_scope,
+      input_observation_ids: { type: "array", minItems: 1, maxItems: 64, uniqueItems: true, items: { type: "string", pattern: "^observation-[a-f0-9]{24}$" } },
+      algorithm: { type: "object", properties: { key: { type: "string", minLength: 1 }, version: { type: "string", minLength: 1 }, digest: { type: "string", pattern: "^[a-f0-9]{64}$" } }, required: ["key", "version", "digest"], additionalProperties: false },
+      coverage: observationCoverageSchema, payload: { type: "object" }, confirm_host_derivation: { type: "boolean" },
+    }, required: ["project_root", "descriptor", "subject", "temporal_scope", "input_observation_ids", "algorithm", "coverage", "payload", "confirm_host_derivation"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_observation_read",
+    description: "Read one exact digest-verified observed or derived Observation by ID.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, observation_id: { type: "string", pattern: "^(?:observation|derived-observation)-[a-f0-9]{24}$" } }, required: ["project_root", "observation_id"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_observation_status",
+    description: "Read the rebuildable P4 Observation status and evidence-only graph. Product semantic edges remain absent and Context eligibility is exact EvidenceNeed only.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_continuity_snapshot",
@@ -1167,6 +1263,61 @@ function productFeatureResolutionFromMcp(value) {
   if (value?.kind === "existing-feature") return { kind: value.kind, featureKey: value.feature_key };
   if (value?.kind === "candidate") return { kind: value.kind, feature: { key: value.feature?.key, name: value.feature?.name, description: value.feature?.description || "", capabilityKeys: value.feature?.capability_keys || [] } };
   return { kind: "gap", reason: value?.reason };
+}
+
+function observationDescriptorFromMcp(value) {
+  return {
+    typeKey: value.type_key,
+    typeVersion: value.type_version,
+    forms: value.forms,
+    payloadSchema: {
+      additionalFields: value.payload_schema.additional_fields,
+      fields: value.payload_schema.fields.map((field) => ({
+        key: field.key,
+        type: field.type,
+        required: field.required,
+        ...(field.min == null ? {} : { min: field.min }),
+        ...(field.max == null ? {} : { max: field.max }),
+        ...(field.enum == null ? {} : { enum: field.enum }),
+        ...(field.items_type == null ? {} : { itemsType: field.items_type }),
+        ...(field.max_items == null ? {} : { maxItems: field.max_items }),
+      })),
+    },
+  };
+}
+
+function observationCoverageFromMcp(value) {
+  return {
+    state: value.state,
+    basis: value.basis,
+    queryDigest: value.query_digest,
+    examinedCount: value.examined_count,
+    sourceReportedTotal: value.source_reported_total,
+    omittedCount: value.omitted_count,
+    cursorStartDigest: value.cursor_start_digest,
+    cursorEndDigest: value.cursor_end_digest,
+  };
+}
+
+function observationBindingFromMcp(value) {
+  return {
+    adapterKey: value.adapter_key,
+    adapterVersion: value.adapter_version,
+    sourceScopeDigest: value.source_scope_digest,
+    credentialReferenceNames: value.credential_reference_names || [],
+  };
+}
+
+function observationInputFromMcp(value) {
+  return {
+    subject: value.subject,
+    form: value.form,
+    temporalScope: { observedAt: value.temporal_scope.observed_at, start: value.temporal_scope.start, end: value.temporal_scope.end },
+    sourceEventKeyDigest: value.source_event_key_digest,
+    sourceEvidenceDigest: value.source_evidence_digest,
+    coverage: observationCoverageFromMcp(value.coverage),
+    payload: value.payload,
+  };
 }
 
 function compactReviewResult(result) {
@@ -1503,7 +1654,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                           : name === "head_product_signal_record"
                             ? recordProductSignal({ root: args.project_root, statement: args.statement, observedAt: args.observed_at, source: args.source || "", evidenceIds: args.evidence_ids || [] })
                           : name === "head_product_hypothesis_record"
-                            ? recordProductHypothesis({ root: args.project_root, statement: args.statement, rationale: args.rationale || "", signalIds: args.signal_ids })
+                            ? recordProductHypothesis({ root: args.project_root, statement: args.statement, rationale: args.rationale || "", signalIds: args.signal_ids || [], observationIds: args.observation_ids || [] })
                           : name === "head_product_initiative_propose"
                             ? proposeProductInitiative({ root: args.project_root, title: args.title, description: args.description || "", reasoning: args.reasoning || "", hypothesisIds: args.hypothesis_ids || [], featureResolution: args.feature_resolution == null ? null : productFeatureResolutionFromMcp(args.feature_resolution) })
                           : name === "head_product_initiative_review"
@@ -1516,6 +1667,16 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                             ? (requireMcpConfirmation(args.confirm_host_observation, "Release observation requires explicit confirmation that the payload came from a host deployment observer.", "RELEASE_HOST_OBSERVATION_CONFIRMATION_REQUIRED"), observeReleaseState({ root: args.project_root, input: { environmentKey: args.environment_key, status: args.status, commit: args.commit, observedAt: args.observed_at, sourceEventKeyDigest: args.source_event_key_digest, deploymentEvidenceDigest: args.deployment_evidence_digest, approved: args.approved, approvalEvidenceDigest: args.approval_evidence_digest, changeSetId: args.change_set_id, vcsEvidenceId: args.vcs_evidence_id } }))
                           : name === "head_release_status"
                             ? inspectReleaseObservations({ root: args.project_root })
+                          : name === "head_observation_sources"
+                            ? inspectObservationSources()
+                          : name === "head_observation_collect" || name === "head_observation_ingest"
+                            ? (requireMcpConfirmation(args.confirm_host_observation, "Observation collection requires explicit confirmation that the payload came from the exact Host source binding.", "OBSERVATION_HOST_CONFIRMATION_REQUIRED"), ingestStructuredObservation({ root: args.project_root, binding: observationBindingFromMcp(args.binding), descriptor: observationDescriptorFromMcp(args.descriptor), input: observationInputFromMcp(args.observation) }))
+                          : name === "head_observation_derive"
+                            ? (requireMcpConfirmation(args.confirm_host_derivation, "Derived Observation recording requires explicit confirmation that the payload came from the named deterministic algorithm.", "OBSERVATION_DERIVATION_CONFIRMATION_REQUIRED"), recordDerivedObservation({ root: args.project_root, descriptor: observationDescriptorFromMcp(args.descriptor), input: { subject: args.subject, temporalScope: { observedAt: args.temporal_scope.observed_at, start: args.temporal_scope.start, end: args.temporal_scope.end }, inputObservationIds: args.input_observation_ids, algorithm: args.algorithm, coverage: observationCoverageFromMcp(args.coverage), payload: args.payload } }))
+                          : name === "head_observation_read"
+                            ? readObservation({ root: args.project_root, observationId: args.observation_id })
+                          : name === "head_observation_status"
+                            ? inspectObservations({ root: args.project_root })
                           : name === "head_continuity_snapshot"
                             ? buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());

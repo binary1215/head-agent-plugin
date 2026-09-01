@@ -177,7 +177,7 @@ for (const target of links(koreanReadme).filter((entry) => entry.startsWith("doc
 const contextCompiler = fs.readFileSync(path.join(docsDir, "context-compiler.md"), "utf8");
 assert.match(contextCompiler, /32K.*64K.*128K.*256K.*512K/s, "Context Compiler docs must describe the current fixed budget tiers");
 assert.match(contextCompiler, /current Compiler rejects arbitrary 4,000-token input/i, "Context Compiler docs must identify 4,000 tokens as a rejected historical budget");
-assert.match(fs.readFileSync(path.join(docsDir, "product-operating-loop.md"), "utf8"), /protocol `0\.2\.0`/i);
+assert.match(fs.readFileSync(path.join(docsDir, "product-operating-loop.md"), "utf8"), /protocol `0\.3\.0`/i);
 assert.match(fs.readFileSync(path.join(docsDir, "onboarding.md"), "utf8"), /Claude Code, Codex, OpenCode/);
 
 console.log(JSON.stringify({

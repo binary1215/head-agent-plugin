@@ -134,6 +134,21 @@ workflow is non-persisted advice and cannot activate Product, mutate World,
 persist a Capsule, authorize execution, review a result, or write recovery
 direction.
 
+When a product exposes build, delivery, analytics, support, runtime, or other
+structured facts, use the common Observation surface instead of inventing Core
+domain vocabulary. Inspect `head_observation_sources`, then collect through an
+exact Host-supplied binding with `head_observation_collect` or
+`head_observation_ingest`. Confirm only a source binding the Host actually
+provided. Descriptors define a closed data shape, not Feature meaning, success,
+causality, policy, or tool routing. Read `head_observation_status` as a P4 view.
+To use one of these records in task context, HEAD must add an EvidenceNeed of
+kind `observation` with exact current `observationIds`; lexical overlap never
+makes an Observation eligible. If product interpretation should persist, author
+a non-authoritative ProductHypothesis that cites the exact Observation IDs.
+Never auto-create a ProductSignal, candidate, ReviewDecision, Canon mutation, or
+P2 recovery direction from an adapter payload. Read
+`../../docs/observation-adapters.md` before adding an Observation adapter.
+
 For Product-to-code or Product-to-test mapping, inspect the current World and
 Graph, then use `head_feature_mapping_propose` with exact current Product and
 source/test node identities. Do not derive mappings from names or token overlap.

@@ -39,6 +39,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 ## Adapters and projections
 
 - [Runtime adapter contracts](runtime-adapters.md)
+- [Common Observation contract and adapters](observation-adapters.md)
 - [ComputeAdapter and WorkerProtocol baseline](compute-adapter.md)
 - [GraphProjectionAdapter contract](graph-projection-adapter.md)
 - [DocumentProjectionAdapter and deterministic Markdown projection](document-projection-adapter.md)

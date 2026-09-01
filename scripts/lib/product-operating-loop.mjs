@@ -5,8 +5,9 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readChangeSet } from "./change-set.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { readProductModelCanon } from "./product-model.mjs";
+import { loadObservationArtifacts } from "./observation-store.mjs";
 
-export const PRODUCT_OPERATING_LOOP_VERSION = "0.2.0";
+export const PRODUCT_OPERATING_LOOP_VERSION = "0.3.0";
 export const PRODUCT_SIGNAL_DIRECTORY = ".head/product-operations/signals";
 export const PRODUCT_HYPOTHESIS_DIRECTORY = ".head/product-operations/hypotheses";
 export const PRODUCT_INITIATIVE_CANDIDATE_DIRECTORY = ".head/product-operations/initiative-candidates";
@@ -26,7 +27,7 @@ const DIRECTORIES = Object.freeze({
 });
 
 const LIMITS = Object.freeze({ maxArtifacts: 512, maxArtifactBytes: 1024 * 1024, maxTotalBytes: 32 * 1024 * 1024 });
-const LEGACY_PROTOCOL_VERSIONS = new Set(["0.1.0"]);
+const LEGACY_PROTOCOL_VERSIONS = new Set(["0.1.0", "0.2.0"]);
 const projectionReadCache = new Map();
 const worldSummaryReadCache = new Map();
 const fail = (message, code = "PRODUCT_OPERATING_LOOP_ERROR") => { const error = new Error(message); error.code = code; throw error; };
@@ -191,9 +192,12 @@ export function verifyProductSignal(document, projectId = "") {
 
 export function verifyProductHypothesis(document, projectId = "") {
   verifyIdentity(document, "product-hypothesis", "hypothesisId", "hypothesisHash", "ProductHypothesis");
+  const signalIds = sortedIds(document.signalIds || [], "ProductHypothesis signalIds");
+  const observationIds = sortedIds(document.observationIds || [], "ProductHypothesis observationIds");
   if (!commonValid(document, "ProductHypothesis", projectId, "hypothesis", "non-authoritative-hypothesis")
-    || typeof document.statement !== "string" || !document.statement || !document.signalIds?.length) fail("ProductHypothesis fields are invalid.", "INVALID_PRODUCT_HYPOTHESIS");
-  sortedIds(document.signalIds, "ProductHypothesis signalIds");
+    || typeof document.statement !== "string" || !document.statement || !signalIds.length && !observationIds.length
+    || observationIds.some((id) => !/^(?:observation|derived-observation)-[a-f0-9]{24}$/.test(id))) fail("ProductHypothesis fields are invalid.", "INVALID_PRODUCT_HYPOTHESIS");
+  if (document.protocol.version !== PRODUCT_OPERATING_LOOP_VERSION && document.observationIds != null) fail("Legacy ProductHypothesis may not gain Observation references.", "INVALID_PRODUCT_HYPOTHESIS");
   return document;
 }
 
@@ -296,8 +300,14 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
   const featureCandidates = by(arrays.featureCandidates, "featureCandidateId");
   const reviews = by(arrays.initiativeReviews, "reviewDecisionId");
   const reviewedInitiatives = by(arrays.reviewedInitiatives, "initiativeId");
+  const observationArtifacts = loadObservationArtifacts({ projectRoot, projectId });
+  const observationIds = new Set([
+    ...observationArtifacts.observations.map((item) => item.observationId),
+    ...observationArtifacts.derivedObservations.map((item) => item.derivedObservationId),
+  ]);
   const changes = new Map(readArtifacts(projectRoot, ".head/change-sets/records").map((value) => [value.changeSetId, value]));
   for (const hypothesis of arrays.hypotheses) if (hypothesis.signalIds.some((id) => !signals.has(id))) fail("ProductHypothesis references an unknown ProductSignal.", "UNKNOWN_PRODUCT_SIGNAL");
+  for (const hypothesis of arrays.hypotheses) if ((hypothesis.observationIds || []).some((id) => !observationIds.has(id))) fail("ProductHypothesis references an unknown Observation.", "UNKNOWN_OBSERVATION");
   for (const initiative of arrays.initiativeCandidates) {
     if (initiative.hypothesisIds.some((id) => !hypotheses.has(id))) fail("ProductInitiativeCandidate references an unknown ProductHypothesis.", "UNKNOWN_PRODUCT_HYPOTHESIS");
     if (initiative.featureResolution?.kind === "candidate") {
@@ -431,12 +441,19 @@ export async function recordProductSignal({ root = ".", statement, observedAt = 
   return { ...persisted, signal, productGraph: await projectProductOperatingGraph(inspected) };
 }
 
-export async function recordProductHypothesis({ root = ".", statement, signalIds = [], rationale = "" } = {}) {
+export async function recordProductHypothesis({ root = ".", statement, signalIds = [], observationIds = [], rationale = "" } = {}) {
   const inspected = readyProject(root, "a ProductHypothesis is recorded");
   const ids = sortedIds(signalIds, "ProductHypothesis signalIds");
-  if (!ids.length) fail("ProductHypothesis requires at least one ProductSignal.", "PRODUCT_HYPOTHESIS_SIGNAL_REQUIRED");
+  const exactObservationIds = sortedIds(observationIds, "ProductHypothesis observationIds");
+  if (!ids.length && !exactObservationIds.length) fail("ProductHypothesis requires at least one ProductSignal or exact Observation.", "PRODUCT_HYPOTHESIS_EVIDENCE_REQUIRED");
   for (const id of ids) findById(inspected.project.projectRoot, PRODUCT_SIGNAL_DIRECTORY, id, "product-signal", verifyProductSignal, inspected.project.projectId);
-  const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductHypothesis", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, statement: requiredText(statement, "ProductHypothesis statement"), rationale: optionalText(rationale, "ProductHypothesis rationale"), signalIds: ids, epistemicClass: "hypothesis", authority: "non-authoritative-hypothesis", instructionAuthority: false, promotionAuthority: false };
+  const observationArtifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const knownObservationIds = new Set([
+    ...observationArtifacts.observations.map((item) => item.observationId),
+    ...observationArtifacts.derivedObservations.map((item) => item.derivedObservationId),
+  ]);
+  for (const id of exactObservationIds) if (!knownObservationIds.has(id)) fail(`ProductHypothesis Observation not found: ${id}`, "UNKNOWN_OBSERVATION");
+  const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductHypothesis", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, statement: requiredText(statement, "ProductHypothesis statement"), rationale: optionalText(rationale, "ProductHypothesis rationale"), signalIds: ids, observationIds: exactObservationIds, epistemicClass: "hypothesis", authority: "non-authoritative-hypothesis", instructionAuthority: false, promotionAuthority: false };
   const hypothesis = verifyProductHypothesis(artifact(payload, "product-hypothesis", "hypothesisId", "hypothesisHash"), inspected.project.projectId);
   const persisted = persistImmutable(inspected.project.projectRoot, PRODUCT_HYPOTHESIS_DIRECTORY, hypothesis.hypothesisId, hypothesis);
   return { ...persisted, hypothesis, productGraph: await projectProductOperatingGraph(inspected) };

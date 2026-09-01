@@ -29,7 +29,7 @@ Sources and promoted canon
   -> ContextCapsule + digest
 ```
 
-Context Compiler protocol `0.15.0` keeps deterministic packaging separate from semantic judgment. The provider HEAD performs task analysis and may name exact normalized repository `paths`, exact Product Canon `entityKeys`, or a current-bound `graphAnchor` in `EvidenceNeed[]`; Core verifies those selectors against the current Project, World Model, and GraphSnapshot and proves actual inclusion. Lexical normalization and overlap remain bounded discovery/ranking signals for unanchored evidence only. Zero lexical overlap never makes a current candidate ineligible, and lexical score never means semantic acceptance. Repository retrieval may expand bounded structural adjacency, but it no longer chooses a temporal anchor from the first token-matching file.
+Context Compiler protocol `0.16.0` keeps deterministic packaging separate from semantic judgment. The provider HEAD performs task analysis and may name exact normalized repository `paths`, exact Product Canon `entityKeys`, a current-bound `graphAnchor`, or immutable `observationIds` in `EvidenceNeed[]`; Core verifies those selectors against the current Project, World Model, GraphSnapshot, and common Observation projection and proves actual inclusion. Lexical normalization and overlap remain bounded discovery/ranking signals for unanchored evidence only. Zero lexical overlap never makes a current candidate ineligible, and lexical score never means semantic acceptance. Repository retrieval may expand bounded structural adjacency, but it no longer chooses a temporal anchor from the first token-matching file.
 
 The explicit budget is a hard upper bound, not a claim of sufficiency. HEAD may provide a task-local `EvidenceNeed[]` contract naming exact project-relative paths, exact Product Canon entity keys, evidence kinds, optional lexical facets, relation types, and minimum item counts needed for the current task. A `temporal-relation` need may instead carry `graphAnchor: { projectId, worldModelId, graphSnapshotId, nodeIds, depth, maxNodes, maxEdges }`. Such anchors must name current eligible nodes, a non-empty relation allowlist, and exact traversal bounds; facets are forbidden on this exact mode. Each matching relation or Product entity key contributes one distinct mechanical evidence item. The Compiler never invents those needs from candidate availability and never imposes a universal source, test, ProductContext, or graph-neighborhood requirement. It only reserves budget for the supplied needs and proves whether matching evidence is actually present in the selected Capsule.
 
@@ -110,6 +110,8 @@ Example HEAD-owned input:
 ```
 
 Tests are requested only when HEAD adds a `repository-test` need for the task. A document cannot satisfy a `repository-source` need, and a relationship need is covered only by a relationship record actually included through an included carrier candidate.
+
+Common Observation records are never lexical candidates. HEAD must use kind `observation` with exact `observationIds`; Core includes only those current immutable records as `ObservationEvidence`. Their descriptor, payload, coverage, and P4 projection remain evidence and cannot supply product meaning, semantic sufficiency, instruction authority, or recovery direction. See [`observation-adapters.md`](observation-adapters.md).
 
 ## Trust and authority
 

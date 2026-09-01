@@ -6,10 +6,10 @@ history or validation fixtures.
 
 Status: active, executable contract
 
-Protocol version: `0.4.0`
+Protocol version: `0.5.0`
 
-Digest-valid `0.1.0`, `0.2.0`, and `0.3.0` embedded boundaries remain readable for upgrade continuity;
-new builders emit `0.4.0`. The only legacy classification retained by the reader
+Digest-valid `0.1.0`, `0.2.0`, `0.3.0`, and `0.4.0` embedded boundaries remain readable for upgrade continuity;
+new builders emit `0.5.0`. The only legacy classification retained by the reader
 is the former generic Feature/Policy naming, never used to promote a new artifact.
 
 ## Why this boundary exists
@@ -24,9 +24,9 @@ become an additional source of product meaning or recovery direction.
 |---|---|---|---|
 | P1 Normative Authority | approved product meaning, policy, and explicit decisions | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision | existence in a graph, message, result, or host cannot create approval |
 | P2 Canonical Recovery/Lineage Record | provider-independent recovery of Project, Session, Run, plan, context, contract, and next direction | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | evidence deletion or provider summary cannot rewrite checkpoint fields |
-| P3 Evidence Record | reviewable results, observations, candidates, claims, ownership records, and audit receipts | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
-| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, WorkerWaveStatusProjection/ResultProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
-| P5 Operational Effect | host-local process, continuation, wait, and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, provider-session reference | successful continuation, waiting, delivery, or process control cannot authorize execution, review, promotion, or recovery |
+| P3 Evidence Record | reviewable results, observations, candidates, claims, ownership records, and audit receipts | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, ObservationTypeDescriptor/ObservationRecord/DerivedObservationRecord/ObservationCollectionReceipt, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
+| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
+| P5 Operational Effect | host-local process, continuation, wait, and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, ObservationSourceBinding, provider-session reference | successful continuation, waiting, delivery, or process control cannot authorize execution, review, promotion, or recovery |
 
 `scripts/lib/authority-plane-contract.mjs` emits one content-derived
 `AuthorityPlaneContract`, assigns the implemented artifacts above to exact planes,
@@ -83,6 +83,8 @@ The same rule applies in context and coordination:
   checkpoint fields or create a ReviewDecision;
 - a remote GraphDB can accelerate a verified query but cannot reconstruct Product
   Canon after the local normative and recovery records are lost.
+
+Common observations preserve the same split. `ObservationTypeDescriptor`, `ObservationRecord`, `DerivedObservationRecord`, and `ObservationCollectionReceipt` are P3 evidence artifacts; `ObservationStatusProjection` is P4; `ObservationSourceBinding` is P5. Descriptor registration, collection, derivation, projection, exact-ID Capsule inclusion, or a hypothesis reference cannot create P1 meaning or P2 direction. See [`observation-adapters.md`](observation-adapters.md).
 
 ## Graph versus record
 

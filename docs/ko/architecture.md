@@ -127,6 +127,8 @@ semantic graph는 콘텐츠에서 파생된 node 및 edge ID, 파일 다이제�
 
 temporal provenance graph는 별도의 검증된 프로젝션입니다. traversal protocol은 `lexical-discovery`와 exact HEAD anchor mode를 상호 배타적으로 제공합니다. exact mode는 현재 GraphSnapshot과 1~32개의 node ID에 결속되고 relation·authority·freshness·confidence·depth·node·edge·candidate policy를 확대할 수 없습니다. Context Compiler는 HEAD 소유 EvidenceNeed 안의 exact anchor만 받아 별도 `GraphTraversalEvidence`를 만들며 lexical search를 semantic relevance로 승격하지 않습니다. Product relation은 `canon-projected`이고 candidate-space node는 명시적 opt-in 없이 숨겨지며, local/ArcadeDB projection은 embedded GraphSnapshot을 복구 소스로 보존합니다.
 
+공급자 중립 공통 Observation 경계는 Core에 제품 어휘를 가르치지 않고 domain-shaped data를 기록합니다. `ObservationTypeDescriptor`, `ObservationRecord`, `DerivedObservationRecord`, `ObservationCollectionReceipt`는 P3이고, `ObservationStatusProjection`은 별도의 재구축 가능한 P4 evidence graph이며, `ObservationSourceBinding`은 P5 Host configuration입니다. 자동 graph relation은 `CONFORMS_TO`, `EVIDENCED_BY`, `DERIVED_FROM`으로 제한됩니다. Context Compiler는 정확한 HEAD 소유 EvidenceNeed를 통해서만 observation을 포함합니다. observation collection은 Product Canon, product meaning, ReviewDecision 또는 P2 recovery direction을 만들 수 없습니다. [`observation-adapters.md`](observation-adapters.md)를 참고하세요.
+
 `DeploymentResultAdapter`는 별도의 Host observation 경계입니다. Provider run/session/process identity를 저장하지 않고 bounded deployment fact와 evidence digest를 제공합니다. Core는 create-only `BranchStateObservation`, `DeploymentResultObservation`, 조건을 충족한 `ReleaseObservation` P3 evidence를 기록하기 전에 reachable Git history와 현재 product ref를 독립적으로 검증합니다. 해당 P4 graph projection은 배포를 허가하거나, 제품 outcome을 승인하거나, Product Canon을 변경하거나, P2 복구 방향을 쓸 수 없습니다. [`release-observation.md`](release-observation.md)를 참고하세요.
 
 ## Native compute plane

@@ -5,6 +5,7 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readChangeSet, readVcsEvidence } from "./change-set.mjs";
 import { VCS_EVIDENCE_VERSION, verifyGitCommitObservation } from "./change-set-projection.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
+import { OBSERVATION_PROTOCOL_VERSION } from "./observation-contract.mjs";
 
 export const RELEASE_OBSERVATION_VERSION = "0.1.0";
 export const BRANCH_STATE_OBSERVATION_DIRECTORY = ".head/release-observations/branch-states";
@@ -175,6 +176,12 @@ function projectionPayload({ projectId, branchStates, deploymentResults, release
     kind: "ReleaseObservationProjectionInput",
     protocol: { name: "head-agent-core-release-observation-projection", version: RELEASE_OBSERVATION_VERSION },
     projectId,
+    commonObservationContract: {
+      protocol: { name: "head-agent-core-observation", version: OBSERVATION_PROTOCOL_VERSION },
+      role: "domain-specialization-with-exact-git-and-approved-deployment-lineage",
+      genericReplacement: false,
+      semanticAuthority: false,
+    },
     branchStates,
     deploymentResults,
     releases,
@@ -188,6 +195,10 @@ export function verifyReleaseObservationProjectionInput(projection) {
   if (!projection || projection.kind !== "ReleaseObservationProjectionInput"
     || projection.protocol?.name !== "head-agent-core-release-observation-projection" || projection.protocol?.version !== RELEASE_OBSERVATION_VERSION
     || !Array.isArray(projection.branchStates) || !Array.isArray(projection.deploymentResults) || !Array.isArray(projection.releases)
+    || projection.commonObservationContract?.protocol?.name !== "head-agent-core-observation"
+    || projection.commonObservationContract?.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
+    || projection.commonObservationContract?.role !== "domain-specialization-with-exact-git-and-approved-deployment-lineage"
+    || projection.commonObservationContract?.genericReplacement !== false || projection.commonObservationContract?.semanticAuthority !== false
     || projection.authority !== "derived-projection-input-not-release-authority" || projection.instructionAuthority !== false || projection.promotionAuthority !== false) fail("Release observation projection is invalid.", "INVALID_RELEASE_OBSERVATION_PROJECTION");
   const branches = new Map(projection.branchStates.map((item) => [verifyBranchStateObservation(item, projection.projectId).branchStateObservationId, item]));
   if (branches.size !== projection.branchStates.length) fail("Duplicate BranchStateObservation.", "DUPLICATE_BRANCH_STATE_OBSERVATION");

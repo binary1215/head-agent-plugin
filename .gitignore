@@ -4,6 +4,7 @@ test/*
 !test/authority-plane-contract.test.mjs
 !test/arcadedb-native-bridge.test.mjs
 !test/context-compiler.test.mjs
+!test/observation-contract.test.mjs
 !test/feature-mapping.test.mjs
 !test/head-core.test.mjs
 !test/product-operating-loop.test.mjs

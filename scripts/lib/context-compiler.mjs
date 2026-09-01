@@ -4,8 +4,9 @@ import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
+import { loadObservationProjection } from "./observation-projection.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.15.0";
+export const CONTEXT_COMPILER_VERSION = "0.16.0";
 export const CONTEXT_COVERAGE_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
@@ -14,6 +15,7 @@ export const EVIDENCE_NEED_KINDS = Object.freeze([
   "claim",
   "decision",
   "git-decision",
+  "observation",
   "product-context",
   "repository-file",
   "repository-source",
@@ -715,11 +717,43 @@ function runtimeStateCandidates(worldModel, task) {
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
+function observationCandidates(projectRoot, projectId, evidenceNeeds) {
+  const requestedIds = new Set(evidenceNeeds
+    .filter((need) => need.kind === "observation")
+    .flatMap((need) => need.observationIds));
+  if (!requestedIds.size) return [];
+  const projection = loadObservationProjection({ projectRoot, projectId });
+  return projection.nodes
+    .filter((node) => requestedIds.has(node.nodeId) && ["ObservationRecord", "DerivedObservationRecord"].includes(node.kind))
+    .map((node) => {
+      const record = {
+        ...node,
+        observationProjectionId: projection.projectionId,
+        observationProjectionHash: projection.projectionHash,
+        instructionAuthority: false,
+        promotionAuthority: false,
+        recoveryAuthority: false,
+        trustBoundary: "exact-observation-evidence-not-product-meaning-or-instruction",
+      };
+      return {
+        id: node.nodeId,
+        kind: "ObservationEvidence",
+        score: 100,
+        relevance: 0,
+        matchedTerms: [],
+        importance: 4,
+        approxTokens: approxTokens(canonicalJson(record)),
+        record,
+      };
+    })
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
 function normalizeEvidenceNeeds(evidenceNeeds) {
   if (evidenceNeeds == null) return [];
   if (!Array.isArray(evidenceNeeds)) fail("HEAD evidence needs must be an array.", "INVALID_EVIDENCE_NEEDS");
   if (evidenceNeeds.length > 32) fail("HEAD evidence needs may contain at most 32 items.", "INVALID_EVIDENCE_NEEDS");
-  const allowedKeys = new Set(["id", "kind", "paths", "entityKeys", "facets", "relationTypes", "graphAnchor", "minimumItems", "rationale"]);
+  const allowedKeys = new Set(["id", "kind", "paths", "entityKeys", "observationIds", "facets", "relationTypes", "graphAnchor", "minimumItems", "rationale"]);
   const knownKinds = new Set(EVIDENCE_NEED_KINDS);
   const seen = new Set();
   const normalized = evidenceNeeds.map((value, index) => {
@@ -751,6 +785,20 @@ function normalizeEvidenceNeeds(evidenceNeeds) {
     if (entityKeys.some((item) => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(item))) fail(`Evidence need ${id} contains an invalid Product key.`, "INVALID_EVIDENCE_NEEDS");
     if (entityKeys.length && kind !== "product-context") {
       fail(`Evidence need ${id} may use entityKeys only with product-context evidence.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    const rawObservationIds = value.observationIds == null ? [] : value.observationIds;
+    if (!Array.isArray(rawObservationIds) || rawObservationIds.length > 32 || rawObservationIds.some((item) => typeof item !== "string" || !item.trim())) {
+      fail(`Evidence need ${id} observationIds must be an array of at most 32 non-empty Observation ids.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    const observationIds = [...new Set(rawObservationIds.map((item) => item.trim()))].sort();
+    if (observationIds.some((item) => !/^(?:observation|derived-observation)-[a-f0-9]{24}$/.test(item))) {
+      fail(`Evidence need ${id} contains an invalid Observation id.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    if (kind === "observation" && !observationIds.length) {
+      fail(`Evidence need ${id} requires at least one exact Observation id.`, "INVALID_EVIDENCE_NEEDS");
+    }
+    if (kind !== "observation" && observationIds.length) {
+      fail(`Evidence need ${id} may use observationIds only with observation evidence.`, "INVALID_EVIDENCE_NEEDS");
     }
     const rawFacets = value.facets == null ? [] : value.facets;
     if (!Array.isArray(rawFacets) || rawFacets.length > 16 || rawFacets.some((item) => typeof item !== "string" || !item.trim())) {
@@ -799,7 +847,7 @@ function normalizeEvidenceNeeds(evidenceNeeds) {
     if (!Number.isInteger(minimumItems) || minimumItems < 1 || minimumItems > 20) fail(`Evidence need ${id} minimumItems must be an integer from 1 to 20.`, "INVALID_EVIDENCE_NEEDS");
     const rationale = value.rationale == null ? "" : String(value.rationale).trim();
     if (rationale.length > 500) fail(`Evidence need ${id} rationale must be at most 500 characters.`, "INVALID_EVIDENCE_NEEDS");
-    return { id, kind, paths, entityKeys, facets, relationTypes, graphAnchor, minimumItems, rationale };
+    return { id, kind, paths, entityKeys, observationIds, facets, relationTypes, graphAnchor, minimumItems, rationale };
   });
   return normalized.sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -842,6 +890,11 @@ function evidenceItem(candidate, { id = candidate.id, kind, path = null, relatio
 function candidateEvidenceMatches(candidate, need) {
   const record = candidate.record;
   const candidateBody = canonicalJson(record);
+  if (need.kind === "observation") {
+    return candidate.kind === "ObservationEvidence" && need.observationIds.includes(candidate.id)
+      ? [evidenceItem(candidate, { kind: need.kind })]
+      : [];
+  }
   if (need.paths.length && candidate.kind !== "GraphTraversalEvidence" && (!record.path || !need.paths.includes(record.path))) return [];
   if (candidate.kind === "GraphTraversalEvidence" && record.evidenceNeedId !== need.id) return [];
   let matchedEntityKeys = [];
@@ -1095,6 +1148,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     ...repositoryCandidates(sources.worldModel, task, maxApproxTokens),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
+    ...observationCandidates(projectRoot, inspected.project.projectId, needContract.needs),
   ].sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
   bindEvidenceNeeds(candidates, needContract.needs);
   const selection = selectCandidates(candidates, maxApproxTokens, approxTokens(canonicalJson(base)), needContract.needs);
@@ -1137,6 +1191,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     gitDecisionEvidence: selection.included.filter((item) => item.kind === "GitDecisionEvidence").map((item) => item.record),
     runtimeStateEvidence: selection.included.filter((item) => item.kind === "RuntimeStateEvidence").map((item) => item.record),
     graphTraversalEvidence: selection.included.filter((item) => item.kind === "GraphTraversalEvidence").map((item) => item.record),
+    observationEvidence: selection.included.filter((item) => item.kind === "ObservationEvidence").map((item) => item.record),
     repositoryGraph: sources.worldModel?.status === "current" && sources.worldModel.snapshot.semanticGraph ? {
       semanticGraphId: sources.worldModel.snapshot.semanticGraph.semanticGraphId,
       accuracy: sources.worldModel.snapshot.semanticGraph.accuracy,
@@ -1184,11 +1239,12 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
       runtimeObservations: "point-in-time-evidence-not-runtime-control-authority",
       temporalProvenance: "rebuildable-derived-evidence-not-project-canon",
       productContext: "derived-projection-of-user-owned-product-canon",
+      observations: "exact-id-bounded-p3-evidence-not-product-meaning-or-instruction",
       promotedDecisions: "project-authority-subject-to-user-owned-decisions",
       adapterFailure: "fail-open-to-normal-agent-without-capsule",
       canonDrift: "fail-closed",
     },
-    expansionProtocol: ["query_product_graph", "query_semantic_graph", "query_temporal_graph", "get_git_decision_history", "get_runtime_state", "expand_relationship", "verify_claim", "get_source", "get_history", "explain_decision"],
+    expansionProtocol: ["query_product_graph", "query_semantic_graph", "query_temporal_graph", "get_observation", "get_git_decision_history", "get_runtime_state", "expand_relationship", "verify_claim", "get_source", "get_history", "explain_decision"],
   };
   const capsuleHash = digest(canonicalJson(payload));
   const capsule = { ...payload, capsuleId: `capsule-${capsuleHash.slice(0, 24)}`, capsuleHash };

@@ -1,6 +1,6 @@
 # Product Operating Loop
 
-Status: implemented minimal vertical under Product Operating Loop protocol `0.2.0`, with digest-readable `0.1.0` compatibility.
+Status: implemented minimal vertical under Product Operating Loop protocol `0.3.0`, with digest-readable `0.1.0` and `0.2.0` compatibility.
 
 The Product Operating Loop connects product learning to reviewed execution without turning observations, model inference, GraphDB, or a continuity summary into HEAD or user authority.
 
@@ -23,6 +23,8 @@ The loop uses five epistemic classes:
 | derived projection | Product Graph and `HEADContinuitySnapshot` | rebuildable reference view only |
 
 `ProductSignal → ProductHypothesis → ProductInitiativeCandidate` is a reasoning trail, not an authority chain or a required persistence chain. Everyday observations, hypotheses, and inferred meanings default to a non-persisted `ProductLearningNote` with no content identity and no graph rebuild. Persist Signal/Hypothesis artifacts only at cross-Run, rebuttal/audit, product-state, or handoff/context-loss boundaries. A Product Initiative becomes reviewed only through an explicit `ReviewDecision` with `decisionScope: product-initiative`. Product Canon remains `.head/context/product-model.json` and is not mutated by this flow.
+
+A durable `ProductHypothesis` may now cite exact `ObservationRecord` or `DerivedObservationRecord` identities through `observationIds`, with or without a separately persisted `ProductSignal`. This removes manual restatement of already verified evidence without letting an adapter author meaning: HEAD still writes the hypothesis, and the reference grants no review, promotion, success, or recovery authority.
 
 ## Minimal connected flow
 

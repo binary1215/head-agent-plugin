@@ -115,6 +115,7 @@ HEAD는 검토된 Feature와 Capability가 어떤 파일, 심볼, 테스트와 �
 | 여러 에이전트 사이에서 책임이 흐려짐 | 제한된 실행, 결과 증거, 독립 검토를 구분하면서 HEAD가 하나의 전체 결과로 통합합니다. |
 | 병렬 워커의 진행 상황을 한눈에 보기 어려움 | 공급자 중립적인 launch wave가 요청·시작·반환·대기·성공·실패를 보여주되, 워커별 권한을 합치거나 wave 완료를 승인으로 취급하지 않습니다. |
 | Git 및 배포 이력을 사람이 직접 입력해야 함 | 공급자 중립 관측이 현재 product ref와 호스트가 보고한 배포 결과를 불변 P3 evidence로 만들며, 승인·성공·정확한 commit/ref 일치가 모두 확인될 때만 권한 없는 ReleaseObservation을 만듭니다. |
+| 제품마다 운영 데이터 형태가 다름 | 공통 evidence-only Observation 계약이 닫힌 제품별 schema를 받아 coverage와 replay를 증명하고, domain vocabulary를 Core에 하드코딩하지 않은 채 제품 해석은 HEAD에 맡깁니다. |
 
 > 일반적인 코딩 에이전트가 현재 작업을 최적화한다면, HEAD Agent Core는
 > 여러 작업이 검토된 하나의 제품 방향으로 축적되도록 최적화합니다.
@@ -769,6 +770,7 @@ HEAD Agent Core Plugin은
 - [Product Model](docs/ko/product-model.md)
 - [Product Operating Loop](docs/ko/product-operating-loop.md)
 - [Release observation](docs/ko/release-observation.md)
+- [공통 Observation 계약](docs/ko/observation-adapters.md)
 - [증분 갱신](docs/ko/incremental-refresh.md)
 - [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)
 - [Session 복구](docs/ko/session-recovery.md)

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.4.0";
+export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.5.0";
 
 const fail = (message, code = "AUTHORITY_PLANE_ERROR") => {
   const error = new Error(message);
@@ -87,6 +87,10 @@ const ARTIFACT_PLANES = Object.freeze({
   BoundedWorkerWave: "P3",
   BoundedWorkerWaveSeal: "P3",
   BoundedWorkerWaveAbandonment: "P3",
+  ObservationTypeDescriptor: "P3",
+  ObservationRecord: "P3",
+  DerivedObservationRecord: "P3",
+  ObservationCollectionReceipt: "P3",
 
   GraphSnapshot: "P4",
   GraphDBProjection: "P4",
@@ -97,6 +101,7 @@ const ARTIFACT_PLANES = Object.freeze({
   SessionRestoreProjection: "P4",
   WorkerWaveStatusProjection: "P4",
   WorkerWaveResultProjection: "P4",
+  ObservationStatusProjection: "P4",
 
   ProcessId: "P5",
   ControlToken: "P5",
@@ -109,6 +114,7 @@ const ARTIFACT_PLANES = Object.freeze({
   ContinuationOutcome: "P5",
   BoundedWorkerWaitOutcome: "P5",
   BoundedWorkerWaveWaitOutcome: "P5",
+  ObservationSourceBinding: "P5",
 });
 
 const ARTIFACT_PLANES_V01 = Object.freeze({
@@ -177,7 +183,7 @@ export function artifactAuthorityBoundary(kind) {
 
 export function verifyArtifactAuthorityBoundary(kind, boundary) {
   const contractVersion = boundary?.contractVersion;
-  if (!new Set(["0.1.0", "0.2.0", "0.3.0", AUTHORITY_PLANE_CONTRACT_VERSION]).has(contractVersion)) {
+  if (!new Set(["0.1.0", "0.2.0", "0.3.0", "0.4.0", AUTHORITY_PLANE_CONTRACT_VERSION]).has(contractVersion)) {
     fail(`${kind} authority-plane contract version is invalid.`, "INVALID_ARTIFACT_AUTHORITY_BOUNDARY");
   }
   const expected = boundaryPayload(kind, contractVersion);
@@ -206,6 +212,7 @@ export function authorityPlaneContract() {
       "projection-writes-cannot-change-product-canon-bytes",
       "a-receipt-cannot-appear-in-the-graph-snapshot-that-the-receipt-names",
       "provider-summary-mail-inbox-reply-and-continuity-views-cannot-rewrite-checkpoint-fields",
+      "observation-descriptors-records-receipts-and-derived-views-cannot-assert-product-meaning-or-rewrite-p1-p2",
     ],
   };
   const contractHash = digest(canonicalJson(payload));

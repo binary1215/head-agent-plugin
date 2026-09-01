@@ -39,6 +39,7 @@
 ## 어댑터와 프로젝션
 
 - [런타임 어댑터 계약](runtime-adapters.md)
+- [공통 Observation 계약과 어댑터](observation-adapters.md)
 - [ComputeAdapter와 WorkerProtocol 기준](compute-adapter.md)
 - [GraphProjectionAdapter 계약](graph-projection-adapter.md)
 - [DocumentProjectionAdapter와 결정적 Markdown 프로젝션](document-projection-adapter.md)

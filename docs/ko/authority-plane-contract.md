@@ -6,9 +6,9 @@
 
 상태: 활성 실행 가능 계약
 
-프로토콜 버전: `0.4.0`
+프로토콜 버전: `0.5.0`
 
-다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.4.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
+다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.5.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
 
 ## 이 경계가 존재하는 이유
 
@@ -18,9 +18,9 @@ HEAD Agent Core는 한 표현이 다른 표현의 권한을 물려받게 하지 
 |---|---|---|---|
 | P1 Normative Authority | 승인된 제품 의미, 정책, 명시적 결정 | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision | 그래프, 메시지, 결과 또는 host에 존재한다는 사실만으로 승인을 만들 수 없음 |
 | P2 Canonical Recovery/Lineage Record | Project, Session, Run, 계획, context, contract와 다음 방향의 provider 독립적 복구 | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | 증거 삭제나 provider 요약이 checkpoint 필드를 다시 쓸 수 없음 |
-| P3 Evidence Record | 검토 가능한 결과, 관찰, 후보, claim, 소유권 레코드와 감사 receipt | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | 증거가 스스로 승격되거나 복구 Canon이 될 수 없음 |
-| P4 Derived Relation/View | 재현 가능한 검색과 사람 대상 view | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, WorkerWaveStatusProjection/ResultProjection | projection이 Canon을 변경하거나 지시 권한을 부여하거나 유일한 복구 출처가 될 수 없음 |
-| P5 Operational Effect | host 로컬 process, continuation, wait와 delivery 효과 | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, provider-session reference | continuation, wait, delivery 또는 process 제어의 성공이 실행, 검토, 승격 또는 복구를 승인할 수 없음 |
+| P3 Evidence Record | 검토 가능한 결과, 관찰, 후보, claim, 소유권 레코드와 감사 receipt | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, ObservationTypeDescriptor/ObservationRecord/DerivedObservationRecord/ObservationCollectionReceipt, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | 증거가 스스로 승격되거나 복구 Canon이 될 수 없음 |
+| P4 Derived Relation/View | 재현 가능한 검색과 사람 대상 view | GraphSnapshot, GraphDB projection, TraversalResult, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection | projection이 Canon을 변경하거나 지시 권한을 부여하거나 유일한 복구 출처가 될 수 없음 |
+| P5 Operational Effect | host 로컬 process, continuation, wait와 delivery 효과 | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, ObservationSourceBinding, provider-session reference | continuation, wait, delivery 또는 process 제어의 성공이 실행, 검토, 승격 또는 복구를 승인할 수 없음 |
 
 `scripts/lib/authority-plane-contract.mjs`는 내용에서 파생된 하나의 `AuthorityPlaneContract`를 내보내고, 위에서 구현된 artifact를 정확한 평면에 할당하며, 내장된 artifact 경계를 검증합니다. 이 평면들은 지속성 계층이 아니라 의미 클래스입니다. P2는 복구에 대한 권한을 갖지만 P1의 제품 의미를 소유하지 않으며, P1 검토는 P2 checkpoint 상태를 대체하지 않습니다.
 
@@ -45,6 +45,8 @@ context와 조정에도 같은 규칙이 적용됩니다.
 - 검토되지 않은 후보는 기본 traversal과 compilation에서 제외된 상태로 유지됩니다.
 - provider 요약, continuity view, inbox message와 reply는 checkpoint 필드를 변경하거나 ReviewDecision을 만들 수 없습니다.
 - 원격 GraphDB는 검증된 query를 가속할 수 있지만, 로컬 규범 레코드와 복구 레코드가 손실된 뒤 Product Canon을 재구성할 수는 없습니다.
+
+공통 observation도 같은 분리를 보존합니다. `ObservationTypeDescriptor`, `ObservationRecord`, `DerivedObservationRecord`, `ObservationCollectionReceipt`는 P3 evidence artifact이고, `ObservationStatusProjection`은 P4이며, `ObservationSourceBinding`은 P5입니다. descriptor 등록, collection, derivation, projection, exact-ID Capsule inclusion 또는 hypothesis reference는 P1 meaning이나 P2 direction을 만들 수 없습니다. [`observation-adapters.md`](observation-adapters.md)를 참고하세요.
 
 ## 그래프와 레코드의 차이
 

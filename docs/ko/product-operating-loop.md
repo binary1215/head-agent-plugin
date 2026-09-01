@@ -2,7 +2,7 @@
 
 # Product Operating Loop
 
-상태: Product Operating Loop 프로토콜 `0.2.0`에 따른 최소 수직 경로가 구현되어 있으며, 다이제스트를 읽을 수 있는 `0.1.0` 호환성을 제공합니다.
+상태: Product Operating Loop 프로토콜 `0.3.0`에 따른 최소 수직 경로가 구현되어 있으며, 다이제스트를 읽을 수 있는 `0.1.0` 및 `0.2.0` 호환성을 제공합니다.
 
 Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약을 HEAD나 사용자의 권한으로 만들지 않으면서 제품 학습을 검토된 실행과 연결합니다.
 
@@ -25,6 +25,8 @@ Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약
 | 파생 프로젝션 | Product Graph 및 `HEADContinuitySnapshot` | 재구축 가능한 참조 뷰일 뿐 |
 
 `ProductSignal → ProductHypothesis → ProductInitiativeCandidate`는 추론의 궤적이지 권한 체인이나 필수 영속화 체인이 아닙니다. 일상적인 관찰, 가설 및 추론된 의미는 콘텐츠 식별자와 그래프 재구축이 없는 비영속 `ProductLearningNote`를 기본으로 합니다. Signal/Hypothesis 아티팩트는 Run 간 경계, 반박/감사 경계, 제품 상태 경계 또는 인계/컨텍스트 손실 경계에서만 영속화합니다. Product Initiative는 `decisionScope: product-initiative`인 명시적 `ReviewDecision`을 통해서만 검토된 상태가 됩니다. Product Canon은 `.head/context/product-model.json`에 그대로 있으며 이 흐름에 의해 변경되지 않습니다.
+
+이제 durable `ProductHypothesis`는 별도로 persisted `ProductSignal`이 있거나 없어도 `observationIds`를 통해 정확한 `ObservationRecord` 또는 `DerivedObservationRecord` identity를 인용할 수 있습니다. 이미 검증된 evidence를 사람이 다시 작성할 필요를 없애지만 adapter가 meaning을 작성하지는 않습니다. hypothesis는 여전히 HEAD가 작성하며 reference는 review, promotion, success 또는 recovery authority를 부여하지 않습니다.
 
 ## 연결된 최소 흐름
 
