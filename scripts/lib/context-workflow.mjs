@@ -9,7 +9,7 @@ import { inspectProject } from "./head-core.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
 export const CONTEXT_WORKFLOW_PROTOCOL_VERSION = "0.3.0";
-export const CONTEXT_PREPARATION_PROTOCOL_VERSION = "0.1.0";
+export const CONTEXT_PREPARATION_PROTOCOL_VERSION = "0.2.0";
 
 const MAX_PREPARATION_REPOSITORY_FILES = 24;
 const MAX_PREPARATION_GRAPH_NODES = 96;
@@ -259,17 +259,25 @@ function preparationDecision(worldStateValue) {
     },
   };
   if (worldStateValue === "not-built") return {
-    status: "world_build_required",
+    status: "curated_only",
     nextAction: {
-      id: "build_world_before_head_proposal",
-      summary: "No verified World Model is available for exact graph-anchor preparation.",
-      note: "Product/World activation remains explicit. Core does not activate it from this read-only preparation call.",
+      id: "continue_core_only",
+      summary: "Continue Core-only work or ordinary semantic repository inspection; this projection does not require Product/World activation.",
+      note: "Curated context remains available. Only if HEAD or the user later determines that the task needs reproducible repository, Product, or graph evidence in a Capsule should the optional Product/World path be activated.",
       entrypoint: {
+        mode: "active-conversation",
+        action: "continue-direct-work-or-inspect-repository",
+      },
+      optionalEscalation: {
+        id: "activate_product_world",
+        when: "HEAD-or-user-determines-reproducible-repository-product-or-graph-capsule-evidence-is-required",
         cli: "head-agent resume <project> --profile product",
         mcpTool: "head_project_initialize_or_resume",
         mcpArguments: { profile: "product" },
         followUpTool: "head_onboarding_guide",
         requiresExplicitActivation: true,
+        selectionOwner: "HEAD-or-user-after-semantic-task-analysis",
+        coreSelectsPath: false,
       },
     },
   };

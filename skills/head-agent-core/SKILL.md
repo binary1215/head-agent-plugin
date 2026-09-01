@@ -61,6 +61,13 @@ governed projections, or exact graph-backed evidence are actually required.
 The Context readiness projection may report `curated-only`; that is a usable,
 honest state, not permission to activate Product/World automatically.
 
+When `head_context_prepare` reports `curated_only`, continue direct work or
+ordinary repository inspection by default. It means reproducible repository,
+Product, and graph evidence is not yet available to the Capsule, not that every
+task requires World construction. Present the explicit Product-profile path only
+as an optional escalation after HEAD or the user determines that the task needs
+that evidence. Core must not make that semantic selection.
+
 ## Choose the lightest sufficient lane
 
 - **Observe**: read, explain, compare, or advise. Do not create durable HEAD

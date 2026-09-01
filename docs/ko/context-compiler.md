@@ -35,12 +35,18 @@ Context Compiler protocol `0.15.0`은 결정적 packaging과 semantic judgment�
 
 `head_context_prepare`와 CLI `context-prepare`는 사용자가 이 구조를 직접 작성하지 않게 합니다. task-only 호출은 현재 Project/World/Graph identity, lexical baseline candidate와 exact node ID를 포함한 제한적이고 비영속적인 `ContextPreparationProjection`을 반환합니다. provider HEAD가 semantic reasoning과 일반 repository inspection으로 `EvidenceNeed[]`를 작성하며 Core는 이를 추론하지 않습니다. 이어지는 `head_context_preview`가 현재 상태에 대해 proposal을 검증합니다. 따라서 preparation은 Core 내부 LLM이나 새 authority plane이 아니라 대화형 UX입니다.
 
+Context Preparation protocol `0.2.0`은 선택적인 World evidence를 사용할 수 없는
+상태와 그것을 활성화해야 한다는 의미 판단을 구분합니다.
+
 readiness/status 표면은 프로젝트 상태를 바꾸지 않고 Context를 `blocked`,
 `curated-only`, `repository-ready`, `world-refresh-required` 네 상태로 구분합니다.
-`curated-only`는 정직한 Core-only 상태입니다. task에 repository World evidence가
-필요하면 preparation은 `world_build_required`와 명시적 Product profile 진입점을
-반환할 뿐 스스로 활성화하지 않습니다. 오래된 World는 재사용하지 않고 제외하며,
-명시적인 refresh 진입점을 반환합니다.
+`curated-only`는 정직한 Core-only 상태입니다. World가 아직 없다면 preparation은
+`curated_only`를 반환하고 직접 작업 또는 일반 repository inspection을 기본으로
+유지합니다. 재현 가능한 repository·Product·graph evidence를 Capsule에 아직 넣을
+수 없다는 점은 공개합니다. 정확한 Product profile 진입점은 HEAD 또는 사용자가
+task에 해당 evidence가 필요하다고 판단한 뒤에만 선택하는 확장 경로이며, Core가
+그 의미 판단이나 활성화를 수행하지 않습니다. 오래된 World는 재사용하지 않고
+제외하며, 명시적인 refresh 진입점을 반환합니다.
 
 HEAD가 EvidenceNeeds를 제공한 경우 packing은 요구된 mechanical coverage가 충족되면 멈춥니다. 무관한 candidate는 `outside-head-evidence-contract`, 이미 충분한 중복 candidate는 `evidence-coverage-satisfied`로 기록되며, 남은 공간이 있다는 이유로 lexical material로 budget을 채우지 않습니다. EvidenceNeeds가 없을 때 lexical path는 제한된 discovery baseline으로 남습니다. 이 구분 덕분에 Core가 semantic relevance를 결정하지 않으면서도 exact HEAD guidance가 recall과 noise를 모두 개선할 수 있습니다.
 

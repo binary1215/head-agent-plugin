@@ -296,10 +296,13 @@ proposal, then gives that proposal to the existing preview verifier. Core does
 not select evidence kinds or anchors, and absence from the lexical candidate
 view never means irrelevance.
 
-If Product/World has not been activated, preparation returns
-`world_build_required` with the exact optional Product-profile entrypoint. It
-does not activate or index the repository by itself. Core-only work remains a
-valid `curated-only` Context state.
+If Product/World has not been activated, preparation returns `curated_only` and
+keeps direct Core work as the primary path. It discloses that reproducible
+repository, Product, and graph Capsule evidence is unavailable, while ordinary
+repository inspection remains possible. The explicit Product-profile entrypoint
+is offered only as an optional escalation after HEAD or the user determines that
+the task needs that evidence; preparation never activates or indexes the
+repository by itself.
 
 Use the typed `head_context_preview` tool in conversation, or the same Core
 operation from the CLI:

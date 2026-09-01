@@ -333,10 +333,15 @@ test("Core-only Context preparation explains the explicit Product/World path wit
   const prepared = prepareContextWorkflow({ root, task: "Repair the current command routing behavior" });
 
   assert.deepEqual(managedTreeSnapshot(root), before);
-  assert.equal(prepared.preparation.status, "world_build_required");
-  assert.equal(prepared.preparation.nextAction.entrypoint.requiresExplicitActivation, true);
-  assert.equal(prepared.preparation.nextAction.entrypoint.mcpTool, "head_project_initialize_or_resume");
-  assert.deepEqual(prepared.preparation.nextAction.entrypoint.mcpArguments, { profile: "product" });
+  assert.equal(prepared.preparation.protocolVersion, "0.2.0");
+  assert.equal(prepared.preparation.status, "curated_only");
+  assert.equal(prepared.preparation.nextAction.id, "continue_core_only");
+  assert.equal(prepared.preparation.nextAction.entrypoint.mode, "active-conversation");
+  assert.equal(prepared.preparation.nextAction.optionalEscalation.requiresExplicitActivation, true);
+  assert.equal(prepared.preparation.nextAction.optionalEscalation.mcpTool, "head_project_initialize_or_resume");
+  assert.deepEqual(prepared.preparation.nextAction.optionalEscalation.mcpArguments, { profile: "product" });
+  assert.equal(prepared.preparation.nextAction.optionalEscalation.coreSelectsPath, false);
+  assert.equal(prepared.preparation.lexicalBaseline.includedRepositoryFileCount, 0);
   assert.equal(prepared.preparation.authority.persisted, false);
   assert.equal(prepared.preparation.authority.promotionAuthority, false);
   assert.equal(prepared.preparation.authority.instructionAuthority, false);

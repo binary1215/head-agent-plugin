@@ -37,6 +37,15 @@ do not ask the user to write JSON and do not treat omission from the lexical
 baseline as irrelevance. Then pass the byte-identical task and your proposal to
 `head_context_preview`.
 
+If no World Model exists, preparation returns `curated_only`: direct work and
+ordinary repository inspection remain primary, while reproducible repository,
+Product, and graph evidence is unavailable to the Capsule. Do not reinterpret
+that absence as a requirement to activate Product/World. Offer the explicit
+Product profile only after semantic task analysis by HEAD or an explicit user
+choice establishes that the task needs that evidence. A later preview may fail
+with `world_evidence_unavailable` only when the authored EvidenceNeeds actually
+request World-backed evidence.
+
 Inspect `capsule.coverageAssessment` before consuming a Capsule. `not-requested` means HEAD supplied no mechanical evidence requirements; it is not a sufficiency judgment. For supplied needs, use a Capsule for consequential execution only when `status` is `coverage-complete` and `mechanicalCoverageSatisfied` is true, then make the separate HEAD-owned semantic acceptance decision. A `coverage-incomplete` Capsule remains a reproducible diagnostic: follow its unmet EvidenceNeeds through bounded expansion, gather missing evidence, or change HEAD's requirement only when the original requirement was wrong. Never treat a full budget, a valid digest, successful persistence, or the deprecated `capsule.sufficiency` compatibility field as semantic sufficiency.
 
 `head_context_preview` and CLI `context-preview` add a non-persisted

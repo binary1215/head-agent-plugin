@@ -42,13 +42,19 @@ does not infer it. The later `head_context_preview` call verifies the proposal
 against current state. Preparation is therefore conversational UX, not an LLM
 inside Core and not a new authority plane.
 
+Context Preparation protocol `0.2.0` distinguishes unavailable optional World
+evidence from a semantic requirement to activate it.
+
 The readiness/status surface distinguishes four Context states without changing
 project state: `blocked`, `curated-only`, `repository-ready`, and
 `world-refresh-required`. `curated-only` is the honest Core-only state. If the
-task needs repository World evidence, preparation returns
-`world_build_required` and the exact explicit Product-profile entrypoint; it
-never performs that activation itself. A stale World is excluded and returns an
-explicit refresh entrypoint instead of being reused.
+World has not been built, preparation returns `curated_only` and keeps direct
+work or ordinary repository inspection primary. It discloses that reproducible
+repository, Product, and graph evidence cannot enter a Capsule yet. The exact
+Product-profile entrypoint remains an optional escalation selected only after
+HEAD or the user determines that the task needs that evidence; Core does not
+make that semantic choice or perform activation. A stale World is excluded and
+returns an explicit refresh entrypoint instead of being reused.
 
 When HEAD supplies EvidenceNeeds, packing stops after their requested mechanical
 coverage is satisfied. Unrelated candidates are recorded as

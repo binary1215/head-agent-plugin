@@ -287,10 +287,12 @@ repository inspection으로 구조화 proposal을 작성하고 기존 preview ve
 전달합니다. Core는 evidence kind나 anchor를 선택하지 않으며 lexical candidate
 view에 없다는 사실은 무관하다는 뜻이 아닙니다.
 
-Product/World가 활성화되지 않았다면 준비 결과는 정확한 선택적 Product profile
-진입점과 함께 `world_build_required`를 반환합니다. 이 조회가 저장소를 자동으로
-인덱싱하거나 활성화하지는 않습니다. Core-only 작업은 `curated-only` Context
-상태에서도 정상적으로 계속할 수 있습니다.
+Product/World가 활성화되지 않았다면 준비 결과는 `curated_only`를 반환하고 직접
+Core 작업을 기본 경로로 유지합니다. 재현 가능한 repository·Product·graph Capsule
+evidence를 사용할 수 없다는 점은 공개하지만, 일반 repository inspection은 계속
+가능합니다. HEAD 또는 사용자가 task에 해당 evidence가 필요하다고 판단한 뒤에만
+명시적 Product profile 진입점을 선택적 확장으로 제시하며, preparation이 저장소를
+자동으로 인덱싱하거나 활성화하지는 않습니다.
 
 대화에서는 typed `head_context_preview`를 사용하고, CLI에서는 같은 Core
 동작을 다음처럼 사용할 수 있습니다.
