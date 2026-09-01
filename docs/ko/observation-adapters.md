@@ -12,7 +12,7 @@
 
 adapter는 정확한 `ObservationSourceBinding`과 제한된 input을 제공합니다. Core는 불변 `ObservationRecord`와 하나의 `ObservationCollectionReceipt`를 만듭니다. 정확한 source record에 대한 결정적 계산은 별도의 `DerivedObservationRecord`를 만들며, 관찰된 사실을 다시 쓰지 않습니다.
 
-credential, provider session, process ID, socket과 cursor는 Host 로컬에 남습니다. binding에는 credential reference name만 나타날 수 있고 observation record에는 복사되지 않습니다. 동일 source-event replay는 같은 record로 수렴합니다. 같은 source-event key에 다른 내용이 들어오면 fail closed됩니다.
+credential, provider session, process ID, socket과 source cursor는 Host 로컬에 남습니다. binding에는 credential reference name만 나타날 수 있고 observation record에는 복사되지 않습니다. replay identity는 정확한 adapter key, adapter version, source-scope digest, source-event-key digest 범위로 제한됩니다. 해당 binding 안의 동일 replay는 같은 record로 수렴하고 내용이 다르면 fail closed됩니다. 서로 독립적인 source binding은 충돌 없이 같은 upstream event key를 재사용할 수 있습니다.
 
 ## Coverage와 graph
 
@@ -26,13 +26,18 @@ Coverage는 complete, sampled, partial, unknown으로 명시됩니다. bounded e
 
 Context compilation은 기본적으로 공통 observation을 제외합니다. HEAD가 semantic analysis를 수행하고 kind가 `observation`이며 `observationIds`에 불변 현재 ID가 들어 있는 EvidenceNeed로 정확한 identity를 요청합니다. Core는 lexical eligibility, semantic promotion 또는 sufficiency judgment 없이 실제 포함만 증명합니다.
 
-CLI는 `observation-ingest`, `observation-status`와 관련 read, collect, derive, source-inspection 명령을 제공합니다. typed MCP는 `head_observation_ingest`, `head_observation_collect`, `head_observation_status`와 대응 read/derive/source tool을 제공합니다. mutation call에는 명시적인 Host confirmation flag가 필요하지만 이는 source binding만 확인할 뿐 P1 또는 P2 권한을 부여하지 않습니다.
+일상적인 inspection은 ephemeral하게 유지합니다. cross-Run, rebuttal/audit, handoff, context-loss evidence가 필요할 때만 Observation을 persist합니다. 사용자가 아니라 Host adapter가 정확한 source binding, descriptor, digest, coverage, provenance confirmation을 구성합니다. `observation-ingest`와 `head_observation_ingest`는 이미 bounded된 input을 위한 고급 Host/CI surface이고 collect는 adapter-facing compatibility alias로 유지됩니다.
+
+`observation-status`와 `head_observation_status`는 전체 payload node 없이 bounded P4 summary를 반환합니다. `observation-query`와 `head_observation_query`는 type, subject, source, time, observed/derived kind로 정확한 현재 identity를 필터링하며 최대 page는 100입니다. cursor continuation은 정확한 현재 `ObservationStatusProjection`에 binding되고 drift 시 fail closed합니다. query result에는 payload body 대신 payload digest가 들어갑니다. exact read surface는 선택한 record, descriptor, bounded receipt 또는 derivation lineage를 반환합니다. query는 discovery일 뿐 semantic selection, Context eligibility, sufficiency judgment가 아닙니다.
 
 ## 수락 속성
 
 - 서로 다른 제품 domain이 Core의 domain vocabulary 없이 같은 계약을 사용합니다.
+- 독립 source binding은 같은 upstream event key를 재사용할 수 있고, 하나의 정확한 binding 안에서 divergent replay는 fail closed합니다.
 - observation write는 Product Canon과 Session recovery byte를 변경하지 않습니다.
+- Product Signal과 그 밖의 관련 없는 operating flow는 사용하지 않는 Observation storage를 load하거나 의존하지 않습니다.
 - false completeness, schema drift, authority drift와 divergent replay는 fail closed됩니다.
+- status와 query output은 bounded 상태를 유지하고 discovery를 semantic selection으로 바꾸지 않습니다.
 - lexical overlap이 있어도 기본 Capsule compilation에는 common observation이 포함되지 않습니다.
 - 정확한 HEAD EvidenceNeed는 이름으로 지정한 immutable record만 포함합니다.
 - derived record와 projection은 semantic graph relation을 추가할 수 없습니다.

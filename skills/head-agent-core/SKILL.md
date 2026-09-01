@@ -134,20 +134,27 @@ workflow is non-persisted advice and cannot activate Product, mutate World,
 persist a Capsule, authorize execution, review a result, or write recovery
 direction.
 
-When a product exposes build, delivery, analytics, support, runtime, or other
-structured facts, use the common Observation surface instead of inventing Core
-domain vocabulary. Inspect `head_observation_sources`, then collect through an
-exact Host-supplied binding with `head_observation_collect` or
-`head_observation_ingest`. Confirm only a source binding the Host actually
-provided. Descriptors define a closed data shape, not Feature meaning, success,
-causality, policy, or tool routing. Read `head_observation_status` as a P4 view.
-To use one of these records in task context, HEAD must add an EvidenceNeed of
-kind `observation` with exact current `observationIds`; lexical overlap never
-makes an Observation eligible. If product interpretation should persist, author
-a non-authoritative ProductHypothesis that cites the exact Observation IDs.
-Never auto-create a ProductSignal, candidate, ReviewDecision, Canon mutation, or
-P2 recovery direction from an adapter payload. Read
-`../../docs/observation-adapters.md` before adding an Observation adapter.
+Use the common Observation surface only when a current task actually needs a
+durable cross-Run, rebuttal/audit, handoff, or context-loss record of structured
+external facts. The mere existence of build, delivery, analytics, support, or
+runtime data does not justify ingestion; keep ordinary inspection ephemeral.
+Use `head_observation_query` to discover bounded exact IDs and
+`head_observation_read` to inspect a selected record. Inspect
+`head_observation_sources` only when adapter capability is unknown. A real Host
+adapter owns source access, binding, digests, coverage, and the Host provenance
+confirmation; do not ask the user to compose those fields or to attest to a
+machine observation. `head_observation_ingest` is the advanced Host/CI boundary
+for an already constructed bounded input, while `head_observation_collect`
+remains the adapter-facing compatibility alias. Descriptors define a closed data
+shape, not Feature meaning, success, causality, policy, or tool routing. Read
+`head_observation_status` only as a bounded P4 summary. To use one of these
+records in task context, HEAD must add an EvidenceNeed of kind `observation` with
+exact current `observationIds`; lexical overlap never makes an Observation
+eligible. If product interpretation should persist, author a non-authoritative
+ProductHypothesis that cites the exact Observation IDs. Never auto-create a
+ProductSignal, candidate, ReviewDecision, Canon mutation, or P2 recovery
+direction from an adapter payload. Read `../../docs/observation-adapters.md`
+before adding an Observation adapter.
 
 For Product-to-code or Product-to-test mapping, inspect the current World and
 Graph, then use `head_feature_mapping_propose` with exact current Product and

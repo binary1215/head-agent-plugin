@@ -26,6 +26,8 @@ The loop uses five epistemic classes:
 
 A durable `ProductHypothesis` may now cite exact `ObservationRecord` or `DerivedObservationRecord` identities through `observationIds`, with or without a separately persisted `ProductSignal`. This removes manual restatement of already verified evidence without letting an adapter author meaning: HEAD still writes the hypothesis, and the reference grants no review, promotion, success, or recovery authority.
 
+Observation storage remains optional and isolated. Product Operating projection and signal-only flows do not load or validate it unless a durable hypothesis actually cites an exact Observation ID. Once cited, current Observation integrity and receipt lineage fail closed as before.
+
 ## Minimal connected flow
 
 ```text

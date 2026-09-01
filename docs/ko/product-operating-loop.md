@@ -28,6 +28,8 @@ Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약
 
 이제 durable `ProductHypothesis`는 별도로 persisted `ProductSignal`이 있거나 없어도 `observationIds`를 통해 정확한 `ObservationRecord` 또는 `DerivedObservationRecord` identity를 인용할 수 있습니다. 이미 검증된 evidence를 사람이 다시 작성할 필요를 없애지만 adapter가 meaning을 작성하지는 않습니다. hypothesis는 여전히 HEAD가 작성하며 reference는 review, promotion, success 또는 recovery authority를 부여하지 않습니다.
 
+Observation storage는 optional이며 격리된 상태를 유지합니다. Product Operating projection과 signal-only flow는 durable hypothesis가 정확한 Observation ID를 실제로 참조하지 않는 한 이를 load하거나 validate하지 않습니다. 일단 참조되면 현재 Observation integrity와 receipt lineage는 이전과 같이 fail closed합니다.
+
 ## 연결된 최소 흐름
 
 ```text

@@ -3,6 +3,7 @@ import { OBSERVATION_PROTOCOL_VERSION, observationCanonicalJson, observationDige
 import { loadObservationArtifacts } from "./observation-store.mjs";
 
 const fail = (message, code = "OBSERVATION_PROJECTION_ERROR") => { const error = new Error(message); error.code = code; throw error; };
+const OBSERVATION_QUERY_LIMIT = 100;
 
 function edge(type, from, to, evidenceIds) {
   const payload = { type, from, to, evidenceIds: [...new Set(evidenceIds)].sort(), authority: "derived-evidence-relation", instructionAuthority: false, promotionAuthority: false };
@@ -129,9 +130,9 @@ export function verifyObservationProjection(document, projectId = "") {
   return document;
 }
 
-export function loadObservationProjection({ projectRoot, projectId } = {}) {
-  const artifacts = loadObservationArtifacts({ projectRoot, projectId });
-  const payload = projectionPayload({ projectId, ...artifacts });
+export function loadObservationProjection({ projectRoot, projectId, artifacts = null } = {}) {
+  const verifiedArtifacts = artifacts || loadObservationArtifacts({ projectRoot, projectId });
+  const payload = projectionPayload({ projectId, ...verifiedArtifacts });
   const projectionHash = observationDigest(payload);
   return verifyObservationProjection({ ...payload, projectionId: `observation-projection-${projectionHash.slice(0, 24)}`, projectionHash }, projectId);
 }
@@ -140,15 +141,173 @@ export function inspectObservations({ root = "." } = {}) {
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail(`Project must be ready for Observation inspection; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   const projection = loadObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const sampleLimit = 20;
   return {
     status: projection.observationIds.length || projection.derivedObservationIds.length ? "active" : "not_started",
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
-    projection,
+    projection: {
+      kind: "ObservationStatusSummary",
+      projectionId: projection.projectionId,
+      projectionHash: projection.projectionHash,
+      counts: {
+        descriptors: projection.descriptorIds.length,
+        observations: projection.observationIds.length,
+        derivedObservations: projection.derivedObservationIds.length,
+        receipts: projection.receiptIds.length,
+        nodes: projection.nodes.length,
+        edges: projection.edges.length,
+      },
+      samples: {
+        observationIds: projection.observationIds.slice(0, sampleLimit),
+        derivedObservationIds: projection.derivedObservationIds.slice(0, sampleLimit),
+      },
+      omitted: {
+        observationIds: Math.max(0, projection.observationIds.length - sampleLimit),
+        derivedObservationIds: Math.max(0, projection.derivedObservationIds.length - sampleLimit),
+      },
+      graphPolicy: projection.graphPolicy,
+      authority: projection.authority,
+      instructionAuthority: false,
+      promotionAuthority: false,
+      recoveryAuthority: false,
+    },
     graphIntegration: "separate-rebuildable-evidence-view",
     worldRefreshRequiredForProductGraph: false,
     authority: { observations: "P3-evidence-only", graph: "P4-derived", productCanon: "unchanged", recovery: "unchanged" },
   };
+}
+
+function optionalKey(value, label) {
+  const normalized = String(value || "").trim();
+  if (normalized && (Buffer.byteLength(normalized, "utf8") > 192 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(normalized))) fail(`${label} is invalid.`, "INVALID_OBSERVATION_QUERY");
+  return normalized;
+}
+
+function optionalTimestamp(value, label) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "";
+  if (Number.isNaN(Date.parse(normalized))) fail(`${label} must be an ISO date-time.`, "INVALID_OBSERVATION_QUERY");
+  return new Date(normalized).toISOString();
+}
+
+function querySummary(record) {
+  const derived = record.kind === "DerivedObservationRecord";
+  return {
+    observationId: derived ? record.derivedObservationId : record.observationId,
+    observationHash: derived ? record.derivedObservationHash : record.observationHash,
+    kind: record.kind,
+    descriptorId: record.descriptorId,
+    typeKey: record.typeKey,
+    typeVersion: record.typeVersion,
+    subject: record.subject,
+    form: record.form,
+    observedAt: record.temporalScope.observedAt,
+    coverage: {
+      state: record.coverage.state,
+      examinedCount: record.coverage.examinedCount,
+      sourceReportedTotal: record.coverage.sourceReportedTotal,
+      omittedCount: record.coverage.omittedCount,
+    },
+    payloadDigest: observationDigest(record.payload),
+    source: derived ? null : {
+      adapterKey: record.source.adapterKey,
+      adapterVersion: record.source.adapterVersion,
+      sourceScopeDigest: record.source.sourceScopeDigest,
+      sourceEvidenceDigest: record.source.sourceEvidenceDigest,
+    },
+    derivation: derived ? {
+      algorithm: record.algorithm,
+      inputObservationIds: record.inputObservations.map((item) => item.observationId),
+    } : null,
+    semanticAuthority: false,
+    contextEligibility: "exact-evidence-need-only",
+  };
+}
+
+export function queryObservations({
+  root = ".",
+  typeKey = "",
+  subjectType = "",
+  subjectKey = "",
+  adapterKey = "",
+  observedAfter = "",
+  observedBefore = "",
+  recordKind = "all",
+  limit = 25,
+  cursor = "",
+  projectionId = "",
+} = {}) {
+  const inspected = inspectProject(root);
+  if (inspected.status !== "ready") fail(`Project must be ready for Observation query; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
+  const normalized = {
+    typeKey: optionalKey(typeKey, "Observation query typeKey"),
+    subjectType: optionalKey(subjectType, "Observation query subjectType"),
+    subjectKey: optionalKey(subjectKey, "Observation query subjectKey"),
+    adapterKey: optionalKey(adapterKey, "Observation query adapterKey"),
+    observedAfter: optionalTimestamp(observedAfter, "Observation query observedAfter"),
+    observedBefore: optionalTimestamp(observedBefore, "Observation query observedBefore"),
+    recordKind: String(recordKind || "all").trim(),
+  };
+  const boundedLimit = Number(limit);
+  if (!Number.isInteger(boundedLimit) || boundedLimit < 1 || boundedLimit > OBSERVATION_QUERY_LIMIT) fail(`Observation query limit must be between 1 and ${OBSERVATION_QUERY_LIMIT}.`, "INVALID_OBSERVATION_QUERY");
+  if (!new Set(["all", "observed", "derived"]).has(normalized.recordKind)) fail("Observation query recordKind is invalid.", "INVALID_OBSERVATION_QUERY");
+  const cursorId = String(cursor || "").trim();
+  const expectedProjectionId = String(projectionId || "").trim();
+  if (Boolean(cursorId) !== Boolean(expectedProjectionId)) fail("Observation query cursor and projectionId must be supplied together.", "INVALID_OBSERVATION_QUERY_CURSOR");
+  if (cursorId && !/^(?:observation|derived-observation)-[a-f0-9]{24}$/.test(cursorId)) fail("Observation query cursor is invalid.", "INVALID_OBSERVATION_QUERY_CURSOR");
+  if (expectedProjectionId && !/^observation-projection-[a-f0-9]{24}$/.test(expectedProjectionId)) fail("Observation query projectionId is invalid.", "INVALID_OBSERVATION_QUERY_CURSOR");
+  if (normalized.observedAfter && normalized.observedBefore && normalized.observedAfter > normalized.observedBefore) fail("Observation query time range is invalid.", "INVALID_OBSERVATION_QUERY");
+
+  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const projection = loadObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, artifacts });
+  if (expectedProjectionId && expectedProjectionId !== projection.projectionId) fail("Observation query cursor projection is stale.", "STALE_OBSERVATION_QUERY_CURSOR");
+  const records = [
+    ...artifacts.observations,
+    ...artifacts.derivedObservations,
+  ].filter((record) => {
+    const derived = record.kind === "DerivedObservationRecord";
+    if (normalized.recordKind === "observed" && derived || normalized.recordKind === "derived" && !derived) return false;
+    if (normalized.typeKey && record.typeKey !== normalized.typeKey) return false;
+    if (normalized.subjectType && record.subject.type !== normalized.subjectType) return false;
+    if (normalized.subjectKey && record.subject.key !== normalized.subjectKey) return false;
+    if (normalized.adapterKey && (derived || record.source.adapterKey !== normalized.adapterKey)) return false;
+    if (normalized.observedAfter && record.temporalScope.observedAt < normalized.observedAfter) return false;
+    if (normalized.observedBefore && record.temporalScope.observedAt > normalized.observedBefore) return false;
+    return true;
+  }).map(querySummary).sort((a, b) => b.observedAt.localeCompare(a.observedAt) || a.observationId.localeCompare(b.observationId));
+
+  let start = 0;
+  if (cursorId) {
+    const index = records.findIndex((item) => item.observationId === cursorId);
+    if (index < 0) fail("Observation query cursor is not present in the current filtered projection.", "INVALID_OBSERVATION_QUERY_CURSOR");
+    start = index + 1;
+  }
+  const results = records.slice(start, start + boundedLimit);
+  const remaining = Math.max(0, records.length - start - results.length);
+  const payload = {
+    schemaVersion: SCHEMA_VERSION,
+    kind: "ObservationQueryProjection",
+    protocol: { name: "head-agent-core-observation-query", version: OBSERVATION_PROTOCOL_VERSION },
+    projectId: inspected.project.projectId,
+    sessionId: inspected.state.sessionId,
+    sourceProjectionId: projection.projectionId,
+    sourceProjectionHash: projection.projectionHash,
+    filters: normalized,
+    limit: boundedLimit,
+    totalMatches: records.length,
+    returned: results.length,
+    omitted: remaining,
+    results,
+    nextCursor: remaining && results.length ? { projectionId: projection.projectionId, observationId: results.at(-1).observationId } : null,
+    semanticSelection: false,
+    authority: "bounded-p4-observation-discovery-not-semantic-selection",
+    instructionAuthority: false,
+    promotionAuthority: false,
+    recoveryAuthority: false,
+  };
+  const queryHash = observationDigest(payload);
+  return { ...payload, queryId: `observation-query-${queryHash.slice(0, 24)}`, queryHash };
 }
 
 export function observationProjectionEvidenceDigest(projection) {

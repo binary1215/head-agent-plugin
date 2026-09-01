@@ -9,12 +9,12 @@ import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { ingestStructuredObservation } from "../scripts/lib/observation-adapter.mjs";
 import { createObservationTypeDescriptor } from "../scripts/lib/observation-contract.mjs";
-import { inspectObservations } from "../scripts/lib/observation-projection.mjs";
+import { inspectObservations, loadObservationProjection, queryObservations } from "../scripts/lib/observation-projection.mjs";
 import { recordDerivedObservation } from "../scripts/lib/observation-store.mjs";
-import { recordProductHypothesis } from "../scripts/lib/product-operating-loop.mjs";
+import { recordProductHypothesis, recordProductSignal } from "../scripts/lib/product-operating-loop.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { runCommand } from "../scripts/head.mjs";
-import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
+import { dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
@@ -88,7 +88,8 @@ test("uses one evidence-only contract across unrelated typed product observation
   }
   assert.equal(fs.readFileSync(canonFile, "utf8"), canonBefore);
   assert.equal(fs.readFileSync(sessionFile, "utf8"), sessionBefore);
-  const projection = inspectObservations({ root }).projection;
+  const project = JSON.parse(fs.readFileSync(path.join(root, ".head", "project.json"), "utf8"));
+  const projection = loadObservationProjection({ projectRoot: root, projectId: project.projectId });
   assert.equal(projection.observationIds.length, 3);
   assert.deepEqual(projection.graphPolicy.automaticRelations, ["CONFORMS_TO", "DERIVED_FROM", "EVIDENCED_BY"]);
   assert.equal(projection.graphPolicy.automaticSemanticRelations, false);
@@ -111,6 +112,20 @@ test("fails closed for divergent replay, false completeness, and schema or adapt
   await assert.rejects(() => ingestStructuredObservation({ root, binding: { ...binding(), adapterKey: "example.other" }, descriptor: build, input: input({ suffix: "adapter", subjectType: "head.build.target", payload: { succeeded: true } }) }), (error) => error.code === "INVALID_OBSERVATION_ADAPTER_AUTHORITY");
 });
 
+test("scopes at-most-once replay to the exact adapter and source binding", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const type = descriptor("example.source.event", [{ key: "value", type: "integer", required: true }]);
+  const observed = input({ suffix: "shared-upstream-id", subjectType: "example.source.subject", payload: { value: 1 } });
+  const firstBinding = binding();
+  const secondBinding = { ...binding(), sourceScopeDigest: sha("independent-source-scope") };
+  const first = await ingestStructuredObservation({ root, binding: firstBinding, descriptor: type, input: observed });
+  const second = await ingestStructuredObservation({ root, binding: secondBinding, descriptor: type, input: observed });
+  assert.notEqual(first.observation.observationId, second.observation.observationId);
+  assert.equal(inspectObservations({ root }).projection.counts.observations, 2);
+  await assert.rejects(() => ingestStructuredObservation({ root, binding: firstBinding, descriptor: type, input: { ...observed, payload: { value: 2 } } }), (error) => error.code === "DIVERGENT_OBSERVATION_REPLAY");
+});
+
 test("records deterministic derivation without promoting causal or product meaning", async (t) => {
   const root = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -127,7 +142,8 @@ test("records deterministic derivation without promoting causal or product meani
     payload: { delta: 3 },
   } });
   assert.equal(derived.derivedObservation.epistemicClass, "derived-projection");
-  const projection = inspectObservations({ root }).projection;
+  const project = JSON.parse(fs.readFileSync(path.join(root, ".head", "project.json"), "utf8"));
+  const projection = loadObservationProjection({ projectRoot: root, projectId: project.projectId });
   assert.equal(projection.edges.filter((edge) => edge.type === "DERIVED_FROM").length, 2);
   assert.equal(projection.edges.some((edge) => edge.type === "IMPACTS"), false);
 });
@@ -141,8 +157,14 @@ test("exposes the same bounded contract through CLI and MCP while requiring Host
   fs.writeFileSync(cliInput, JSON.stringify({ binding: binding(), descriptor: type, input: observed }));
   const cli = await runCommand(["observation-ingest", root, "--input", cliInput]);
   assert.equal(cli.observation.typeKey, "head.test.summary");
-  assert.equal(runCommand(["observation-status", root]).projection.observationIds.length, 1);
+  assert.equal(runCommand(["observation-status", root]).projection.counts.observations, 1);
   assert.equal(runCommand(["observation-sources", root]).dynamicProjectCodeLoading, false);
+  const cliQuery = runCommand(["observation-query", root, "--type-key", type.typeKey, "--limit", "1"]);
+  assert.equal(cliQuery.results[0].observationId, cli.observation.observationId);
+  assert.equal(cliQuery.results[0].payload, undefined);
+  const cliRead = runCommand(["observation-read", root, "--observation", cli.observation.observationId]);
+  assert.equal(cliRead.descriptor.descriptorId, cli.observation.descriptorId);
+  assert.equal(cliRead.lineage.receiptId, cli.receipt.receiptId);
 
   const mcpArguments = {
     project_root: root,
@@ -161,6 +183,50 @@ test("exposes the same bounded contract through CLI and MCP while requiring Host
   assert.match(denied.error.message, /exact Host source binding/);
   const accepted = await dispatchMcp({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "head_observation_ingest", arguments: { ...mcpArguments, confirm_host_observation: true } } });
   assert.equal(accepted.result.structuredContent.observation.observationId, cli.observation.observationId);
+  const queried = await dispatchMcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "head_observation_query", arguments: { project_root: root, type_key: type.typeKey, limit: 1 } } });
+  assert.equal(queried.result.structuredContent.results[0].observationId, cli.observation.observationId);
+  const itemsType = mcpTools.find((tool) => tool.name === "head_observation_ingest").inputSchema.properties.descriptor.properties.payload_schema.properties.fields.items.properties.items_type.enum;
+  assert.equal(itemsType.includes("enum"), false);
+});
+
+test("keeps unrelated ProductSignal flow independent from unused Observation storage", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const recorded = await ingestStructuredObservation({
+    root,
+    binding: binding(),
+    descriptor: descriptor("example.optional.event", [{ key: "value", type: "integer", required: true }]),
+    input: input({ suffix: "optional", subjectType: "example.optional.subject", payload: { value: 1 } }),
+  });
+  fs.unlinkSync(path.join(root, ".head", "observations", "receipts", `${recorded.receipt.receiptId}.json`));
+  const signal = await recordProductSignal({ root, statement: "A separate user-authored product fact.", source: "user" });
+  assert.equal(signal.signal.kind, "ProductSignal");
+  await assert.rejects(() => recordProductHypothesis({ root, statement: "This exact observation may matter.", observationIds: [recorded.observation.observationId] }), (error) => error.code === "OBSERVATION_RECEIPT_MISSING");
+});
+
+test("bounds Observation status and cursor query without semantic selection", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const type = descriptor("example.query.event", [{ key: "value", type: "integer", required: true }]);
+  for (let index = 0; index < 3; index += 1) await ingestStructuredObservation({
+    root,
+    binding: binding(),
+    descriptor: type,
+    input: { ...input({ suffix: `query-${index}`, subjectType: "example.query.subject", payload: { value: index } }), temporalScope: { observedAt: `2026-09-01T00:0${index}:00.000Z`, start: null, end: null } },
+  });
+  const status = inspectObservations({ root });
+  assert.equal(status.projection.counts.observations, 3);
+  assert.equal(status.projection.nodes, undefined);
+  const first = queryObservations({ root, typeKey: type.typeKey, limit: 2 });
+  assert.equal(first.returned, 2);
+  assert.equal(first.semanticSelection, false);
+  assert.equal(first.nextCursor.projectionId, first.sourceProjectionId);
+  const second = queryObservations({ root, typeKey: type.typeKey, limit: 2, projectionId: first.nextCursor.projectionId, cursor: first.nextCursor.observationId });
+  assert.equal(second.returned, 1);
+  assert.equal(second.nextCursor, null);
+  assert.deepEqual(new Set([...first.results, ...second.results].map((item) => item.observationId)).size, 3);
+  await ingestStructuredObservation({ root, binding: binding(), descriptor: type, input: input({ suffix: "query-new", subjectType: "example.query.subject", payload: { value: 4 } }) });
+  assert.throws(() => queryObservations({ root, typeKey: type.typeKey, limit: 2, projectionId: first.nextCursor.projectionId, cursor: first.nextCursor.observationId }), { code: "STALE_OBSERVATION_QUERY_CURSOR" });
 });
 
 test("admits Observation evidence only by exact HEAD need and keeps semantic interpretation in a hypothesis", async (t) => {

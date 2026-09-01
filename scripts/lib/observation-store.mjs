@@ -110,6 +110,32 @@ function descriptorMap(descriptors) {
   return map;
 }
 
+function sourceReplayKeyDigest(source) {
+  return observationDigest({
+    adapterKey: source.adapterKey,
+    adapterVersion: source.adapterVersion,
+    sourceScopeDigest: source.sourceScopeDigest,
+    sourceEventKeyDigest: source.sourceEventKeyDigest,
+  });
+}
+
+function persistObservationRecord(projectRoot, record) {
+  const legacyFile = path.join(safeDirectory(projectRoot, OBSERVATION_RECORD_DIRECTORY), `${record.source.sourceEventKeyDigest}.json`);
+  if (fs.existsSync(legacyFile)) {
+    const stat = fs.lstatSync(legacyFile);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > LIMITS.maxArtifactBytes) fail("Legacy Observation record is unsafe or too large.", "OBSERVATION_STORE_LIMIT");
+    let existing;
+    try { existing = JSON.parse(fs.readFileSync(legacyFile, "utf8")); }
+    catch (error) { fail(`Legacy Observation record contains invalid JSON: ${error.message}`, "INVALID_OBSERVATION_ARTIFACT"); }
+    if (!existing?.source || typeof existing.source !== "object") fail("Legacy Observation record source is invalid.", "INVALID_OBSERVATION_ARTIFACT");
+    if (sourceReplayKeyDigest(existing.source) === sourceReplayKeyDigest(record.source)) {
+      if (observationCanonicalJson(existing) !== observationCanonicalJson(record)) fail(`Create-only Observation key has divergent content: ${path.basename(legacyFile)}`, "DIVERGENT_OBSERVATION_REPLAY");
+      return { status: "existing", file: legacyFile };
+    }
+  }
+  return persistCreateOnly(projectRoot, OBSERVATION_RECORD_DIRECTORY, `${sourceReplayKeyDigest(record.source)}.json`, record, "DIVERGENT_OBSERVATION_REPLAY");
+}
+
 export function loadObservationArtifacts({ projectRoot, projectId } = {}) {
   const descriptors = readDirectory(projectRoot, OBSERVATION_DESCRIPTOR_DIRECTORY, "ObservationTypeDescriptor");
   const descriptorsById = descriptorMap(descriptors);
@@ -122,10 +148,11 @@ export function loadObservationArtifacts({ projectRoot, projectId } = {}) {
   const sourceKeys = new Map();
   for (const record of observations) {
     if (observationIds.has(record.observationId)) fail("Duplicate ObservationRecord.", "DUPLICATE_OBSERVATION_RECORD");
-    const existing = sourceKeys.get(record.source.sourceEventKeyDigest);
+    const replayKeyDigest = sourceReplayKeyDigest(record.source);
+    const existing = sourceKeys.get(replayKeyDigest);
     if (existing && existing !== record.observationId) fail("Observation source key has divergent records.", "DIVERGENT_OBSERVATION_REPLAY");
     observationIds.set(record.observationId, record);
-    sourceKeys.set(record.source.sourceEventKeyDigest, record.observationId);
+    sourceKeys.set(replayKeyDigest, record.observationId);
   }
   const derivedObservations = readDirectory(projectRoot, DERIVED_OBSERVATION_DIRECTORY, "DerivedObservationRecord").map((record) => {
     const descriptor = descriptorsById.get(record.descriptorId);
@@ -180,7 +207,7 @@ export function recordCollectedObservation({ root = ".", descriptor, input, adap
       sourceEvidenceDigest: input.sourceEvidenceDigest,
     },
   });
-  const recordPersisted = persistCreateOnly(inspected.project.projectRoot, OBSERVATION_RECORD_DIRECTORY, `${record.source.sourceEventKeyDigest}.json`, record, "DIVERGENT_OBSERVATION_REPLAY");
+  const recordPersisted = persistObservationRecord(inspected.project.projectRoot, record);
   const receiptPayload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ObservationCollectionReceipt",
@@ -224,5 +251,17 @@ export function readObservation({ root = ".", observationId } = {}) {
   const observation = artifacts.observations.find((item) => item.observationId === observationId) || null;
   const derivedObservation = artifacts.derivedObservations.find((item) => item.derivedObservationId === observationId) || null;
   if (!observation && !derivedObservation) fail(`Observation not found: ${observationId}`, "OBSERVATION_NOT_FOUND");
-  return { status: "verified", projectId: inspected.project.projectId, observation: observation || derivedObservation };
+  const selected = observation || derivedObservation;
+  const descriptor = artifacts.descriptors.find((item) => item.descriptorId === selected.descriptorId) || null;
+  const receipt = observation ? artifacts.receipts.find((item) => item.observationId === observation.observationId) || null : null;
+  return {
+    status: "verified",
+    projectId: inspected.project.projectId,
+    observation: selected,
+    descriptor,
+    receipt,
+    lineage: observation
+      ? { kind: "collected", receiptId: receipt.receiptId, descriptorId: descriptor.descriptorId }
+      : { kind: "derived", descriptorId: descriptor.descriptorId, inputObservationIds: selected.inputObservations.map((item) => item.observationId) },
+  };
 }

@@ -300,11 +300,13 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
   const featureCandidates = by(arrays.featureCandidates, "featureCandidateId");
   const reviews = by(arrays.initiativeReviews, "reviewDecisionId");
   const reviewedInitiatives = by(arrays.reviewedInitiatives, "initiativeId");
-  const observationArtifacts = loadObservationArtifacts({ projectRoot, projectId });
-  const observationIds = new Set([
-    ...observationArtifacts.observations.map((item) => item.observationId),
-    ...observationArtifacts.derivedObservations.map((item) => item.derivedObservationId),
-  ]);
+  const referencedObservationIds = new Set(arrays.hypotheses.flatMap((hypothesis) => hypothesis.observationIds || []));
+  const observationIds = new Set();
+  if (referencedObservationIds.size) {
+    const observationArtifacts = loadObservationArtifacts({ projectRoot, projectId });
+    for (const item of observationArtifacts.observations) observationIds.add(item.observationId);
+    for (const item of observationArtifacts.derivedObservations) observationIds.add(item.derivedObservationId);
+  }
   const changes = new Map(readArtifacts(projectRoot, ".head/change-sets/records").map((value) => [value.changeSetId, value]));
   for (const hypothesis of arrays.hypotheses) if (hypothesis.signalIds.some((id) => !signals.has(id))) fail("ProductHypothesis references an unknown ProductSignal.", "UNKNOWN_PRODUCT_SIGNAL");
   for (const hypothesis of arrays.hypotheses) if ((hypothesis.observationIds || []).some((id) => !observationIds.has(id))) fail("ProductHypothesis references an unknown Observation.", "UNKNOWN_OBSERVATION");
@@ -447,12 +449,14 @@ export async function recordProductHypothesis({ root = ".", statement, signalIds
   const exactObservationIds = sortedIds(observationIds, "ProductHypothesis observationIds");
   if (!ids.length && !exactObservationIds.length) fail("ProductHypothesis requires at least one ProductSignal or exact Observation.", "PRODUCT_HYPOTHESIS_EVIDENCE_REQUIRED");
   for (const id of ids) findById(inspected.project.projectRoot, PRODUCT_SIGNAL_DIRECTORY, id, "product-signal", verifyProductSignal, inspected.project.projectId);
-  const observationArtifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
-  const knownObservationIds = new Set([
-    ...observationArtifacts.observations.map((item) => item.observationId),
-    ...observationArtifacts.derivedObservations.map((item) => item.derivedObservationId),
-  ]);
-  for (const id of exactObservationIds) if (!knownObservationIds.has(id)) fail(`ProductHypothesis Observation not found: ${id}`, "UNKNOWN_OBSERVATION");
+  if (exactObservationIds.length) {
+    const observationArtifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+    const knownObservationIds = new Set([
+      ...observationArtifacts.observations.map((item) => item.observationId),
+      ...observationArtifacts.derivedObservations.map((item) => item.derivedObservationId),
+    ]);
+    for (const id of exactObservationIds) if (!knownObservationIds.has(id)) fail(`ProductHypothesis Observation not found: ${id}`, "UNKNOWN_OBSERVATION");
+  }
   const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductHypothesis", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, statement: requiredText(statement, "ProductHypothesis statement"), rationale: optionalText(rationale, "ProductHypothesis rationale"), signalIds: ids, observationIds: exactObservationIds, epistemicClass: "hypothesis", authority: "non-authoritative-hypothesis", instructionAuthority: false, promotionAuthority: false };
   const hypothesis = verifyProductHypothesis(artifact(payload, "product-hypothesis", "hypothesisId", "hypothesisHash"), inspected.project.projectId);
   const persisted = persistImmutable(inspected.project.projectRoot, PRODUCT_HYPOTHESIS_DIRECTORY, hypothesis.hypothesisId, hypothesis);

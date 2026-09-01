@@ -23,7 +23,7 @@ import { readRuntimeInvocationResult } from "./lib/runtime-run-result-applicatio
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
-import { inspectObservations } from "./lib/observation-projection.mjs";
+import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
@@ -57,7 +57,7 @@ const observationFieldSchema = {
     key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$" },
     type: { type: "string", enum: ["string", "stable-key", "timestamp", "sha256", "boolean", "integer", "nonnegative-integer", "bounded-number", "enum", "array"] },
     required: { type: "boolean" }, min: { type: "number" }, max: { type: "number" }, enum: { type: "array", maxItems: 64 },
-    items_type: { type: "string", enum: ["string", "stable-key", "timestamp", "sha256", "boolean", "integer", "nonnegative-integer", "bounded-number", "enum"] },
+    items_type: { type: "string", enum: ["string", "stable-key", "timestamp", "sha256", "boolean", "integer", "nonnegative-integer", "bounded-number"] },
     max_items: { type: "integer", minimum: 0, maximum: 1024 },
   },
   required: ["key", "type", "required"], additionalProperties: false,
@@ -1177,13 +1177,13 @@ export const tools = [
   },
   {
     name: "head_observation_collect",
-    description: "Collect one bounded host-supplied typed Observation through an exact source binding. The result is P3 evidence only and cannot create ProductSignal, ReviewDecision, Product Canon, or recovery direction.",
+    description: "Compatibility alias for ingesting one already collected, bounded Host Observation through an exact source binding. It does not open or infer an external source and cannot create ProductSignal, ReviewDecision, Product Canon, or recovery direction.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, binding: observationBindingSchema, descriptor: observationDescriptorSchema, observation: observationInputSchema, confirm_host_observation: { type: "boolean" } }, required: ["project_root", "binding", "descriptor", "observation", "confirm_host_observation"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "head_observation_ingest",
-    description: "Ingest one bounded CI or Host Observation using the same Core identity and authority contract as collection. Explicit host-source confirmation is required.",
+    description: "Ingest one already constructed bounded CI or Host Observation. The Host adapter owns source access, binding, digests, coverage, and provenance confirmation; this tool does not ask the user to attest to machine evidence.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, binding: observationBindingSchema, descriptor: observationDescriptorSchema, observation: observationInputSchema, confirm_host_observation: { type: "boolean" } }, required: ["project_root", "binding", "descriptor", "observation", "confirm_host_observation"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
@@ -1202,13 +1202,31 @@ export const tools = [
   },
   {
     name: "head_observation_read",
-    description: "Read one exact digest-verified observed or derived Observation by ID.",
+    description: "Read one exact digest-verified observed or derived Observation by ID with its descriptor and bounded receipt or derivation lineage.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, observation_id: { type: "string", pattern: "^(?:observation|derived-observation)-[a-f0-9]{24}$" } }, required: ["project_root", "observation_id"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: "head_observation_query",
+    description: "Query a bounded P4 summary of current Observation identities by exact type, subject, source, time, and record-kind filters. This is discovery only; it does not select semantic relevance or make records Context-eligible.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 },
+      type_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      subject_type: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      subject_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      adapter_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      observed_after: { type: "string", format: "date-time" },
+      observed_before: { type: "string", format: "date-time" },
+      record_kind: { type: "string", enum: ["all", "observed", "derived"], default: "all" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 25 },
+      projection_id: { type: "string", pattern: "^observation-projection-[a-f0-9]{24}$" },
+      cursor: { type: "string", pattern: "^(?:observation|derived-observation)-[a-f0-9]{24}$" },
+    }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "head_observation_status",
-    description: "Read the rebuildable P4 Observation status and evidence-only graph. Product semantic edges remain absent and Context eligibility is exact EvidenceNeed only.",
+    description: "Read a bounded summary of the rebuildable P4 Observation graph. Use head_observation_query for exact current IDs instead of loading full payload nodes; Product semantic edges remain absent.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -1675,6 +1693,8 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                             ? (requireMcpConfirmation(args.confirm_host_derivation, "Derived Observation recording requires explicit confirmation that the payload came from the named deterministic algorithm.", "OBSERVATION_DERIVATION_CONFIRMATION_REQUIRED"), recordDerivedObservation({ root: args.project_root, descriptor: observationDescriptorFromMcp(args.descriptor), input: { subject: args.subject, temporalScope: { observedAt: args.temporal_scope.observed_at, start: args.temporal_scope.start, end: args.temporal_scope.end }, inputObservationIds: args.input_observation_ids, algorithm: args.algorithm, coverage: observationCoverageFromMcp(args.coverage), payload: args.payload } }))
                           : name === "head_observation_read"
                             ? readObservation({ root: args.project_root, observationId: args.observation_id })
+                          : name === "head_observation_query"
+                            ? queryObservations({ root: args.project_root, typeKey: args.type_key || "", subjectType: args.subject_type || "", subjectKey: args.subject_key || "", adapterKey: args.adapter_key || "", observedAfter: args.observed_after || "", observedBefore: args.observed_before || "", recordKind: args.record_kind || "all", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "" })
                           : name === "head_observation_status"
                             ? inspectObservations({ root: args.project_root })
                           : name === "head_continuity_snapshot"

@@ -31,7 +31,7 @@ import { initializeOrResumeProject, inspectProjectExperience } from "./lib/proje
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
-import { inspectObservations } from "./lib/observation-projection.mjs";
+import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
@@ -133,6 +133,7 @@ export function usage({ all = false } = {}) {
       "head observation-ingest <project> --input <observation.json>",
       "head observation-derive <project> --input <derived-observation.json>",
       "head observation-read <project> --observation <observation-id>",
+      "head observation-query <project> [--type-key <key>] [--subject-type <key>] [--subject-key <key>] [--adapter-key <key>] [--observed-after <timestamp>] [--observed-before <timestamp>] [--record-kind <all|observed|derived>] [--limit <1-100>] [--projection <observation-projection-id> --cursor <observation-id>]",
       "head observation-status <project>",
       "head product-hypothesis-record <project> --input <hypothesis.json>",
       "head product-initiative-propose <project> --input <initiative.json>",
@@ -389,6 +390,19 @@ export function runCommand(argv = process.argv.slice(2)) {
     return recordDerivedObservation({ root, descriptor: value.descriptor, input: value.input });
   }
   if (command === "observation-read") return readObservation({ root, observationId: options.observation });
+  if (command === "observation-query") return queryObservations({
+    root,
+    typeKey: options["type-key"] || "",
+    subjectType: options["subject-type"] || "",
+    subjectKey: options["subject-key"] || "",
+    adapterKey: options["adapter-key"] || "",
+    observedAfter: options["observed-after"] || "",
+    observedBefore: options["observed-before"] || "",
+    recordKind: options["record-kind"] || "all",
+    limit: options.limit == null ? 25 : Number(options.limit),
+    projectionId: options.projection || "",
+    cursor: options.cursor || "",
+  });
   if (command === "observation-status") return inspectObservations({ root });
   if (command === "head-continuity") return buildHeadContinuitySnapshot({ root, fresh: options.fresh === true });
   if (command === "world-index") return buildWorldModel({

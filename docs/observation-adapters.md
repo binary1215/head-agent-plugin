@@ -10,7 +10,7 @@ The common contract standardizes evidence shape, lineage, coverage, replay, and 
 
 An adapter supplies an exact `ObservationSourceBinding` and bounded input. Core creates an immutable `ObservationRecord` plus one `ObservationCollectionReceipt`. Deterministic computation over exact source records creates a separate `DerivedObservationRecord`; it never rewrites an observed fact.
 
-Credentials, provider sessions, process IDs, sockets, and cursors remain Host-local. Only credential reference names may appear in the binding, and they are not copied into observation records. Identical source-event replay converges on the same record. Divergent content for the same source-event key fails closed.
+Credentials, provider sessions, process IDs, sockets, and source cursors remain Host-local. Only credential reference names may appear in the binding, and they are not copied into observation records. Replay identity is scoped to the exact adapter key, adapter version, source-scope digest, and source-event-key digest. Identical replay inside that binding converges on the same record, while divergent content fails closed. Independent source bindings may reuse an upstream event key without colliding.
 
 ## Coverage and graph
 
@@ -24,13 +24,18 @@ Release evidence is a strict specialization, not a replacement by the generic ad
 
 Context compilation excludes common observations by default. HEAD performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core then proves actual inclusion without lexical eligibility, semantic promotion, or sufficiency judgment.
 
-CLI provides `observation-ingest`, `observation-status`, and the related read, collect, derive, and source-inspection commands. Typed MCP provides `head_observation_ingest`, `head_observation_collect`, `head_observation_status`, and matching read/derive/source tools. Mutation calls require an explicit Host confirmation flag, but this confirms the source binding only; it grants no P1 or P2 authority.
+Ordinary inspection remains ephemeral. Persist an Observation only when cross-Run, rebuttal/audit, handoff, or context-loss evidence is required. A Host adapter, not the user, constructs the exact source binding, descriptor, digests, coverage, and provenance confirmation. `observation-ingest` and `head_observation_ingest` are advanced Host/CI surfaces for already bounded input; collect remains the adapter-facing compatibility alias.
+
+`observation-status` and `head_observation_status` return a bounded P4 summary without full payload nodes. `observation-query` and `head_observation_query` filter exact current identities by type, subject, source, time, and observed/derived kind with a maximum page of 100. Cursor continuation is bound to the exact current `ObservationStatusProjection`; drift fails closed. Query results contain payload digests rather than payload bodies. The exact read surface returns the selected record, descriptor, and bounded receipt or derivation lineage. Querying is discovery, not semantic selection, Context eligibility, or sufficiency judgment.
 
 ## Acceptance properties
 
 - unrelated product domains use the same contract without domain vocabulary in Core;
+- independent source bindings may reuse the same upstream event key, while divergent replay inside one exact binding fails closed;
 - observation writes leave Product Canon and Session recovery bytes unchanged;
+- Product Signal and other unrelated operating flows do not load or depend on unused Observation storage;
 - false completeness, schema drift, authority drift, and divergent replay fail closed;
+- status and query output stays bounded and never turns discovery into semantic selection;
 - default Capsule compilation includes no common observation, even with lexical overlap;
 - an exact HEAD EvidenceNeed includes only the named immutable records;
 - derived records and projections cannot add semantic graph relations;
