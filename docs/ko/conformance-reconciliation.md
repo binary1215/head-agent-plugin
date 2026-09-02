@@ -43,7 +43,7 @@ head_conformance_prepare
 
 Core가 disclosure를 계산합니다. 공급자와 사용자는 connector가 완전하다거나 Graph가 current라거나 Observation이 포괄적이라고 주장하지 않습니다. Finding fingerprint는 설명 문구를 제외하며 HEAD가 설명을 다르게 표현해도 동일한 Project, baseline, Canon anchor, evidence anchor, claim kind는 수렴합니다.
 
-직접 source hashing은 하나의 diagnostic request가 MCP process를 독점하지 않도록 64 MiB로 제한합니다. 이는 해당 anchor 형식만 제한합니다. 더 큰 파일은 exact current World 또는 ChangeSet anchor를 사용할 수 있고 일반 작업은 계속됩니다.
+직접 source hashing은 하나의 diagnostic request가 MCP process를 독점하지 않도록 64 MiB로 제한합니다. 이는 해당 anchor 형식만 제한합니다. 더 큰 파일은 exact current World 또는 ChangeSet anchor를 사용할 수 있고 일반 작업은 계속됩니다. 이전에 수용한 direct source anchor가 나중에 이 bound보다 커지면 queue 조회는 해당 Finding만 정확한 이유와 함께 `needs-recheck`로 표시합니다. 나머지 read-only queue를 중단하거나 resolution을 추론하지 않습니다.
 
 ## Disposition과 resolution
 
@@ -59,7 +59,7 @@ P4 감사 graph는 `CHECKS_AGAINST`, `EVIDENCED_BY`, `DISPOSITIONED_BY`, `REASSE
 
 기본 mode는 `opportunistic`입니다. Host는 background provider execution 없이 자연스러운 대화 경계에서 queued evidence를 준비합니다. `monitor`와 자동 provider assessment에는 명시적 사용자 opt-in이 필요합니다. Host trigger delivery 자체는 Finding을 만들지 않습니다. 공급자 HEAD가 여전히 의미 평가를 수행하고 Core가 여전히 proposal을 검증합니다.
 
-중복 trigger는 queued evidence와 pending evidence 전체에서 수렴합니다. 빈 queue는 pending batch를 만들지 않고 idle을 반환합니다. Refresh receipt는 omission count와 함께 queued verified receipt 중 최신 항목으로 coalesce됩니다. 준비된 batch는 Host가 complete로 표시할 때까지 안정적입니다. delivery 또는 provider outcome이 uncertain이면 automatic replay와 completion이 중단되며, 명시적 사용자 retry decision만 uncertain state를 지울 수 있습니다. Host adapter 하나를 사용할 수 없어도 optional-capability disclosure를 반환하고 일반 HEAD 작업은 계속됩니다.
+중복 trigger는 queued evidence와 pending evidence 전체에서 수렴합니다. 빈 queue는 pending batch를 만들지 않고 idle을 반환합니다. Preparation은 완전한 projection을 먼저 계산하고 검증한 뒤 선택한 trigger를 queue에서 pending batch 하나로 원자적으로 옮기므로 preparation 실패로 trigger가 유실되지 않습니다. Refresh receipt는 queued verified receipt 중 최신 항목으로 coalesce됩니다. omission lineage는 해당 queued receipt와 함께 이동하며 이를 포함한 batch에서만 보고되고 process lifetime 누적값으로 보고되지 않습니다. 준비된 batch는 Host가 complete로 표시할 때까지 안정적입니다. delivery 또는 provider outcome이 uncertain이면 automatic replay와 completion이 중단되며, 명시적 사용자 retry decision만 uncertain state를 지울 수 있습니다. Host adapter 하나를 사용할 수 없어도 optional-capability disclosure를 반환하고 일반 HEAD 작업은 계속됩니다.
 
 ## CLI와 typed MCP
 
@@ -83,8 +83,8 @@ head conformance-resolution-propose <project> --input <provider-head-resolution.
 - candidate 생성, status, disposition, resolution, Host trigger 동작은 Product Canon, `ReviewDecision`, Session pointer, checkpoint, execution authorization을 변경하지 않습니다.
 - stale baseline은 mutation만 거부하고 HEAD에게 read-only preparation을 반복하라고 안내합니다.
 - stale read-only cursor는 사용자 절차 없이 재동기화합니다.
-- wording만 다른 중복 claim은 exact semantic anchor fingerprint로 수렴합니다.
+- wording만 다른 중복 claim은 호출 사이와 하나의 proposal batch 내부 모두에서 exact semantic anchor fingerprint로 수렴합니다.
 - source drift는 `needs-recheck`를 만들며 자동 resolution을 만들지 않습니다.
 - resolution은 fresh exact evidence가 필요하며 Finding 하나를 닫으려면 명시적 사용자 확인이 필요합니다.
-- Host monitor execution은 opt-in이고, duplicate delivery는 수렴하며, uncertain outcome은 auto-replay되지 않고, Host state는 Project 밖에 남습니다.
+- Host monitor execution은 opt-in이고, 실패한 preparation은 queued trigger를 보존하며, duplicate delivery는 수렴하고, refresh omission count는 batch-local로 유지되며, uncertain outcome은 auto-replay되지 않고, Host state는 Project 밖에 남습니다.
 - CLI와 MCP는 같은 Core identity를 반환하며 65번째 항목도 접근할 수 있습니다.

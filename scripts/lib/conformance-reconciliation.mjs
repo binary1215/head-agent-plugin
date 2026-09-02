@@ -263,6 +263,7 @@ function findingCurrency(projectRoot, current, finding) {
     verifyEvidenceAnchors({ projectRoot, projectId: finding.projectId, baseline: finding.baseline, world: current.world, anchors: finding.evidenceAnchors });
     return { state: "current", reasonCode: null };
   } catch (error) {
+    if (error.code === "CONFORMANCE_SOURCE_TOO_LARGE") return { state: "needs-recheck", reasonCode: "direct-source-anchor-exceeds-current-bound" };
     if (new Set(["CONFORMANCE_SOURCE_DRIFT", "CONFORMANCE_EVIDENCE_NOT_FOUND", "CONFORMANCE_BASELINE_DRIFT"]).has(error.code)) return { state: "needs-recheck", reasonCode: error.code.toLowerCase() };
     throw error;
   }
@@ -365,15 +366,17 @@ export function proposeConformanceFindings({ root = ".", baseline, findings } = 
     const computedDisclosures = verifyEvidenceAnchors({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, baseline, world: current.world, anchors: input.evidenceAnchors });
     return createConformanceFindingCandidate({ projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, baseline, canonAnchor: input.canonAnchor, evidenceAnchors: input.evidenceAnchors, claim: input.claim, disclosures: computedDisclosures });
   });
-  const unique = [...new Map(candidates.map((item) => {
-    const existing = existingByFingerprint.get(item.fingerprintId);
-    return [existing?.findingId || item.findingId, existing || item];
-  })).values()];
+  const uniqueByFingerprint = new Map();
+  for (const item of candidates) {
+    if (!uniqueByFingerprint.has(item.fingerprintId)) uniqueByFingerprint.set(item.fingerprintId, existingByFingerprint.get(item.fingerprintId) || item);
+  }
+  const unique = [...uniqueByFingerprint.values()];
   const persisted = unique.map((finding) => ({ finding, ...persistImmutable(inspected.project.projectRoot, DIRECTORIES.findings, finding.findingId, finding, "Conformance Finding") }));
   return {
     status: persisted.every((item) => item.status === "existing") ? "existing" : "recorded",
     outcome: unique.some((item) => item.disclosures.length) ? "accepted-with-disclosure" : "accepted",
     findings: persisted.map(({ finding, status }) => ({ findingId: finding.findingId, findingHash: finding.findingHash, status, disclosures: finding.disclosures })),
+    convergedInBatchDuplicateCount: candidates.length - unique.length,
     ordinaryWorkBlocked: false,
     authority: { findings: "P3-candidate-evidence", productCanonMutated: false, reviewDecisionCreated: false, recoveryDirectionMutated: false },
   };

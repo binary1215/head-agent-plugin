@@ -13,6 +13,10 @@ export const CONFORMANCE_TRIGGER_KINDS = Object.freeze(["change-set", "observati
 const MAX_TRIGGER_PAGE = 64;
 const fail = (message, code = "CONFORMANCE_TRIGGER_ERROR") => { const error = new Error(message); error.code = code; throw error; };
 
+function coalescedRefreshCount(items) {
+  return items.reduce((count, item) => count + (item.kind === "refresh-receipt" ? item.coalescedRefreshCount || 0 : 0), 0);
+}
+
 function readyProject(root) {
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail(`Project must be ready for Conformance Host trigger use; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
@@ -66,12 +70,14 @@ export class ConformanceTriggerRegistry {
     if (typeof providerAssessmentEnabled !== "boolean" || providerAssessmentEnabled && mode !== "monitor") fail("Automatic provider assessment is available only in explicit monitor mode.", "INVALID_CONFORMANCE_TRIGGER_BINDING");
     const identity = bindingIdentity({ projectId: inspected.project.projectId, sourceKey: normalizedSourceKey, triggerKinds: normalizedKinds, mode, providerAssessmentEnabled });
     if (this.sources.has(identity.sourceId)) return this.describeSource(this.sources.get(identity.sourceId));
-    const source = { ...identity, projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, sourceKey: normalizedSourceKey, triggerKinds: normalizedKinds, mode, providerAssessmentEnabled, queue: [], pendingBatch: null, coalescedRefreshCount: 0, uncertainAssessment: false };
+    const source = { ...identity, projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, sourceKey: normalizedSourceKey, triggerKinds: normalizedKinds, mode, providerAssessmentEnabled, queue: [], pendingBatch: null, uncertainAssessment: false };
     this.sources.set(identity.sourceId, source);
     return this.describeSource(source);
   }
 
   describeSource(source) {
+    const queuedCoalescedRefreshCount = coalescedRefreshCount(source.queue);
+    const pendingCoalescedRefreshCount = source.pendingBatch?.coalescedRefreshCount || 0;
     return {
       sourceId: source.sourceId,
       bindingHash: source.bindingHash,
@@ -81,7 +87,9 @@ export class ConformanceTriggerRegistry {
       providerAssessmentEnabled: source.providerAssessmentEnabled,
       queuedTriggerCount: source.queue.length,
       pendingBatchId: source.pendingBatch?.batchId || null,
-      coalescedRefreshCount: source.coalescedRefreshCount,
+      coalescedRefreshCount: queuedCoalescedRefreshCount + pendingCoalescedRefreshCount,
+      queuedCoalescedRefreshCount,
+      pendingCoalescedRefreshCount,
       uncertainAssessment: source.uncertainAssessment,
       stateLocation: "host-local-process-memory",
       credentialsPersisted: false,
@@ -109,12 +117,13 @@ export class ConformanceTriggerRegistry {
     const exactId = `${verified.kind}:${verified.artifactId}:${verified.artifactHash}`;
     if (source.queue.some((item) => item.exactId === exactId)
       || source.pendingBatch?.triggers.some((item) => `${item.kind}:${item.artifactId}:${item.artifactHash}` === exactId)) return { status: "existing", source: this.describeSource(source), trigger: verified };
+    let triggerCoalescedRefreshCount = 0;
     if (verified.kind === "refresh-receipt") {
-      const retained = source.queue.filter((item) => item.kind !== "refresh-receipt");
-      source.coalescedRefreshCount += source.queue.length - retained.length;
-      source.queue = retained;
+      const removed = source.queue.filter((item) => item.kind === "refresh-receipt");
+      triggerCoalescedRefreshCount = removed.reduce((count, item) => count + 1 + (item.coalescedRefreshCount || 0), 0);
+      source.queue = source.queue.filter((item) => item.kind !== "refresh-receipt");
     }
-    source.queue.push({ ...verified, exactId });
+    source.queue.push({ ...verified, exactId, coalescedRefreshCount: triggerCoalescedRefreshCount });
     source.queue.sort((a, b) => a.exactId.localeCompare(b.exactId));
     return { status: "queued", source: this.describeSource(source), trigger: verified };
   }
@@ -131,9 +140,11 @@ export class ConformanceTriggerRegistry {
     if (source.uncertainAssessment) fail("A prior provider assessment has an uncertain outcome and will not be replayed automatically.", "CONFORMANCE_TRIGGER_ASSESSMENT_UNCERTAIN");
     if (source.pendingBatch) return source.pendingBatch;
     if (!source.queue.length) return { status: "idle", source: this.describeSource(source), nextAction: "continue-ordinary-work", ordinaryWorkBlocked: false, authority: "P5-status-only" };
-    const triggers = source.queue.splice(0, boundedLimit);
+    const triggers = source.queue.slice(0, boundedLimit);
+    const remainingTriggers = source.queue.slice(triggers.length);
     const preparation = prepareConformanceAssessment({ root: source.projectRoot, limit: 32 });
-    const payload = { projectId: source.projectId, sourceId: source.sourceId, bindingHash: source.bindingHash, triggerIds: triggers.map((item) => item.exactId), preparationId: preparation.projectionId };
+    const batchCoalescedRefreshCount = coalescedRefreshCount(triggers);
+    const payload = { projectId: source.projectId, sourceId: source.sourceId, bindingHash: source.bindingHash, triggerIds: triggers.map((item) => item.exactId), preparationId: preparation.projectionId, coalescedRefreshCount: batchCoalescedRefreshCount };
     const batchHash = conformanceDigest(conformanceCanonicalJson(payload));
     const batch = {
       schemaVersion: 1,
@@ -142,9 +153,9 @@ export class ConformanceTriggerRegistry {
       batchHash,
       projectId: source.projectId,
       sourceId: source.sourceId,
-      triggers: triggers.map(({ exactId, ...item }) => item),
-      coalescedRefreshCount: source.coalescedRefreshCount,
-      remainingTriggerCount: source.queue.length,
+      triggers: triggers.map((item) => ({ kind: item.kind, artifactId: item.artifactId, artifactHash: item.artifactHash })),
+      coalescedRefreshCount: batchCoalescedRefreshCount,
+      remainingTriggerCount: remainingTriggers.length,
       preparation,
       providerAssessment: { enabled: source.providerAssessmentEnabled, executionOwnedByHost: true, automaticReplayAfterUncertainOutcome: false },
       authority: "non-persisted-P4-trigger-preparation-over-P5-host-state",
@@ -154,6 +165,7 @@ export class ConformanceTriggerRegistry {
       recoveryAuthority: false,
       ordinaryWorkBlocked: false,
     };
+    source.queue = remainingTriggers;
     source.pendingBatch = batch;
     return batch;
   }

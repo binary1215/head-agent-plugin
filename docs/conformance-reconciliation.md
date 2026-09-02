@@ -41,7 +41,7 @@ head_conformance_prepare
 
 Core computes disclosures. The provider and user do not assert that a connector is complete, a Graph is current, or an Observation is comprehensive. Finding fingerprinting excludes explanatory wording and converges the same Project, baseline, Canon anchor, evidence anchors, and claim kind even when HEAD phrases the explanation differently.
 
-Direct source hashing is bounded to 64 MiB so one diagnostic request cannot monopolize the MCP process. This limits only that anchor form: larger files may use an exact current World or ChangeSet anchor, and ordinary work remains available.
+Direct source hashing is bounded to 64 MiB so one diagnostic request cannot monopolize the MCP process. This limits only that anchor form: larger files may use an exact current World or ChangeSet anchor, and ordinary work remains available. If a previously accepted direct source anchor later grows beyond that bound, queue inspection marks only that Finding `needs-recheck` with an exact reason; it does not abort the rest of the read-only queue or infer resolution.
 
 ## Disposition and resolution
 
@@ -57,7 +57,7 @@ The P4 audit graph uses only `CHECKS_AGAINST`, `EVIDENCED_BY`, `DISPOSITIONED_BY
 
 The default mode is `opportunistic`: a Host prepares queued evidence at a natural conversational boundary without background provider execution. `monitor` and automatic provider assessment require explicit user opt-in. Host trigger delivery creates no Finding by itself; provider HEAD still performs semantic assessment and Core still verifies the proposal.
 
-Duplicate triggers converge across both queued and pending evidence. An empty queue returns idle without creating a pending batch. Refresh receipts coalesce to the latest queued verified receipt with an omission count. A prepared batch is stable until the Host marks it complete. If delivery or provider outcome is uncertain, automatic replay and completion stop; only an explicit user retry decision may clear the uncertain state. One unavailable Host adapter returns an optional-capability disclosure and ordinary HEAD work continues.
+Duplicate triggers converge across both queued and pending evidence. An empty queue returns idle without creating a pending batch. Preparation computes and verifies the complete projection before atomically moving selected triggers from the queue into one pending batch, so a preparation failure loses no trigger. Refresh receipts coalesce to the latest queued verified receipt; omission lineage travels with that queued receipt and is reported only by the batch that contains it, never as a process-lifetime cumulative count. A prepared batch is stable until the Host marks it complete. If delivery or provider outcome is uncertain, automatic replay and completion stop; only an explicit user retry decision may clear the uncertain state. One unavailable Host adapter returns an optional-capability disclosure and ordinary HEAD work continues.
 
 ## CLI and typed MCP
 
@@ -81,8 +81,8 @@ Pages contain at most 64 entities or Findings. This is an output bound, not an e
 - candidate creation, status, disposition, resolution, and Host trigger operations leave Product Canon, `ReviewDecision`, Session pointers, checkpoints, and execution authorization unchanged;
 - stale baselines reject only a mutation and tell HEAD to repeat read-only preparation;
 - stale read-only cursors resynchronize without user ceremony;
-- wording-only duplicate claims converge by exact semantic anchor fingerprint;
+- wording-only duplicate claims converge by exact semantic anchor fingerprint both across calls and within one proposal batch;
 - source drift creates `needs-recheck`, never automatic resolution;
 - resolution requires fresh exact evidence and explicit user confirmation to close one Finding;
-- Host monitor execution is opt-in, duplicate delivery converges, uncertain outcomes do not auto-replay, and Host state remains outside the Project;
+- Host monitor execution is opt-in, failed preparation retains queued triggers, duplicate delivery converges, refresh omission counts stay batch-local, uncertain outcomes do not auto-replay, and Host state remains outside the Project;
 - CLI and MCP return the same Core identities, and the 65th item remains reachable.

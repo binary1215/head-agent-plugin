@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
+import { refreshWorldModel } from "../scripts/lib/incremental-refresh.mjs";
 import {
   inspectConformanceQueue,
   prepareConformanceAssessment,
@@ -111,6 +112,52 @@ test("converges wording-only duplicates and rejects only stale or unsafe exact e
   assert.equal(queue.findings[0].currency.reasonCode, "conformance_source_drift");
 });
 
+test("converges wording-only duplicate candidates inside one proposal batch", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "batch.mjs"), "export const state = true;\n");
+  const prepared = prepareConformanceAssessment({ root });
+  const first = proposal(root, prepared, "src/batch.mjs").findings[0];
+  const second = structuredClone(first);
+  second.claim.summary = "Different explanatory wording for the same exact semantic anchors.";
+  second.claim.rationale = "The provider phrased the same candidate differently in one delivery batch.";
+  const recorded = proposeConformanceFindings({ root, baseline: prepared.baseline, findings: [first, second] });
+  assert.equal(recorded.status, "recorded");
+  assert.equal(recorded.findings.length, 1);
+  assert.equal(recorded.convergedInBatchDuplicateCount, 1);
+  assert.equal(inspectConformanceQueue({ root }).totalMatches, 1);
+  const replay = proposeConformanceFindings({ root, baseline: prepared.baseline, findings: [second, first] });
+  assert.equal(replay.status, "existing");
+  assert.equal(replay.findings[0].findingId, recorded.findings[0].findingId);
+  assert.equal(replay.convergedInBatchDuplicateCount, 1);
+});
+
+test("isolates an oversized current source anchor to one needs-recheck queue row", (t) => {
+  const root = fixture({ constraints: 2 });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "large.mjs"), "export const large = false;\n");
+  fs.writeFileSync(path.join(root, "src", "current.mjs"), "export const current = true;\n");
+  const prepared = prepareConformanceAssessment({ root });
+  proposeConformanceFindings({
+    root,
+    baseline: prepared.baseline,
+    findings: [
+      proposal(root, prepared, "src/large.mjs", { constraint: "constraint.0" }).findings[0],
+      proposal(root, prepared, "src/current.mjs", { constraint: "constraint.1" }).findings[0],
+    ],
+  });
+  fs.truncateSync(path.join(root, "src", "large.mjs"), 64 * 1024 * 1024 + 1);
+  const queue = inspectConformanceQueue({ root });
+  assert.equal(queue.totalMatches, 2);
+  const oversized = queue.findings.find((item) => item.canonAnchor.entityKey === "constraint.0");
+  const current = queue.findings.find((item) => item.canonAnchor.entityKey === "constraint.1");
+  assert.equal(oversized.status, "needs-recheck");
+  assert.equal(oversized.currency.reasonCode, "direct-source-anchor-exceeds-current-bound");
+  assert.equal(current.currency.state, "current");
+});
+
 test("binds optional World source identities to the same exact file", async (t) => {
   const root = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -212,6 +259,80 @@ test("keeps Host triggers optional, coalesced, Project-bound, and uncertain-safe
   assert.equal(registry.prepare({ root, sourceId: source.sourceId }).batchId, batch.batchId);
   registry.completeAssessment({ root, sourceId: source.sourceId, batchId: batch.batchId });
   assert.equal(registry.inspect({ root, sourceId: source.sourceId }).source.pendingBatchId, null);
+});
+
+test("retains queued triggers when preparation fails before batch commit", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const registry = new ConformanceTriggerRegistry();
+  const source = registry.register({ root, sourceKey: "atomic-prepare", triggerKinds: ["observation"], mode: "opportunistic" });
+  const observed = await ingestStructuredObservation({
+    root,
+    binding: { adapterKey: "head.structured-host-observation", adapterVersion: "0.1.0", sourceScopeDigest: sha("atomic-trigger-source"), credentialReferenceNames: [] },
+    descriptor: { typeKey: "example.atomic-trigger", typeVersion: "1.0.0", forms: ["event"], payloadSchema: { fields: [{ key: "changed", type: "boolean", required: true }], additionalFields: false } },
+    input: { subject: { type: "example.target", key: "global" }, form: "event", temporalScope: { observedAt: "2026-09-02T00:00:00.000Z", start: null, end: null }, sourceEventKeyDigest: sha("atomic-trigger-event"), sourceEvidenceDigest: sha("atomic-trigger-evidence"), coverage: { state: "partial", basis: "bounded-event", queryDigest: null, examinedCount: 1, sourceReportedTotal: null, omittedCount: null, cursorStartDigest: null, cursorEndDigest: null }, payload: { changed: true } },
+  });
+  registry.enqueue({ root, sourceId: source.sourceId, trigger: { kind: "observation", artifactId: observed.observation.observationId, artifactHash: observed.observation.observationHash } });
+  const canonFile = path.join(root, ".head", "context", "product-model.json");
+  const canonBytes = fs.readFileSync(canonFile);
+  fs.writeFileSync(canonFile, "{ invalid json\n");
+  assert.throws(() => registry.prepare({ root, sourceId: source.sourceId }), { code: "INVALID_PRODUCT_MODEL_JSON" });
+  const afterFailure = registry.inspect({ root, sourceId: source.sourceId }).source;
+  assert.equal(afterFailure.queuedTriggerCount, 1);
+  assert.equal(afterFailure.pendingBatchId, null);
+  fs.writeFileSync(canonFile, canonBytes);
+  const batch = registry.prepare({ root, sourceId: source.sourceId });
+  assert.equal(batch.triggers.length, 1);
+  assert.equal(registry.inspect({ root, sourceId: source.sourceId }).source.queuedTriggerCount, 0);
+});
+
+test("reports refresh omission counts only in the batch that owns the coalesced receipt", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"));
+  const sourceFile = path.join(root, "src", "refresh.mjs");
+  fs.writeFileSync(sourceFile, "export const revision = 0;\n");
+  await buildWorldModel({ root });
+  const registry = new ConformanceTriggerRegistry();
+  const source = registry.register({ root, sourceKey: "refresh-coalescing", triggerKinds: ["observation", "refresh-receipt"], mode: "opportunistic" });
+  const enqueueRefresh = (receipt) => registry.enqueue({ root, sourceId: source.sourceId, trigger: { kind: "refresh-receipt", artifactId: receipt.refreshReceiptId, artifactHash: receipt.refreshReceiptHash } });
+
+  fs.writeFileSync(sourceFile, "export const revision = 1;\n");
+  const first = await refreshWorldModel({ root });
+  enqueueRefresh(first.receipt);
+  fs.writeFileSync(sourceFile, "export const revision = 2;\n");
+  const second = await refreshWorldModel({ root });
+  enqueueRefresh(second.receipt);
+  const observed = await ingestStructuredObservation({
+    root,
+    binding: { adapterKey: "head.structured-host-observation", adapterVersion: "0.1.0", sourceScopeDigest: sha("coalescing-page-source"), credentialReferenceNames: [] },
+    descriptor: { typeKey: "example.coalescing-page", typeVersion: "1.0.0", forms: ["event"], payloadSchema: { fields: [{ key: "changed", type: "boolean", required: true }], additionalFields: false } },
+    input: { subject: { type: "example.target", key: "global" }, form: "event", temporalScope: { observedAt: "2026-09-02T00:00:00.000Z", start: null, end: null }, sourceEventKeyDigest: sha("coalescing-page-event"), sourceEvidenceDigest: sha("coalescing-page-evidence"), coverage: { state: "partial", basis: "bounded-event", queryDigest: null, examinedCount: 1, sourceReportedTotal: null, omittedCount: null, cursorStartDigest: null, cursorEndDigest: null }, payload: { changed: true } },
+  });
+  registry.enqueue({ root, sourceId: source.sourceId, trigger: { kind: "observation", artifactId: observed.observation.observationId, artifactHash: observed.observation.observationHash } });
+  assert.equal(registry.inspect({ root, sourceId: source.sourceId }).source.queuedCoalescedRefreshCount, 1);
+  const leadingBatch = registry.prepare({ root, sourceId: source.sourceId, limit: 1 });
+  assert.equal(leadingBatch.triggers[0].kind, "observation");
+  assert.equal(leadingBatch.coalescedRefreshCount, 0);
+  assert.equal(registry.inspect({ root, sourceId: source.sourceId }).source.queuedCoalescedRefreshCount, 1);
+  registry.completeAssessment({ root, sourceId: source.sourceId, batchId: leadingBatch.batchId });
+  const firstBatch = registry.prepare({ root, sourceId: source.sourceId });
+  assert.equal(firstBatch.coalescedRefreshCount, 1);
+  assert.equal(firstBatch.triggers[0].artifactId, second.receipt.refreshReceiptId);
+  registry.completeAssessment({ root, sourceId: source.sourceId, batchId: firstBatch.batchId });
+
+  fs.writeFileSync(sourceFile, "export const revision = 3;\n");
+  const third = await refreshWorldModel({ root });
+  enqueueRefresh(third.receipt);
+  fs.writeFileSync(sourceFile, "export const revision = 4;\n");
+  const fourth = await refreshWorldModel({ root });
+  enqueueRefresh(fourth.receipt);
+  const secondBatch = registry.prepare({ root, sourceId: source.sourceId });
+  assert.equal(secondBatch.coalescedRefreshCount, 1);
+  assert.equal(secondBatch.triggers[0].artifactId, fourth.receipt.refreshReceiptId);
+  registry.markAssessmentUncertain({ root, sourceId: source.sourceId });
+  registry.clearUncertainAfterUserDecision({ root, sourceId: source.sourceId, confirmUserRetryDecision: true });
+  assert.equal(registry.prepare({ root, sourceId: source.sourceId }).coalescedRefreshCount, 1);
 });
 
 test("exposes the same conversational Core flow through typed MCP without Host configuration", async (t) => {
