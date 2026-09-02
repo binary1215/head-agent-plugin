@@ -78,6 +78,13 @@ user to choose a token tier, EvidenceNeed kind, repository path, entity key, or
 graph node ID. Do not ask about an optional profile before semantic task analysis
 has established a real need for that wider scope.
 
+When the user explicitly invokes HEAD, or the exact project already has a HEAD
+Project, keep the original task available, initialize or resume Core, inspect
+status and recovery readiness, and continue that task in the same turn. Do not
+stop at a setup report or ask the user to repeat the request. Do not initialize
+an unrelated uninitialized repository merely because an ordinary coding request
+matched this Skill.
+
 Do not narrate every internal readiness state or tool call. Continue the task
 directly when Core-only context is usable. When a current World exists, use it
 without asking for a setup choice; when it is absent or stale, use ordinary
@@ -90,6 +97,14 @@ external mutation, destructive work, or an ambiguous project root.
 Lead the response with the work outcome. Keep P1-P5 names, digests, budgets,
 candidate IDs, and full JSON available for audit and diagnosis, but do not make
 them prerequisites for normal use.
+
+Before applying a natural-language answer to a protected decision, re-read the
+exact current candidate or Finding and require one unique unchanged target. Do
+not infer a disposition with lexical rules or treat a provider summary, model
+recommendation, or confirmation boolean as the user's decision. Present IDs as
+diagnostic detail, not the primary interaction. Read
+`references/conversation-ux.md` for the task-first, decision-card, and adaptive
+outcome contract.
 
 ## Choose the lightest sufficient lane
 
@@ -234,6 +249,14 @@ Restore P2 first from `.head/project.json`, `.head/sessions/current.json`, and
 the exact content-addressed checkpoint. Provider resume or live attachment is
 optional and occurs only after artifact recovery succeeds.
 
+The presence of a HEAD Project does not imply a current checkpoint. When project
+status reports no current checkpoint, continue ordinary Session work. When it
+reports a verified current checkpoint, call `head_session_restore` before using
+its direction. When recovery needs attention, fail only the affected recovery
+operation and disclose the problem; never invent missing direction. Do not
+consume a compaction continuation token or attach a provider merely to simplify
+conversation entry.
+
 Compaction is an intentional lossy provider operation. Prepare an immutable
 checkpoint, compact outside Core, verify against trusted real-user-turn
 evidence, then consume the one-shot continuation token. A provider summary,
@@ -253,6 +276,8 @@ Load only the reference needed for the current outcome:
   `references/authority-and-roles.md`.
 - Provider/runtime/host composition: read `references/runtime-composition.md`.
 - Session restore: read `../../docs/session-recovery.md`.
+- Conversation entry, decision cards, and outcome presentation: read
+  `references/conversation-ux.md`.
 - Bounded workers or waves: read `../../docs/bounded-worker-wave.md`.
 - Git ref, deployment-result, or release observations: read
   `../../docs/release-observation.md`.

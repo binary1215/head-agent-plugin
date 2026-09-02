@@ -45,6 +45,13 @@ Claude Code, Codex 및 OpenCode는 동일한 `.head/` 권한의 프로젝션입�
 
 따라서 `profile`은 영속적인 프로젝트 모드가 아니라 작업 선택입니다. 읽기 전용 `HeadProjectExperienceProjection`은 Core 준비 상태와 Product 준비 상태를 독립적으로 보고하고, 실행 가능한 다음 단계 하나를 선택하며, Context 컴파일, 영속적 Runs, 범위가 한정된 workers, 컴팩션 복구 및 공급자 호출의 전제 조건을 공개합니다. 이 프로젝션은 범위가 한정되고 비영속적이며 권한이 없습니다. 검사는 기능을 활성화하거나, 관리되는 파일을 복구하거나, Run 또는 ReviewDecision을 생성하거나, 임대를 소비하거나, 복구 방향을 기록할 수 없습니다. CLI `status`/`doctor`와 MCP `head_project_status`는 동일한 프로젝션을 반환합니다. 검증된 온보딩 상태는 계속 내장되므로 친절한 안내가 정식 상태 머신을 대체하지 않습니다.
 
+같은 프로젝션은 `readiness.recovery`를 사실 기반의 읽기 전용 안내로 공개합니다.
+`no-current-checkpoint`에서는 일반 Session 작업을 계속할 수 있고,
+`verified-current-checkpoint`는 아티팩트 전용 복원이 성공했다는 뜻이며,
+`attention-required`는 영향을 받은 복구 경로에만 수정이 필요함을 공개합니다.
+이 필드를 읽어도 컴팩션 continuation을 소비하거나, 공급자를 연결하거나, P2 방향을
+기록할 수 없습니다.
+
 ## 온보딩 authority plane
 
 초기화는 공급자 대화와 독립적으로 프로젝트 범위의 HEAD Session 레코드와 휴면 온보딩 포인터를 생성합니다. 명시적인 `product` 프로필만 로컬 World Model을 인덱싱합니다. 구조화된 user brief는 candidate를 직접 seed할 수 있고, 그 외에는 fresh provider HEAD가 현재 evidence에서 bounded semantic proposal을 작성합니다. JavaScript Core는 정확한 SourceSnapshot, path, digest, line, optional symbol, Product Model reference와 bound를 검증한 뒤 하나의 immutable batch를 제시합니다. Core는 lexical product inference를 하지 않으며 proposal에는 지시 또는 승격 권한이 없습니다.

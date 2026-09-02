@@ -121,8 +121,14 @@ function assertReadmeContract() {
   for (const required of ["[한국어](README.ko.md)", "## Who it is for", "## Why use it"]) {
     assert(readme.includes(required), `README audience contract is missing: ${required}`);
   }
+  for (const required of ["## How to use it", "HEAD keeps that original task"]) {
+    assert(readme.includes(required), `README task-first conversation contract is missing: ${required}`);
+  }
   for (const required of ["[English](README.md)", "## 누구에게 필요한가", "## 왜 사용해야 하는가"]) {
     assert(koreanReadme.includes(required), `Korean README audience contract is missing: ${required}`);
+  }
+  for (const required of ["## 일반 사용자는 어떻게 사용하나요?", "HEAD는 초기화, 상태 확인과 검증된 복구를 마친 뒤에도 이 원래 작업을 유지"]) {
+    assert(koreanReadme.includes(required), `Korean README task-first conversation contract is missing: ${required}`);
   }
   assert(readme.includes("binary1215/head-agent-plugin@claude-marketplace"), "README Claude marketplace install contract is missing.");
   assert(koreanReadme.includes("binary1215/head-agent-plugin@claude-marketplace"), "Korean README Claude marketplace install contract is missing.");

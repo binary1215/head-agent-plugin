@@ -17,8 +17,9 @@ Keep the reason behind every accepted change.
 
 [Why use it](#why-use-it) ·
 [Who it is for](#who-it-is-for) ·
+[How to use it](#how-to-use-it) ·
 [Install](#install) ·
-[First project](#first-project) ·
+[Advanced use](#cli-automation-and-advanced-setup) ·
 [Core model](#core-model) ·
 [Graph](#graph-and-records) ·
 [Capabilities](#capability-status) ·
@@ -155,6 +156,54 @@ needs, or work where conversation history is sufficient. It is also a poor fit
 when inferred model output should be accepted without review, or when GraphDB is
 expected to become the unquestioned source of project meaning.
 
+## How to use it
+
+Install HEAD Agent Core once, open your project in Codex, Claude Code, or a
+configured OpenCode workspace, and describe your work in ordinary language.
+You do not have to operate HEAD as a separate application.
+
+The first request can include the real task. You do not need a separate setup
+turn:
+
+```text
+Use HEAD Agent Core for this project. Resume its existing state if one exists;
+otherwise initialize the Core. Then find the cause of this login failure and fix it.
+```
+
+HEAD keeps that original task and continues it after initialization, status, and
+any verified recovery step. After that, keep asking for work as you normally
+would:
+
+```text
+This conversation was compacted. Recover the approved direction from the project
+artifacts and continue the current work.
+```
+
+```text
+Prepare only the code and decision evidence needed for this change, then proceed.
+```
+
+```text
+Keep one overall plan and use parallel workers only for the independent parts.
+```
+
+HEAD checks or resumes the project, chooses the lightest safe operating lane,
+and prepares durable context or recovery artifacts only when the task needs
+them. It may inspect the repository directly for ordinary work; Product, World,
+Graph, and long-lived Run machinery are optional escalations rather than setup
+requirements.
+
+You do **not** need to write structured JSON, choose a token budget, find graph
+or session IDs, operate GraphDB, select an Observe/Session/Run lane, or decide
+which CLI or MCP operation to call. Those are internal or advanced interfaces.
+HEAD asks for a decision only when the authority really belongs to you—for
+example, approving Product meaning, resolving an ambiguous scope, or allowing
+an external, consequential, or destructive change.
+
+The P1-P5 model is therefore an internal safety system, not a workflow the user
+must perform. The CLI sections below expose the same Core for automation,
+diagnosis, CI, and recovery; they are not prerequisites for normal conversation.
+
 ## Install
 
 Choose one installation path. The Codex and Claude Code marketplace paths
@@ -250,7 +299,11 @@ directory and writes launchers to `~/.local/bin`. It does not edit a shell
 profile, a Codex cache, remote GraphDB, or an existing project before the
 explicit `--project` initialization step.
 
-## First project
+## CLI, automation, and advanced setup
+
+The normal path is the conversation-first flow above. Use the following CLI
+surface when a script, CI job, offline recovery procedure, or host integration
+needs the same deterministic Core behavior without a guided conversation.
 
 The default path initializes only the provider-neutral HEAD constitution and its
 fixed Project/Session recovery anchors:

@@ -4,8 +4,9 @@ import { fileURLToPath } from "node:url";
 import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
 import { inspectOnboarding, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
+import { restoreSessionFromArtifacts } from "./session-recovery.mjs";
 
-export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.4.0";
+export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.5.0";
 
 const packageVersion = JSON.parse(fs.readFileSync(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json"),
@@ -156,6 +157,64 @@ function runtimeProjection() {
   };
 }
 
+function recoveryReadiness(projectInspection) {
+  const authority = {
+    advisoryOnly: true,
+    writesRecoveryDirection: false,
+    consumesContinuation: false,
+    attachesProvider: false,
+  };
+  if (projectInspection.status === "not_initialized") {
+    return {
+      state: "unavailable-until-core-ready",
+      currentCheckpoint: false,
+      restorable: false,
+      userActionRequired: false,
+      authority,
+    };
+  }
+  if (projectInspection.status !== "ready") {
+    return {
+      state: "blocked-by-core-drift",
+      currentCheckpoint: Boolean(projectInspection.state?.latestCheckpoint),
+      restorable: false,
+      userActionRequired: true,
+      reasonCode: "CORE_DRIFT",
+      authority,
+    };
+  }
+  if (!projectInspection.state.latestCheckpoint) {
+    return {
+      state: "no-current-checkpoint",
+      currentCheckpoint: false,
+      restorable: false,
+      userActionRequired: false,
+      authority,
+    };
+  }
+  try {
+    const restored = restoreSessionFromArtifacts({ root: projectInspection.project.projectRoot });
+    return {
+      state: "verified-current-checkpoint",
+      currentCheckpoint: true,
+      restorable: true,
+      userActionRequired: false,
+      checkpointId: restored.checkpoint.checkpointId,
+      sessionRestoreId: restored.sessionRestoreId,
+      authority,
+    };
+  } catch (error) {
+    return {
+      state: "attention-required",
+      currentCheckpoint: true,
+      restorable: false,
+      userActionRequired: true,
+      reasonCode: error?.code || "SESSION_RESTORE_VERIFICATION_FAILED",
+      authority,
+    };
+  }
+}
+
 function entrypoint(action) {
   const entries = {
     initialize_core: {
@@ -267,6 +326,7 @@ function projectExperience(projectInspection, onboardingInspection = null) {
         core: { state: "not_initialized", managedProjectionDriftCount: 0 },
         product: { state: "unavailable", governanceActivated: false, onboardingStatus: null },
         context,
+        recovery: recoveryReadiness(projectInspection),
       },
       nextAction: { id: action, summary: "Initialize the constitutional Core and one canonical Project/Session before using optional capabilities.", entrypoint: entrypoint(action) },
       capabilities: capabilityGuide({ coreState: "not_initialized", productState: "unavailable", contextState: context }),
@@ -283,6 +343,7 @@ function projectExperience(projectInspection, onboardingInspection = null) {
   };
   const coreState = projectInspection.status === "ready" ? "ready" : "drifted";
   const context = contextReadiness({ coreState, productState: product.state, onboardingInspection });
+  const recovery = recoveryReadiness(projectInspection);
   const action = coreState === "ready" ? product.action : "review_managed_projection_drift";
   return {
     kind: "HeadProjectExperienceProjection",
@@ -299,6 +360,7 @@ function projectExperience(projectInspection, onboardingInspection = null) {
         onboardingStatus: onboardingInspection?.status || null,
       },
       context,
+      recovery,
     },
     nextAction: {
       id: action,

@@ -52,6 +52,12 @@ allowed to author those fields.
 5. re-verifies pending review lineage when ResultPacket evidence is present;
 6. returns a deterministic, non-persisted `SessionRestoreProjection`.
 
+The read-only project experience may run this exact verification to report
+`no-current-checkpoint`, `verified-current-checkpoint`, or
+`attention-required`. That readiness view does not return recovery direction,
+consume a continuation token, or attach a provider. HEAD reads the full restore
+projection only when a verified current checkpoint exists.
+
 The projection carries the checkpoint's exact purpose, position, and next
 expected result as the consumer instruction. It does not read or persist a
 provider session ID, transcript, or summary and does not enable provider resume

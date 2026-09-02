@@ -264,6 +264,11 @@ test("initializes Claude, Codex, and OpenCode projections and verifies managed c
   assert.ok(fs.existsSync(path.join(root, ".mcp.json")));
   assert.ok(fs.existsSync(path.join(root, "AGENTS.md")));
   assert.ok(fs.existsSync(path.join(root, "opencode.json")));
+  const generatedInstructions = fs.readFileSync(path.join(root, ".head", "generated", "head-instructions.md"), "utf8");
+  assert.match(generatedInstructions, /Keep the user's original task as the active objective/u);
+  assert.match(generatedInstructions, /Do not initialize an unrelated repository/u);
+  assert.match(generatedInstructions, /Never infer a disposition from keyword matching, silence, or a default/u);
+  assert.match(generatedInstructions, /distinguish mechanical coverage from semantic sufficiency/u);
   const claudeMcp = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8"));
   assert.equal(claudeMcp.mcpServers.head_core.command, process.execPath);
   assert.match(claudeMcp.mcpServers.head_core.args[0], /mcp-server\.mjs$/);
@@ -282,6 +287,18 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(absent.status, "not_initialized");
   assert.equal(absent.nextAction.id, "initialize_core");
   assert.equal(absent.readiness.context.state, "blocked");
+  assert.deepEqual(absent.readiness.recovery, {
+    state: "unavailable-until-core-ready",
+    currentCheckpoint: false,
+    restorable: false,
+    userActionRequired: false,
+    authority: {
+      advisoryOnly: true,
+      writesRecoveryDirection: false,
+      consumesContinuation: false,
+      attachesProvider: false,
+    },
+  });
   assert.equal(absent.runtime.activePackageVersion, pluginVersion);
   assert.equal(absent.authority.mutatesProject, false);
 
@@ -301,6 +318,18 @@ test("defaults to the constitutional core without activating Product or Graph go
       entrypoint: {
         cli: "head-agent context-prepare <project> --task <exact-task>",
         mcpTool: "head_context_prepare",
+      },
+    },
+    recovery: {
+      state: "no-current-checkpoint",
+      currentCheckpoint: false,
+      restorable: false,
+      userActionRequired: false,
+      authority: {
+        advisoryOnly: true,
+        writesRecoveryDirection: false,
+        consumesContinuation: false,
+        attachesProvider: false,
       },
     },
   });
@@ -339,7 +368,7 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(mcpStatus.result.structuredContent.status, "core_ready");
   assert.deepEqual(mcpStatus.result.structuredContent.readiness, projected.readiness);
   assert.equal(Buffer.byteLength(JSON.stringify(mcpStatus.result.structuredContent), "utf8") < 64 * 1024, true);
-  assert.match(mcpStatus.result.content[0].text, /HEAD is ready — describe the task/u);
+  assert.match(mcpStatus.result.content[0].text, /HEAD is ready — continue the task/u);
   assert.equal(mcpStatus.result.content[0].text.trimStart().startsWith("{"), false);
   const mcpContract = await dispatchMcp({
     jsonrpc: "2.0",
@@ -352,12 +381,18 @@ test("defaults to the constitutional core without activating Product or Graph go
 
   const humanStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root], { encoding: "utf8" });
   assert.equal(humanStatus.status, 0, humanStatus.stderr);
-  assert.match(humanStatus.stdout, /HEAD is ready — describe the task/u);
-  assert.match(humanStatus.stdout, /HEAD Core: ready/u);
-  assert.match(humanStatus.stdout, /Product governance: not activated/u);
+  assert.match(humanStatus.stdout, /HEAD is ready — continue the task/u);
+  assert.match(humanStatus.stdout, /Project: ready/u);
+  assert.match(humanStatus.stdout, /Product knowledge: not activated/u);
   assert.match(humanStatus.stdout, /Context: curated evidence only/u);
-  assert.equal(humanStatus.stdout.includes(`Active package: ${pluginVersion}`), true);
+  assert.match(humanStatus.stdout, /Recovery: no current checkpoint; ordinary Session work is available/u);
+  assert.equal(humanStatus.stdout.includes(`Active package: ${pluginVersion}`), false);
   assert.equal(humanStatus.stdout.trimStart().startsWith("{"), false);
+
+  const humanDoctor = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "doctor", root], { encoding: "utf8" });
+  assert.equal(humanDoctor.status, 0, humanDoctor.stderr);
+  assert.equal(humanDoctor.stdout.includes(`Active package: ${pluginVersion}`), true);
+  assert.match(humanDoctor.stdout, /Command:|MCP:/u);
 
   const jsonStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root, "--json"], { encoding: "utf8" });
   assert.equal(jsonStatus.status, 0, jsonStatus.stderr);

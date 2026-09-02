@@ -10,7 +10,7 @@ const projectRoot = path.join(temporaryRoot, "sample-project");
 const graphProjectRoot = path.join(temporaryRoot, "graph-project");
 const coreProjectRoot = path.join(temporaryRoot, "core-project");
 
-async function tool(name, args) {
+async function toolResponse(name, args) {
   const response = await dispatch({
     jsonrpc: "2.0",
     id: `${name}-${Date.now()}`,
@@ -18,7 +18,11 @@ async function tool(name, args) {
     params: { name, arguments: args },
   });
   if (response.error) throw new Error(`${name}: ${response.error.message}`);
-  return response.result.structuredContent;
+  return response.result;
+}
+
+async function tool(name, args) {
+  return (await toolResponse(name, args)).structuredContent;
 }
 
 try {
@@ -49,22 +53,28 @@ try {
 
   fs.mkdirSync(coreProjectRoot, { recursive: true });
   fs.writeFileSync(path.join(coreProjectRoot, "core.mjs"), "export const coordinated = true;\n");
-  const coreInitialized = await tool("head_project_initialize_or_resume", {
+  const coreInitializationResponse = await toolResponse("head_project_initialize_or_resume", {
     project_root: coreProjectRoot,
     runtimes: ["codex"],
   });
+  const coreInitialized = coreInitializationResponse.structuredContent;
   assert.equal(coreInitialized.status, "core_ready");
   assert.equal(coreInitialized.profile, "core");
   assert.equal(coreInitialized.productGovernanceActivated, false);
   assert.equal(coreInitialized.onboardingAction, "not-activated");
   assert.equal(coreInitialized.onboarding.candidateSetId, null);
   assert.equal(coreInitialized.nextAction.id, "work_directly");
+  assert.equal(coreInitialized.readiness.recovery.state, "no-current-checkpoint");
+  assert.equal(coreInitialized.readiness.recovery.authority.writesRecoveryDirection, false);
+  assert.match(coreInitializationResponse.content[0].text, /Continue the user's original task in this conversation/u);
+  assert.doesNotMatch(coreInitializationResponse.content[0].text, /MCP:|Command:|candidateSetId|sessionId/u);
   assert.equal(coreInitialized.capabilities.find((item) => item.id === "product-governance").availability, "available-not-activated");
   const coreStatus = await tool("head_project_status", { project_root: coreProjectRoot });
   assert.equal(coreStatus.status, "core_ready");
   assert.equal(coreStatus.readiness.product.state, "not_activated");
   assert.equal(coreStatus.authority.mutatesProject, false);
   assert.equal(coreStatus.authority.activatesCapabilities, false);
+  assert.equal(coreStatus.readiness.recovery.authority.consumesContinuation, false);
 
   fs.mkdirSync(graphProjectRoot, { recursive: true });
   fs.writeFileSync(path.join(graphProjectRoot, "service.mjs"), "export function serve() { return true; }\n");
@@ -165,6 +175,10 @@ try {
   assert.equal(reviewGuide.nextAction, "review_candidates");
   assert.equal(reviewGuide.review.truncated, false);
   assert.equal(reviewGuide.review.candidates.every((candidate) => candidate.authority === "candidate-only-until-explicit-review"), true);
+  const reviewGuideResponse = await toolResponse("head_onboarding_guide", { project_root: projectRoot, candidate_limit: 200 });
+  assert.match(reviewGuideResponse.content[0].text, /Core supplies no automatic disposition/u);
+  assert.match(reviewGuideResponse.content[0].text, /Reply in natural language/u);
+  assert.doesNotMatch(reviewGuideResponse.content[0].text, /candidateSetId|candidate-/u);
 
   const revised = await tool("head_onboarding_review", {
     project_root: projectRoot,

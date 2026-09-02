@@ -52,6 +52,12 @@ ResultPacket 어느 쪽도 이 fields를 작성할 수 없습니다.
 5. ResultPacket 증거가 있으면 보류 중인 review 계보를 다시 검증합니다.
 6. 결정적이고 지속되지 않는 `SessionRestoreProjection`을 반환합니다.
 
+읽기 전용 프로젝트 경험은 동일한 검증을 실행해 `no-current-checkpoint`,
+`verified-current-checkpoint` 또는 `attention-required`를 보고할 수 있습니다.
+이 준비 상태 뷰는 복구 방향을 반환하거나 continuation token을 소비하거나 공급자를
+연결하지 않습니다. HEAD는 검증된 현재 체크포인트가 있을 때만 전체 복원 프로젝션을
+읽습니다.
+
 projection은 checkpoint의 정확한 purpose, position 및 next expected result를 consumer
 instruction으로 전달합니다. 공급자 session ID, transcript 또는 summary를 읽거나
 지속하지 않으며 공급자 resume 또는 streaming을 활성화하지도 않습니다. pointer drift,

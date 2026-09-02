@@ -71,6 +71,13 @@ CLI `status`/`doctor` and MCP `head_project_status` return the same projection.
 The verified onboarding status remains embedded so friendly guidance never
 replaces the canonical state machine.
 
+The same projection exposes `readiness.recovery` as factual, read-only guidance.
+`no-current-checkpoint` keeps ordinary Session work available,
+`verified-current-checkpoint` means artifact-only restore succeeded, and
+`attention-required` discloses that only the affected recovery path needs
+repair. Reading this field cannot consume compaction continuation, attach a
+provider, or write P2 direction.
+
 ## Onboarding authority plane
 
 Initialization creates a project-scoped HEAD Session record and a dormant

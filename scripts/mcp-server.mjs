@@ -145,7 +145,7 @@ export const tools = [
   },
   {
     name: "head_project_status",
-    description: "Read bounded Core, optional Product/World, Context, active-package, next-action, capability, and Session/Run readiness without modifying the project or activating any capability.",
+    description: "Read bounded Core, optional Product/World, Context, verified checkpoint-recovery readiness, active-package, next-action, capability, and Session/Run readiness without modifying the project, consuming continuation, attaching a provider, or activating any capability.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },

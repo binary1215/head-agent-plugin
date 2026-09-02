@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { initializeProject, createCheckpoint } from "../scripts/lib/head-core.mjs";
+import { inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
@@ -88,7 +89,7 @@ function integrationInput(run, reviewDecision, overrides = {}) {
 }
 
 function childRestore(root, environment) {
-  const result = spawnSync(process.execPath, [cliFile, "session-restore", root], {
+  const result = spawnSync(process.execPath, [cliFile, "session-restore", root, "--json"], {
     cwd: pluginRoot,
     env: { ...process.env, ...environment },
     encoding: "utf8",
@@ -109,6 +110,9 @@ const canonicalJson = (value) => JSON.stringify(canonical(value));
 test("the public checkpoint surface creates one content-addressed P2 canon and restores identically across fresh provider processes", (t) => {
   const root = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const beforeCheckpoint = inspectProjectExperience({ root });
+  assert.equal(beforeCheckpoint.readiness.recovery.state, "no-current-checkpoint");
+  assert.equal(beforeCheckpoint.readiness.recovery.userActionRequired, false);
   assert.throws(() => createCheckpoint({ root, summary: "legacy", next: "legacy" }), { code: "LEGACY_CHECKPOINT_API_RETIRED" });
 
   const checkpointed = runCommand([
@@ -121,6 +125,16 @@ test("the public checkpoint surface creates one content-addressed P2 canon and r
   assert.equal(checkpointed.checkpoint.authorityBoundary.planeId, "P2");
   assert.equal(checkpointed.checkpoint.protocol.version, "0.3.0");
   assert.equal(checkpointed.checkpoint.sessionPointer.mode, "session");
+  const stateFile = path.join(root, ".head", "sessions", "current.json");
+  const checkpointFile = path.join(root, ".head", "sessions", "ledger", `${checkpointed.checkpoint.checkpointId}.json`);
+  const stateBeforeReadiness = fs.readFileSync(stateFile, "utf8");
+  const checkpointBeforeReadiness = fs.readFileSync(checkpointFile, "utf8");
+  const afterCheckpoint = inspectProjectExperience({ root });
+  assert.equal(afterCheckpoint.readiness.recovery.state, "verified-current-checkpoint");
+  assert.equal(afterCheckpoint.readiness.recovery.restorable, true);
+  assert.equal(afterCheckpoint.readiness.recovery.authority.writesRecoveryDirection, false);
+  assert.equal(fs.readFileSync(stateFile, "utf8"), stateBeforeReadiness);
+  assert.equal(fs.readFileSync(checkpointFile, "utf8"), checkpointBeforeReadiness);
 
   const codex = childRestore(root, { CODEX_THREAD_ID: "provider-secret-codex-thread" });
   const opencode = childRestore(root, { OPENCODE_SESSION_ID: "provider-secret-opencode-session" });
@@ -160,6 +174,11 @@ test("artifact-only restore revalidates the exact active Run lineage and rejects
   state.activeExecutionContractId = "execution-contract-000000000000000000000000";
   fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
   assert.throws(() => restoreSessionFromArtifacts({ root }), { code: "SESSION_RESTORE_POINTER_DRIFT" });
+  const attention = inspectProjectExperience({ root });
+  assert.equal(attention.readiness.recovery.state, "attention-required");
+  assert.equal(attention.readiness.recovery.userActionRequired, true);
+  assert.equal(attention.readiness.recovery.reasonCode, "SESSION_RESTORE_POINTER_DRIFT");
+  assert.equal(attention.nextAction.id, "work_directly");
 });
 
 test("legacy content-addressed checkpoints stay readable but cannot drive current Session restore", (t) => {
