@@ -448,13 +448,17 @@ function writeRecoveryReceipt(root, epoch, { verifiedDigest = null, continuation
   return { file, receipt };
 }
 
-export function prepareCompaction({ root = ".", runtime = "manual", userTurnIdAtPrepare, purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] } = {}) {
-  const inspected = readyProject(root, "compaction is prepared");
-  if (!new Set(["manual", "claude", "codex", "opencode"]).has(runtime)) fail("Compaction runtime is invalid.", "INVALID_COMPACTION_RUNTIME");
+function validateCompactionRuntime(runtime) {
+  if (!new Set(["manual", "claude", "codex", "opencode"]).has(runtime)) {
+    fail("Compaction runtime is invalid.", "INVALID_COMPACTION_RUNTIME");
+  }
+  return runtime;
+}
+
+function createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPrepare }) {
   const previous = currentEpoch(inspected.project.projectRoot);
   if (previous && OPEN_STATES.has(previous.state)) fail(`Compaction epoch is already open: ${previous.epochId}`, "COMPACTION_EPOCH_ALREADY_OPEN");
-  const checkpointResult = createRecoveryCheckpoint({ root: inspected.project.projectRoot, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
-  if (inspected.state.activeRunId && !checkpointResult.checkpoint.runPointer) {
+  if (inspected.state.activeRunId && !checkpoint.runPointer) {
     fail("Active Run compaction requires a verified Run pointer.", "COMPACTION_RUN_POINTER_REQUIRED");
   }
   const epochId = `compaction-epoch-${crypto.randomUUID()}`;
@@ -466,12 +470,12 @@ export function prepareCompaction({ root = ".", runtime = "manual", userTurnIdAt
     epochId,
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
-    runId: checkpointResult.checkpoint.runPointer?.runId || null,
-    checkpointId: checkpointResult.checkpoint.checkpointId,
-    checkpointDigest: checkpointResult.checkpoint.checkpointDigest,
+    runId: checkpoint.runPointer?.runId || null,
+    checkpointId: checkpoint.checkpointId,
+    checkpointDigest: checkpoint.checkpointDigest,
     userTurnIdAtPrepare: turnId(userTurnIdAtPrepare, "User turn id at prepare"),
-    continuationTokenBindingHash: digest(`${epochId}\n${checkpointResult.checkpoint.checkpointDigest}\n${continuationToken}`),
-    runtime,
+    continuationTokenBindingHash: digest(`${epochId}\n${checkpoint.checkpointDigest}\n${continuationToken}`),
+    runtime: validateCompactionRuntime(runtime),
     state: "prepared",
     createdAt: now(),
     updatedAt: now(),
@@ -482,11 +486,43 @@ export function prepareCompaction({ root = ".", runtime = "manual", userTurnIdAt
   replaceJson(currentEpochFile(inspected.project.projectRoot), { schemaVersion: SCHEMA_VERSION, epochId, updatedAt: now() });
   return {
     status: "compaction_prepared",
-    checkpoint: checkpointResult.checkpoint,
+    checkpoint,
     epoch,
     continuationToken,
     warning: "Compaction is lossy; recovery authority remains the Session/Run checkpoint.",
-    providerAction: "Perform provider compaction explicitly, then call compact-verify with trusted user-turn evidence.",
+    providerAction: "Perform provider compaction explicitly, then verify it with trusted user-turn evidence.",
+  };
+}
+
+export function prepareCompaction({ root = ".", runtime = "manual", userTurnIdAtPrepare, purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] } = {}) {
+  const inspected = readyProject(root, "compaction is prepared");
+  validateCompactionRuntime(runtime);
+  const checkpointResult = createRecoveryCheckpoint({ root: inspected.project.projectRoot, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
+  return createCompactionEpoch({
+    inspected: inspectProject(inspected.project.projectRoot),
+    checkpoint: checkpointResult.checkpoint,
+    runtime,
+    userTurnIdAtPrepare,
+  });
+}
+
+export function prepareCompactionFromCurrentCheckpoint({ root = ".", runtime = "manual", userTurnIdAtPrepare } = {}) {
+  const inspected = readyProject(root, "compaction is prepared from the current recovery checkpoint");
+  validateCompactionRuntime(runtime);
+  if (!inspected.state.latestCheckpoint) {
+    fail("A current canonical recovery checkpoint is required.", "SESSION_RESTORE_CHECKPOINT_REQUIRED");
+  }
+  const checkpoint = readRecoveryCheckpoint({
+    root: inspected.project.projectRoot,
+    checkpointId: inspected.state.latestCheckpoint,
+  }).checkpoint;
+  if (checkpoint.protocol?.version !== COMPACTION_RECOVERY_VERSION || !checkpoint.sessionPointer) {
+    fail("Only a current checkpoint with the complete Session pointer can be reused.", "SESSION_RESTORE_CURRENT_CHECKPOINT_REQUIRED");
+  }
+  assertCurrentStateMatchesCheckpoint(inspectProject(inspected.project.projectRoot), checkpoint);
+  return {
+    ...createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPrepare }),
+    checkpointReused: true,
   };
 }
 

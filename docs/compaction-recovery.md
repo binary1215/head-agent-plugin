@@ -15,6 +15,21 @@ HEAD/user direction plus verified P2 lineage. P3 evidence may be referenced for
 audit but is never a recovery-field source; general non-amplification tests reject
 P3, P4, and P5 attempts to become P2.
 
+## Automatic conversation UX
+
+`head_conversation_enter` is the normal read-only entry path. The Skill calls it
+on project entry, after compaction, and after provider replacement. It has three
+bounded outcomes:
+
+- a current checkpoint verifies and its exact P2 direction is restored;
+- no checkpoint exists and ordinary work continues without a recovery gate; or
+- checkpoint integrity needs attention, which pauses only checkpoint-dependent
+  work and never invents direction.
+
+The user does not provide checkpoint identities, lifecycle events, trusted turn
+counters, or continuation tokens. Explicit `session-restore` and `compact-*`
+commands remain advanced diagnostic surfaces.
+
 ## State transition
 
 ```text
@@ -49,9 +64,40 @@ The same operation creates one `CompactionEpoch`. The epoch contains the checkpo
 
 `compact-continue` consumes the checkpoint-bound token through an atomic create and returns the exact checkpoint plus a bounded continuation instruction. A second consumption fails. The returned `CompactionRecoveryReceipt` is derived evidence with no instruction, recovery, objective-rewrite, Product Canon, or review authority.
 
-## Explicit provider boundary
+## Provider-neutral Host lifecycle boundary
 
-The Core does not invoke provider compaction. With Codex or another runtime that lacks a native compaction hook, use the provider UI or a trusted adapter between prepare and verify. The adapter supplies monotonic real-user-turn evidence; synthetic continuation does not advance that sequence.
+The Core does not invoke provider compaction. An injected Host adapter may expose
+one journaled `conversation-entry`, `provider-replaced`, `before-compaction`, or
+`after-compaction` event at a time. Its descriptor is fixed to P5, carries no
+recovery/instruction/promotion authority, and promises not to replay an uncertain
+mutation. Events contain the exact Project, HEAD Session, runtime, monotonic
+trusted real-user-turn sequence, and only for post-compaction an epoch plus the
+bounded outcome `succeeded`, `failed`, or `uncertain`. Provider session IDs,
+transcripts, summaries, prompts, credentials, PIDs, sockets, and UI identities
+are rejected from this contract.
+
+`head_compaction_lifecycle_step` processes the event without exposing those
+operational fields to the user:
+
+1. Before compaction it reuses an exact current checkpoint when possible. If new
+   recovery direction is needed, provider HEAD authors it from the current user
+   direction, existing approved decisions, and verified P2 lineage only; it may
+   not invent an approval, and the user is not asked to fill a schema.
+2. The raw token is retained only by the Host adapter and never returned from the
+   lifecycle result or persisted in project Canon.
+3. After a reported success, Core performs artifact-only P2 restore first, then
+   verifies the exact epoch/checkpoint/current turn and consumes at most once.
+4. A newer real user turn supersedes the old continuation. An uncertain outcome
+   is not verified, continued, or automatically replayed. Provider failure aborts
+   only the epoch.
+5. If transport continuation is unavailable after successful P2 restore, the
+   epoch is closed and HEAD continues as a disclosed fresh logical HEAD from the
+   verified artifacts.
+
+With Codex or another runtime that lacks a native compaction hook, automatic
+first-turn artifact restore still works. The provider UI or another trusted Host
+remains responsible for the actual compaction action; missing hooks do not block
+ordinary work.
 
 ```text
 head compact-prepare <project> --input <recovery.json>
@@ -61,7 +107,16 @@ head compact-status <project>
 head compact-abort <project> --input <abort.json>
 ```
 
-These are advanced `help-all` commands, not part of the light default surface. Observe and ordinary Session work create no epoch by default. An active Run should prepare at a natural idle boundary before provider compaction. Compaction never approves an open review, changes Product Canon or candidate bytes, performs an external write, or replaces a recovery checkpoint.
+The mutating commands are advanced `help-all` operations; read-only
+`compact-status` remains a light diagnostic. Observe and ordinary Session work
+create no epoch by default. An active Run should prepare at a natural idle
+boundary before provider compaction. Compaction never approves an open review,
+changes Product Canon or candidate bytes, performs an external write, or
+replaces a recovery checkpoint.
+
+Host integration additionally uses `head_conversation_enter` and
+`head_compaction_lifecycle_step`; they are not a user setup ritual. The lifecycle
+step is non-blocking-unavailable when no adapter is injected.
 
 Example prepare input:
 

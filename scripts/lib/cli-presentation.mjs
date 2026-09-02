@@ -146,6 +146,59 @@ export function formatSessionRestore(value) {
   ].join("\n")}\n`;
 }
 
+export function formatConversationRecovery(value) {
+  const entry = value?.conversationEntry || value;
+  const restored = entry?.restore?.checkpoint || entry?.restore?.projection?.checkpoint || {};
+  const lines = [];
+  if (value?.status === "compaction_lifecycle_prepared") {
+    lines.push(
+      "HEAD and the Host prepared compaction recovery automatically.",
+      "The exact P2 direction is checkpointed and the one-time transport token stays Host-local.",
+      "User action: none.",
+    );
+  } else if (entry?.status === "conversation_direction_restored") {
+    lines.push(
+      "HEAD restored the verified project direction automatically.",
+      "User action: none — continue the original task.",
+      "",
+      `Purpose: ${compactText(restored.purpose || "verified current checkpoint", 240)}`,
+      `Next expected result: ${compactText(restored.nextExpectedResult || "continue from the verified checkpoint", 240)}`,
+    );
+  } else if (entry?.status === "conversation_ready") {
+    lines.push(
+      "HEAD conversation entry is ready.",
+      "No recovery checkpoint exists, so ordinary work continues without a recovery gate.",
+      "User action: none.",
+    );
+  } else {
+    lines.push(
+      "HEAD could not verify recovery-dependent direction automatically.",
+      `Reason: ${entry?.reasonCode || value?.reasonCode || "recovery evidence needs inspection"}`,
+      "Ordinary independent work remains available; only work that depends on the unverified checkpoint is paused.",
+      "User action: none unless HEAD identifies a material decision after inspection.",
+    );
+  }
+  if (value?.status === "host_lifecycle_unavailable") {
+    lines.push("Host compaction hooks are unavailable; first-turn artifact restore still works and provider compaction remains Host-owned.");
+  } else if (value?.status === "compaction_lifecycle_prepared") {
+    lines.push("The Host retained the one-time continuation internally; no token or lifecycle JSON is required from the user.");
+  } else if (value?.status === "provider_compaction_outcome_uncertain") {
+    lines.push("The provider outcome is uncertain and will not be replayed automatically. Verified P2 direction remains available.");
+  } else if (value?.status === "conversation_direction_restored_without_transport_continuation") {
+    lines.push("Transport continuation was unavailable, so HEAD will continue as a fresh logical HEAD from verified P2 artifacts.");
+  } else if (value?.status === "compaction_lifecycle_continued" || value?.status === "compaction_lifecycle_already_continued") {
+    lines.push("Verified continuation converged; duplicate Host delivery cannot apply it twice.");
+  } else if (value?.status === "provider_compaction_failed" || value?.status === "provider_compaction_failure_already_recorded") {
+    lines.push("Provider compaction failed; only that epoch was closed and verified P2 direction remains available.");
+  } else if (value?.status === "compaction_lifecycle_superseded") {
+    lines.push("A newer real user turn superseded the older prepared continuation.");
+  } else if (value?.status === "head_direction_required") {
+    lines.push("Provider HEAD must author the current bounded recovery direction internally; the user is not asked to fill a schema.");
+  }
+  lines.push("", "No provider summary, provider session identity, review result, or Product Canon was promoted by this projection.", "Technical details: use the structured result or --json");
+  return `${lines.join("\n")}\n`;
+}
+
 export function formatOnboardingGuide(value) {
   const review = value?.review || {};
   const lines = [];
@@ -332,6 +385,7 @@ export function formatMcpToolContent(name, value) {
   if (name === "head_project_status") return formatProjectStatus(value);
   if (name === "head_project_initialize_or_resume") return formatProjectBootstrap(value);
   if (name === "head_session_restore") return formatSessionRestore(value);
+  if (["head_conversation_enter", "head_compaction_lifecycle_step"].includes(name)) return formatConversationRecovery(value);
   if (name === "head_onboarding_guide") return formatOnboardingGuide(value);
   if (name === "head_feature_mapping_status") return formatFeatureMappingStatus(value);
   if (name === "head_pending_review") return formatPendingReview(value);
@@ -359,6 +413,7 @@ export function formatCliResult(command, value) {
   if (command === "status" || command === "doctor") return formatProjectStatus(value, { doctor: command === "doctor" });
   if (command === "init" || command === "resume") return formatProjectBootstrap(value);
   if (command === "session-restore") return formatSessionRestore(value);
+  if (["conversation-enter", "compaction-lifecycle-step"].includes(command)) return formatConversationRecovery(value);
   if (command === "feature-mapping-status") return formatFeatureMappingStatus(value);
   if (command === "run-review-context") return formatPendingReview(value);
   if (command === "conformance-queue") return formatConformanceQueue(value);

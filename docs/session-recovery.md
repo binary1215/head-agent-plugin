@@ -64,6 +64,12 @@ provider session ID, transcript, or summary and does not enable provider resume
 or streaming. Pointer drift, tamper, missing P2 lineage, or a historical
 checkpoint fails closed rather than reconstructing plausible state.
 
+`head_conversation_enter` is the automatic conversation-facing composition of
+this same read-only restore. The Skill calls it without making the user request
+recovery or supply an identity. No current checkpoint means ordinary work
+continues; verification failure pauses only recovery-dependent work. Explicit
+`session-restore` remains available for diagnostics and adapter integration.
+
 If P3 ResultPacket evidence was deleted after checkpoint creation, restore still
 returns the exact P2 direction and marks the evidence `missing-evidence`; it does
 not manufacture a Fresh HEAD review context. The caller must recover or reproduce

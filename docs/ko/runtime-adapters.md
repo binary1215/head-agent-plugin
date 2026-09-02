@@ -36,6 +36,17 @@ HEAD Core
 
 Session continuation의 범위는 이보다 더 좁습니다. Core가 먼저 정확한 P2 `SessionRestoreProjection`을 재구축합니다. 그 이후에만 주입된 WorkspaceHost 어댑터가 이미 실행 중인 HEAD endpoint를 새로 검증할 수 있습니다. 반환된 P5 `ContinuationOutcome`은 지속되지 않으며 projection을 변경할 수 없습니다. attachment가 없거나, stale하거나, 지원되지 않으면 명시적으로 새로운 논리적 HEAD로 fallback합니다. 이는 의미론적 복구에 선택적 대화 연속성을 더한 것이지, 일반적인 공급자 `resume` 또는 `stream`이 아닙니다.
 
+Compaction lifecycle 통합도 선택적 P5 Host 구성입니다.
+`CompactionLifecycleHostAdapter`는 정확한 Project, HEAD Session, runtime 및
+trusted user-turn sequence에 결속된 journaled conversation-entry,
+provider-replacement, pre/post-compaction event를 노출합니다. Raw continuation
+token은 project Canon 밖에 보관합니다. Core는 읽기 전용 artifact entry restore를
+자동 수행하고, 보고된 성공 compaction을 verify하거나 consume하기 전에 P2를
+복원합니다. `failed`는 epoch만 abort하고 `uncertain`은 자동 replay하지 않습니다.
+Descriptor는 provider/session/process/UI identity와 모든 P1-P4 authority를
+금지합니다. Adapter가 없어도 일반 작업과 첫 turn artifact 복구는 가능하고
+provider compaction만 Host 소유로 남습니다.
+
 Run 범위 worker 소유권은 P3 `BoundedWorkerDispatch`로 나타내며, lease/process/wait 상태는 P5에 남습니다. 기존 네이티브 감독자는 정확한 `ExecutionAuthorization` 하나를 여전히 최대 한 번만 소비합니다. 완료된 실제 공급자 draft가 ResultPacket이 되려면 기존 application gate만 통과해야 하고, 이후 Fresh HEAD 검토와 명시적 P2 통합이 필요합니다. Dispatch와 wait는 WholePlan, ReviewDecision 또는 checkpoint direction을 쓸 수 없습니다.
 
 공급자 중립 `BoundedWorkerWave`는 선택적으로 이미 생성된 dispatch 2~64개를 묶어 간결하게 시작 가시성을 제공합니다. 호출자 handle 또는 공급자/Herdr session topology를 저장하지 않고, authorization을 만들지 않으며, lease를 공유하지 않습니다. 명시적 seal에는 모든 독립 authorization의 소비가 검증되어야 합니다. 열린 wave의 aggregate result read와 wait는 fail-closed합니다. P4 status/results 및 P5 wait는 결과를 적용하거나 HF-010 통합을 수행할 수 없습니다. [`bounded-worker-wave.md`](bounded-worker-wave.md)를 참조하세요.

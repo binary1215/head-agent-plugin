@@ -38,6 +38,7 @@ import { inspectConformanceQueue, prepareConformanceAssessment, proposeConforman
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
@@ -191,6 +192,8 @@ export function usage({ all = false } = {}) {
       "head compact-continue <project> --input <continuation.json>",
       "head compact-status <project>",
       "head compact-abort <project> --input <abort.json>",
+      "head conversation-enter <project>",
+      "head compaction-lifecycle-step <project> [--input <head-direction.json>]",
       "head coordination-open <project>",
       "head coordination-rotate <project>",
       "head coordination-bind <project> --role <head|developer|coder|reviewer>",
@@ -267,7 +270,7 @@ function evidenceNeedsInput(options) {
   return Array.isArray(value) ? value : value?.evidenceNeeds ?? value;
 }
 
-export function runCommand(argv = process.argv.slice(2), { observationRegistry = null } = {}) {
+export function runCommand(argv = process.argv.slice(2), { observationRegistry = null, compactionLifecycleHost = null } = {}) {
   const { command, root, options } = parse(argv);
   if (command === "help" || command === "--help" || command === "-h") return usage();
   if (command === "help-all") return usage({ all: true });
@@ -577,6 +580,12 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (command === "compact-continue") return continueCompaction({ ...inputJson(options, "Compaction continuation"), root });
   if (command === "compact-status") return inspectCompaction({ root });
   if (command === "compact-abort") return abortCompaction({ ...inputJson(options, "Compaction abort"), root });
+  if (command === "conversation-enter") return enterConversationRecovery({ root });
+  if (command === "compaction-lifecycle-step") return processCompactionLifecycle({
+    root,
+    hostAdapter: compactionLifecycleHost,
+    direction: options.input ? inputJson(options, "HEAD compaction direction") : null,
+  });
   if (command === "coordination-open") return openCoordinationGeneration({ root });
   if (command === "coordination-rotate") return openCoordinationGeneration({ root, rotate: true });
   if (command === "coordination-bind") return issueCoordinationRoleBinding({ root, role: options.role });

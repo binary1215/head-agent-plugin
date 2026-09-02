@@ -12,6 +12,7 @@ test/*
 !test/product-operating-loop.test.mjs
 !test/release-observation.test.mjs
 !test/session-recovery-integration.test.mjs
+!test/compaction-lifecycle.test.mjs
 .test-tmp-*/
 .qa-*/
 *.log

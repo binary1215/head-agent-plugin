@@ -52,6 +52,15 @@ Claude Code, Codex 및 OpenCode는 동일한 `.head/` 권한의 프로젝션입�
 이 필드를 읽어도 컴팩션 continuation을 소비하거나, 공급자를 연결하거나, P2 방향을
 기록할 수 없습니다.
 
+대화 진입은 읽기 전용 `head_conversation_enter`를 통해 같은 검증을 구성합니다.
+별도의 선택적 P5 `CompactionLifecycleHostAdapter`는 journaled pre/post-compaction
+및 provider-replacement event를 전달하고 raw continuation token을 project Canon
+밖에 보관하며 bounded provider outcome만 보고할 수 있습니다. Core는 verify나
+continuation보다 P2를 먼저 복원합니다. Adapter는 provider-session identity를
+담거나 recovery, instruction, review, promotion 또는 Product Canon을 작성할 수
+없습니다. Adapter 부재는 project-readiness failure가 아니라 일반 작업을 막지
+않는 capability gap입니다.
+
 ## 온보딩 authority plane
 
 초기화는 공급자 대화와 독립적으로 프로젝트 범위의 HEAD Session 레코드와 휴면 온보딩 포인터를 생성합니다. 명시적인 `product` 프로필만 로컬 World Model을 인덱싱합니다. 구조화된 user brief는 candidate를 직접 seed할 수 있고, 그 외에는 fresh provider HEAD가 현재 evidence에서 bounded semantic proposal을 작성합니다. JavaScript Core는 정확한 SourceSnapshot, path, digest, line, optional symbol, Product Model reference와 bound를 검증한 뒤 하나의 immutable batch를 제시합니다. Core는 lexical product inference를 하지 않으며 proposal에는 지시 또는 승격 권한이 없습니다.

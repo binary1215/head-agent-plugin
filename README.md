@@ -53,10 +53,15 @@ Conversation compaction is lossy, and provider summaries can omit a constraint
 or quietly change the next step. For recovery-sensitive work, HEAD checkpoints
 the exact purpose, approved decisions, current position, and next expected
 result. After compaction it verifies that the project direction did not drift
-before continuing. A newer real user request always wins over an older prepared
+before continuing. On conversation entry, provider replacement, or a Host-
+reported compaction boundary, this restore is automatic: the user keeps talking
+about the task and does not supply checkpoint IDs, turn counters, tokens, or
+recovery JSON. A newer real user request always wins over an older prepared
 continuation.
 
-This restores the work direction, not a transcript or a model persona. See
+This restores the work direction, not a transcript or a model persona. When a
+Host has no native compaction hook, first-turn artifact restore still happens
+automatically while the provider's compaction action remains Host-owned. See
 [Compaction recovery](docs/compaction-recovery.md) and
 [Session recovery](docs/session-recovery.md).
 
@@ -573,14 +578,21 @@ reconstructs the current input from the exact P2 checkpoint and verified lineage
 After an accepted result, `run-integrate-checkpoint` can bind that review to a new
 checkpoint only when HEAD or the user explicitly supplies its recovery fields.
 
-Intentional context compaction uses the same boundary:
+Intentional context compaction uses the same boundary internally:
 
-1. `compact-prepare` freezes purpose, approved decisions, current position, and
-   the next expected result;
-2. provider compaction occurs outside Core;
-3. `compact-verify` checks trusted real-user-turn evidence and rejects drift or
-   summary-derived recovery;
-4. `compact-continue` consumes one checkpoint-bound token.
+1. provider HEAD writes or reuses the exact P2 direction before compaction;
+2. a provider-neutral Host adapter retains the one-time transport token outside
+   project Canon and performs the provider-owned compaction;
+3. Core restores P2 first, then verifies trusted real-user-turn evidence and
+   rejects drift, uncertain replay, or summary-derived recovery;
+4. the Host submits the checkpoint-bound continuation at most once, or HEAD
+   continues as a disclosed fresh logical HEAD from the verified artifacts.
+
+The normal UX is simply to continue the task. `head_conversation_enter` is the
+automatic read-only entry projection used by the Skill, while the `compact-*`
+and `head_compaction_lifecycle_step` surfaces are advanced adapter and diagnostic
+operations. Missing Host hooks do not create a setup gate and never block
+ordinary work.
 
 A newer real user turn wins over a pending continuation. See
 [Compaction recovery](docs/compaction-recovery.md) and

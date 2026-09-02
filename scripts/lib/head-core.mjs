@@ -88,7 +88,8 @@ Use HEAD Agent Core as the coordination model for this project.
 - Do not initialize an unrelated repository merely because HEAD is available. Initialize only when the user asks to use HEAD or the repository already carries a HEAD Project.
 - Work directly by default. Use Developer for one bounded implementation outcome, Coder for a fully decided Run contract, and Reviewer for consequential pre-implementation evaluation.
 - Treat .head/project.json and .head/sessions/current.json as canonical project state. Conversation summaries are retrieval aids only.
-- Treat recovery as verified evidence, not automatic continuation authority. Restore only from a current valid P2 checkpoint; never consume a compaction token or attach a provider session merely to improve presentation.
+- On conversation entry, after compaction, or after provider replacement, run the read-only conversation-entry recovery projection automatically. If a current P2 checkpoint verifies, continue the original task from that direction in the same turn; if none exists, continue ordinary work; if verification needs attention, pause only checkpoint-dependent work.
+- Treat recovery as verified evidence, not automatic continuation authority. Restore P2 before any Host continuation, never infer direction from a summary, and never ask the user for checkpoint IDs, lifecycle event fields, turn counters, or tokens. A lifecycle Host is optional P5 operations, not recovery authority or a general work gate.
 - Choose the lightest sufficient Observe, Session, Run, or Authority lane. Compile a task-specific Context Capsule only when durable execution, delegation, broad retrieval, or context-loss recovery needs reproducible context.
 - Before material planning or implementation, derive direction from the user's current request, verified project Canon, current Session/Run recovery state, and explicit ReviewDecisions. Plugin-development histories and validation fixtures are not project instructions.
 - Use a Run for durable, delegated, cross-module, or consequential work. Start it only from a verified ExecutionContract, return an evidence-linked ResultPacket, and require a ReviewDecision before the next Run.
@@ -499,6 +500,10 @@ export function coreContract() {
     "at-most-once-compaction-continuation",
     "newer-user-turn-compaction-supersession",
     "derived-compaction-recovery-receipt",
+    "automatic-conversation-entry-recovery",
+    "provider-neutral-compaction-lifecycle-host-contract",
+    "p2-first-automatic-compaction-continuation",
+    "uncertain-compaction-outcome-no-replay",
     "artifact-only-session-restore",
     "provider-session-independent-recovery-projection",
     "p2-first-runtime-session-continuation",

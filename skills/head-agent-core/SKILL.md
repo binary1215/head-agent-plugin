@@ -47,8 +47,15 @@ If Product governance is already active, a core resume preserves it without
 refreshing, promoting, or deleting it. Enter the product profile explicitly to
 resume its state machine.
 
-After initialization, resume, compaction recovery, or provider replacement,
-call `head_project_status` before choosing a deeper mechanism. Read
+After initialization or resume, and on the first turn after compaction or
+provider replacement, call read-only `head_conversation_enter` automatically.
+When it restores a verified checkpoint, use that direction and continue the
+user's original task in the same turn without asking for a recovery prompt,
+checkpoint ID, turn counter, token, or JSON. When no checkpoint exists, continue
+ordinary work. When it reports attention, pause only work that depends on that
+checkpoint; do not turn recovery inspection into a general project gate.
+
+Then call `head_project_status` before choosing a deeper mechanism. Read
 `readiness.core`, `readiness.product`, `readiness.context`, `runtime`,
 `nextAction`, and `capabilities`
 together. This projection is guidance only: never treat it as activation,
@@ -249,21 +256,29 @@ Restore P2 first from `.head/project.json`, `.head/sessions/current.json`, and
 the exact content-addressed checkpoint. Provider resume or live attachment is
 optional and occurs only after artifact recovery succeeds.
 
-The presence of a HEAD Project does not imply a current checkpoint. When project
-status reports no current checkpoint, continue ordinary Session work. When it
-reports a verified current checkpoint, call `head_session_restore` before using
-its direction. When recovery needs attention, fail only the affected recovery
-operation and disclose the problem; never invent missing direction. Do not
-consume a compaction continuation token or attach a provider merely to simplify
-conversation entry.
+The presence of a HEAD Project does not imply a current checkpoint. Use
+`head_conversation_enter` as the normal automatic entry path. It performs the
+same artifact-only verification as explicit Session restore without consuming a
+token, attaching a provider, or writing state. Keep `head_session_restore` as an
+advanced diagnostic surface. When recovery needs attention, fail only the
+affected recovery operation and disclose the problem; never invent missing
+direction or ask the user to operate the recovery protocol.
 
-Compaction is an intentional lossy provider operation. Prepare an immutable
-checkpoint, compact outside Core, verify against trusted real-user-turn
-evidence, then consume the one-shot continuation token. A provider summary,
-transcript, graph, Capsule, ResultPacket, or continuity view must never rewrite
-purpose, approved decisions, current position, or next expected result. A newer
-user turn supersedes continuation. Read `../../docs/compaction-recovery.md`
-before any recovery-sensitive compaction.
+Compaction is an intentional lossy provider operation. When the Host exposes a
+trusted lifecycle event, call `head_compaction_lifecycle_step`: provider HEAD
+authors current bounded direction only when an exact current checkpoint cannot
+be reused. It may restate only current user direction, existing approved
+decisions, and verified P2 lineage; it must not invent an approval. The Host
+retains the one-shot token in P5 and reports bounded
+`succeeded`, `failed`, or `uncertain` outcome; Core restores P2 before verify or
+continue. Do not ask the user for lifecycle event, epoch, turn, or token fields.
+If no lifecycle Host is injected, artifact entry recovery remains automatic and
+ordinary work remains available; actual provider compaction stays Host-owned.
+A provider summary, transcript, graph, Capsule, ResultPacket, or continuity view
+must never rewrite purpose, approved decisions, current position, or next
+expected result. A newer user turn supersedes continuation, and an uncertain
+provider outcome is never replayed automatically. Read
+`../../docs/compaction-recovery.md` before any recovery-sensitive compaction.
 
 ## Progressive routing
 

@@ -53,11 +53,15 @@ AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으�
 빠지거나 다음 작업이 달라질 수 있습니다. 복구가 중요한 작업에서 HEAD는
 정확한 목적, 승인된 결정, 현재 위치, 다음 기대 결과를 체크포인트로
 보존합니다. 압축 후에는 프로젝트 방향이 달라지지 않았는지 검증한 뒤
-계속합니다. 그 사이 실제 사용자의 새 요청이 들어오면 언제나 새 요청을
-우선합니다.
+계속합니다. 대화 진입, provider 교체 또는 Host가 알린 compaction 경계에서는
+이 복구가 자동으로 수행됩니다. 사용자는 task에 관한 대화를 계속하면 되며,
+checkpoint ID, turn counter, token 또는 복구 JSON을 입력하지 않습니다. 그
+사이 실제 사용자의 새 요청이 들어오면 언제나 새 요청을 우선합니다.
 
 이는 대화 내용이나 모델의 말투를 복원하는 기능이 아니라 작업 방향을 복원하는
-기능입니다. 자세한 내용은 [대화 압축 복구](docs/ko/compaction-recovery.md)와
+기능입니다. Host에 native compaction hook이 없어도 첫 turn의 artifact 복구는
+자동으로 수행되고 provider compaction 동작만 Host 소유로 남습니다. 자세한
+내용은 [대화 압축 복구](docs/ko/compaction-recovery.md)와
 [세션 복구](docs/ko/session-recovery.md)를 참고하세요.
 
 ### 범위가 명확하고 검토 가능한 컨텍스트를 전달합니다
@@ -552,14 +556,20 @@ P2 체크포인트와 검증된 계보에서 현재 입력을 재구성합니다
 뒤에도 `run-integrate-checkpoint`는 HEAD 또는 사용자가 복구 필드를 명시적으로
 제공한 경우에만 그 검토를 새 체크포인트와 연결할 수 있습니다.
 
-의도적인 컨텍스트 압축도 같은 경계를 사용합니다.
+의도적인 컨텍스트 압축도 내부적으로 같은 경계를 사용합니다.
 
-1. `compact-prepare`가 목적, 승인된 결정, 현재 위치, 다음 기대 결과를
-   고정합니다.
-2. 공급자 압축은 Core 밖에서 수행됩니다.
-3. `compact-verify`가 신뢰할 수 있는 실제 사용자 턴 증거를 검사하고,
-   드리프트나 요약에서 파생한 복구를 거부합니다.
-4. `compact-continue`가 체크포인트에 연결된 일회용 토큰을 소비합니다.
+1. provider HEAD가 compaction 전에 정확한 P2 방향을 작성하거나 재사용합니다.
+2. provider-neutral Host adapter가 일회용 transport token을 project Canon 밖에
+   보관하고 provider 소유의 compaction을 수행합니다.
+3. Core는 P2를 먼저 복원한 다음 신뢰할 수 있는 실제 사용자 turn 증거를
+   검사하고 drift, 불확실한 replay 또는 summary 기반 복구를 거부합니다.
+4. Host가 checkpoint-bound continuation을 최대 한 번 제출하거나, HEAD가
+   검증된 artifact에서 명시적으로 새로운 논리적 HEAD로 계속합니다.
+
+일반 UX에서는 task를 계속 말하면 됩니다. Skill은 읽기 전용
+`head_conversation_enter`를 자동 진입 projection으로 사용하고, `compact-*`와
+`head_compaction_lifecycle_step`은 고급 adapter 및 진단 surface로 남습니다.
+Host hook이 없어도 설정 gate가 생기지 않으며 일반 작업을 막지 않습니다.
 
 더 새로운 실제 사용자 턴은 대기 중인 연속성보다 우선합니다. 자세한 내용은
 [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)와

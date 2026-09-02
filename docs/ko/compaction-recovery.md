@@ -8,6 +8,21 @@ Protocol `0.3.0`은 [`authority-plane-contract.md`](authority-plane-contract.md)
 
 Checkpoint authority metadata는 복구 field가 명시적인 HEAD/사용자 방향과 검증된 P2 lineage에서만 온다고 명시합니다. P3 증거는 감사를 위해 참조될 수 있지만 복구 field의 출처가 되는 일은 절대 없습니다. 일반 비증폭 test는 P3, P4, P5가 P2가 되려는 시도를 거부합니다.
 
+## 자동 대화 UX
+
+`head_conversation_enter`는 일반적인 읽기 전용 진입 경로입니다. Skill은
+project 진입, compaction 후, provider 교체 후에 이를 자동 호출합니다. 결과는
+다음 세 가지로 제한됩니다.
+
+- 현재 checkpoint가 검증되어 정확한 P2 방향이 복원됩니다.
+- checkpoint가 없어서 복구 gate 없이 일반 작업을 계속합니다.
+- checkpoint 무결성에 주의가 필요해 checkpoint 의존 작업만 멈추며 방향을
+  지어내지 않습니다.
+
+사용자는 checkpoint identity, lifecycle event, trusted turn counter 또는
+continuation token을 입력하지 않습니다. 명시적인 `session-restore`와
+`compact-*` command는 고급 진단 surface로 남습니다.
+
 ## 상태 전이
 
 ```text
@@ -37,9 +52,38 @@ immutable Session pointer는 provider 독립적인 artifact restore를 반증 �
 
 `compact-continue`는 atomic create를 통해 checkpoint에 결속된 token을 소비하고 정확한 checkpoint와 제한된 continuation instruction을 반환합니다. 두 번째 소비는 실패합니다. 반환되는 `CompactionRecoveryReceipt`는 instruction, recovery, objective-rewrite, Product Canon 또는 review authority가 없는 파생 증거입니다.
 
-## 명시적 provider 경계
+## Provider-neutral Host lifecycle 경계
 
-Core는 provider compaction을 호출하지 않습니다. native compaction hook이 없는 Codex 또는 다른 runtime에서는 prepare와 verify 사이에 provider UI 또는 신뢰할 수 있는 adapter를 사용하세요. adapter는 단조 증가하는 real-user-turn 증거를 제공하며, 합성 continuation은 그 sequence를 전진시키지 않습니다.
+Core는 provider compaction을 호출하지 않습니다. 주입된 Host adapter는 한 번에
+하나의 journaled `conversation-entry`, `provider-replaced`,
+`before-compaction` 또는 `after-compaction` event를 노출할 수 있습니다. 고정
+descriptor는 P5이며 recovery/instruction/promotion authority가 없고 불확실한
+mutation을 replay하지 않음을 보장합니다. Event는 정확한 Project, HEAD Session,
+runtime, 단조 증가하는 trusted real-user-turn sequence를 포함하고,
+post-compaction에서만 epoch와 `succeeded`, `failed`, `uncertain` 중 하나의
+bounded outcome을 포함합니다. Provider session ID, transcript, summary, prompt,
+credential, PID, socket 및 UI identity는 이 계약에서 거부됩니다.
+
+`head_compaction_lifecycle_step`은 운영 field를 사용자에게 노출하지 않고 event를
+처리합니다.
+
+1. compaction 전에는 가능한 경우 정확한 현재 checkpoint를 재사용합니다. 새
+   복구 방향이 필요하면 provider HEAD가 현재 사용자 방향, 기존 승인된 결정 및
+   검증된 P2 lineage만으로 작성합니다. 승인을 지어낼 수 없으며 사용자에게
+   schema 입력을 요구하지 않습니다.
+2. raw token은 Host adapter에만 P5로 보관되며 lifecycle 결과로 반환되거나
+   project Canon에 지속되지 않습니다.
+3. 성공이 보고되면 Core가 artifact-only P2 복원을 먼저 수행한 뒤 정확한
+   epoch/checkpoint/current turn을 검증하고 최대 한 번 소비합니다.
+4. 새 실제 사용자 turn은 기존 continuation을 supersede합니다. uncertain outcome은
+   verify, continue 또는 자동 replay하지 않습니다. Provider failure는 epoch만
+   abort합니다.
+5. P2 복원이 성공한 뒤 transport continuation을 사용할 수 없다면 epoch를 닫고
+   검증된 artifact에서 새로운 논리적 HEAD로 계속함을 명시합니다.
+
+native compaction hook이 없는 Codex 또는 다른 runtime에서도 첫 turn의 artifact
+복구는 자동으로 동작합니다. 실제 compaction은 provider UI 또는 신뢰할 수 있는
+Host가 담당하며, hook 부재는 일반 작업을 막지 않습니다.
 
 ```text
 head compact-prepare <project> --input <recovery.json>
@@ -49,7 +93,16 @@ head compact-status <project>
 head compact-abort <project> --input <abort.json>
 ```
 
-이들은 가벼운 기본 surface의 일부가 아니라 고급 `help-all` command입니다. Observe와 일반 Session 작업은 기본적으로 epoch를 만들지 않습니다. active Run은 provider compaction 전에 자연스러운 idle boundary에서 prepare해야 합니다. Compaction은 open review를 승인하거나, Product Canon 또는 candidate 바이트를 변경하거나, 외부 write를 수행하거나, 복구 checkpoint를 대체하지 않습니다.
+상태를 변경하는 command는 고급 `help-all` 작업이고, 읽기 전용
+`compact-status`는 가벼운 진단으로 남습니다. Observe와 일반 Session 작업은
+기본적으로 epoch를 만들지 않습니다. active Run은 provider compaction 전에
+자연스러운 idle boundary에서 prepare해야 합니다. Compaction은 open review를
+승인하거나, Product Canon 또는 candidate 바이트를 변경하거나, 외부 write를
+수행하거나, 복구 checkpoint를 대체하지 않습니다.
+
+Host 통합은 `head_conversation_enter`와 `head_compaction_lifecycle_step`도 사용하지만,
+이는 사용자 설정 절차가 아닙니다. adapter가 주입되지 않으면 lifecycle step은
+일반 작업을 막지 않는 unavailable 결과를 냅니다.
 
 prepare input 예시:
 

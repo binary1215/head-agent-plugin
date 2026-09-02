@@ -49,6 +49,18 @@ stale, or unsupported attachment yields an explicit fresh logical HEAD fallback.
 This is semantic recovery plus optional conversation continuity, not general
 provider `resume` or `stream`.
 
+Compaction lifecycle integration is another optional P5 Host composition. A
+`CompactionLifecycleHostAdapter` exposes journaled conversation-entry,
+provider-replacement, and pre/post-compaction events bound to the exact Project,
+HEAD Session, runtime, and trusted user-turn sequence. It retains the raw
+continuation token outside project Canon. Core performs read-only artifact entry
+restore automatically and restores P2 before verifying or consuming a reported
+successful compaction. `failed` aborts only the epoch; `uncertain` is never
+replayed automatically. The descriptor forbids provider/session/process/UI
+identity and all P1-P4 authority. Without this adapter, ordinary work and
+first-turn artifact restore remain available while provider compaction stays
+Host-owned.
+
 Run-scoped worker ownership is represented by P3 `BoundedWorkerDispatch`, while
 lease/process/wait state remains P5. One exact `ExecutionAuthorization` is still
 consumed at most once by the existing native supervisor. A completed actual-

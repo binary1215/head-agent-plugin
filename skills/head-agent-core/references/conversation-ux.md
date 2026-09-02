@@ -14,10 +14,11 @@ When the user explicitly asks to use HEAD, or the exact project already contains
 a HEAD Project, use this sequence:
 
 1. initialize or resume the Core profile;
-2. read project status and recovery readiness;
-3. restore a verified current checkpoint when one exists;
-4. select the lightest sufficient lane;
-5. continue the original task in the same turn unless a real authority, scope,
+2. call `head_conversation_enter` automatically;
+3. read project status and recovery readiness;
+4. use the verified restored direction when one exists;
+5. select the lightest sufficient lane;
+6. continue the original task in the same turn unless a real authority, scope,
    integrity, or destructive-action boundary needs the user.
 
 Do not initialize an uninitialized repository merely because an ordinary coding
@@ -35,9 +36,12 @@ exists. Treat recovery readiness as three factual states:
   synthesize direction from a summary, transcript, graph, Capsule, or message.
 
 Never consume a compaction continuation token, attach a provider session, or
-rewrite checkpoint fields merely to make conversational entry smoother. A new
-real user request supersedes a prepared continuation and may redirect future
-work, but it does not retroactively alter an existing checkpoint.
+rewrite checkpoint fields merely to make conversational entry smoother. The
+read-only entry projection performs no such action. When a trusted Host lifecycle
+event exists, provider HEAD may separately call the lifecycle step; the user is
+never asked for event, epoch, turn, or token fields. A new real user request
+supersedes a prepared continuation and may redirect future work, but it does not
+retroactively alter an existing checkpoint.
 
 ## Decision presentation
 

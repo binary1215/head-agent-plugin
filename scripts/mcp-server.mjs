@@ -30,6 +30,7 @@ import { inspectConformanceQueue, prepareConformanceAssessment, proposeConforman
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
@@ -1315,6 +1316,33 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: "head_conversation_enter",
+    description: "Automatically restore the current provider-independent direction from the exact current P2 checkpoint when a conversation starts or resumes. This read-only projection creates no continuation, provider attachment, review, or Canon change; absence of a checkpoint never blocks ordinary work.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_compaction_lifecycle_step",
+    description: "Process one Host-injected provider-neutral compaction lifecycle event. The Host owns event delivery and compaction; Core restores P2 first, retains transport tokens only in P5, and never asks the user for event, epoch, turn, or token JSON. Without an injected Host adapter this is a non-blocking unavailable capability.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 },
+      direction: {
+        type: "object",
+        description: "Optional current recovery direction authored by provider HEAD at a before-compaction boundary. Omit to reuse the exact current checkpoint.",
+        properties: {
+          purpose: { type: "string", minLength: 1 },
+          approved_decisions: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+          current_position: { type: "string", minLength: 1 },
+          next_expected_result: { type: "string", minLength: 1 },
+          open_review_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+        },
+        required: ["purpose", "approved_decisions", "current_position", "next_expected_result", "open_review_ids"],
+        additionalProperties: false,
+      },
+    }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "head_observation_read",
     description: "Read one exact digest-verified observed or derived Observation by ID with its descriptor and bounded receipt or derivation lineage.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, observation_id: { type: "string", pattern: "^(?:observation|derived-observation)-[a-f0-9]{24}$" } }, required: ["project_root", "observation_id"], additionalProperties: false },
@@ -1595,7 +1623,7 @@ function continueSessionFromMcp(args, coordinationWorkspaceHost) {
   });
 }
 
-export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null } = {}) {
+export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null } = {}) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
       return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: packageVersion } });
@@ -1823,6 +1851,20 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                             ? inspectCompaction({ root: args.project_root })
                           : name === "head_compact_abort"
                             ? abortCompaction({ root: args.project_root, epochId: args.epoch_id, reason: args.reason })
+                          : name === "head_conversation_enter"
+                            ? enterConversationRecovery({ root: args.project_root })
+                          : name === "head_compaction_lifecycle_step"
+                            ? processCompactionLifecycle({
+                              root: args.project_root,
+                              hostAdapter: compactionLifecycleHost,
+                              direction: args.direction == null ? null : {
+                                purpose: args.direction.purpose,
+                                approvedDecisions: args.direction.approved_decisions,
+                                currentPosition: args.direction.current_position,
+                                nextExpectedResult: args.direction.next_expected_result,
+                                openReviewIds: args.direction.open_review_ids,
+                              },
+                            })
                           : name === "head_product_note"
                             ? prepareProductLearningNote({ root: args.project_root, statement: args.statement, epistemicClass: args.epistemic_class, source: args.source || "", rationale: args.rationale || "", evidenceIds: args.evidence_ids || [], referencedByAnotherRun: args.referenced_by_another_run ?? false, needsRebuttal: args.needs_rebuttal ?? false, affectsProductState: args.affects_product_state ?? false, handoff: args.handoff ?? false })
                           : name === "head_product_signal_record"
@@ -1870,12 +1912,12 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
   }
 }
 
-export function serveMcp({ coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null } = {}) {
+export function serveMcp({ coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null } = {}) {
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   input.on("line", async (line) => {
     if (!line.trim()) return;
     let response;
-    try { response = await dispatch(JSON.parse(line), { coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry }); }
+    try { response = await dispatch(JSON.parse(line), { coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost }); }
     catch (error) { response = failure(null, `Parse error: ${error.message}`); }
     if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
   });

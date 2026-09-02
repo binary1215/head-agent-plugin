@@ -78,6 +78,15 @@ The same projection exposes `readiness.recovery` as factual, read-only guidance.
 repair. Reading this field cannot consume compaction continuation, attach a
 provider, or write P2 direction.
 
+Conversation entry composes that same verification through read-only
+`head_conversation_enter`. A separate optional P5
+`CompactionLifecycleHostAdapter` can deliver journaled pre/post-compaction and
+provider-replacement events, retain the raw continuation token outside project
+Canon, and report only a bounded provider outcome. Core restores P2 before any
+verify or continuation action. The adapter cannot carry provider-session
+identity or author recovery, instruction, review, promotion, or Product Canon;
+its absence is a non-blocking capability gap, not a project-readiness failure.
+
 ## Onboarding authority plane
 
 Initialization creates a project-scoped HEAD Session record and a dormant
