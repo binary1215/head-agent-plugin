@@ -657,6 +657,13 @@ Raw prompts stay outside this graph. Product meaning enters only through
 reviewed Canon artifacts. Candidate nodes may be inspected explicitly, but are
 excluded from default traversal and Context compilation.
 
+Common Observations keep their exact descriptor, receipt, and derivation
+lineage in the same temporal graph. A ProductHypothesis may point to an exact
+Observation, but that edge remains evidence for a hypothesis rather than a
+promotion of measured data into product truth. If Observation storage is
+damaged, only that graph layer is reported unavailable; unrelated product work
+continues.
+
 Source relations are structural evidence, not product meaning. The default
 heuristic import/call graph remains available, while an optional provider-neutral
 language-AST adapter may add separately labeled, exact-file-bound evidence. One
@@ -685,12 +692,21 @@ head-agent world-status C:\path\to\project
 head-agent world-temporal C:\path\to\project `
   --query "<Feature, symbol, path, ChangeSet, or ReviewDecision>" `
   --depth 3 --limit 100 --edge-limit 200
+head-agent graph-lineage-status C:\path\to\project
+head-agent graph-lineage-trace C:\path\to\project --anchor <exact-node-id>
+head-agent graph-lineage-diff C:\path\to\project `
+  --from <older-world-model-id> --to <newer-world-model-id>
 head-agent context-preview C:\path\to\project --task "<task>" --budget 32768
 ```
 
 Traversal returns snapshot, query, and result identities plus inclusion,
 exclusion, and truncation reasons. Embedded, local JSON, and activated ArcadeDB
 backends must preserve the same semantic result.
+
+The lineage commands reuse retained content-addressed World snapshots and do
+not create another history stream. Their Hot/Warm/Cold status, trace, execution
+overlay, and diff are non-persisted P4 views. An exact-content file move is only
+reported as a possible move; semantic identity is never asserted automatically.
 
 ## Runtime and coordination
 

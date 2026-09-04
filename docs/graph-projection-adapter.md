@@ -6,7 +6,7 @@ this boundary.
 
 ## Purpose
 
-`GraphProjectionAdapter` version `0.1.0` separates the semantic temporal `GraphSnapshot` from the backend used to materialize and traverse it. Temporal provenance protocol `0.11.0` embeds the P4 boundary from the [`AuthorityPlaneContract`](authority-plane-contract.md). The embedded, digest-verified GraphSnapshot in the World Model remains the recoverable source for rebuilding a projection. Neither the snapshot, local adapter, nor ArcadeDB adapter is Product semantic Canon, instruction authority, promotion authority, or unique authority.
+`GraphProjectionAdapter` version `0.1.0` separates the semantic temporal `GraphSnapshot` from the backend used to materialize and traverse it. Temporal provenance protocol `0.12.0` embeds the P4 boundary from the [`AuthorityPlaneContract`](authority-plane-contract.md). The embedded, digest-verified GraphSnapshot in the World Model remains the recoverable source for rebuilding a projection. Neither the snapshot, local adapter, nor ArcadeDB adapter is Product semantic Canon, instruction authority, promotion authority, or unique authority.
 
 Product semantic Canon remains P1; the Core GraphSnapshot is its P4 relation and retrieval index. The graph's ProductModel identity binds the exact projected source without transferring its normative authority. Distribution and Host are architectural planes, not additional meaning planes. A graph adapter runs behind an exact Product Canon byte fence: mutation or deletion is restored and rejected before the World Model pointer can advance.
 

@@ -8,6 +8,7 @@ test/*
 !test/conformance-reconciliation.test.mjs
 !test/observation-contract.test.mjs
 !test/feature-mapping.test.mjs
+!test/graph-lineage.test.mjs
 !test/head-core.test.mjs
 !test/product-operating-loop.test.mjs
 !test/release-observation.test.mjs

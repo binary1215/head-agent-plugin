@@ -32,6 +32,7 @@ import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProduc
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { collectRegisteredObservation, ingestJsonObservationEventFile, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
+import { diffGraphLineage, inspectGraphLineage, traceGraphLineage } from "./lib/graph-lineage.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
 import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
@@ -183,6 +184,9 @@ export function usage({ all = false } = {}) {
       "head world-query <project> --query <text> [--depth <0-3>] [--limit <1-500>]",
       "head world-temporal <project> (--query <discovery-text> | --anchor-ids <node-id,node-id> --graph-snapshot <graph-snapshot-id>) [--kind <kind,kind>] [--relations <type,type>] [--include-candidates <true|false>] [--depth <0-3>] [--limit <1-500>] [--edge-limit <0-1000>] [--min-confidence <0-1>]",
       "head world-history <project> [--query <text>] [--limit <1-500>]",
+      "head graph-lineage-status <project> [--cursor <world-model-id>] [--limit <1-100>]",
+      "head graph-lineage-trace <project> (--anchor <node-id> | --query <discovery-text>) [--world <world-model-id>] [--depth <0-3>] [--limit <1-500>] [--edge-limit <0-1000>]",
+      "head graph-lineage-diff <project> --from <world-model-id> --to <world-model-id> [--limit <1-500>]",
       "head world-runtime <project> [--query <text>] [--runtime <name>] [--state <state>] [--kind <kind>] [--limit <1-500>]",
       "head checkpoint <project> --summary <text> [--next <text>]",
       "head session-restore <project> [--checkpoint <session-run-checkpoint-id>]",
@@ -549,6 +553,27 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
     root,
     query: options.query || "",
     limit: options.limit == null ? 50 : Number(options.limit),
+  });
+  if (command === "graph-lineage-status") return inspectGraphLineage({
+    root,
+    cursor: options.cursor || "",
+    limit: options.limit == null ? 25 : Number(options.limit),
+  });
+  if (command === "graph-lineage-trace") return traceGraphLineage({
+    root,
+    worldModelId: options.world || "",
+    anchorId: options.anchor || "",
+    query: options.query || "",
+    depth: options.depth == null ? 2 : Number(options.depth),
+    maxNodes: options.limit == null ? 100 : Number(options.limit),
+    maxEdges: options["edge-limit"] == null ? 200 : Number(options["edge-limit"]),
+    includeExecution: options["include-execution"] !== "false",
+  });
+  if (command === "graph-lineage-diff") return diffGraphLineage({
+    root,
+    fromWorldModelId: options.from,
+    toWorldModelId: options.to,
+    limit: options.limit == null ? 100 : Number(options.limit),
   });
   if (command === "world-runtime") return queryWorldRuntimeState({
     root,

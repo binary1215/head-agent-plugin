@@ -632,6 +632,12 @@ flowchart LR
 아티팩트를 통해서만 들어옵니다. 후보 노드는 명시적으로 검사할 수 있지만
 기본 탐색과 Context 컴파일에서는 제외됩니다.
 
+공통 Observation의 정확한 descriptor·receipt·derivation 계보도 동일한 temporal
+graph에 들어갑니다. ProductHypothesis는 정확한 Observation을 가리킬 수 있지만,
+그 edge는 측정 데이터를 제품 진실로 승격하지 않고 hypothesis의 evidence로만
+남습니다. Observation 저장소가 손상되면 그 graph layer만 unavailable로
+표시되고 관련 없는 product 작업은 계속할 수 있습니다.
+
 source relation은 제품 의미가 아니라 structural evidence입니다. 기본 heuristic
 import/call graph는 유지되고, 선택적인 provider-neutral 언어 AST adapter가 현재
 file manifest에 결속된 별도 label의 evidence를 추가할 수 있습니다. 어느 source도
@@ -660,12 +666,21 @@ head-agent world-status C:\path\to\project
 head-agent world-temporal C:\path\to\project `
   --query "<Feature, symbol, path, ChangeSet, or ReviewDecision>" `
   --depth 3 --limit 100 --edge-limit 200
+head-agent graph-lineage-status C:\path\to\project
+head-agent graph-lineage-trace C:\path\to\project --anchor <exact-node-id>
+head-agent graph-lineage-diff C:\path\to\project `
+  --from <older-world-model-id> --to <newer-world-model-id>
 head-agent context-preview C:\path\to\project --task "<task>" --budget 32768
 ```
 
 탐색 결과는 스냅샷, 질의, 결과 식별자와 포함·제외·잘림 이유를 함께
 반환합니다. 내장 그래프, local JSON, 활성화된 ArcadeDB 백엔드는 동일한
 의미 결과를 보존해야 합니다.
+
+lineage 명령은 보존된 content-addressed World snapshot을 재사용하며 별도의
+history stream을 만들지 않습니다. Hot/Warm/Cold status, trace, execution
+overlay, diff는 모두 비지속 P4 view입니다. exact-content file move도 possible
+move로만 보고하며 semantic identity를 자동으로 단정하지 않습니다.
 
 ## 런타임과 역할 통신
 

@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.11+codex.20260904000121",
+  "version": "0.3.0-beta.12+codex.20260904062728",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -41,6 +41,7 @@
       "Reuse-first Observation Preparation and Project-bound Host Source Collection",
       "Non-blocking Provider-HEAD Conformance Reconciliation",
       "Rebuildable World Graph and Markdown Projections",
+      "Bounded Non-persisted Graph Lineage Trace and Diff",
       "Claude Code, Codex, and OpenCode Runtime Adapters",
       "Integrity-verified Native Distribution"
     ],

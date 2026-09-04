@@ -24,6 +24,7 @@ import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProduc
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { collectRegisteredObservation, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
+import { diffGraphLineage, inspectGraphLineage, traceGraphLineage } from "./lib/graph-lineage.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
 import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
@@ -1118,6 +1119,55 @@ export const tools = [
     }
   },
   {
+    name: "head_graph_lineage_status",
+    description: "Read one bounded page of retained content-addressed World/Graph lineage as a non-persisted P4 hot/warm/cold projection. It creates no artifacts and never blocks ordinary work.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        cursor: { type: "string", pattern: "^world-model-[a-f0-9]{24}$" },
+        limit: { type: "integer", minimum: 1, maximum: 100, default: 25 }
+      },
+      required: ["project_root"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "head_graph_lineage_trace",
+    description: "Trace an exact or discovery-selected Graph anchor in a verified current or retained snapshot, with a bounded read-only execution-lineage overlay. Discovery does not prove relevance and completion does not imply integration.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        world_model_id: { type: "string", pattern: "^world-model-[a-f0-9]{24}$" },
+        anchor_id: { type: "string", minLength: 1, maxLength: 256 },
+        query: { type: "string", minLength: 1 },
+        depth: { type: "integer", minimum: 0, maximum: 3, default: 2 },
+        node_limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+        edge_limit: { type: "integer", minimum: 0, maximum: 1000, default: 200 },
+        include_execution: { type: "boolean", default: true }
+      },
+      required: ["project_root"],
+      oneOf: [{ required: ["anchor_id"] }, { required: ["query"] }],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "head_graph_lineage_diff",
+    description: "Compare two exact retained World/Graph snapshots as a bounded P4 view. Exact-content possible moves are evidence only and never automatic semantic identity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        from_world_model_id: { type: "string", pattern: "^world-model-[a-f0-9]{24}$" },
+        to_world_model_id: { type: "string", pattern: "^world-model-[a-f0-9]{24}$" },
+        limit: { type: "integer", minimum: 1, maximum: 500, default: 100 }
+      },
+      required: ["project_root", "from_world_model_id", "to_world_model_id"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "head_runtime_state",
     description: "Read bounded point-in-time external runtime observations from the current digest-verified World Model as evidence without granting runtime control authority.",
     inputSchema: {
@@ -1828,6 +1878,21 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                           maxNodes: args.node_limit ?? 100,
                           maxEdges: args.edge_limit ?? 200,
                         })
+                        : name === "head_graph_lineage_status"
+                          ? inspectGraphLineage({ root: args.project_root, cursor: args.cursor || "", limit: args.limit ?? 25 })
+                          : name === "head_graph_lineage_trace"
+                            ? traceGraphLineage({
+                              root: args.project_root,
+                              worldModelId: args.world_model_id || "",
+                              anchorId: args.anchor_id || "",
+                              query: args.query || "",
+                              depth: args.depth ?? 2,
+                              maxNodes: args.node_limit ?? 100,
+                              maxEdges: args.edge_limit ?? 200,
+                              includeExecution: args.include_execution ?? true,
+                            })
+                            : name === "head_graph_lineage_diff"
+                              ? diffGraphLineage({ root: args.project_root, fromWorldModelId: args.from_world_model_id, toWorldModelId: args.to_world_model_id, limit: args.limit ?? 100 })
                         : name === "head_runtime_state"
                           ? queryWorldRuntimeState({
                             root: args.project_root,

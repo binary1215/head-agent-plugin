@@ -148,6 +148,10 @@ including exact repository paths and Product Canon entity keys when known. For
 temporal relations, HEAD may propose exact current node IDs bound to the returned
 Project, World Model, and GraphSnapshot with explicit relation, depth, node, and
 edge bounds. Never let Core choose a semantic graph anchor from token overlap.
+When history or regression analysis needs prior graph state, use the bounded
+`head_graph_lineage_status`, `head_graph_lineage_trace`, and
+`head_graph_lineage_diff` P4 views. They create no artifacts, do not replace P2
+recovery, and treat exact-content moves as evidence rather than identity.
 Lexical overlap is discovery/fallback ranking only and never candidate eligibility
 or semantic sufficiency. The read-only preview automatically retries
 the same task and EvidenceNeeds at the next fixed tier only when matching

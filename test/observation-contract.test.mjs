@@ -20,7 +20,7 @@ import { inspectObservations, loadObservationProjection, queryObservations } fro
 import { recordDerivedObservation } from "../scripts/lib/observation-store.mjs";
 import { prepareObservationEvidence } from "../scripts/lib/observation-workflow.mjs";
 import { recordProductHypothesis, recordProductSignal } from "../scripts/lib/product-operating-loop.mjs";
-import { buildWorldModel } from "../scripts/lib/world-model.mjs";
+import { buildWorldModel, inspectWorldModelStatus, readWorldModel } from "../scripts/lib/world-model.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
 
@@ -450,6 +450,18 @@ test("keeps unrelated ProductSignal flow independent from unused Observation sto
   fs.unlinkSync(path.join(root, ".head", "observations", "receipts", `${recorded.receipt.receiptId}.json`));
   const signal = await recordProductSignal({ root, statement: "A separate user-authored product fact.", source: "user" });
   assert.equal(signal.signal.kind, "ProductSignal");
+  const isolatedWorld = readWorldModel({ root }).snapshot;
+  assert.equal(isolatedWorld.observationProjection.status, "unavailable");
+  assert.equal(isolatedWorld.observationProjection.reasonCode, "OBSERVATION_RECEIPT_MISSING");
+  assert.equal(isolatedWorld.temporalProvenanceGraph.summary.observationRecordCount, 0);
+  assert.deepEqual(inspectWorldModelStatus({ root }).observations, {
+    status: "unavailable",
+    reasonCode: "OBSERVATION_RECEIPT_MISSING",
+    descriptorCount: 0,
+    observationCount: 0,
+    derivedObservationCount: 0,
+    effect: "observation-graph-layer-only",
+  });
   await assert.rejects(() => recordProductHypothesis({ root, statement: "This exact observation may matter.", observationIds: [recorded.observation.observationId] }), (error) => error.code === "OBSERVATION_RECEIPT_MISSING");
 });
 
@@ -515,6 +527,9 @@ test("admits Observation evidence only by exact HEAD need and keeps semantic int
   assert.deepEqual(hypothesis.hypothesis.signalIds, []);
   assert.equal(hypothesis.hypothesis.epistemicClass, "hypothesis");
   assert.equal(hypothesis.hypothesis.promotionAuthority, false);
+  const graph = readWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.equal(graph.nodes.some((node) => node.nodeId === observed.observation.observationId && node.kind === "ObservationRecord"), true);
+  assert.equal(graph.edges.some((edge) => edge.type === "SUPPORTED_BY" && edge.from === hypothesis.hypothesis.hypothesisId && edge.to === observed.observation.observationId), true);
 
   assert.throws(() => compileContext({ root, task, evidenceNeeds: [{ id: "invalid-observation", kind: "observation", observationIds: [] }] }), { code: "INVALID_EVIDENCE_NEEDS" });
   await assert.rejects(() => recordProductHypothesis({ root, statement: "Unsupported", observationIds: ["observation-000000000000000000000000"] }), (error) => error.code === "UNKNOWN_OBSERVATION");
