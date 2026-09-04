@@ -1317,7 +1317,7 @@ export const tools = [
   },
   {
     name: "head_conversation_enter",
-    description: "Automatically restore the current provider-independent direction from the exact current P2 checkpoint when a conversation starts or resumes. This read-only projection creates no continuation, provider attachment, review, or Canon change; absence of a checkpoint never blocks ordinary work.",
+    description: "Use as the single automatic conversation entry: restore current provider-independent direction from the exact P2 checkpoint and return bounded project status, Attention, package-version, and presentation projections. This read-only composition creates no continuation, provider attachment, review, Canon change, or ordinary-work gate.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -1641,6 +1641,12 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           activePackageVersion: packageVersion,
           reloadPolicy: "restart-host-after-install-or-upgrade",
           providerSessionIdentityPersisted: false,
+          compactionLifecycle: {
+            conversationEntryRecovery: "active",
+            injectedHostContract: "active",
+            packagedProviderEventAdapters: { claude: "not-bound", codex: "not-bound", opencode: "not-bound" },
+            unavailableBehavior: "non-blocking-p2-artifact-entry-recovery",
+          },
         },
       }
       : name === "head_project_status"

@@ -15,7 +15,8 @@ a HEAD Project, use this sequence:
 
 1. initialize or resume the Core profile;
 2. call `head_conversation_enter` automatically;
-3. read project status and recovery readiness;
+3. read its composed project status, recovery readiness, Attention, version,
+   and presentation policy;
 4. use the verified restored direction when one exists;
 5. select the lightest sufficient lane;
 6. continue the original task in the same turn unless a real authority, scope,
@@ -76,3 +77,14 @@ is not acceptance; a commit is not a push; and a deployment observation is not
 product success. For a durable Run, completion follows Fresh HEAD review and the
 existing explicit review/integration boundaries. Keep technical IDs and JSON
 available for diagnosis rather than making them prerequisites for ordinary use.
+
+Successful entry and status are quiet by default: one line is enough unless the
+user asks for detail or a real exception exists. An exception names its owner,
+reason, affected operation, and next action. `userDecisionRequired` means a real
+protected decision; `headActionRequired` means HEAD should investigate or act
+without turning that work into a user gate. Neither implies that ordinary work
+is blocked. The non-persisted Attention and presentation projections may collect
+existing facts, but they create no new queue, artifact, authority, or decision.
+An optional Product review or refresh is `when-product-governance-is-in-scope`:
+show it as a notice, never as an immediate user decision merely because it
+exists. The explicit Product operation still presents its real review card.

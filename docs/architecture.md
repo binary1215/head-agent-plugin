@@ -79,7 +79,14 @@ repair. Reading this field cannot consume compaction continuation, attach a
 provider, or write P2 direction.
 
 Conversation entry composes that same verification through read-only
-`head_conversation_enter`. A separate optional P5
+`head_conversation_enter` and returns bounded project-status, unified Attention,
+package-version, and presentation projections in the same call. These P4-style
+views add no stored queue or gate: `userDecisionRequired` is reserved for a
+protected user decision, `headActionRequired` assigns internal follow-up to
+HEAD, and each item lists the affected operation while ordinary work remains
+available by default. Pending optional Product work is marked
+`when-product-governance-is-in-scope`; its existence alone cannot turn entry
+into an immediate user decision. A separate optional P5
 `CompactionLifecycleHostAdapter` can deliver journaled pre/post-compaction and
 provider-replacement events, retain the raw continuation token outside project
 Canon, and report only a bounded provider outcome. Core restores P2 before any
@@ -126,6 +133,12 @@ non-persisted compile at the next fixed tier only for a proven `context-budget`
 exclusion, recording every Capsule identity and proof. It never executes an
 external or mutating operation and never promotes coverage into semantic
 acceptance.
+
+The same workflow includes a non-persisted `ContextExplanationCard` that groups
+included evidence by kind, summarizes intentional omissions by the Compiler's
+existing reason codes, and states remaining uncertainty. It explains an
+existing Capsule result; it neither adds an EvidenceNeed nor changes selection,
+budget, semantic-sufficiency ownership, or authority.
 
 The preceding `ContextPreparationProjection` is also non-persisted P4. It takes
 only the user's task text and exposes the current Project/World/Graph binding,

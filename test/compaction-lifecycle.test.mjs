@@ -59,15 +59,26 @@ function enqueue(adapter, value) {
   return adapter;
 }
 
+function projectFiles(root) {
+  return fs.readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.relative(root, path.join(entry.parentPath, entry.name)).replaceAll("\\", "/"))
+    .sort();
+}
+
 test("conversation entry restores current P2 direction automatically and otherwise creates no gate", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const before = fs.readFileSync(path.join(root, ".head", "sessions", "current.json"));
+  const filesBefore = projectFiles(root);
   const empty = enterConversationRecovery({ root });
   assert.equal(empty.status, "conversation_ready");
-  assert.equal(empty.userActionRequired, false);
+  assert.equal(empty.userDecisionRequired, false);
+  assert.equal(empty.projectStatus.kind, "HeadProjectExperienceProjection");
+  assert.equal(empty.attention.status, "clear");
   assert.equal(empty.ordinaryWorkBlocked, false);
   assert.deepEqual(fs.readFileSync(path.join(root, ".head", "sessions", "current.json")), before);
+  assert.deepEqual(projectFiles(root), filesBefore);
 
   const canonical = checkpoint(root);
   const stateAfterCheckpoint = fs.readFileSync(path.join(root, ".head", "sessions", "current.json"));
@@ -76,7 +87,8 @@ test("conversation entry restores current P2 direction automatically and otherwi
   assert.equal(restored.restore.checkpoint.checkpointId, canonical.checkpointId);
   assert.equal(restored.restore.projection.consumerInstruction.nextExpectedResult, canonical.nextExpectedResult);
   assert.equal(restored.restore.projection.providerBoundary.providerTranscriptUsed, false);
-  assert.equal(restored.userActionRequired, false);
+  assert.equal(restored.userDecisionRequired, false);
+  assert.equal(Buffer.byteLength(JSON.stringify(restored), "utf8") < 64 * 1024, true);
   assert.deepEqual(fs.readFileSync(path.join(root, ".head", "sessions", "current.json")), stateAfterCheckpoint);
 });
 
@@ -92,7 +104,8 @@ test("tampered recovery stops only checkpoint-dependent work and never guesses d
   assert.equal(restored.status, "recovery_attention_required");
   assert.equal(restored.recoveryDependentWorkBlocked, true);
   assert.equal(restored.ordinaryWorkBlocked, false);
-  assert.equal(restored.userActionRequired, false);
+  assert.equal(restored.userDecisionRequired, false);
+  assert.equal(restored.attention.headActionRequired, true);
   assert.equal(Object.hasOwn(restored, "restore"), false);
 });
 
@@ -104,7 +117,7 @@ test("missing Host lifecycle hooks stay optional while artifact entry recovery r
   assert.equal(result.status, "host_lifecycle_unavailable");
   assert.equal(result.conversationEntry.status, "conversation_direction_restored");
   assert.equal(result.ordinaryWorkBlocked, false);
-  assert.equal(result.userActionRequired, false);
+  assert.equal(result.userDecisionRequired, false);
 });
 
 test("before-compaction reuses an exact current checkpoint and keeps the raw token Host-local", (t) => {
@@ -137,7 +150,7 @@ test("HEAD authors missing recovery direction internally instead of asking the u
   const needsHead = processCompactionLifecycle({ root, hostAdapter: adapter });
   assert.equal(needsHead.status, "head_direction_required");
   assert.equal(needsHead.headActionRequired, true);
-  assert.equal(needsHead.userActionRequired, false);
+  assert.equal(needsHead.userDecisionRequired, false);
   assert.equal(needsHead.ordinaryWorkBlocked, false);
   const prepared = processCompactionLifecycle({ root, hostAdapter: adapter, direction: direction() });
   assert.equal(prepared.status, "compaction_lifecycle_prepared");
@@ -209,7 +222,7 @@ test("Host token retention and loss fail safely while verified P2 remains usable
   const retention = processCompactionLifecycle({ root: roots[0], hostAdapter: retentionHost });
   assert.equal(retention.status, "recovery_attention_required");
   assert.equal(retention.reasonCode, "COMPACTION_HOST_RETENTION_UNCERTAIN");
-  assert.equal(retention.userActionRequired, false);
+  assert.equal(retention.userDecisionRequired, false);
   assert.equal(inspectCompaction({ root: roots[0] }).epoch.state, "aborted");
   assert.equal(enterConversationRecovery({ root: roots[0] }).status, "conversation_direction_restored");
 
@@ -223,7 +236,7 @@ test("Host token retention and loss fail safely while verified P2 remains usable
   assert.equal(missing.status, "conversation_direction_restored_without_transport_continuation");
   assert.equal(missing.conversationEntry.status, "conversation_direction_restored");
   assert.equal(missing.freshLogicalHeadRequired, true);
-  assert.equal(missing.userActionRequired, false);
+  assert.equal(missing.userDecisionRequired, false);
   assert.equal(inspectCompaction({ root: roots[1] }).epoch.state, "aborted");
 });
 
@@ -277,9 +290,9 @@ test("MCP and CLI expose the same Core behavior without making recovery a user r
     params: { name: "head_conversation_enter", arguments: { project_root: root } },
   });
   assert.equal(mcp.result.structuredContent.status, "conversation_direction_restored");
-  assert.match(mcp.result.content[0].text, /User action: none/u);
+  assert.match(mcp.result.content[0].text, /continue the task/u);
   assert.doesNotMatch(mcp.result.content[0].text, /checkpoint-[a-f0-9]{24}/u);
   const cli = formatCliResult("conversation-enter", runCommand(["conversation-enter", root]));
-  assert.match(cli, /continue the original task/u);
+  assert.match(cli, /continue the task/u);
   assert.doesNotMatch(cli, /checkpoint-[a-f0-9]{24}/u);
 });

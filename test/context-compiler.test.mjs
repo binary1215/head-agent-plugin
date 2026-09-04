@@ -116,6 +116,11 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   assert.deepEqual(throughMcp.result.structuredContent.workflow.budget.attemptedTiers, [DEFAULT_CONTEXT_BUDGET]);
   assert.equal(throughMcp.result.structuredContent.workflow.authority.judgesSemanticSufficiency, false);
   assert.equal(throughMcp.result.structuredContent.workflow.authority.persistsCapsule, false);
+  assert.equal(throughMcp.result.structuredContent.workflow.explanation.kind, "ContextExplanationCard");
+  assert.equal(throughMcp.result.structuredContent.workflow.explanation.semanticSufficiencyOwner, "HEAD");
+  assert.equal(throughMcp.result.structuredContent.workflow.explanation.userDecisionRequired, false);
+  assert.equal(throughMcp.result.structuredContent.workflow.explanation.included.totalCandidateCount, throughMcp.result.structuredContent.capsule.selection.includedIds.length);
+  assert.equal(throughMcp.result.structuredContent.workflow.explanation.intentionallyOmitted.total, throughMcp.result.structuredContent.capsule.selection.excluded.length);
   assert.equal(Buffer.byteLength(JSON.stringify(throughMcp.result.structuredContent.workflow), "utf8") < 32 * 1024, true);
   assert.equal(first.capsule.coverageAssessment.status, "coverage-complete");
   assert.equal(first.capsule.coverageAssessment.mechanicalCoverageSatisfied, true);

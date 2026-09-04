@@ -55,12 +55,16 @@ checkpoint ID, turn counter, token, or JSON. When no checkpoint exists, continue
 ordinary work. When it reports attention, pause only work that depends on that
 checkpoint; do not turn recovery inspection into a general project gate.
 
-Then call `head_project_status` before choosing a deeper mechanism. Read
-`readiness.core`, `readiness.product`, `readiness.context`, `runtime`,
-`nextAction`, and `capabilities`
-together. This projection is guidance only: never treat it as activation,
-authorization, review, or recovery direction. `profile` describes the current
-operation; do not infer a persisted active profile from it.
+The same entry result includes bounded project status, Attention, version, and
+presentation projections. Read `projectStatus.readiness.core`,
+`projectStatus.readiness.product`, `projectStatus.readiness.context`,
+`projectStatus.readiness.recovery`, `attention`, `runtime`, and
+`projectStatus.nextAction` together before choosing a deeper mechanism. Do not
+call `head_project_status` again unless diagnosing a later state change or the
+user explicitly asks for status. These projections are guidance only: never
+treat them as activation, authorization, review, or recovery direction.
+`profile` describes the current operation; do not infer a persisted active
+profile from it.
 
 When the user says only "set up", "initialize", or "onboard HEAD", choose the
 Core profile. Ask about Product/World activation only when repository semantics,
@@ -259,10 +263,12 @@ optional and occurs only after artifact recovery succeeds.
 The presence of a HEAD Project does not imply a current checkpoint. Use
 `head_conversation_enter` as the normal automatic entry path. It performs the
 same artifact-only verification as explicit Session restore without consuming a
-token, attaching a provider, or writing state. Keep `head_session_restore` as an
-advanced diagnostic surface. When recovery needs attention, fail only the
-affected recovery operation and disclose the problem; never invent missing
-direction or ask the user to operate the recovery protocol.
+token, attaching a provider, or writing state, and includes the bounded status
+and Attention facts needed to continue without a second status call. Keep
+`head_session_restore` as an advanced diagnostic surface. When recovery needs
+attention, fail only the affected recovery operation and assign inspection to
+HEAD; never invent missing direction or ask the user to operate the recovery
+protocol.
 
 Compaction is an intentional lossy provider operation. When the Host exposes a
 trusted lifecycle event, call `head_compaction_lifecycle_step`: provider HEAD

@@ -64,10 +64,11 @@ instruction으로 전달합니다. 공급자 session ID, transcript 또는 summa
 tamper, 누락된 P2 lineage 또는 historical checkpoint가 있으면 그럴듯한 상태를 재구성하는
 대신 fail-closed로 중단됩니다.
 
-`head_conversation_enter`는 같은 읽기 전용 restore를 대화용으로 자동 구성합니다.
-Skill은 사용자가 recovery를 요청하거나 identity를 입력하게 하지 않고 이를 호출합니다.
-현재 checkpoint가 없으면 일반 작업을 계속하고, 검증 실패 시 recovery 의존 작업만
-멈춥니다. 명시적 `session-restore`는 진단 및 adapter 통합용으로 계속 제공됩니다.
+`head_conversation_enter`는 같은 읽기 전용 restore와 기존의 범위 제한 프로젝트 상태
+사실을 대화용으로 자동 구성합니다. Skill은 사용자가 recovery를 요청하거나 identity를
+입력하거나 두 번째 status 호출을 수행하게 하지 않습니다. 현재 checkpoint가 없으면
+일반 작업을 계속하고, 검증 실패는 HEAD에 배정되어 recovery 의존 작업만 멈춥니다.
+명시적 `session-restore`는 진단 및 adapter 통합용으로 계속 제공됩니다.
 
 checkpoint 생성 후 P3 ResultPacket 증거가 삭제되었더라도 restore는 정확한 P2 방향을
 반환하고 증거를 `missing-evidence`로 표시합니다. Fresh HEAD review context를 만들어내지

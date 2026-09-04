@@ -112,7 +112,7 @@ test("the public checkpoint surface creates one content-addressed P2 canon and r
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const beforeCheckpoint = inspectProjectExperience({ root });
   assert.equal(beforeCheckpoint.readiness.recovery.state, "no-current-checkpoint");
-  assert.equal(beforeCheckpoint.readiness.recovery.userActionRequired, false);
+  assert.equal(beforeCheckpoint.readiness.recovery.userDecisionRequired, false);
   assert.throws(() => createCheckpoint({ root, summary: "legacy", next: "legacy" }), { code: "LEGACY_CHECKPOINT_API_RETIRED" });
 
   const checkpointed = runCommand([
@@ -176,7 +176,9 @@ test("artifact-only restore revalidates the exact active Run lineage and rejects
   assert.throws(() => restoreSessionFromArtifacts({ root }), { code: "SESSION_RESTORE_POINTER_DRIFT" });
   const attention = inspectProjectExperience({ root });
   assert.equal(attention.readiness.recovery.state, "attention-required");
-  assert.equal(attention.readiness.recovery.userActionRequired, true);
+  assert.equal(attention.readiness.recovery.userDecisionRequired, false);
+  assert.equal(attention.readiness.recovery.headActionRequired, true);
+  assert.equal(attention.readiness.recovery.ordinaryWorkBlocked, false);
   assert.equal(attention.readiness.recovery.reasonCode, "SESSION_RESTORE_POINTER_DRIFT");
   assert.equal(attention.nextAction.id, "work_directly");
 });

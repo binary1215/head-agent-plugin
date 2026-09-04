@@ -52,7 +52,14 @@ Claude Code, Codex 및 OpenCode는 동일한 `.head/` 권한의 프로젝션입�
 이 필드를 읽어도 컴팩션 continuation을 소비하거나, 공급자를 연결하거나, P2 방향을
 기록할 수 없습니다.
 
-대화 진입은 읽기 전용 `head_conversation_enter`를 통해 같은 검증을 구성합니다.
+대화 진입은 읽기 전용 `head_conversation_enter`를 통해 같은 검증을 구성하고,
+범위가 한정된 프로젝트 상태, 통합 Attention, 패키지 버전 및 표시 투영을 한 번에
+반환합니다. 이 P4 스타일 view는 저장 큐나 gate를 추가하지 않습니다.
+`userDecisionRequired`는 보호되는 사용자 결정에만 사용하고,
+`headActionRequired`는 내부 후속 조치를 HEAD에 배정하며, 각 항목은 영향을 받는
+작업을 명시합니다. 일반 작업은 기본적으로 계속할 수 있습니다.
+대기 중인 선택적 Product 작업은 `when-product-governance-is-in-scope`로 표시하며,
+그 존재만으로 대화 진입을 즉시 필요한 사용자 결정으로 바꿀 수 없습니다.
 별도의 선택적 P5 `CompactionLifecycleHostAdapter`는 journaled pre/post-compaction
 및 provider-replacement event를 전달하고 raw continuation token을 project Canon
 밖에 보관하며 bounded provider outcome만 보고할 수 있습니다. Core는 verify나
@@ -86,6 +93,11 @@ CLI로 제공되고 `decisionScope: product-canon-bootstrap`이 지정된 `Revie
 Context Compiler는 정식 프로젝트 지식과 HEAD 실행 사이에 위치합니다. 범위가 한정되고 재현 가능한 `ContextCapsule`을 컴파일하며, 두 번째 권한이 되지는 않습니다.
 
 `ContextWorkflowProjection`은 하나의 비영속 미리보기를 대상으로 하는 얇은 P4 스타일의 자문 뷰입니다. 기반 아티팩트를 변경하지 않고 검증된 World 가용성, HEAD가 작성한 EvidenceNeeds, Compiler 포함 증명, 고정된 예산 티어 옵션 및 다음 HEAD 결정을 연결합니다. 입증된 `context-budget` 제외가 있을 때에만 다음 고정 티어에서 동일한 비영속 컴파일을 반복할 수 있으며, 모든 Capsule ID와 증명을 기록합니다. 외부 작업이나 변경 작업을 절대 실행하지 않으며, 커버리지를 의미적 수락으로 승격하지도 않습니다.
+
+같은 workflow에는 비영속 `ContextExplanationCard`가 포함됩니다. 포함된 증거를
+종류별로 묶고, Compiler가 이미 기록한 사유별 의도적 제외와 남은 불확실성을
+요약합니다. 기존 Capsule 결과를 설명할 뿐 EvidenceNeed를 추가하거나 selection,
+budget, 의미적 충분성의 소유권 또는 권위를 바꾸지 않습니다.
 
 그 앞의 `ContextPreparationProjection`도 비영속 P4입니다. 사용자의 task text만 받아 현재 Project/World/Graph binding, 제한된 lexical discovery baseline과 provider HEAD가 검사할 exact node identity를 보여줍니다. EvidenceNeeds를 작성하거나 anchor를 선택하거나 provider를 호출하지 않으며 lexical 후보에 없다는 사실을 무관하다는 뜻으로 해석하지 않습니다. HEAD가 대화 안에서 구조화 proposal을 작성하고 기존 preview verifier에 제출합니다. provider 교체 후 이 projection을 다시 만들 수 있지만 P2 recovery direction을 쓸 수 없고, 오래된 World 또는 Graph binding은 fail closed됩니다.
 

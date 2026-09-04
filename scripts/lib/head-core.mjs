@@ -69,6 +69,16 @@ function readJson(file, label) {
   }
 }
 
+function packageVersionAt(pluginRoot) {
+  for (const relative of [path.join(".codex-plugin", "plugin.json"), "package.json"]) {
+    const file = path.join(pluginRoot, relative);
+    if (!fs.existsSync(file)) continue;
+    const value = readJson(file, "Plugin package manifest");
+    if (typeof value.version === "string" && value.version.trim()) return value.version.trim();
+  }
+  return null;
+}
+
 function normalizeRuntimes(values) {
   const input = values?.length ? values : SUPPORTED_RUNTIMES;
   const normalized = [...new Set(input.map((value) => String(value).trim().toLowerCase()).filter(Boolean))];
@@ -88,7 +98,7 @@ Use HEAD Agent Core as the coordination model for this project.
 - Do not initialize an unrelated repository merely because HEAD is available. Initialize only when the user asks to use HEAD or the repository already carries a HEAD Project.
 - Work directly by default. Use Developer for one bounded implementation outcome, Coder for a fully decided Run contract, and Reviewer for consequential pre-implementation evaluation.
 - Treat .head/project.json and .head/sessions/current.json as canonical project state. Conversation summaries are retrieval aids only.
-- On conversation entry, after compaction, or after provider replacement, run the read-only conversation-entry recovery projection automatically. If a current P2 checkpoint verifies, continue the original task from that direction in the same turn; if none exists, continue ordinary work; if verification needs attention, pause only checkpoint-dependent work.
+- On conversation entry, after compaction, or after provider replacement, run the read-only conversation-entry recovery projection automatically. It also returns bounded project status, Attention, and package-version facts, so do not repeat status unless state changed or diagnosis is requested. If a current P2 checkpoint verifies, continue the original task from that direction in the same turn; if none exists, continue ordinary work; if verification needs attention, assign inspection to HEAD and pause only checkpoint-dependent work.
 - Treat recovery as verified evidence, not automatic continuation authority. Restore P2 before any Host continuation, never infer direction from a summary, and never ask the user for checkpoint IDs, lifecycle event fields, turn counters, or tokens. A lifecycle Host is optional P5 operations, not recovery authority or a general work gate.
 - Choose the lightest sufficient Observe, Session, Run, or Authority lane. Compile a task-specific Context Capsule only when durable execution, delegation, broad retrieval, or context-loss recovery needs reproducible context.
 - Before material planning or implementation, derive direction from the user's current request, verified project Canon, current Session/Run recovery state, and explicit ReviewDecisions. Plugin-development histories and validation fixtures are not project instructions.
@@ -287,7 +297,7 @@ export function initializeProject({ root = ".", pluginRoot, runtimes } = {}) {
       sha256: sha256(fs.readFileSync(path.join(canonicalRoot, relative))),
     }));
     const manifestFile = path.join(canonicalRoot, ".head", "generated", "manifest.json");
-    atomicWrite(manifestFile, json({ schemaVersion: SCHEMA_VERSION, generatedAt: now(), pluginRoot: canonicalPluginRoot, managed }));
+    atomicWrite(manifestFile, json({ schemaVersion: SCHEMA_VERSION, generatedAt: now(), pluginRoot: canonicalPluginRoot, packageVersion: packageVersionAt(canonicalPluginRoot), managed }));
     createdFiles.push(manifestFile);
     return {
       status: Object.values(integrations).some((item) => item.status === "manual") ? "ready_with_manual_integration" : "ready",
@@ -306,6 +316,7 @@ export function initializeProject({ root = ".", pluginRoot, runtimes } = {}) {
 
 export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes = null } = {}) {
   const canonicalPluginRoot = fs.realpathSync(path.resolve(pluginRoot));
+  const packageVersion = packageVersionAt(canonicalPluginRoot);
   const inspected = inspectProject(root);
   if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
   if (inspected.status !== "ready") {
@@ -320,7 +331,7 @@ export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes =
   const projectRoot = inspected.project.projectRoot;
   const manifestFile = path.join(projectRoot, ".head", "generated", "manifest.json");
   const manifest = readJson(manifestFile, "Managed manifest");
-  if (manifest.pluginRoot === canonicalPluginRoot) {
+  if (manifest.pluginRoot === canonicalPluginRoot && manifest.packageVersion === packageVersion) {
     return {
       status: "current",
       projectId: inspected.project.projectId,
@@ -331,15 +342,28 @@ export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes =
   }
 
   const replacements = new Map();
+  const addReplacement = (relative, content) => {
+    const file = path.join(projectRoot, relative);
+    if (!fs.existsSync(file) || fs.readFileSync(file, "utf8") !== content) replacements.set(relative, content);
+  };
+  const packageVersionChanged = manifest.packageVersion !== packageVersion;
+  if (packageVersionChanged) {
+    addReplacement(".head/generated/head-instructions.md", headInstructions());
+    for (const role of ["head", "developer", "coder", "reviewer"]) {
+      addReplacement(`.head/roles/${role}.md`, roleInstruction(role));
+    }
+    if (inspected.project.integrations.claude?.status === "managed") addReplacement("CLAUDE.md", headInstructions());
+    if (inspected.project.integrations.codex?.status === "managed") addReplacement("AGENTS.md", headInstructions());
+  }
   if (inspected.project.runtimes.includes("claude")) {
     const projection = json(claudeMcpProjection(canonicalPluginRoot));
-    replacements.set(".head/generated/claude.mcp.json", projection);
-    if (inspected.project.integrations.claude?.status === "managed") replacements.set(".mcp.json", projection);
+    addReplacement(".head/generated/claude.mcp.json", projection);
+    if (inspected.project.integrations.claude?.status === "managed") addReplacement(".mcp.json", projection);
   }
   if (inspected.project.runtimes.includes("opencode")) {
     const projection = json(opencodeProjection(canonicalPluginRoot));
-    replacements.set(".head/generated/opencode.json", projection);
-    if (inspected.project.integrations.opencode?.status === "managed") replacements.set("opencode.json", projection);
+    addReplacement(".head/generated/opencode.json", projection);
+    if (inspected.project.integrations.opencode?.status === "managed") addReplacement("opencode.json", projection);
   }
   const originals = new Map([[manifestFile, fs.readFileSync(manifestFile)]]);
   try {
@@ -358,7 +382,7 @@ export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes =
         fail(`Managed manifest does not own installation projection: ${relative}`, "MANAGED_INSTALLATION_PROJECTION_UNOWNED");
       }
     }
-    atomicWrite(manifestFile, json({ ...manifest, generatedAt: now(), pluginRoot: canonicalPluginRoot, managed }));
+    atomicWrite(manifestFile, json({ ...manifest, generatedAt: now(), pluginRoot: canonicalPluginRoot, packageVersion, managed }));
   } catch (error) {
     for (const [file, content] of [...originals.entries()].reverse()) {
       try { atomicWrite(file, content); } catch {}
@@ -371,7 +395,8 @@ export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes =
     status: "converged",
     projectId: converged.project.projectId,
     sessionId: converged.state.sessionId,
-    pluginRootChanged: true,
+    pluginRootChanged: manifest.pluginRoot !== canonicalPluginRoot,
+    packageVersionChanged,
     updatedManagedFiles: [...replacements.keys()].sort(),
   };
 }
@@ -394,7 +419,16 @@ export function inspectProject(root = ".") {
     if (!fs.existsSync(file)) drift.push({ path: item.path, reason: "missing" });
     else if (sha256(fs.readFileSync(file)) !== item.sha256) drift.push({ path: item.path, reason: "modified" });
   }
-  return { status: drift.length ? "drifted" : "ready", project, state, drift };
+  return {
+    status: drift.length ? "drifted" : "ready",
+    project,
+    state,
+    drift,
+    installation: {
+      pluginRoot: manifest.pluginRoot || null,
+      packageVersion: manifest.packageVersion || null,
+    },
+  };
 }
 
 export async function inspectRuntimeAdapters(root = ".") {
@@ -501,6 +535,11 @@ export function coreContract() {
     "newer-user-turn-compaction-supersession",
     "derived-compaction-recovery-receipt",
     "automatic-conversation-entry-recovery",
+    "single-conversation-entry-status-composition",
+    "non-persisted-unified-attention-projection",
+    "quiet-success-actionable-exception-presentation",
+    "loaded-configured-package-version-visibility",
+    "context-explanation-card",
     "provider-neutral-compaction-lifecycle-host-contract",
     "p2-first-automatic-compaction-continuation",
     "uncertain-compaction-outcome-no-replay",

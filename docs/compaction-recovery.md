@@ -26,6 +26,12 @@ bounded outcomes:
 - checkpoint integrity needs attention, which pauses only checkpoint-dependent
   work and never invents direction.
 
+The same call includes the bounded project-status, Attention, loaded/configured
+package-version, and presentation projections, so normal entry does not require
+a second status call. Recovery verification failure is `headActionRequired`, not
+a user decision. `userDecisionRequired` remains false unless an independent
+protected decision is actually pending, and `ordinaryWorkBlocked` remains false.
+
 The user does not provide checkpoint identities, lifecycle events, trusted turn
 counters, or continuation tokens. Explicit `session-restore` and `compact-*`
 commands remain advanced diagnostic surfaces.

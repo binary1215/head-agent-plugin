@@ -172,9 +172,11 @@ HEAD Agent Core는 한 번 설치한 뒤 Codex, Claude Code 또는 연동한 Ope
 HEAD는 초기화, 상태 확인과 검증된 복구를 마친 뒤에도 이 원래 작업을 유지하고
 같은 대화에서 계속합니다. 그다음부터도 평소처럼 작업을 요청하면 됩니다.
 
-```text
-대화가 압축됐어. 프로젝트 기록에서 승인된 방향을 복구하고 현재 작업을 이어서 진행해줘.
-```
+대화 압축이나 provider 교체 뒤에는 HEAD Skill이 읽기 전용 대화 진입 복구를
+자동으로 실행합니다. 사용자가 압축 사실을 알리거나 복구를 요청하거나 checkpoint
+ID를 제공할 필요가 없습니다. Host가 신뢰 가능한 lifecycle hook을 제공하지 않아도
+다음 대화 진입에서 P2 artifact를 복구하며, 관측하지 못한 provider compaction을
+관측했다고 가장하지 않습니다.
 
 ```text
 이 변경에 필요한 코드와 결정 근거만 준비한 뒤 진행해줘.
@@ -313,9 +315,10 @@ head-agent init C:\path\to\project --runtime claude,codex,opencode
 head-agent status C:\path\to\project
 ```
 
-기본 사람용 출력은 Core, 선택적인 Product 거버넌스, Context 준비도, 현재
-활성 패키지 버전과 다음 행동 하나를 보여줍니다. 안정적인 기계 판독 결과가
-필요하면 `--json`을 붙입니다. 이 투영은 `readiness.core`,
+성공한 사람용 status 출력은 한 줄만 보여줍니다. 예외가 있을 때는 담당 주체,
+사유, 영향을 받는 작업과 다음 행동을 표시하며, `doctor` 또는 `--json`에서 Core,
+선택적인 Product 거버넌스, Context 준비도, 로드된/구성된 패키지 버전과 기술 세부
+정보를 확인할 수 있습니다. 구조화 투영은 `readiness.core`,
 `readiness.product`, `readiness.context`를 분리하고, 지금 수행할
 `nextAction` 하나와 실제 선행조건이 붙은 선택 기능 목록을 보여줍니다. 예를
 들어 Product는 `available-not-activated`, bounded worker는
@@ -336,6 +339,9 @@ head-agent status C:\path\to\project
 `EvidenceNeed[]`를 작성한 뒤, 사용자가 내부 단계를 조작하지 않아도
 `head_context_preview`까지 이어갑니다. 선택적 World evidence가 없거나 stale이어도
 직접 작업은 막히지 않으며, 근거가 있는 budget 확장은 자동입니다.
+최종 preview는 종류별 포함 증거, 사유별 의도적 제외와 남은 불확실성을 하나의
+설명 카드로 제공합니다. 새 gate를 추가하지 않으며, 기계적 coverage는 Core가,
+의미적 충분성은 HEAD가 계속 담당합니다.
 
 자동화와 진단을 위해서는 같은 Core 동작을 CLI에서도 사용할 수 있습니다.
 
@@ -763,7 +769,9 @@ HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정�
 | --- | --- | --- |
 | 프로젝트 | 초기화, Source Scope, 검토를 거치는 Product Canon | **사용 가능** |
 | 지식 | World Model, 증분 갱신, Context Capsule | **사용 가능** |
-| 계보 | Run, ResultPacket, Fresh HEAD 검토, Session 복구, 압축 | **사용 가능** |
+| 계보 | Run, ResultPacket, Fresh HEAD 검토, P2 Session 및 대화 진입 복구 | **사용 가능** |
+| Host lifecycle | 공급자 중립 주입형 compaction 계약 | **실험적** |
+| Host lifecycle | 패키지에 연결된 Claude Code, Codex, OpenCode compaction event binding | **보류됨** |
 | 런타임 | Claude Code, Codex, OpenCode 일회성 Session/Run 실행 | **사용 가능** |
 | 런타임 증거 | 세 런타임 결정론적 fixture 및 로컬 CLI 기능 probe | **사용 가능** |
 | 런타임 증거 | Claude Code 실제 모델 호출 적합성 | **실험적** |

@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.10+codex.20260902024338",
+  "version": "0.3.0-beta.11+codex.20260904000121",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -31,6 +31,9 @@
       "Explicit Product Canon Review",
       "Compaction and Provider-independent Recovery",
       "Automatic Conversation-entry Recovery",
+      "Single-entry Project Status and Attention",
+      "Quiet Success and Actionable Exception Presentation",
+      "Loaded-versus-configured Package Version Visibility",
       "Provider-neutral Host Compaction Lifecycle",
       "Durable Runs with Fresh HEAD Review",
       "Provider-neutral Bounded Worker Waves",

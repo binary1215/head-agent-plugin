@@ -19,21 +19,31 @@ const authority = {
   attachesProvider: false,
 };
 
-function projectExperience({ recoveryState = "no-current-checkpoint", recoveryAttention = false } = {}) {
+function projectExperience({ recoveryState = "no-current-checkpoint", recoveryAttention = false, productState = "not_activated" } = {}) {
   return {
     status: "core_ready",
     projectAction: "initialized",
     readiness: {
       core: { state: "ready" },
-      product: { state: "not_activated" },
+      product: { state: productState },
       context: { state: "curated-only" },
       recovery: {
         state: recoveryState,
-        userActionRequired: recoveryAttention,
+        userDecisionRequired: false,
+        headActionRequired: recoveryAttention,
+        recoveryDependentWorkBlocked: recoveryAttention,
+        ordinaryWorkBlocked: false,
         reasonCode: recoveryAttention ? "SESSION_RESTORE_POINTER_DRIFT" : null,
         authority,
       },
     },
+    attention: {
+      status: recoveryAttention ? "attention" : "clear",
+      userDecisionRequired: false,
+      headActionRequired: recoveryAttention,
+      items: recoveryAttention ? [{ owner: "HEAD", summary: "Inspect recovery evidence; ordinary work remains available when it does not depend on that checkpoint." }] : [],
+    },
+    presentation: { mode: recoveryAttention ? "exception" : "quiet" },
     runtime: { activePackageVersion: "fixture-version" },
     drift: [],
     nextAction: {
@@ -44,13 +54,25 @@ function projectExperience({ recoveryState = "no-current-checkpoint", recoveryAt
   };
 }
 
+test("optional Product work is a notice rather than an immediate conversation gate", () => {
+  const value = projectExperience({ productState: "review_required" });
+  value.attention = {
+    status: "notice",
+    userDecisionRequired: false,
+    headActionRequired: false,
+    items: [{ owner: "user", actionability: "when-product-governance-is-in-scope", summary: "Product review is available." }],
+  };
+  value.presentation = { mode: "notice" };
+  const output = formatProjectStatus(value);
+  assert.match(output, /ordinary work continues/u);
+  assert.match(output, /optional item/u);
+  assert.doesNotMatch(output, /User decision: required/u);
+});
+
 test("ordinary project status leads with the task and hides implementation details", () => {
   const output = formatProjectStatus(projectExperience());
   assert.match(output, /HEAD is ready — continue the task/u);
-  assert.match(output, /no current checkpoint; ordinary Session work is available/u);
-  assert.match(output, /Continue the user's original task/u);
-  assert.doesNotMatch(output, /fixture-version|Command:|MCP:/u);
-  assert.match(output, /grants no authority/u);
+  assert.doesNotMatch(output, /Recovery:|Product knowledge:|fixture-version|Command:|MCP:/u);
 
   const doctor = formatProjectStatus(projectExperience(), { doctor: true });
   assert.match(doctor, /fixture-version/u);

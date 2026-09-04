@@ -179,10 +179,12 @@ HEAD keeps that original task and continues it after initialization, status, and
 any verified recovery step. After that, keep asking for work as you normally
 would:
 
-```text
-This conversation was compacted. Recover the approved direction from the project
-artifacts and continue the current work.
-```
+After compaction or provider replacement, the HEAD Skill runs the read-only
+conversation-entry recovery automatically. You do not need to announce that
+compaction happened, request recovery, or provide a checkpoint ID. When the
+Host exposes no trustworthy lifecycle hook, the next conversation entry still
+restores P2 artifacts; it does not pretend that provider compaction itself was
+observed.
 
 ```text
 Prepare only the code and decision evidence needed for this change, then proceed.
@@ -325,9 +327,10 @@ at any time:
 head-agent status C:\path\to\project
 ```
 
-The human-readable default shows Core, optional Product governance, Context
-readiness, the active package version, and one next action. Add `--json` for the
-stable machine-readable projection. That projection separates
+Successful human-readable status is intentionally one line. Exceptions name
+the owner, reason, affected operation, and next action; `doctor` or `--json`
+shows Core, optional Product governance, Context readiness, loaded/configured
+package versions, and technical details. The structured projection separates
 `readiness.core`, `readiness.product`, and `readiness.context`, names one
 `nextAction`, and lists optional capabilities with their real prerequisites.
 For example, Product appears as `available-not-activated`, while bounded workers
@@ -348,6 +351,10 @@ In conversation, describe the task once. The HEAD Skill calls
 task-required `EvidenceNeed[]`, and calls `head_context_preview` without asking
 the user to operate those steps. Missing or stale optional World evidence does
 not block direct work, and justified budget expansion is automatic.
+The final preview includes one explanation card with included evidence by kind,
+intentional omissions by reason, and remaining uncertainty. It does not add a
+new gate: mechanical coverage still belongs to Core and semantic sufficiency
+still belongs to HEAD.
 
 The same Core operations remain available from the CLI for automation and
 diagnosis:
@@ -784,7 +791,9 @@ Status labels are evidence claims, not roadmap promises:
 | --- | --- | --- |
 | Project | initialization, Source Scope, review-gated Product Canon | **Available** |
 | Knowledge | World Model, incremental refresh, Context Capsules | **Available** |
-| Lineage | Runs, ResultPackets, Fresh HEAD review, Session restore, compaction | **Available** |
+| Lineage | Runs, ResultPackets, Fresh HEAD review, P2 Session and conversation-entry recovery | **Available** |
+| Host lifecycle | provider-neutral injected compaction contract | **Experimental** |
+| Host lifecycle | packaged Claude Code, Codex, and OpenCode compaction event bindings | **Deferred** |
 | Runtime | Claude Code, Codex, and OpenCode one-shot Session/Run execution | **Available** |
 | Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | **Available** |
 | Runtime evidence | Claude Code live model-call conformance | **Experimental** |

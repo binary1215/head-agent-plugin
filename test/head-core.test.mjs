@@ -291,7 +291,11 @@ test("defaults to the constitutional core without activating Product or Graph go
     state: "unavailable-until-core-ready",
     currentCheckpoint: false,
     restorable: false,
-    userActionRequired: false,
+    userDecisionRequired: false,
+    headActionRequired: false,
+    recoveryDependentWorkBlocked: false,
+    ordinaryWorkBlocked: false,
+    blockedOperations: [],
     authority: {
       advisoryOnly: true,
       writesRecoveryDirection: false,
@@ -324,7 +328,11 @@ test("defaults to the constitutional core without activating Product or Graph go
       state: "no-current-checkpoint",
       currentCheckpoint: false,
       restorable: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
+      headActionRequired: false,
+      recoveryDependentWorkBlocked: false,
+      ordinaryWorkBlocked: false,
+      blockedOperations: [],
       authority: {
         advisoryOnly: true,
         writesRecoveryDirection: false,
@@ -337,7 +345,14 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(first.capabilities.find((item) => item.id === "product-governance").availability, "available-not-activated");
   assert.equal(first.capabilities.find((item) => item.id === "context-compiler").availability, "requires-explicit-product-world");
   assert.equal(first.runtime.activePackageVersion, pluginVersion);
+  assert.equal(first.runtime.loadedPackageVersion, pluginVersion);
+  assert.equal(first.runtime.configuredPackageVersion, pluginVersion);
+  assert.equal(first.runtime.configuredRootMatchesLoaded, true);
+  assert.equal(first.runtime.state, "current");
+  assert.equal(first.runtime.restartRequired, false);
   assert.equal(first.runtime.providerSessionIdentityPersisted, false);
+  assert.equal(first.attention.status, "clear");
+  assert.equal(first.presentation.mode, "quiet");
   assert.equal(first.authority.activatesCapabilities, false);
   assert.equal(first.authority.grantsAuthorization, false);
   assert.equal(first.onboarding.status, "initialized");
@@ -382,16 +397,15 @@ test("defaults to the constitutional core without activating Product or Graph go
   const humanStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root], { encoding: "utf8" });
   assert.equal(humanStatus.status, 0, humanStatus.stderr);
   assert.match(humanStatus.stdout, /HEAD is ready — continue the task/u);
-  assert.match(humanStatus.stdout, /Project: ready/u);
-  assert.match(humanStatus.stdout, /Product knowledge: not activated/u);
-  assert.match(humanStatus.stdout, /Context: curated evidence only/u);
-  assert.match(humanStatus.stdout, /Recovery: no current checkpoint; ordinary Session work is available/u);
+  assert.doesNotMatch(humanStatus.stdout, /Project:|Product knowledge:|Context:|Recovery:/u);
   assert.equal(humanStatus.stdout.includes(`Active package: ${pluginVersion}`), false);
   assert.equal(humanStatus.stdout.trimStart().startsWith("{"), false);
 
   const humanDoctor = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "doctor", root], { encoding: "utf8" });
   assert.equal(humanDoctor.status, 0, humanDoctor.stderr);
-  assert.equal(humanDoctor.stdout.includes(`Active package: ${pluginVersion}`), true);
+  assert.equal(humanDoctor.stdout.includes(`Loaded package: ${pluginVersion}`), true);
+  assert.equal(humanDoctor.stdout.includes(`Configured package: ${pluginVersion}`), true);
+  assert.match(humanDoctor.stdout, /Host restart: not required/u);
   assert.match(humanDoctor.stdout, /Command:|MCP:/u);
 
   const jsonStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root, "--json"], { encoding: "utf8" });
@@ -417,6 +431,38 @@ test("defaults to the constitutional core without activating Product or Graph go
   const jsonFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root, "--json"], { encoding: "utf8" });
   assert.notEqual(jsonFailure.status, 0);
   assert.equal(JSON.parse(jsonFailure.stdout).code, "HEAD_CLI_ERROR");
+});
+
+test("reports loaded versus configured package state without blocking ordinary work", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const manifestFile = path.join(root, ".head", "generated", "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  const generatedInstructionsFile = path.join(root, ".head", "generated", "head-instructions.md");
+  const oldInstructions = "# Old managed instructions\n";
+  fs.writeFileSync(generatedInstructionsFile, oldInstructions);
+  const oldInstructionDigest = crypto.createHash("sha256").update(oldInstructions).digest("hex");
+  const oldManaged = manifest.managed.map((item) => item.path === ".head/generated/head-instructions.md"
+    ? { ...item, sha256: oldInstructionDigest }
+    : item);
+  fs.writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, packageVersion: "0.0.0-fixture", managed: oldManaged }, null, 2)}\n`);
+  assert.equal(inspectProject(root).status, "ready");
+
+  const outdated = inspectProjectExperience({ root });
+  assert.equal(outdated.runtime.loadedPackageVersion, pluginVersion);
+  assert.equal(outdated.runtime.configuredPackageVersion, "0.0.0-fixture");
+  assert.equal(outdated.runtime.state, "project-integration-outdated");
+  assert.equal(outdated.runtime.restartRequired, true);
+  assert.deepEqual(outdated.runtime.reloadSequence, ["converge-project-integration", "restart-host"]);
+  assert.equal(outdated.attention.items.some((item) => item.id === "plugin-integration-update"), true);
+  assert.equal(outdated.attention.ordinaryWorkBlocked, false);
+
+  const converged = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  assert.equal(converged.installationAction, "converged");
+  assert.equal(converged.runtime.state, "current");
+  assert.equal(converged.runtime.restartRequired, false);
+  assert.match(fs.readFileSync(generatedInstructionsFile, "utf8"), /do not repeat status unless state changed/u);
 });
 
 test("requires an explicit product profile before applying onboarding input", async (t) => {
@@ -492,6 +538,12 @@ test("resume requires a fresh semantic reproposal for stale non-authoritative on
   assert.equal(first.status, "product_review_required");
   assert.equal(first.nextAction.id, "review_product_candidates");
   assert.equal(first.onboarding.status, "awaiting_review");
+  assert.equal(first.attention.userDecisionRequired, false);
+  assert.equal(first.attention.status, "notice");
+  assert.equal(first.attention.counts.availableUserDecision, 1);
+  assert.equal(first.presentation.mode, "notice");
+  assert.equal(first.attention.ordinaryWorkBlocked, false);
+  assert.deepEqual(first.attention.blockedOperations, ["product-canon-promotion"]);
   const firstSetId = first.onboarding.candidateSetId;
   const firstSourceSnapshotId = first.onboarding.sourceSnapshotId;
   fs.writeFileSync(path.join(root, "src", "policy.py"), "def apply_policy():\n    return True\n");
@@ -816,6 +868,10 @@ test("detects managed file drift and blocks canonical mutation", (t) => {
   assert.equal(experience.readiness.product.governanceActivated, null);
   assert.equal(experience.readiness.context.state, "blocked");
   assert.equal(experience.nextAction.id, "review_managed_projection_drift");
+  assert.equal(experience.attention.userDecisionRequired, false);
+  assert.equal(experience.attention.headActionRequired, true);
+  assert.equal(experience.attention.ordinaryWorkBlocked, false);
+  assert.equal(experience.attention.blockedOperations.includes("head-managed-mutation"), true);
   assert.equal(experience.nextAction.entrypoint.note.includes("explicit repair"), true);
   assert.equal(experience.capabilities.every((item) => item.availability === "blocked-until-core-ready"), true);
   assert.throws(() => createRecoveryCheckpoint({

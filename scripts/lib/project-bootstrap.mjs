@@ -5,11 +5,13 @@ import { convergeProjectInstallation, initializeProject, inspectProject } from "
 import { inspectOnboarding, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 import { restoreSessionFromArtifacts } from "./session-recovery.mjs";
+import { actionability, withExperienceProjections } from "./experience-projection.mjs";
 
-export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.5.0";
+export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.6.0";
 
+const activePluginRoot = fs.realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."));
 const packageVersion = JSON.parse(fs.readFileSync(
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json"),
+  path.join(activePluginRoot, "package.json"),
   "utf8",
 )).version;
 
@@ -149,15 +151,37 @@ function contextReadiness({ coreState, productState, onboardingInspection = null
   };
 }
 
-function runtimeProjection() {
+function runtimeProjection(projectInspection = null) {
+  const configuredPackageVersion = projectInspection?.installation?.packageVersion || null;
+  const configuredRoot = projectInspection?.installation?.pluginRoot || null;
+  const configuredRootMatchesLoaded = configuredRoot == null ? null : path.resolve(configuredRoot) === activePluginRoot;
+  const state = configuredPackageVersion == null ? "version-unrecorded"
+    : configuredPackageVersion === packageVersion && configuredRootMatchesLoaded ? "current" : "project-integration-outdated";
   return {
     activePackageVersion: packageVersion,
+    loadedPackageVersion: packageVersion,
+    configuredPackageVersion,
+    configuredRootMatchesLoaded,
+    state,
+    restartRequired: state === "project-integration-outdated",
+    restartReason: state === "project-integration-outdated" ? "project-integration-points-to-a-different-package-root-or-version" : null,
+    reloadSequence: state === "project-integration-outdated" ? ["converge-project-integration", "restart-host"] : [],
     reloadPolicy: "restart-host-after-install-or-upgrade",
     providerSessionIdentityPersisted: false,
+    compactionLifecycle: {
+      conversationEntryRecovery: "active",
+      injectedHostContract: "active",
+      packagedProviderEventAdapters: {
+        claude: "not-bound",
+        codex: "not-bound",
+        opencode: "not-bound",
+      },
+      unavailableBehavior: "non-blocking-p2-artifact-entry-recovery",
+    },
   };
 }
 
-function recoveryReadiness(projectInspection) {
+export function recoveryReadiness(projectInspection, { includeRestore = false } = {}) {
   const authority = {
     advisoryOnly: true,
     writesRecoveryDirection: false,
@@ -169,7 +193,7 @@ function recoveryReadiness(projectInspection) {
       state: "unavailable-until-core-ready",
       currentCheckpoint: false,
       restorable: false,
-      userActionRequired: false,
+      ...actionability({ headActionRequired: false }),
       authority,
     };
   }
@@ -178,7 +202,11 @@ function recoveryReadiness(projectInspection) {
       state: "blocked-by-core-drift",
       currentCheckpoint: Boolean(projectInspection.state?.latestCheckpoint),
       restorable: false,
-      userActionRequired: true,
+      ...actionability({
+        headActionRequired: true,
+        recoveryDependentWorkBlocked: Boolean(projectInspection.state?.latestCheckpoint),
+        blockedOperations: ["head-managed-mutation", ...(projectInspection.state?.latestCheckpoint ? ["checkpoint-dependent-work"] : [])],
+      }),
       reasonCode: "CORE_DRIFT",
       authority,
     };
@@ -188,7 +216,7 @@ function recoveryReadiness(projectInspection) {
       state: "no-current-checkpoint",
       currentCheckpoint: false,
       restorable: false,
-      userActionRequired: false,
+      ...actionability(),
       authority,
     };
   }
@@ -198,9 +226,10 @@ function recoveryReadiness(projectInspection) {
       state: "verified-current-checkpoint",
       currentCheckpoint: true,
       restorable: true,
-      userActionRequired: false,
+      ...actionability(),
       checkpointId: restored.checkpoint.checkpointId,
       sessionRestoreId: restored.sessionRestoreId,
+      ...(includeRestore ? { restore: restored } : {}),
       authority,
     };
   } catch (error) {
@@ -208,7 +237,11 @@ function recoveryReadiness(projectInspection) {
       state: "attention-required",
       currentCheckpoint: true,
       restorable: false,
-      userActionRequired: true,
+      ...actionability({
+        headActionRequired: true,
+        recoveryDependentWorkBlocked: true,
+        blockedOperations: ["checkpoint-dependent-work"],
+      }),
       reasonCode: error?.code || "SESSION_RESTORE_VERIFICATION_FAILED",
       authority,
     };
@@ -313,11 +346,11 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
   ];
 }
 
-function projectExperience(projectInspection, onboardingInspection = null) {
+function projectExperience(projectInspection, onboardingInspection = null, recoveryOverride = null) {
   if (projectInspection.status === "not_initialized") {
     const action = "initialize_core";
     const context = contextReadiness({ coreState: "not_initialized", productState: "unavailable" });
-    return {
+    return withExperienceProjections({
       kind: "HeadProjectExperienceProjection",
       protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
       status: "not_initialized",
@@ -326,13 +359,13 @@ function projectExperience(projectInspection, onboardingInspection = null) {
         core: { state: "not_initialized", managedProjectionDriftCount: 0 },
         product: { state: "unavailable", governanceActivated: false, onboardingStatus: null },
         context,
-        recovery: recoveryReadiness(projectInspection),
+        recovery: recoveryOverride || recoveryReadiness(projectInspection),
       },
       nextAction: { id: action, summary: "Initialize the constitutional Core and one canonical Project/Session before using optional capabilities.", entrypoint: entrypoint(action) },
       capabilities: capabilityGuide({ coreState: "not_initialized", productState: "unavailable", contextState: context }),
-      runtime: runtimeProjection(),
+      runtime: runtimeProjection(projectInspection),
       authority: { advisoryOnly: true, persisted: false, mutatesProject: false, activatesCapabilities: false, grantsAuthorization: false },
-    };
+    });
   }
 
   const product = onboardingInspection ? productReadiness(onboardingInspection.status) : {
@@ -343,9 +376,9 @@ function projectExperience(projectInspection, onboardingInspection = null) {
   };
   const coreState = projectInspection.status === "ready" ? "ready" : "drifted";
   const context = contextReadiness({ coreState, productState: product.state, onboardingInspection });
-  const recovery = recoveryReadiness(projectInspection);
+  const recovery = recoveryOverride || recoveryReadiness(projectInspection);
   const action = coreState === "ready" ? product.action : "review_managed_projection_drift";
-  return {
+  return withExperienceProjections({
     kind: "HeadProjectExperienceProjection",
     protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
     status: coreState === "ready" ? product.status : "core_drifted",
@@ -368,15 +401,15 @@ function projectExperience(projectInspection, onboardingInspection = null) {
       entrypoint: entrypoint(action),
     },
     capabilities: capabilityGuide({ coreState, productState: product.state, contextState: context, runtimes: projectInspection.project.runtimes }),
-    runtime: runtimeProjection(),
+    runtime: runtimeProjection(projectInspection),
     authority: { advisoryOnly: true, persisted: false, mutatesProject: false, activatesCapabilities: false, grantsAuthorization: false },
-  };
+  });
 }
 
-export function inspectProjectExperience({ root = "." } = {}) {
+export function inspectProjectExperience({ root = ".", recoveryOverride = null } = {}) {
   const project = inspectProject(root);
-  if (project.status !== "ready") return projectExperience(project);
-  return projectExperience(project, inspectOnboarding({ root }));
+  if (project.status !== "ready") return projectExperience(project, null, recoveryOverride);
+  return projectExperience(project, inspectOnboarding({ root }), recoveryOverride);
 }
 
 function bootstrapResponse({ root, profile, before, installation, onboardingAction, inputDisposition, inspected, extra = {} }) {

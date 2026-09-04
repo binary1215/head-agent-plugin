@@ -8,7 +8,7 @@ import {
 import { inspectProject } from "./head-core.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 
-export const CONTEXT_WORKFLOW_PROTOCOL_VERSION = "0.3.0";
+export const CONTEXT_WORKFLOW_PROTOCOL_VERSION = "0.4.0";
 export const CONTEXT_PREPARATION_PROTOCOL_VERSION = "0.2.0";
 
 const MAX_PREPARATION_REPOSITORY_FILES = 24;
@@ -143,6 +143,27 @@ function buildContextWorkflowProjection(preview, { callerTask, requestedBudget, 
   const decision = workflowDecision(capsule);
   const coverage = capsule.coverageAssessment;
   const world = worldState(capsule);
+  const omittedByReason = {};
+  for (const excluded of capsule.selection.excluded) {
+    omittedByReason[excluded.reason] = (omittedByReason[excluded.reason] || 0) + 1;
+  }
+  const includedByKind = {
+    claims: capsule.claims.length,
+    decisions: capsule.decisions.length,
+    unknowns: capsule.unknowns.length,
+    repositoryFiles: capsule.repositoryContext.length,
+    productConcepts: capsule.productContext.length,
+    gitHistory: capsule.gitDecisionEvidence.length,
+    runtimeObservations: capsule.runtimeStateEvidence.length,
+    graphTraversals: capsule.graphTraversalEvidence.length,
+    observations: capsule.observationEvidence.length,
+  };
+  const remainingUncertainty = [
+    ...(coverage.status === "not-requested" ? ["HEAD has not yet declared task-specific EvidenceNeeds."] : []),
+    ...(coverage.status === "coverage-incomplete" ? ["At least one HEAD-declared evidence requirement is not included."] : []),
+    "Mechanical coverage does not establish semantic sufficiency, correctness, or approval.",
+    ...(world !== "current-verified" ? [`Repository World evidence is ${world}.`] : []),
+  ];
   return {
     schemaVersion: 1,
     kind: "ContextWorkflowProjection",
@@ -199,6 +220,27 @@ function buildContextWorkflowProjection(preview, { callerTask, requestedBudget, 
       persisted: false,
       identityVerifiedByCompiler: true,
       coverageProofDigest: coverage.proofDigest,
+    },
+    explanation: {
+      kind: "ContextExplanationCard",
+      included: {
+        totalCandidateCount: capsule.selection.includedIds.length,
+        byKind: includedByKind,
+        evidenceNeedProofs: coverage.proofs.map((need) => ({
+          evidenceNeedId: need.evidenceNeedId,
+          requiredMinimumItems: need.requiredMinimumItems,
+          includedMatchCount: need.includedMatchCount,
+          covered: need.covered,
+        })),
+      },
+      intentionallyOmitted: {
+        total: capsule.selection.excluded.length,
+        byReason: omittedByReason,
+      },
+      remainingUncertainty,
+      semanticSufficiencyOwner: "HEAD",
+      userDecisionRequired: false,
+      persisted: false,
     },
     nextAction: decision.nextAction,
     authority: {

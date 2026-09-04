@@ -7,7 +7,7 @@ import {
   prepareCompactionFromCurrentCheckpoint,
   verifyCompaction,
 } from "./compaction-recovery.mjs";
-import { restoreSessionFromArtifacts } from "./session-recovery.mjs";
+import { inspectProjectExperience, recoveryReadiness } from "./project-bootstrap.mjs";
 
 export const COMPACTION_LIFECYCLE_VERSION = "0.1.0";
 const EVENT_KINDS = new Set(["conversation-entry", "provider-replaced", "before-compaction", "after-compaction"]);
@@ -122,25 +122,40 @@ function recoveryAttention(error, details = {}) {
     reasonCode: error?.code || "COMPACTION_LIFECYCLE_ERROR",
     recoveryDependentWorkBlocked: true,
     ordinaryWorkBlocked: false,
-    userActionRequired: false,
+    userDecisionRequired: false,
     headActionRequired: true,
     authorityChanged: false,
     ...details,
   };
 }
 
+function conversationProjection(root, recovery) {
+  const publicRecovery = { ...recovery };
+  delete publicRecovery.restore;
+  const projectStatus = inspectProjectExperience({ root, recoveryOverride: publicRecovery });
+  return {
+    projectStatus,
+    attention: projectStatus.attention,
+    runtime: projectStatus.runtime,
+    presentation: projectStatus.presentation,
+  };
+}
+
 export function enterConversationRecovery({ root = "." } = {}) {
   const inspected = inspectProject(root);
+  const recovery = recoveryReadiness(inspected, { includeRestore: true });
+  const composed = conversationProjection(root, recovery);
   if (inspected.status !== "ready") {
     return {
       status: "conversation_recovery_unavailable",
       reasonCode: inspected.status === "not_initialized" ? "NOT_INITIALIZED" : "PROJECT_NOT_READY",
-      recoveryDependentWorkBlocked: true,
+      recoveryDependentWorkBlocked: recovery.recoveryDependentWorkBlocked,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
-      headActionRequired: true,
+      userDecisionRequired: false,
+      headActionRequired: recovery.headActionRequired,
       authorityChanged: false,
       persisted: false,
+      ...composed,
     };
   }
   if (!inspected.state.latestCheckpoint) {
@@ -149,28 +164,33 @@ export function enterConversationRecovery({ root = "." } = {}) {
       recoveryState: "no-current-checkpoint",
       recoveryDependentWorkBlocked: false,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: false,
       persisted: false,
+      ...composed,
     };
   }
-  try {
-    const restored = restoreSessionFromArtifacts({ root: inspected.project.projectRoot });
+  if (recovery.restorable) {
+    const restored = recovery.restore;
     return {
       status: "conversation_direction_restored",
       recoveryState: "verified-current-checkpoint",
       restore: restored,
       recoveryDependentWorkBlocked: false,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: false,
       persisted: false,
+      ...composed,
     };
-  } catch (error) {
-    return recoveryAttention(error, { persisted: false });
   }
+  return {
+    ...recoveryAttention({ code: recovery.reasonCode }, { persisted: false }),
+    userDecisionRequired: false,
+    ...composed,
+  };
 }
 
 function currentEpochForEvent(root, event) {
@@ -191,7 +211,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       hostLifecycleAvailable: false,
       recoveryDependentWorkBlocked: entry.recoveryDependentWorkBlocked,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: entry.headActionRequired,
       authorityChanged: false,
     };
@@ -206,7 +226,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       hostLifecycleAvailable: true,
       recoveryDependentWorkBlocked: entry.recoveryDependentWorkBlocked,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: entry.headActionRequired,
       authorityChanged: false,
     };
@@ -240,7 +260,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
       hostDescriptor: descriptor,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: refreshed.headActionRequired,
       authorityChanged: false,
     };
@@ -259,7 +279,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
           eventKind: event.kind,
           recoveryDependentWorkBlocked: true,
           ordinaryWorkBlocked: false,
-          userActionRequired: false,
+          userDecisionRequired: false,
           headActionRequired: true,
           authorityChanged: false,
           reasonCode: error.code,
@@ -298,7 +318,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       continuationTokenDisclosed: false,
       acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: direction != null,
     };
@@ -322,7 +342,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
       recoveryDependentWorkBlocked: false,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: false,
     };
@@ -336,7 +356,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       continuationConsumed: false,
       acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: false,
     };
@@ -351,7 +371,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       acknowledgement: safeAcknowledge(hostAdapter, event, "uncertain"),
       recoveryDependentWorkBlocked: false,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: true,
       authorityChanged: false,
     };
@@ -376,7 +396,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
       recoveryDependentWorkBlocked: false,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: false,
     };
@@ -389,7 +409,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       continuationConsumed: true,
       acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: false,
     };
@@ -407,7 +427,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       continuationConsumed: false,
       acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: false,
     };
@@ -446,7 +466,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
       recoveryDependentWorkBlocked: false,
       ordinaryWorkBlocked: false,
-      userActionRequired: false,
+      userDecisionRequired: false,
       headActionRequired: false,
       authorityChanged: false,
     };
@@ -465,7 +485,7 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
     continuationConsumed: true,
     acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
     ordinaryWorkBlocked: false,
-    userActionRequired: false,
+    userDecisionRequired: false,
     headActionRequired: false,
     authorityChanged: false,
   };

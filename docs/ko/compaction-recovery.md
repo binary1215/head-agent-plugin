@@ -19,6 +19,12 @@ project 진입, compaction 후, provider 교체 후에 이를 자동 호출합�
 - checkpoint 무결성에 주의가 필요해 checkpoint 의존 작업만 멈추며 방향을
   지어내지 않습니다.
 
+같은 호출은 범위가 한정된 프로젝트 상태, Attention, 로드된/구성된 패키지 버전과
+표시 투영도 포함하므로 일반 진입에서 별도의 status 호출이 필요하지 않습니다.
+복구 검증 실패는 사용자 결정이 아니라 `headActionRequired`입니다. 독립적인 보호
+결정이 실제로 대기 중이지 않으면 `userDecisionRequired`는 false이며,
+`ordinaryWorkBlocked`도 false로 유지됩니다.
+
 사용자는 checkpoint identity, lifecycle event, trusted turn counter 또는
 continuation token을 입력하지 않습니다. 명시적인 `session-restore`와
 `compact-*` command는 고급 진단 surface로 남습니다.

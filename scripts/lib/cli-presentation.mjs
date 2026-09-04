@@ -70,20 +70,24 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
   const productDecision = product?.state === "review_required"
     ? "Product candidates need review; ordinary work remains available"
     : "none for ordinary work";
-  const integrityAttention = core?.state === "drifted" || recovery?.userActionRequired;
+  const integrityAttention = core?.state === "drifted" || recovery?.headActionRequired;
   const next = value.nextAction?.id === "work_directly"
     ? "Continue the user's original task."
     : compactText(value.nextAction?.summary || "Continue with the task.");
+  if (!doctor && value.presentation?.mode === "quiet") {
+    return `${core?.state === "ready" ? "HEAD is ready — continue the task." : "HEAD is not initialized; ordinary work remains available."}\n`;
+  }
+  if (!doctor && value.presentation?.mode === "notice") {
+    return `HEAD is ready — ordinary work continues; ${value.attention?.items?.length || 0} optional item(s) are available when relevant.\n`;
+  }
   const lines = [
-    core?.state === "ready"
-      ? "HEAD is ready — continue the task in your coding conversation."
-      : "HEAD needs one setup step before it can coordinate this project.",
+    core?.state === "ready" ? "HEAD is ready — continue the task." : "HEAD needs attention before a HEAD-managed mutation.",
     "",
     `Project: ${core?.state || value.status}`,
     `Recovery: ${RECOVERY_LABELS[recovery?.state] || recovery?.state || "unknown"}`,
     `Product knowledge: ${PRODUCT_LABELS[product?.state] || product?.state || "unknown"}`,
     `Context: ${CONTEXT_LABELS[context?.state] || context?.state || "unknown"}`,
-    `User decision: ${productDecision}`,
+    `User decision: ${value.attention?.userDecisionRequired ? "required for the listed protected decision" : productDecision}`,
   ];
   if (integrityAttention) {
     lines.push(core?.state === "drifted"
@@ -91,7 +95,9 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
       : "Recovery notice: inspect the checkpoint before relying on recovery; ordinary work remains available when it does not depend on that checkpoint.");
   }
   if (doctor || (value.drift?.length || 0) > 0) {
-    lines.push(`Active package: ${value.runtime?.activePackageVersion || "unknown"}`);
+    lines.push(`Loaded package: ${value.runtime?.loadedPackageVersion || value.runtime?.activePackageVersion || "unknown"}`);
+    lines.push(`Configured package: ${value.runtime?.configuredPackageVersion || "not recorded"}`);
+    lines.push(`Host restart: ${value.runtime?.restartRequired ? "required after project integration convergence" : "not required by the current version evidence"}`);
     lines.push(`Managed projection drift: ${value.drift?.length || 0}`);
     for (const item of value.drift || []) lines.push(`  - ${item.path || item.kind || "managed artifact"}`);
     if (recovery?.reasonCode) lines.push(`Recovery diagnostic: ${recovery.reasonCode}`);
@@ -100,6 +106,10 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
     lines.push("", `Next: ${next}`);
     if (doctor && value.nextAction.entrypoint?.cli) lines.push(`Command: ${value.nextAction.entrypoint.cli}`);
     if (doctor && value.nextAction.entrypoint?.mcpTool) lines.push(`MCP: ${value.nextAction.entrypoint.mcpTool}`);
+  }
+  if (value.attention?.items?.length) {
+    lines.push("", "Attention:");
+    for (const item of value.attention.items) lines.push(`  - ${item.owner}: ${compactText(item.summary, 240)}`);
   }
   lines.push("", "This is read-only guidance; it grants no authority and changes no project state.");
   return `${lines.join("\n")}\n`;
@@ -111,7 +121,7 @@ export function formatProjectBootstrap(value) {
   const recovery = value.readiness?.recovery;
   const ready = core?.state === "ready";
   const needsProductReview = product?.state === "review_required";
-  const integrityAttention = !ready || recovery?.userActionRequired;
+  const integrityAttention = !ready || recovery?.headActionRequired;
   const next = value.nextAction?.id === "work_directly"
     ? "Continue the user's original task in this conversation."
     : compactText(value.nextAction?.summary || "Continue with the task.");
@@ -177,6 +187,10 @@ export function formatConversationRecovery(value) {
       "Ordinary independent work remains available; only work that depends on the unverified checkpoint is paused.",
       "User action: none unless HEAD identifies a material decision after inspection.",
     );
+  }
+  if (["quiet", "notice"].includes(value?.presentation?.mode) && !value?.conversationEntry && ["conversation_ready", "conversation_direction_restored"].includes(value?.status)) {
+    const suffix = value.presentation.mode === "notice" ? `; ${value.attention?.items?.length || 0} optional item(s) remain available when relevant` : "";
+    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified direction — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n`;
   }
   if (value?.status === "host_lifecycle_unavailable") {
     lines.push("Host compaction hooks are unavailable; first-turn artifact restore still works and provider compaction remains Host-owned.");
@@ -369,6 +383,15 @@ export function formatContextPreview(value) {
   ];
   if ((budget.attemptedTiers || []).length > 1) {
     lines.push(`Automatic expansion: ${(budget.attemptedTiers || []).map(formatBudget).join(" → ")}`);
+  }
+  const explanation = workflow.explanation;
+  if (explanation) {
+    lines.push(`Included: ${explanation.included.totalCandidateCount} evidence item(s)`);
+    if (explanation.intentionallyOmitted.total) {
+      const reasons = Object.entries(explanation.intentionallyOmitted.byReason).map(([reason, count]) => `${reason} ${count}`).join(", ");
+      lines.push(`Intentionally omitted: ${explanation.intentionallyOmitted.total} (${reasons})`);
+    }
+    lines.push(`Remaining uncertainty: ${explanation.remainingUncertainty.join(" ")}`);
   }
   if (workflow.status === "ready_for_head_semantic_assessment") {
     lines.push("User action: none. HEAD now makes the separate semantic sufficiency judgment.");
