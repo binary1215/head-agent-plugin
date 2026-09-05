@@ -1,0 +1,21 @@
+{
+  "name": "head-agent-plugin",
+  "owner": {
+    "name": "ccolt"
+  },
+  "description": "Verified Claude Code distribution of the provider-neutral HEAD Agent Core.",
+  "metadata": {
+    "description": "Verified Claude Code distribution of the provider-neutral HEAD Agent Core."
+  },
+  "plugins": [
+    {
+      "name": "head-agent-core",
+      "source": "./plugins/head-agent-core",
+      "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
+      "version": "0.3.0-beta.12+codex.20260905144828",
+      "author": {
+        "name": "ccolt"
+      }
+    }
+  ]
+}

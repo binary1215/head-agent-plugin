@@ -1,0 +1,55 @@
+{
+  "name": "head-agent-core",
+  "version": "0.3.0-beta.12+codex.20260905144828",
+  "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
+  "author": {
+    "name": "ccolt"
+  },
+  "license": "MIT",
+  "keywords": [
+    "head-agent",
+    "claude-code",
+    "codex",
+    "opencode",
+    "coordination",
+    "continuity"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "HEAD Agent Core",
+    "shortDescription": "HEAD-owned coordination and continuity",
+    "longDescription": "A provider-neutral HEAD core that preserves one Project and Session across providers. Ordinary work uses a small constitutional default; Product/Graph onboarding, durable Runs, compaction recovery, bounded workers, and host coordination activate only when their protected outcome requires them.",
+    "developerName": "ccolt",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Small Provider-neutral HEAD Constitution",
+      "Core-first Project and Session Continuity",
+      "Read-only Readiness and Next-action Guidance",
+      "Task-only Conversational Context Preparation",
+      "Reproducible Context Capsules with Exact Evidence Proof",
+      "Explicit Product Canon Review",
+      "Compaction and Provider-independent Recovery",
+      "Automatic Conversation-entry Recovery",
+      "Single-entry Project Status and Attention",
+      "Quiet Success and Actionable Exception Presentation",
+      "Loaded-versus-configured Package Version Visibility",
+      "Provider-neutral Host Compaction Lifecycle",
+      "Durable Runs with Fresh HEAD Review",
+      "Provider-neutral Bounded Worker Waves",
+      "Provider-neutral Common Observation Evidence",
+      "Reuse-first Observation Preparation and Project-bound Host Source Collection",
+      "Non-blocking Provider-HEAD Conformance Reconciliation",
+      "Rebuildable World Graph and Markdown Projections",
+      "Bounded Non-persisted Graph Lineage Trace and Diff",
+      "Claude Code, Codex, and OpenCode Runtime Adapters",
+      "Integrity-verified Native Distribution"
+    ],
+    "defaultPrompt": [
+      "Initialize or resume the small provider-neutral HEAD Core and report readiness.",
+      "Inspect readiness and show the next safe action without activating optional governance.",
+      "Prepare Context from my exact task; if World is absent, explain the explicit optional path."
+    ],
+    "brandColor": "#234E70"
+  }
+}

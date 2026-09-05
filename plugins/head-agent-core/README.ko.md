@@ -1,0 +1,904 @@
+<div align="center">
+
+# HEAD Agent Core Plugin
+
+[English](README.md) | **한국어** | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
+
+**도구와 에이전트, 대화가 바뀌어도<br>
+AI 개발이 하나의 검토된 제품 방향으로 이어지게 합니다.**
+
+대화 압축 후에도 안전하게 복구하고, 작업마다 필요한 정보만 전달하며,
+승인된 변경의 이유를 함께 남깁니다.
+
+[![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
+![Status](https://img.shields.io/badge/status-beta-blue)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
+![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
+
+[왜 사용해야 하는가](#왜-사용해야-하는가) ·
+[누구에게 필요한가](#누구에게-필요한가) ·
+[일반 사용법](#일반-사용자는-어떻게-사용하나요) ·
+[설치](#설치) ·
+[고급 사용](#cli-자동화와-고급-설정) ·
+[핵심 모델](#핵심-모델) ·
+[그래프](#그래프와-기록) ·
+[기능 현황](#기능-현황) ·
+[문서](#문서)
+
+</div>
+
+## HEAD Agent Core가 하는 일
+
+HEAD Agent Core는 AI와 함께 개발한 방향과 근거를 하나의 모델 대화 안에
+가두지 않고 프로젝트에 보존합니다. Claude Code, Codex, OpenCode 전반에서
+다음을 연결된 상태로 유지합니다.
+
+- 사용자가 제품에 관해 승인한 내용
+- 현재 저장소와 테스트에서 확인된 사실
+- 이번 작업에 실제로 필요한 정보
+- 에이전트가 바꾼 내용, 검증 결과, 다음 작업
+
+HEAD의 주목적은 모델이 당장 코드를 더 잘 쓰게 만드는 것이 아닙니다. 여러
+AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으로 축적되게 하는
+것입니다. 모델 세션, Git 호스트, 생성 문서, GraphDB 어느 것도 프로젝트의
+숨은 결정권자가 되지 않습니다.
+
+## 왜 사용해야 하는가
+
+프로젝트가 하나의 대화보다 오래 이어질수록 HEAD의 장점도 커집니다.
+
+### 대화 압축이나 세션 손실 후에도 이어갑니다
+
+대화 압축은 일부 내용을 잃을 수 있으며, 공급자가 만든 요약에서 중요한 조건이
+빠지거나 다음 작업이 달라질 수 있습니다. 복구가 중요한 작업에서 HEAD는
+정확한 목적, 승인된 결정, 현재 위치, 다음 기대 결과를 체크포인트로
+보존합니다. 압축 후에는 프로젝트 방향이 달라지지 않았는지 검증한 뒤
+계속합니다. 대화 진입, provider 교체 또는 Host가 알린 compaction 경계에서는
+이 복구가 자동으로 수행됩니다. 사용자는 task에 관한 대화를 계속하면 되며,
+checkpoint ID, turn counter, token 또는 복구 JSON을 입력하지 않습니다. 그
+사이 실제 사용자의 새 요청이 들어오면 언제나 새 요청을 우선합니다.
+
+이는 대화 내용이나 모델의 말투를 복원하는 기능이 아니라 작업 방향을 복원하는
+기능입니다. Host에 native compaction hook이 없어도 첫 turn의 artifact 복구는
+자동으로 수행되고 provider compaction 동작만 Host 소유로 남습니다. 자세한
+내용은 [대화 압축 복구](docs/ko/compaction-recovery.md)와
+[세션 복구](docs/ko/session-recovery.md)를 참고하세요.
+
+### 범위가 명확하고 검토 가능한 컨텍스트를 전달합니다
+
+컨텍스트는 많다고 항상 좋은 것이 아닙니다. 사용자는 task를 자연어로 말하면 됩니다.
+provider-neutral HEAD가 대화 안에서 task의 의미를 분석하고 task-local EvidenceNeeds를 작성하며,
+사용자에게 JSON, graph ID 또는 token tier 선택을 요구하지 않고 정확한 repository path,
+Product entity, 현재 graph node anchor를 지정할 수 있습니다. status, preparation,
+repository inspection과 preview는 사용자가 조작하는 설정 마법사가 아니라 HEAD 내부
+절차입니다. Context Compiler는 정해진 예산 안에서 실제 포함 여부를 검증하고 제외 정보와 stale coverage를
+기록합니다. lexical overlap은 discovery/fallback ranking일 뿐입니다. Core는 첫 일치 단어로 semantic graph anchor를 고르거나, 현재 file을 탈락시키거나 sufficiency를 선언하지 않습니다.
+
+그 결과인 Context Capsule은 내용으로 식별되며 재현할 수 있습니다. 검증된
+입력, 컴파일러 버전, 작업과 예산이 같으면 같은 식별자가 만들어지고, 정본이나
+다이제스트가 달라지면 재사용을 중단합니다. 이는 불필요한 잡음을 줄이고,
+에이전트 간 인수인계를 검토하기 쉽게 만들며, 저장소 전체를 프롬프트로 넣지
+않게 합니다. 자세한 내용은 [Context Compiler](docs/ko/context-compiler.md)를
+참고하세요.
+
+### 무엇을 바꿨는지뿐 아니라 왜 바꿨는지 검토합니다
+
+Git은 어떤 파일과 바이트가 바뀌었는지 보여줍니다. HEAD는 그 변경을 둘러싼
+검토 기록도 함께 보존합니다.
+
+```text
+전체 계획
+  -> 실행 범위 + 작업 컨텍스트
+  -> 에이전트 결과 + 검증 증거
+  -> Fresh HEAD 검토 + 명시적 결정
+  -> ChangeSet + 다음 체크포인트
+```
+
+실행 결과가 스스로를 승인할 수 없으며, 중요한 다음 Run은 검토가 끝날 때까지
+시작되지 않습니다. 나중에 유지보수자는 대화 기록이나 커밋 메시지를 추측하지
+않고도 목표, 허용 범위, 증거, 결정, 변경된 리비전과 다음 방향을 확인할 수
+있습니다. 자세한 내용은 [실행 계보](docs/ko/execution-lineage.md)와
+[ChangeSet](docs/ko/change-sets.md)을 참고하세요.
+
+### 제품 의도를 코드와 테스트에 연결합니다
+
+HEAD는 검토된 Feature와 Capability가 어떤 파일, 심볼, 테스트와 관련되는지
+근거가 연결된 관계 후보를 제안할 수 있습니다. 이후 정확한 변경 전후 리비전을
+비교해 검토 가능한 기능 영향 후보도 만들 수 있습니다. 추론 결과는 명시적으로
+검토되기 전까지 후보로 남으므로, 단순한 이름 일치가 제품 결정으로 바뀌지
+않습니다. 자세한 내용은 [Feature 매핑](docs/ko/feature-mapping.md)을 참고하세요.
+
+### 그 밖의 장점
+
+| 일반적인 AI 개발 문제 | HEAD가 제공하는 것 |
+| --- | --- |
+| 에이전트와 도구마다 프로젝트를 다르게 해석함 | Claude Code, Codex, OpenCode, HEAD와 워커가 프로젝트에 속한 동일한 `.head/` 식별자를 사용합니다. |
+| 모델의 추론이 어느새 결정으로 취급됨 | 추론된 개념과 영향은 사용자가 명시적으로 승인하기 전까지 검토 가능한 후보로 남습니다. |
+| 인수인계 과정에서 현재 위치가 사라짐 | 공급자에 독립적인 체크포인트가 다른 세션, 도구, 팀원을 위해 정확한 작업 방향을 보존합니다. |
+| 그래프나 생성 문서가 숨은 결정권자가 됨 | GraphSnapshot, GraphDB, Markdown, 연속성 정보는 검증된 기록에서 다시 만들 수 있는 조회 결과로 남습니다. |
+| 큰 저장소가 프롬프트를 압도함 | Source Scope와 제한된 컨텍스트 구성이 생성물, 외부 의존성, 복사된 자료를 일반 작업 컨텍스트에서 제외합니다. |
+| 여러 에이전트 사이에서 책임이 흐려짐 | 제한된 실행, 결과 증거, 독립 검토를 구분하면서 HEAD가 하나의 전체 결과로 통합합니다. |
+| 병렬 워커의 진행 상황을 한눈에 보기 어려움 | 공급자 중립적인 launch wave가 요청·시작·반환·대기·성공·실패를 보여주되, 워커별 권한을 합치거나 wave 완료를 승인으로 취급하지 않습니다. |
+| Git 및 배포 이력을 사람이 직접 입력해야 함 | 공급자 중립 관측이 현재 product ref와 호스트가 보고한 배포 결과를 불변 P3 evidence로 만들며, 승인·성공·정확한 commit/ref 일치가 모두 확인될 때만 권한 없는 ReleaseObservation을 만듭니다. |
+| 제품마다 운영 데이터 형태가 다름 | Project-bound Host registry를 통해 HEAD가 configured source를 opaque ID로 collect하고, 제품별 adapter는 하나의 evidence-only 계약으로 normalize하며 Core는 coverage와 replay를 증명합니다. |
+| 릴리스 사이에 코드와 검토된 정책이 어긋남 | 공급자 HEAD가 증거가 연결된 Conformance Finding을 비차단 queue에 제안하고, Core는 exact anchor와 replay를 검증하며, disposition 또는 fresh resolution 수락은 사용자만 수행합니다. Graph나 connector data가 없어도 disclosure일 뿐 일반 작업의 gate가 되지 않습니다. |
+
+> 일반적인 코딩 에이전트가 현재 작업을 최적화한다면, HEAD Agent Core는
+> 여러 작업이 검토된 하나의 제품 방향으로 축적되도록 최적화합니다.
+
+이 장점들은 서로 연결됩니다.
+
+```text
+검토된 방향 + 현재 저장소 증거
+  -> bounded Context Capsule + HEAD sufficiency judgment
+  -> 범위가 정해진 실행과 명시적 검토
+  -> 결정 및 변경 이력
+  -> 인수인계, 세션 손실, 대화 압축에 대비한 정확한 체크포인트
+```
+
+## 누구에게 필요한가
+
+HEAD Agent Core는 하나의 프롬프트, 작업, 에이전트 또는 런타임을 넘어
+AI와 함께 개발하는 제품의 일관성을 유지해야 하는 사람을 위한 도구입니다.
+
+| 다음에 해당한다면 | HEAD가 제공하는 도움 |
+| --- | --- |
+| 여러 AI 세션에 걸쳐 제품을 만드는 1인 개발자 | 프로젝트를 처음부터 다시 설명하지 않고 검토된 방향에서 작업을 이어갑니다. |
+| 여러 에이전트나 워커를 조율하는 테크 리드 | 계획, 구현, 검토를 구분하면서 결과를 하나의 전체 성과로 통합합니다. |
+| 크거나 오래 유지된 저장소를 관리하는 유지보수자 | 작업마다 실제로 필요한 현재 저장소 증거와 이력만 전달합니다. |
+| Claude Code, Codex, OpenCode 또는 여러 공급자를 사용하는 팀 | 대화마다 별도의 진실을 만들지 않고 공급자에 독립적인 하나의 프로젝트 상태를 유지합니다. |
+| 감사 또는 안정적인 인수인계가 필요한 팀 | 승인된 변경의 목적, 증거, 명시적 결정, 영향과 복구 상태를 보존합니다. |
+| 제품 의도와 구현을 연결해야 하는 제품 팀 | 검토된 Feature에서 코드, 테스트, 리비전, ChangeSet과 검토 증거까지 따라갑니다. |
+
+한 번 끝나는 스크립트, 복구가 필요 없는 짧은 실험, 대화 기록만으로 충분한
+작업에는 필요하지 않을 수 있습니다. 모델이 추론한 출력을 검토 없이 바로
+승인해야 하거나, GraphDB를 프로젝트 의미의 절대적 원천으로 사용하려는
+경우에도 적합하지 않습니다.
+
+## 일반 사용자는 어떻게 사용하나요?
+
+HEAD Agent Core는 한 번 설치한 뒤 Codex, Claude Code 또는 연동한 OpenCode에서
+프로젝트를 열고 평소처럼 자연어로 요청하면 됩니다. HEAD를 별도 프로그램처럼
+조작할 필요는 없습니다.
+
+첫 요청에 실제 작업까지 함께 말하면 됩니다. 설정만 위한 별도 대화는 필요하지
+않습니다.
+
+```text
+이 프로젝트에 HEAD Agent Core를 사용해줘. 기존 상태가 있으면 이어서 재개하고,
+없으면 Core를 초기화한 뒤 이 로그인 오류의 원인을 찾아서 수정해줘.
+```
+
+HEAD는 초기화, 상태 확인과 검증된 복구를 마친 뒤에도 이 원래 작업을 유지하고
+같은 대화에서 계속합니다. 그다음부터도 평소처럼 작업을 요청하면 됩니다.
+
+대화 압축이나 provider 교체 뒤에는 HEAD Skill이 읽기 전용 대화 진입 복구를
+자동으로 실행합니다. 사용자가 압축 사실을 알리거나 복구를 요청하거나 checkpoint
+ID를 제공할 필요가 없습니다. Host가 신뢰 가능한 lifecycle hook을 제공하지 않아도
+다음 대화 진입에서 P2 artifact를 복구하며, 관측하지 못한 provider compaction을
+관측했다고 가장하지 않습니다.
+
+```text
+이 변경에 필요한 코드와 결정 근거만 준비한 뒤 진행해줘.
+```
+
+```text
+전체 계획은 하나로 유지하고, 서로 독립적인 부분만 워커로 나눠 병렬로 진행해줘.
+```
+
+HEAD는 프로젝트 상태를 확인하거나 재개하고, 작업에 맞는 가장 가벼운 안전 경로를
+선택하며, 필요한 경우에만 지속 가능한 컨텍스트나 복구 기록을 준비합니다. 일반
+작업은 저장소를 직접 살펴보며 진행할 수 있고, Product·World·Graph와 장기 Run은
+필수 초기 설정이 아니라 실제 작업에 필요할 때만 사용하는 선택 기능입니다.
+
+사용자는 구조화 JSON을 작성하거나, 토큰 예산을 고르거나, graph·session ID를
+찾거나, GraphDB를 조작하거나, Observe·Session·Run 단계를 선택하거나, 어떤 CLI나
+MCP 호출을 사용할지 결정할 필요가 없습니다. 이러한 것은 내부 또는 고급
+인터페이스입니다. HEAD는 Product 의미 승인, 모호한 범위 결정, 외부 시스템 변경,
+중요하거나 파괴적인 작업처럼 실제 결정권이 사용자에게 있는 경우에만 확인을
+요청합니다.
+
+따라서 P1-P5는 사용자가 수행해야 할 절차가 아니라 내부 안전 체계입니다. 아래 CLI
+설명은 자동화, 진단, CI와 복구에서 같은 Core를 사용하기 위한 것이며, 일반적인
+대화형 사용의 선행조건이 아닙니다.
+
+## 설치
+
+설치 경로 중 하나를 선택하세요. Codex 및 Claude Code 마켓플레이스 경로는
+대화형 Skill, 타입이 지정된 MCP 서버, 지원되는 모든 호스트용 검증된 네이티브
+번들을 설치합니다. 런타임에서는 현재 호스트와 정확히 일치하는 바이너리만
+선택할 수 있습니다. 사용자 범위 경로는 자동화와 복구에 사용할 전역
+`head-agent` 명령도 제공하며, 일치하는 GitHub Release에서 네이티브 패키지를
+가져옵니다.
+
+### Codex Git 마켓플레이스
+
+```powershell
+codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplace
+codex plugin add head-agent-core@head-agent-plugin
+```
+
+설치 후 Codex를 재시작하고, 설치된 Skill과 MCP 서버를 불러오도록 새 작업을
+시작한 뒤 다음과 같이 요청하세요.
+
+```text
+이 프로젝트의 작은 HEAD Core를 초기화하거나 재개하고 준비 상태를 알려 줘.
+```
+
+마켓플레이스 설치 자체는 프로젝트를 초기화하거나 GraphDB에 접속하거나
+모델을 선택하거나 Product Canon을 승인하지 않습니다. 이러한 전이는 여전히
+타입이 지정된 Core 경계를 거치며, 중요한 경우 사용자의 명시적 검토를
+요구합니다.
+
+### Claude Code Git 마켓플레이스
+
+```powershell
+claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
+claude plugin install head-agent-core@head-agent-plugin
+```
+
+설치 후 Claude Code를 재시작해 Skill과 `head_core` MCP 서버를 불러온 뒤
+다음과 같이 요청하세요.
+
+```text
+이 프로젝트의 작은 HEAD Core를 초기화하거나 재개하고 준비 상태를 알려 줘.
+```
+
+Claude Code는 플러그인을 버전별 캐시에 복사합니다. 따라서 생성된 Claude
+배포판은 MCP 진입점을 `${CLAUDE_PLUGIN_ROOT}`를 통해 프로젝션하지만, 소스
+Core와 `.head/` 식별자는 바꾸지 않습니다. 설치만으로 프로젝트 변경,
+Product Canon 검토, GraphDB 접속 또는 모델 선택이 승인되지는 않습니다.
+
+### Claude Code 및 OpenCode 프로젝트 프로젝션
+
+아래 사용자 범위 설치를 사용하는 경우 프로젝트를
+`--runtime claude,codex,opencode`로 초기화합니다. 마켓플레이스로 설치한 Claude
+Code 사용자는 번들 Skill을 통해 같은 초기화를 요청할 수 있습니다. HEAD는
+해당 프로젝트 파일이 없을 때만 Claude Code용 `CLAUDE.md`와 `.mcp.json`,
+Codex용 `AGENTS.md`, OpenCode용 `opencode.json`을 만듭니다. 기존 파일은
+보존하고 수동 통합용 생성 프로젝션은 `.head/generated/`에 둡니다.
+
+초기화 후 프로젝트에서 `claude` 또는 `opencode`를 시작하세요. Claude Code는
+공유 `head_core` 서버를 처음 사용할 때 프로젝트 MCP 승인을 요청합니다.
+런타임별 지시·설정 파일은 프로젝션일 뿐이며, HEAD 정본은 계속 `.head/`입니다.
+
+### 사용자 범위 CLI
+
+요구 사항은 최신 Node.js LTS와 Git 또는 다운로드한 소스 아카이브입니다.
+대상 프로젝트 내부의 Git, Go, GraphDB, 공급자 런타임은 선택 사항입니다.
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/binary1215/head-agent-plugin.git
+Set-Location .\head-agent-plugin
+.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
+
+head-agent --version
+head-agent doctor C:\path\to\project
+```
+
+macOS 또는 Linux:
+
+```bash
+git clone https://github.com/binary1215/head-agent-plugin.git
+cd head-agent-plugin
+./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
+
+head-agent --version
+head-agent doctor /path/to/project
+```
+
+설치 프로그램은 내용이 검증된 릴리스를 현재 사용자의 데이터 디렉터리에
+준비하고 `~/.local/bin`에 실행 파일을 만듭니다. 명시적인 `--project` 초기화
+단계 전에는 셸 프로필, Codex 캐시, 원격 GraphDB 또는 기존 프로젝트를
+수정하지 않습니다.
+
+## CLI, 자동화와 고급 설정
+
+일반 사용자는 위의 대화 우선 경로를 사용하면 됩니다. 아래 CLI는 스크립트, CI,
+오프라인 복구 또는 Host 연동에서 안내 대화 없이도 동일한 결정론적 Core 동작이
+필요할 때 사용하는 고급 표면입니다.
+
+기본 경로는 공급자 중립 HEAD 헌법과 고정 Project/Session 복구 앵커만
+초기화합니다.
+
+```powershell
+head-agent init C:\path\to\project --runtime claude,codex,opencode
+```
+
+이 경로는 저장소를 인덱싱하거나 Product, World Model, Graph, 문서 거버넌스를
+시작하지 않고 `core_ready`를 반환합니다. 같은 범위 제한 상태는 언제든 확인할
+수 있습니다.
+
+```powershell
+head-agent status C:\path\to\project
+```
+
+성공한 사람용 status 출력은 한 줄만 보여줍니다. 예외가 있을 때는 담당 주체,
+사유, 영향을 받는 작업과 다음 행동을 표시하며, `doctor` 또는 `--json`에서 Core,
+선택적인 Product 거버넌스, Context 준비도, 로드된/구성된 패키지 버전과 기술 세부
+정보를 확인할 수 있습니다. 구조화 투영은 `readiness.core`,
+`readiness.product`, `readiness.context`를 분리하고, 지금 수행할
+`nextAction` 하나와 실제 선행조건이 붙은 선택 기능 목록을 보여줍니다. 예를
+들어 Product는 `available-not-activated`, bounded worker는
+`requires-active-run-authorization`으로 표시됩니다. 이 결과는 저장되지 않는
+자문용 투영입니다. 읽는 것만으로 Product 활성화, Run 생성, 권한 부여 또는
+드리프트 복구가 일어나지 않습니다. `profile`도 숨은 프로젝트 모드가 아니라
+한 번의 초기화/재개 호출에서 선택하는 동작 범위입니다.
+
+최상위 상태는 바로 행동으로 연결됩니다. `core_ready`,
+`product_evidence_required`, `product_review_required`, `product_ready`,
+`product_refresh_required`, `core_drifted`를 사용하며, 세부 온보딩 상태는
+`readiness.product.onboardingStatus`에 그대로 남습니다.
+
+### 대화형 Context 준비와 미리보기
+
+대화에서는 사용자가 task를 한 번만 설명합니다. HEAD Skill이
+`head_context_prepare`를 호출하고, repository를 의미적으로 검사해 필요한
+`EvidenceNeed[]`를 작성한 뒤, 사용자가 내부 단계를 조작하지 않아도
+`head_context_preview`까지 이어갑니다. 선택적 World evidence가 없거나 stale이어도
+직접 작업은 막히지 않으며, 근거가 있는 budget 확장은 자동입니다.
+최종 preview는 종류별 포함 증거, 사유별 의도적 제외와 남은 불확실성을 하나의
+설명 카드로 제공합니다. 새 gate를 추가하지 않으며, 기계적 coverage는 Core가,
+의미적 충분성은 HEAD가 계속 담당합니다.
+
+자동화와 진단을 위해서는 같은 Core 동작을 CLI에서도 사용할 수 있습니다.
+
+```powershell
+head-agent context-prepare C:\path\to\project --task "<task>"
+```
+
+이 task-only 비영속 P4 projection은 현재 Project·World Model·GraphSnapshot
+binding, 제한된 lexical discovery material과 exact node identity를 반환합니다.
+사용자는 `EvidenceNeed[]`를 작성하지 않습니다. HEAD가 일반 semantic reasoning과
+repository inspection으로 구조화 proposal을 작성하고 기존 preview verifier에
+전달합니다. Core는 evidence kind나 anchor를 선택하지 않으며 lexical candidate
+view에 없다는 사실은 무관하다는 뜻이 아닙니다.
+
+Product/World가 활성화되지 않았다면 준비 결과는 `curated_only`를 반환하고 직접
+Core 작업을 기본 경로로 유지합니다. 재현 가능한 repository·Product·graph Capsule
+evidence를 사용할 수 없다는 점은 공개하지만, 일반 repository inspection은 계속
+가능합니다. HEAD 또는 사용자가 task에 해당 evidence가 필요하다고 판단한 뒤에만
+명시적 Product profile 진입점을 선택적 확장으로 제시하며, preparation이 저장소를
+자동으로 인덱싱하거나 활성화하지는 않습니다.
+
+고급 자동화에서는 HEAD가 작성한 structured input으로 preview를 직접 호출할 수
+있습니다.
+
+```powershell
+head-agent context-preview C:\path\to\project `
+  --task "재시도에서도 이 작업 문구를 정확히 유지" `
+  --budget 32768 `
+  --evidence-needs .\evidence-needs.json
+```
+
+CLI는 기본적으로 짧고 사람이 읽기 쉬운 결과를 보여줍니다. 전체 Capsule, identity,
+exclusion과 coverage proof가 필요하면 명령에 `--json`을 추가합니다.
+
+미리보기는 기존의 결정론적 Capsule 내용을 그대로 반환하면서, 작은 읽기 전용
+`workflow` 투영을 추가합니다. World Model이 current·미구축·stale 제외 중
+어느 상태인지, HEAD가 EvidenceNeed를 정의했는지, 실제 포함 coverage, 현재
+고정 예산 계층과 다음 행동 하나를 보여줍니다. 미리보기는 요청 계층에서
+시작하고, 일치 증거가 정확히 `context-budget` 때문에 제외된 경우에만 다음
+고정 계층으로 자동 재시도합니다. `workflow.budget.attempts`는 각 시도의
+계층·Capsule ID·coverage proof digest를 기록하고,
+`workflow.budget.attemptedTiers`는 시도한 계층을 요약합니다. 대표적인 최종
+상태는 다음과 같습니다.
+
+- `evidence_needs_unassessed`: HEAD가 작업에 필요한 증거 종류를 선택하거나
+  기계적 요구가 없다고 명시적으로 판단해야 합니다.
+- `world_evidence_unavailable` 또는 `world_refresh_required`: World 활성화,
+  인덱싱, 갱신은 별도의 명시적 동작으로 남습니다.
+- `evidence_gap_requires_head_action`: 증거 자체가 없으므로 더 큰 예산을
+  사용하지 않거나, 512K 하드 상한에서도 일치 증거가 모두 들어오지 않습니다.
+- `ready_for_head_semantic_assessment`: 포함 coverage는 완전하지만 의미적
+  충분성은 여전히 HEAD가 판단해야 합니다.
+
+준비 및 미리보기 안내 계층은 EvidenceNeed를 만들어내거나, World를 갱신하거나, 미리보기
+Capsule을 저장하거나, 실행 권한을 부여하거나, `coverage-complete`를 승인으로
+바꾸지 않습니다. 자동 확대는 32K·64K·128K·256K·512K 사이의 읽기 전용
+재시도일 뿐이며, 제공자 호출·무제한 컨텍스트 증가·충분성 판정이 아닙니다.
+재시도 사이의 정확한 task와 EvidenceNeed는 바뀌지 않습니다.
+
+### 대화 우선 경로
+
+번들로 제공되는 `head-agent-onboarding` Skill이 권장 대화형 진입점입니다.
+현재 상태를 검사하고, 저장소 범위나 저장소 모드처럼 중요한 선택만 질문하며,
+bounded current evidence를 의미적으로 분석한 뒤 Core 검증용 typed proposal을
+제출합니다. 그 결과인 evidence-linked candidate를 제시하고 Product Canon 변경 전에
+명시적인 검토를 사용합니다. 이 Skill은 `product` 프로필을 명시적으로 선택하며,
+provider proposal은 계속 P3 evidence입니다.
+
+### 선택적 Product 프로필 CLI 경로
+
+동일한 프로젝트 및 HEAD Session 식별자를 초기화하거나 재개합니다.
+
+```powershell
+head-agent init C:\path\to\project --runtime claude,codex,opencode --profile product
+head-agent onboarding-status C:\path\to\project
+```
+
+structured user brief가 없으면 처음 실행은 의도적으로 `awaiting-evidence`를 반환합니다.
+Core는 symbol에서 product concept를 만들어 내지 않습니다. 대화 Skill은 보통 fresh
+semantic proposal을 제출하며, CLI 사용자는 동일한 `semanticProposal`을 `--input`에
+넣을 수 있습니다. Core가 정확한 SourceSnapshot, path, line, optional symbol과 Product
+Model reference를 검증한 뒤 immutable candidate-set ID가 반환됩니다. 검토 전에 내용을 확인하세요.
+
+```powershell
+$onboarding = head-agent onboarding-status C:\path\to\project | ConvertFrom-Json
+head-agent onboarding-candidates C:\path\to\project `
+  --candidate-set $onboarding.state.candidateSetId
+```
+
+증거를 검토한 뒤에만 `onboarding-review.json`을 만드세요. 아래의 간단한
+예시는 전체 부트스트랩 후보를 승인합니다. 이름 변경, 분리, 병합 또는 제외할
+후보가 있다면 선택 승인이나 수정이 더 안전합니다.
+
+```json
+{
+  "candidateSetId": "onboarding-candidates-<id>",
+  "disposition": "accept-all",
+  "rationale": "증거가 연결된 모든 후보를 검토했으며 이 부트스트랩 후보 집합을 채택합니다."
+}
+```
+
+결정을 적용하고 생성된 뷰를 검증합니다.
+
+```powershell
+head-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
+head-agent world-status C:\path\to\project
+head-agent context-preview C:\path\to\project `
+  --task "검토된 Feature 하나의 구현 증거 찾기" --budget 32768
+head-agent world-docs-build C:\path\to\project
+head-agent resume C:\path\to\project --runtime claude,codex,opencode --profile product
+```
+
+`accept-all`은 전체 후보를 직접 확인한 경우 사용할 수 있지만 기본 권장
+방식은 아닙니다. 검토에서는 의존성이 완전한 일부 후보를 승인하거나, 후보
+집합을 수정·거부하거나, 추가 증거를 요청하거나, 미해결 개념을 명시적인
+Unknown으로 남길 수 있습니다. 전체 계약은
+[온보딩 문서](docs/ko/onboarding.md)를 참고하세요.
+
+### 소스 범위
+
+생성 결과물, 벤더 의존성, 복사된 프로젝트, 대형 픽스처 또는 모델 번들이
+포함된 저장소에서는 첫 인덱싱 전에 프로젝트 기준 관찰 경계를 정의하세요.
+
+```json
+{
+  "mode": "existing",
+  "sourceScope": {
+    "includeRoots": ["src", "packages"],
+    "excludeRoots": ["dist", "vendor", "generated", "fixtures"]
+  }
+}
+```
+
+`head-agent init ... --profile product --input .\onboarding.json`으로 전달합니다. Source Scope는
+관찰 범위만 제어합니다. Product Canon을 정의하거나 후보를 승인하거나 실행
+권한을 부여할 수 없습니다.
+
+## 핵심 모델
+
+HEAD는 의미, 복구, 증거, 뷰, 효과를 분리하여 하나의 표현이 다른 표현의
+권한을 상속하지 못하게 합니다.
+
+| 평면 | 소유 대상 | 예시 | 부여하지 않는 권한 |
+| --- | --- | --- | --- |
+| P1 규범적 권한 | 승인된 의미와 명시적 결정 | Product Canon, ReviewDecision | 그래프·결과·메시지에서 승인을 추론하는 권한 |
+| P2 복구와 계보 | 공급자와 독립적인 프로젝트 방향 | Session, Run, 계획, Capsule, 계약, 체크포인트 | 요약이나 결과로 방향을 다시 쓰는 권한 |
+| P3 증거 | 검토 가능한 관찰과 결과 | 후보, ResultPacket, ChangeSet, 영수증 | 자기 승격이나 체크포인트 작성 권한 |
+| P4 파생 뷰 | 재현 가능한 검색 및 사람용 뷰 | GraphSnapshot, 탐색 결과, Markdown, 연속성 뷰 | Canon 변경이나 유일한 복구 원천이 될 권한 |
+| P5 운영 효과 | 호스트 로컬 실행과 전달 | PID, 임대, 엔드포인트, 받은 편지함, 전달 영수증 | 실행·검토·승격·복구 권한 |
+
+배포와 호스트 통합은 이 계약을 패키징하거나 실행할 뿐, 제품 의미의 여섯
+번째 원천이 되지 않습니다. 전체 실행 가능 경계는
+[권한 평면 문서](docs/ko/authority-plane-contract.md)에 설명되어 있습니다.
+
+더 작은 규범적 뿌리와 Record/Graph의 공식 경계는
+[공급자 중립 HEAD 헌법](docs/ko/head-constitution.md)에 설명되어 있습니다.
+
+### 아키텍처 개요
+
+```mermaid
+flowchart LR
+    U[사용자 목표] --> H[전체 계획을 소유하는 HEAD]
+    PC[Product Canon] --> WM[World Model + GraphSnapshot]
+    RE[저장소 증거] --> WM
+    H --> CC[Context Compiler]
+    WM -->|범위가 제한된 증거| CC
+    CC --> RA[Runtime adapter]
+    RA --> RP[ResultPacket]
+    RP --> FR[Fresh HEAD 검토]
+    WM --> PX[Local / ArcadeDB / Markdown 프로젝션]
+```
+
+피드백 경로도 명시적입니다. 승인된 결과는 검토된 계보가 될 수 있고,
+저장소를 다시 인덱싱할 수 있으며, 이후 그래프가 그 증거를 투영할 수
+있습니다. 결과, 프로젝션 또는 런타임 효과가 스스로를 승인할 수는 없습니다.
+
+### HEAD가 의미를 판단하고 Compiler가 포함을 증명하는 컨텍스트
+
+Context Compiler는 명시적인 예산 안에서 작업과 관련된 증거를 선택합니다.
+포함·제외·오래됨·누락·잘림·미확인 항목을 기록합니다. 동일한 정본 입력,
+컴파일러 버전, 탐색 정책, 예산은 동일한 Context Capsule을 재현합니다.
+
+예산은 결정론적인 근사 토큰 계층 다섯 개만 사용합니다. `32768`(기본값),
+`65536`, `131072`, `262144`, `524288`(하드 상한)입니다. 읽기 전용
+미리보기는 32K에서 시작하고, HEAD가 정의한 미충족 need의 일치 증거가
+`context-budget` 때문에 제외된 동안에만 다음 계층으로 자동 확대합니다.
+직접 컴파일과 Capsule 저장은 여전히 하나의 명시적 계층을 사용하며 512K를
+넘지 않습니다. 현재 값은 UTF-16 코드 단위 수를 4로 나눈 근사치이므로,
+실제 호출 전에는 런타임 어댑터가 제공자의 토크나이저, 컨텍스트 창,
+출력 예약분을 별도로 확인해야 합니다.
+
+현재 작업에 실제로 필요한 증거는 HEAD가 정합니다. HEAD는 source 또는 test
+증거에는 정확한 repository `paths`, Product Context에는 정확한 Product Canon
+`entityKeys`, 그 밖에는 특정 graph relation과 현재 exact `graphAnchor` node ID 및 traversal bound를 task-local `EvidenceNeed[]`로 지정할 수 있습니다. stale, cross-project, hidden-candidate, tampered 또는 확대된 graph anchor는 fail closed됩니다. Compiler는 모든 작업에 test를 일률적으로 요구하거나 단어 overlap으로 의미를 추론하지 않으며, 일치하는 증거가 실제 Capsule에 포함됐는지만
+`coverageAssessment`로 재현 가능하게 증명합니다. 이후 ExecutionContract가
+정확한 need-set 및 coverage-proof digest와 함께 HEAD의 별도 의미적 수용을
+기록합니다.
+
+Capsule은 파생된 실행 입력이지 두 번째 Canon이 아닙니다. 다이제스트 또는
+Canon 드리프트는 실패 폐쇄되며, 단순한 읽기·추론 작업은 기본적으로
+Capsule을 만들지 않습니다.
+
+### 실행과 복구
+
+중요한 실행은 지속 가능하고 검토 가능한 순서를 따릅니다.
+
+```text
+WholePlanSnapshot
+  → ExecutionContract + ContextCapsule
+  → 런타임 또는 범위가 제한된 워커
+  → ResultPacket
+  → Fresh HEAD ReviewDecision
+  → 승인된 계보 또는 수정된 계획
+```
+
+공급자 손실 시 대화 기록을 가져올 필요가 없습니다. `session-restore`는 정확한
+P2 체크포인트와 검증된 계보에서 현재 입력을 재구성합니다. 결과가 승인된
+뒤에도 `run-integrate-checkpoint`는 HEAD 또는 사용자가 복구 필드를 명시적으로
+제공한 경우에만 그 검토를 새 체크포인트와 연결할 수 있습니다.
+
+의도적인 컨텍스트 압축도 내부적으로 같은 경계를 사용합니다.
+
+1. provider HEAD가 compaction 전에 정확한 P2 방향을 작성하거나 재사용합니다.
+2. provider-neutral Host adapter가 일회용 transport token을 project Canon 밖에
+   보관하고 provider 소유의 compaction을 수행합니다.
+3. Core는 P2를 먼저 복원한 다음 신뢰할 수 있는 실제 사용자 turn 증거를
+   검사하고 drift, 불확실한 replay 또는 summary 기반 복구를 거부합니다.
+4. Host가 checkpoint-bound continuation을 최대 한 번 제출하거나, HEAD가
+   검증된 artifact에서 명시적으로 새로운 논리적 HEAD로 계속합니다.
+
+일반 UX에서는 task를 계속 말하면 됩니다. Skill은 읽기 전용
+`head_conversation_enter`를 자동 진입 projection으로 사용하고, `compact-*`와
+`head_compaction_lifecycle_step`은 고급 adapter 및 진단 surface로 남습니다.
+Host hook이 없어도 설정 gate가 생기지 않으며 일반 작업을 막지 않습니다.
+
+더 새로운 실제 사용자 턴은 대기 중인 연속성보다 우선합니다. 자세한 내용은
+[컨텍스트 압축 복구](docs/ko/compaction-recovery.md)와
+[Session 복구](docs/ko/session-recovery.md)를 참고하세요.
+
+### 제품 학습
+
+일상적인 관찰은 지속하지 않는 메모로 남길 수 있습니다. 다른 Run, 감사,
+제품 상태 전이 또는 인수인계에서 필요한 경우에만 영구 아티팩트를 만듭니다.
+
+```text
+Signal → Hypothesis → Initiative 후보 → 사용자 ReviewDecision
+       → 검토된 Initiative → 승인된 실행 → OutcomeObservation
+```
+
+이 흐름은 하나의 자동 승격 사슬이 아닙니다. 증거는 증거로, 가설은 가설로
+남고, 검토된 Initiative도 Product Canon과 구분됩니다.
+`head-agent operating-lane-recommend`는 권한을 만들지 않으면서 가장 가벼운
+안전 경로를 제안할 수 있습니다.
+
+- Observe: 읽기와 추론 작업
+- Session: 하나의 범위가 제한된 가역적 결과
+- Run: 서로 의존하거나 복구 민감한 작업
+- Authority: Canon, Initiative 결정, 외부 쓰기, 자격 증명 또는 복구 정본 변경
+
+자세한 내용은 [Product Operating Loop](docs/ko/product-operating-loop.md)를
+참고하세요.
+Git ref 및 배포 배관은 [Release observation](docs/ko/release-observation.md)에
+설명되어 있습니다.
+
+## 그래프와 기록
+
+`GraphSnapshot`은 검증된 하나의 Repository World Model에 포함된 변경 불가능한
+콘텐츠 주소 기반 증거 그래프입니다. 그래프 UI의 스크린샷, 데이터베이스
+백업, 변경 가능한 최신 노드 집합이 아닙니다. 동일한 검증 입력은 동일한
+`graphSnapshotId`를 생성하고, 의미가 달라지면 명시적인 계보를 가진 새
+스냅샷이 생성됩니다.
+
+`head_world_model`은 전체 모델과 현재 저장소를 빠짐없이 검증한 뒤, 전체
+스냅샷 대신 크기가 제한된 상태 프로젝션을 반환합니다. 카운트, ID, digest,
+표본, 생략 정보는 유지하며 더 자세한 내용은 범위가 제한된 그래프·히스토리·
+런타임·시맨틱 질의 도구로 확인합니다. 따라서 freshness나 digest 계산을
+생략하지 않고 MCP 응답만 작게 유지합니다.
+
+```mermaid
+flowchart LR
+    C[Product Canon] <-->|검토된 의미| F[Features]
+    F <-->|구현 / 검증| S[코드와 테스트]
+    S <-->|리비전| CH[ChangeSets]
+    CH <-->|결과 / 검토| E[실행 계보]
+```
+
+원시 프롬프트는 이 그래프 밖에 남습니다. 제품 의미는 검토된 Canon
+아티팩트를 통해서만 들어옵니다. 후보 노드는 명시적으로 검사할 수 있지만
+기본 탐색과 Context 컴파일에서는 제외됩니다.
+
+공통 Observation의 정확한 descriptor·receipt·derivation 계보도 동일한 temporal
+graph에 들어갑니다. ProductHypothesis는 정확한 Observation을 가리킬 수 있지만,
+그 edge는 측정 데이터를 제품 진실로 승격하지 않고 hypothesis의 evidence로만
+남습니다. Observation 저장소가 손상되면 그 graph layer만 unavailable로
+표시되고 관련 없는 product 작업은 계속할 수 있습니다.
+
+source relation은 제품 의미가 아니라 structural evidence입니다. 기본 heuristic
+import/call graph는 유지되고, 선택적인 provider-neutral 언어 AST adapter가 현재
+file manifest에 결속된 별도 label의 evidence를 추가할 수 있습니다. 어느 source도
+다른 source를 조용히 덮어쓰지 않으며 decision을 승인할 수 없습니다.
+
+### 그래프와 기록의 경계
+
+방향은 의도적으로 단방향입니다.
+
+```text
+P1 Product Canon + 관찰된 소스 + 검증된 P2/P3 기록
+  → 복구 가능한 GraphSnapshot을 포함한 P4 Repository World Model
+      → 교체 가능한 그래프 구체화: local JSON / 선택적 ArcadeDB
+      → 교체 가능한 사람용 프로젝션: Markdown
+```
+
+그래프는 탐색을 소유하지만 의미나 복구 방향을 소유하지 않습니다. GraphDB나
+생성된 Markdown을 삭제해도 Product Canon, Session/Run 복구, 검토 계보는
+남아야 합니다. 오래되거나 변조되거나 의미적으로 달라진 프로젝션은 그래프를
+재정의하지 않고 실패 폐쇄됩니다.
+
+### 그래프 질의
+
+```powershell
+head-agent world-status C:\path\to\project
+head-agent world-temporal C:\path\to\project `
+  --query "<Feature, symbol, path, ChangeSet, or ReviewDecision>" `
+  --depth 3 --limit 100 --edge-limit 200
+head-agent graph-lineage-status C:\path\to\project
+head-agent graph-lineage-trace C:\path\to\project --anchor <exact-node-id>
+head-agent graph-lineage-diff C:\path\to\project `
+  --from <older-world-model-id> --to <newer-world-model-id>
+head-agent context-preview C:\path\to\project --task "<task>" --budget 32768
+```
+
+탐색 결과는 스냅샷, 질의, 결과 식별자와 포함·제외·잘림 이유를 함께
+반환합니다. 내장 그래프, local JSON, 활성화된 ArcadeDB 백엔드는 동일한
+의미 결과를 보존해야 합니다.
+
+lineage 명령은 보존된 content-addressed World snapshot을 재사용하며 별도의
+history stream을 만들지 않습니다. Hot/Warm/Cold status, trace, execution
+overlay, diff는 모두 비지속 P4 view입니다. exact-content file move도 possible
+move로만 보고하며 semantic identity를 자동으로 단정하지 않습니다.
+
+## 런타임과 역할 통신
+
+Claude Code, Codex, OpenCode는 하나의 `.head/` 권한을 공유하는 프로젝션입니다. 런타임
+어댑터는 기능을 관찰하고, 정확한 권한을 최대 한 번 소비하며, 소유한 프로세스
+트리를 감독하고, 구조화된 출력을 검증하고, 운영 상태를 프로젝트 밖에
+보관합니다.
+
+역할 통신 표면은 의도적으로 작습니다. 보내기, 받은 편지함 읽기, 제한된
+답장 대기, 변경 불가능한 답장만 제공합니다. 신뢰된 호스트가 각 엔드포인트를
+하나의 프로젝트 역할에 연결하며, 호출자가 자신의 발신자 역할을 주장할 수
+없습니다. 메시지와 전달 영수증은 증거일 뿐 ReviewDecision을 생성하거나,
+계약을 확장하거나, Product Canon을 변경하거나, 복구 방향을 다시 쓸 수
+없습니다.
+
+호스트별 pane, socket, CLI, UI 동작은 별도로 소유되는 선택적 어댑터에
+속합니다. Core는 공급자 중립적인 엔드포인트, 프로젝트 루트, 최신 스냅샷,
+증명, 승인 응답, 정리 경계를 유지합니다. 일반적인 공급자 resume과 stream은
+여전히 보류되어 있습니다. 자세한 내용은
+[런타임 어댑터](docs/ko/runtime-adapters.md)와
+[역할 통신](docs/ko/role-coordination.md)을 참고하세요.
+
+## 선택적 GraphDB
+
+로컬 저장소가 안전한 기본값입니다. 온보딩, 컨텍스트 컴파일, 실행 계보 또는
+복구에 GraphDB가 필요하지 않습니다.
+
+ArcadeDB는 파생 그래프 프로젝션으로 명시적으로 활성화할 수 있습니다. 자격
+증명은 환경 변수 참조를 통해서만 해석되며 프로젝트 아티팩트, 그래프 식별자,
+생성 문서 또는 영수증에 들어가지 않습니다. 원격 활성화는 복구 가능한 내장
+그래프와 의미적으로 동일함을 증명해야 합니다.
+
+JavaScript 브리지가 의미적 기준 구현입니다. 검증된 네이티브 패키지가 있으면
+읽기 전용 준비 질의가 콘텐츠 주소 기반 Go query-batch 브리지를 사용할 수
+있습니다. 이 경우에도 JavaScript가 포인터, 토폴로지, 탐색 결과, 요청 연결,
+영수증을 검증합니다. `HEAD_AGENT_ARCADEDB_NATIVE_MODE`는 다음 중 하나로
+설정합니다.
+
+- `auto`: 검증된 네이티브 브리지가 있으면 사용하고, 없으면 이를 알린 뒤
+  JavaScript 기준 경로를 사용합니다.
+- `off`: 항상 JavaScript 경로를 사용합니다.
+- `required`: 검증된 네이티브 경로를 사용할 수 없으면 실패합니다.
+
+매니페스트, 바이너리, 선택 후 다이제스트가 일치하지 않으면 항상 실패
+폐쇄됩니다. 정확한 자식 프로세스에는 설정된 자격 증명 참조 변수와 제한된
+OS, TLS, 로캘, 프록시 허용 목록만 전달됩니다. 계산 워커 자체는 네트워크와
+권한을 갖지 않습니다. 자세한 내용은
+[그래프 프로젝션 어댑터](docs/ko/graph-projection-adapter.md)를 참고하세요.
+
+## 설치 수명주기
+
+### 네이티브 패키지
+
+사용자 범위 설치와 업그레이드는 기본적으로 `--native auto`를 사용합니다.
+설치 프로그램은 정확한 버전과 플랫폼 패키지를 선택하고 릴리스 체크섬,
+아카이브 경로, 빌드 메타데이터, 네이티브 매니페스트를 검증한 뒤 바이너리를
+릴리스 식별자에 포함합니다. JavaScript 전용 설치에는 `--native off`, 폴백을
+허용할 수 없는 경우에는 `--native required`를 사용하세요.
+
+Codex와 Claude 마켓플레이스 스냅샷에는 지원되는 다섯 타깃의 동일한 검증
+패키지가 포함되므로 설치 중 별도 다운로드가 필요하지 않습니다. 타깃 누락,
+서로 다른 빌드 커밋 혼합, 매니페스트 또는 다이제스트 불일치는 마켓플레이스
+게시를 중단시킵니다.
+
+네이티브 구성 요소는 무권한 계산, 소유 프로세스 감독, 읽기 전용 ArcadeDB
+배치에 대해 서로 다른 계약을 가집니다. 어떤 구성 요소를 설치해도 Product
+Canon, 그래프 식별자, 검토 권한 또는 계보는 변경되지 않습니다.
+
+### 상태, 업그레이드, 롤백, 제거
+
+새로 다운로드한 소스 트리에서 수명주기 명령을 실행합니다.
+
+```powershell
+node .\scripts\distribution.mjs upgrade
+node .\scripts\distribution.mjs status
+node .\scripts\distribution.mjs rollback
+node .\scripts\distribution.mjs uninstall
+```
+
+업그레이드는 활성 포인터를 교체하기 전에 변경 불가능한 릴리스를 준비하고
+검증합니다. 일반 제거는 실행 파일과 활성 포인터를 삭제하지만 복구를 위해
+검증된 릴리스를 보존합니다. `uninstall --purge`는 사용자 범위 릴리스 저장소도
+제거합니다. 어느 방식도 프로젝트의 `.head` 상태, Git 데이터, 생성된 프로젝트
+문서 또는 GraphDB 데이터를 순회하거나 삭제하지 않습니다.
+
+공급자 설정과 인증은 Claude Code, Codex 또는 OpenCode가 계속 소유합니다.
+HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정보 오버레이만
+전달합니다. 공급자 프리셋을 설치하거나, 자격 증명을 복사하거나,
+엔드포인트를 다시 쓰지 않습니다.
+
+## 기능 현황
+
+상태 표시는 증거에 기반한 주장이지 로드맵 약속이 아닙니다.
+
+- **사용 가능**: 현재 소스 배포판에 구현됨
+- **실험적**: 명시적이거나 제한된 활성화 경로 뒤에 구현됨
+- **계획됨**: 방향은 채택했지만 아직 배포되지 않음
+- **보류됨**: 현재 마일스톤 범위에서 의도적으로 제외됨
+
+| 영역 | 기능 | 상태 |
+| --- | --- | --- |
+| 프로젝트 | 초기화, Source Scope, 검토를 거치는 Product Canon | **사용 가능** |
+| 지식 | World Model, 증분 갱신, Context Capsule | **사용 가능** |
+| 계보 | Run, ResultPacket, Fresh HEAD 검토, P2 Session 및 대화 진입 복구 | **사용 가능** |
+| Host lifecycle | 공급자 중립 주입형 compaction 계약 | **실험적** |
+| Host lifecycle | 패키지에 연결된 Claude Code, Codex, OpenCode compaction event binding | **보류됨** |
+| 런타임 | Claude Code, Codex, OpenCode 일회성 Session/Run 실행 | **사용 가능** |
+| 런타임 증거 | 세 런타임 결정론적 fixture 및 로컬 CLI 기능 probe | **사용 가능** |
+| 런타임 증거 | Claude Code 실제 모델 호출 적합성 | **실험적** |
+| 릴리스 증거 | 공급자 중립 Git ref, deployment-result 및 release observation | **사용 가능** |
+| 공통 관측 | 기존 exact evidence 우선 준비, Host source 페이지 탐색, opaque ID 수집 | **사용 가능** |
+| 워커 | 범위가 제한된 전달, 대기, 결과, 검토, 통합 | **사용 가능** |
+| 역할 통신 | 지속 가능한 역할 메시징과 정확한 엔드포인트 전달 | **사용 가능** |
+| 프로젝션 | 로컬 그래프와 Markdown | **사용 가능** |
+| 프로젝션 | ArcadeDB | **실험적** |
+| 배포 | 사용자 범위 설치, 네이티브 전달, 롤백, 안전한 제거 | **사용 가능** |
+| 배포 | 검증된 Git 기반 Codex 마켓플레이스 | **사용 가능** |
+| 배포 | 검증된 Git 기반 Claude Code 마켓플레이스 | **사용 가능** |
+| 배포 | OpenAI 범용 플러그인 디렉터리 | **계획됨** |
+| 런타임 | 일반 공급자 세션 resume과 stream | **보류됨** |
+| 문서 | Obsidian 및 Notion 어댑터 | **보류됨** |
+
+정확한 주장과 승인 증거는 이 요약에서 추론하지 말고 하위 시스템 문서와
+소스 검증을 사용하세요.
+
+## 설계 원칙
+
+HEAD Agent Core Plugin은
+[Won6314/head-agent-core](https://github.com/Won6314/head-agent-core)에서
+영감을 받아 공급자 중립적인 플러그인으로 독립 재구성한 프로젝트입니다.
+공식 업스트림 릴리스나 드롭인 대체재가 아닙니다. 자세한 내용은
+[소스 기반 비교 문서](docs/ko/original-head-core-comparison.md)를 참고하세요.
+
+이 구현은 HEAD의 기반 원칙을 유지하면서 공급자 중립적인 계약으로
+표현합니다.
+
+- HEAD는 연결된 전체 결과를 소유합니다.
+- 사용자는 중요한 결정 권한을 유지합니다.
+- 의미적 충분성은 HEAD가 판단하며, 최대 컨텍스트보다 bounded verified context를 우선합니다.
+- 지속 가능한 Canon은 임시 모델 세션보다 오래 유지됩니다.
+- 위임은 범위가 제한되며 권한을 획득하지 않습니다.
+- 완료 판단에는 연결된 1차 증거가 필요합니다.
+- 그래프는 의심하지 않는 권위가 아니라 검색 인덱스입니다.
+- 프로젝트 의미는 런타임 메커니즘과 분리됩니다.
+
+원래 설계 맥락은 업스트림
+[Foundations](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/FOUNDATIONS.md)와
+[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/TECHNICAL_ARCHITECTURE.md)를
+참고하세요.
+
+## 문서
+
+[전체 영문 문서 색인](docs/README.md)과 [전체 한국어 문서 색인](docs/ko/README.md)을
+제공합니다. 모든 공개 영문 하위 시스템 문서에는 한국어 대응본이 있으며, 코드,
+명령 이름, 프로토콜 식별자, 아티팩트 필드 이름은 두 언어에서 동일하게 유지합니다.
+
+다음 문서부터 살펴보세요.
+
+- [아키텍처](docs/ko/architecture.md): 공급자 중립적 구성
+- [권한 평면](docs/ko/authority-plane-contract.md): 실행 가능한 Graph/record 및
+  권한 비증폭 계약
+- [온보딩](docs/ko/onboarding.md): HEAD semantic proposal, Core 검증과 명시적 검토
+- [Context Compiler](docs/ko/context-compiler.md): 재현 가능한 작업 컨텍스트
+- [실행 계보](docs/ko/execution-lineage.md): 계획, 계약, 결과, 검토, 복구
+- [World Model](docs/ko/world-model.md): 소스 증거와 그래프 구성
+- [런타임 어댑터](docs/ko/runtime-adapters.md): 기능, 호출, 프로세스 소유권
+- [성능 fast path](docs/ko/performance-fast-path-design.md): 의미 또는 권한을
+  생략하지 않는 최적화
+
+추가 참고 문서:
+
+- [Product Model](docs/ko/product-model.md)
+- [Product Operating Loop](docs/ko/product-operating-loop.md)
+- [Release observation](docs/ko/release-observation.md)
+- [공통 Observation 계약](docs/ko/observation-adapters.md)
+- [비차단 Conformance 재정](docs/ko/conformance-reconciliation.md)
+- [증분 갱신](docs/ko/incremental-refresh.md)
+- [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)
+- [Session 복구](docs/ko/session-recovery.md)
+- [역할 통신](docs/ko/role-coordination.md)
+- [그래프 프로젝션 어댑터](docs/ko/graph-projection-adapter.md)
+- [문서 프로젝션 어댑터](docs/ko/document-projection-adapter.md)
+- [Codex 마켓플레이스 배포](docs/ko/codex-marketplace.md)
+- [Claude Code 마켓플레이스 배포](docs/ko/claude-marketplace.md)
+
+설치된 동작은 이 런타임 계약, 대상 프로젝트의 사용자 소유 Canon, 현재
+Session/Run 복구 상태, 명시적인 ReviewDecision의 지배를 받습니다. 저장소
+개발 이력, 벤치마크 픽스처, 유지관리자 마일스톤은 플러그인에 관한 증거이지,
+이 플러그인을 사용하는 프로젝트의 지침이 아닙니다.
+
+## 소스에서 검증
+
+Core는 신뢰하는 로컬 호출자가 전달한 결정의 정확한 대상과 허용된 전이를
+검증합니다. Host와 HEAD는 실제 사용자 승인을 전달해야 하며, digest와
+확인 플래그 자체가 사람의 의사를 인증하지는 않습니다.
+
+Fixture 테스트는 재현성과 상태 전이를 입증합니다. HEAD의 증거 발견률이나
+전체 코딩 작업의 정확성을 입증하지는 않습니다.
+[검증 증거와 로컬 진단](docs/ko/verification-evidence.md)을 참고하세요.
+
+```powershell
+npm test
+npm run verify:newcomer
+npm run verify:distribution
+npm run verify:codex-marketplace
+npm run verify:claude-marketplace
+```
+
+네이티브 소스는 해당 모듈 디렉터리에서 `go test ./...`와 `go vet ./...`도
+지원합니다. JavaScript는 의미적 기준 구현으로 유지됩니다. 네이티브
+백엔드는 픽스처 기반 적합성 검사와 무결성 검증을 통과한 뒤에만 사용 가능한
+기능으로 표시됩니다.
+
+## 상태와 라이선스
+
+HEAD Agent Core Plugin은 베타 소프트웨어입니다. 공급자 중립 헌법 Core, 복구,
+Context Compiler, 실행 계보, 로컬 프로젝션, bounded worker, 검증된 Codex/Claude
+배포는 더 넓은 사용자의 테스트를 받을 준비가 됐습니다. 위 표에서 실험적,
+계획됨 또는 보류됨으로 표시한 기능은 이 베타 판정의 범위에 포함되지 않습니다.
+
+이 프로젝트는 [MIT License](LICENSE)로 배포됩니다.

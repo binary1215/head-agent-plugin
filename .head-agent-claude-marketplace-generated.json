@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "0.1.0",
+  "kind": "HeadAgentClaudeMarketplaceSnapshot",
+  "marketplaceName": "head-agent-plugin",
+  "pluginName": "head-agent-core",
+  "pluginVersion": "0.3.0-beta.12+codex.20260905144828",
+  "sourceDistributionReleaseId": "release-d6b231c418403694c4fe29c9",
+  "sourceRepository": "binary1215/head-agent-plugin",
+  "sourceCommit": "79e803dcc5ed8b485d636eabac3b6a8ec09ecb0a",
+  "projectionContentDigest": "5d25cae471632c8c974c4b129a0a9192da5d2886dfb39329f087d0fc0ec0b89b",
+  "authorityEffect": "none",
+  "snapshotId": "claude-marketplace-9af801258f644d5cab50c845"
+}
