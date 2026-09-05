@@ -41,6 +41,16 @@ merely by referencing or storing the decision.
 
 ## Non-amplification
 
+The approval boundary trusts the local caller to convey an actual user decision.
+Core verifies the exact target, disposition, digests, and permitted transition;
+it does not authenticate a human merely because a request names the user or sets
+a confirmation flag. The Host and provider HEAD must connect the user's current
+decision to the unchanged candidate before calling the protected mutation.
+Tool annotations describe effects, not approval. A Host that needs stronger
+authentication can check its own user-action receipt before calling Core; such
+receipts and provider identities stay at the Host boundary. Ordinary work does
+not acquire an additional approval step.
+
 Authority may not move upward merely because one plane points at another. A
 P3 candidate may affect P1 only through an explicit, verified ReviewDecision and
 the exact reviewed mutation operation. A P4 graph write is fenced by exact Product

@@ -901,6 +901,14 @@ for a project using it.
 
 ## Verify from source
 
+Core verifies the exact target and permitted transition of a decision supplied
+by a trusted local caller. The Host and HEAD must convey the user's actual
+approval; digests and confirmation flags do not authenticate a human.
+
+Fixture tests establish reproducibility and transition behavior. They do not
+establish HEAD's evidence-discovery rate or end-to-end coding accuracy.
+See [verification evidence and local diagnostics](docs/verification-evidence.md).
+
 ```powershell
 npm test
 npm run verify:newcomer

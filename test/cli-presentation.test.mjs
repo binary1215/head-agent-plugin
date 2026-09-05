@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { tools, dispatch } from "../scripts/mcp-server.mjs";
 import {
   formatConformanceFinding,
   formatConformanceQueue,
@@ -18,6 +19,18 @@ const authority = {
   consumesContinuation: false,
   attachesProvider: false,
 };
+
+test("MCP discovery discloses every operation effect without granting approval", async () => {
+  for (const tool of tools) assert.equal(typeof tool.annotations?.readOnlyHint, "boolean", tool.name);
+  for (const name of ["head_graph_lineage_status", "head_graph_lineage_trace", "head_graph_lineage_diff", "head_conversation_enter"]) {
+    assert.equal(tools.find((tool) => tool.name === name).annotations.readOnlyHint, true);
+  }
+  for (const name of ["head_onboarding_review", "head_compact_prepare", "head_compact_verify", "head_compact_continue"]) {
+    assert.equal(tools.find((tool) => tool.name === name).annotations.readOnlyHint, false);
+  }
+  const response = await dispatch({ jsonrpc: "2.0", id: "effects", method: "tools/list" });
+  assert.deepEqual(response.result.tools, tools);
+});
 
 function projectExperience({ recoveryState = "no-current-checkpoint", recoveryAttention = false, productState = "not_activated" } = {}) {
   return {

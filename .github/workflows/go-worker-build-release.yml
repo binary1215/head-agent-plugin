@@ -7,158 +7,40 @@ on:
     tags:
       - "v*"
     paths:
-      - "native/head-agent-worker/**"
-      - "scripts/generate-go-worker-manifest.mjs"
-      - "scripts/generate-process-supervisor-manifest.mjs"
-      - "scripts/generate-arcadedb-native-bridge-manifest.mjs"
-      - "scripts/lib/compute-adapter.mjs"
-      - "scripts/lib/go-worker-adapter.mjs"
-      - "scripts/lib/repository-scan.mjs"
-      - "scripts/lib/repository-source-scope.mjs"
-      - "scripts/lib/source-analysis.mjs"
-      - "scripts/lib/context-compiler.mjs"
-      - "scripts/lib/head-core.mjs"
-      - "scripts/lib/onboarding-contract.mjs"
-      - "scripts/lib/onboarding.mjs"
-      - "scripts/lib/onboarding-projection.mjs"
-      - "scripts/lib/onboarding-conversation.mjs"
-      - "scripts/lib/product-model.mjs"
-      - "scripts/lib/temporal-provenance.mjs"
-      - "scripts/lib/world-model.mjs"
-      - "scripts/lib/graph-projection-adapter.mjs"
-      - "scripts/lib/arcadedb-incremental-sync.mjs"
-      - "scripts/lib/graphdb-projection-activation.mjs"
-      - "scripts/lib/arcadedb-database-lifecycle.mjs"
-      - "scripts/lib/arcadedb-http-bridge.mjs"
-      - "scripts/lib/arcadedb-native-bridge.mjs"
-      - "scripts/lib/prepared-traversal-benchmark.mjs"
-      - "scripts/lib/runtime-adapter.mjs"
-      - "scripts/lib/runtime-machine-discovery.mjs"
-      - "scripts/lib/runtime-machine-execution.mjs"
-      - "scripts/lib/runtime-protocol-evidence.mjs"
-      - "scripts/lib/runtime-invocation-lifecycle.mjs"
-      - "scripts/lib/runtime-execution-lease.mjs"
-      - "scripts/lib/runtime-process-supervisor.mjs"
-      - "scripts/lib/runtime-codex-exec.mjs"
-      - "scripts/lib/runtime-opencode-run.mjs"
-      - "scripts/lib/runtime-one-shot-exec.mjs"
-      - "scripts/lib/runtime-supervised-one-shot.mjs"
-      - "scripts/lib/distribution-lifecycle.mjs"
-      - "scripts/lib/codex-marketplace.mjs"
-      - "scripts/lib/claude-marketplace.mjs"
-      - "scripts/lib/native-artifact-delivery.mjs"
-      - "scripts/distribution.mjs"
-      - "scripts/assemble-native-bundle.mjs"
-      - "scripts/build-codex-marketplace.mjs"
-      - "scripts/verify-codex-marketplace.mjs"
-      - "scripts/build-claude-marketplace.mjs"
-      - "scripts/verify-claude-marketplace.mjs"
-      - "scripts/verify-distribution-lifecycle.mjs"
-      - "scripts/verify-native-artifact-delivery.mjs"
-      - "scripts/verify-newcomer-readme.mjs"
-      - "scripts/benchmark-prepared-traversal.mjs"
-      - "scripts/benchmark-arcadedb-query-batch.mjs"
-      - "scripts/fixtures/arcadedb-query-batch-server.mjs"
-      - "scripts/verify-runtime-adapters.mjs"
-      - "scripts/verify-runtime-invocation-lifecycle.mjs"
-      - "scripts/verify-live-codex-runtime.mjs"
-      - "scripts/verify-process-supervisor.mjs"
-      - "scripts/head.mjs"
-      - "scripts/mcp-server.mjs"
-      - "scripts/verify-go-worker.mjs"
-      - "scripts/verify-onboarding.mjs"
-      - "scripts/verify-conversational-onboarding.mjs"
-      - "scripts/verify-arcadedb-database-lifecycle.mjs"
-      - "scripts/verify-arcadedb-incremental-sync.mjs"
+      - "native/**"
+      - "scripts/**"
+      - "test/**"
+      - "benchmarks/**"
       - "skills/**"
-      - ".mcp.json"
-      - "README.md"
-      - "README.ko.md"
-      - "assets/**"
       - "docs/**"
-      - "package.json"
-      - ".codex-plugin/plugin.json"
+      - "assets/**"
+      - "README*.md"
+      - "package*.json"
+      - ".codex-plugin/**"
+      - ".mcp.json"
       - "LICENSE"
       - ".gitattributes"
-      - "benchmarks/repository-scan-v1/**"
-      - "benchmarks/prepared-traversal-v1/**"
-      - ".github/workflows/go-worker-build-release.yml"
+      - ".gitignore"
+      - ".github/workflows/**"
   pull_request:
     branches:
       - main
     paths:
-      - "native/head-agent-worker/**"
-      - "scripts/generate-go-worker-manifest.mjs"
-      - "scripts/generate-process-supervisor-manifest.mjs"
-      - "scripts/lib/compute-adapter.mjs"
-      - "scripts/lib/go-worker-adapter.mjs"
-      - "scripts/lib/repository-scan.mjs"
-      - "scripts/lib/repository-source-scope.mjs"
-      - "scripts/lib/source-analysis.mjs"
-      - "scripts/lib/context-compiler.mjs"
-      - "scripts/lib/head-core.mjs"
-      - "scripts/lib/onboarding-contract.mjs"
-      - "scripts/lib/onboarding.mjs"
-      - "scripts/lib/onboarding-projection.mjs"
-      - "scripts/lib/onboarding-conversation.mjs"
-      - "scripts/lib/product-model.mjs"
-      - "scripts/lib/temporal-provenance.mjs"
-      - "scripts/lib/world-model.mjs"
-      - "scripts/lib/graph-projection-adapter.mjs"
-      - "scripts/lib/arcadedb-incremental-sync.mjs"
-      - "scripts/lib/graphdb-projection-activation.mjs"
-      - "scripts/lib/arcadedb-database-lifecycle.mjs"
-      - "scripts/lib/arcadedb-http-bridge.mjs"
-      - "scripts/lib/prepared-traversal-benchmark.mjs"
-      - "scripts/lib/runtime-adapter.mjs"
-      - "scripts/lib/runtime-machine-discovery.mjs"
-      - "scripts/lib/runtime-machine-execution.mjs"
-      - "scripts/lib/runtime-protocol-evidence.mjs"
-      - "scripts/lib/runtime-invocation-lifecycle.mjs"
-      - "scripts/lib/runtime-execution-lease.mjs"
-      - "scripts/lib/runtime-process-supervisor.mjs"
-      - "scripts/lib/runtime-codex-exec.mjs"
-      - "scripts/lib/runtime-opencode-run.mjs"
-      - "scripts/lib/runtime-one-shot-exec.mjs"
-      - "scripts/lib/runtime-supervised-one-shot.mjs"
-      - "scripts/lib/distribution-lifecycle.mjs"
-      - "scripts/lib/codex-marketplace.mjs"
-      - "scripts/lib/claude-marketplace.mjs"
-      - "scripts/lib/native-artifact-delivery.mjs"
-      - "scripts/distribution.mjs"
-      - "scripts/assemble-native-bundle.mjs"
-      - "scripts/build-codex-marketplace.mjs"
-      - "scripts/verify-codex-marketplace.mjs"
-      - "scripts/build-claude-marketplace.mjs"
-      - "scripts/verify-claude-marketplace.mjs"
-      - "scripts/verify-distribution-lifecycle.mjs"
-      - "scripts/verify-native-artifact-delivery.mjs"
-      - "scripts/verify-newcomer-readme.mjs"
-      - "scripts/benchmark-prepared-traversal.mjs"
-      - "scripts/verify-runtime-adapters.mjs"
-      - "scripts/verify-runtime-invocation-lifecycle.mjs"
-      - "scripts/verify-live-codex-runtime.mjs"
-      - "scripts/verify-process-supervisor.mjs"
-      - "scripts/head.mjs"
-      - "scripts/mcp-server.mjs"
-      - "scripts/verify-go-worker.mjs"
-      - "scripts/verify-onboarding.mjs"
-      - "scripts/verify-conversational-onboarding.mjs"
-      - "scripts/verify-arcadedb-database-lifecycle.mjs"
-      - "scripts/verify-arcadedb-incremental-sync.mjs"
+      - "native/**"
+      - "scripts/**"
+      - "test/**"
+      - "benchmarks/**"
       - "skills/**"
-      - ".mcp.json"
-      - "README.md"
-      - "README.ko.md"
-      - "assets/**"
       - "docs/**"
-      - "package.json"
-      - ".codex-plugin/plugin.json"
+      - "assets/**"
+      - "README*.md"
+      - "package*.json"
+      - ".codex-plugin/**"
+      - ".mcp.json"
       - "LICENSE"
       - ".gitattributes"
-      - "benchmarks/repository-scan-v1/**"
-      - "benchmarks/prepared-traversal-v1/**"
-      - ".github/workflows/go-worker-build-release.yml"
+      - ".gitignore"
+      - ".github/workflows/**"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -174,6 +56,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 env:
+  NODE_VERSION: "24.18.0"
   GO_WORKER_ROOT: native/head-agent-worker
   GO_WORKER_COMMAND: ./cmd/head-agent-worker
   GO_SUPERVISOR_COMMAND: ./cmd/head-agent-supervisor
@@ -192,6 +75,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      - name: Set up the tested Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
 
       - name: Detect Go worker source
         id: detect
@@ -241,6 +130,57 @@ jobs:
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+  javascript:
+    name: Full JavaScript regression suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up the tested Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Run every JavaScript regression test
+        run: npm test
+
+  host_smoke:
+    name: Execute native install lifecycle on ${{ matrix.os }}
+    needs: prepare
+    if: ${{ needs.prepare.outputs.enabled == 'true' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up the tested Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Set up Go from the worker module
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: native/head-agent-worker/go.mod
+          cache-dependency-path: native/head-agent-worker/go.mod
+          check-latest: false
+
+      # These are executed host binaries; the separate build matrix only cross-builds.
+      - name: Build, install, doctor, native health, cleanup, rollback, and uninstall
+        run: node scripts/verify-native-host-smoke.mjs
+
   test:
     name: Test Go worker and supervisor
     needs: prepare
@@ -258,6 +198,12 @@ jobs:
           go-version-file: native/head-agent-worker/go.mod
           cache-dependency-path: native/head-agent-worker/go.mod
           check-latest: false
+
+      - name: Set up the tested Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
 
       - name: Verify modules
         working-directory: native/head-agent-worker
@@ -365,6 +311,7 @@ jobs:
     needs:
       - prepare
       - test
+      - javascript
     if: ${{ needs.prepare.outputs.enabled == 'true' }}
     runs-on: ubuntu-latest
     strategy:
@@ -429,6 +376,12 @@ jobs:
           go-version-file: native/head-agent-worker/go.mod
           cache-dependency-path: native/head-agent-worker/go.mod
           check-latest: false
+
+      - name: Set up the tested Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
 
       - name: Build and package worker and supervisor
         shell: bash
@@ -518,7 +471,9 @@ jobs:
     needs:
       - prepare
       - build
-    if: ${{ needs.prepare.outputs.enabled == 'true' && needs.prepare.outputs.release_tag != '' && needs.build.result == 'success' }}
+      - javascript
+      - host_smoke
+    if: ${{ needs.prepare.outputs.enabled == 'true' && needs.prepare.outputs.release_tag != '' && needs.build.result == 'success' && needs.javascript.result == 'success' && needs.host_smoke.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -568,7 +523,9 @@ jobs:
       - prepare
       - test
       - build
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.enabled == 'true' && needs.test.result == 'success' && needs.build.result == 'success' }}
+      - javascript
+      - host_smoke
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.enabled == 'true' && needs.test.result == 'success' && needs.build.result == 'success' && needs.javascript.result == 'success' && needs.host_smoke.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -580,6 +537,12 @@ jobs:
         with:
           persist-credentials: true
           fetch-depth: 1
+
+      - name: Set up the tested Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
 
       - name: Download every verified native platform artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -666,7 +629,9 @@ jobs:
       - prepare
       - test
       - build
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.enabled == 'true' && needs.test.result == 'success' && needs.build.result == 'success' }}
+      - javascript
+      - host_smoke
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.enabled == 'true' && needs.test.result == 'success' && needs.build.result == 'success' && needs.javascript.result == 'success' && needs.host_smoke.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -678,6 +643,12 @@ jobs:
         with:
           persist-credentials: true
           fetch-depth: 1
+
+      - name: Set up the tested Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
 
       - name: Download every verified native platform artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

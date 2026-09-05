@@ -109,6 +109,42 @@ test("tampered recovery stops only checkpoint-dependent work and never guesses d
   assert.equal(Object.hasOwn(restored, "restore"), false);
 });
 
+test("lifecycle restores newer P2 direction when its transport token becomes stale", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const host = new InMemoryCompactionLifecycleHostAdapter();
+  enqueue(host, event(root, "before-compaction"));
+  processCompactionLifecycle({ root, hostAdapter: host, direction: direction() });
+  const prepared = inspectCompaction({ root });
+  enqueue(host, event(root, "after-compaction", { epochId: prepared.epoch.epochId, outcome: "succeeded" }));
+  const load = host.loadContinuation.bind(host);
+  let newer;
+  host.loadContinuation = (binding) => {
+    newer = checkpoint(root, { nextExpectedResult: "Current task B after checkpoint update" });
+    return load(binding);
+  };
+  const acknowledge = host.acknowledge.bind(host);
+  host.acknowledge = () => { throw new Error("lost acknowledgement"); };
+  const result = processCompactionLifecycle({ root, hostAdapter: host });
+  assert.equal(result.status, "conversation_direction_restored_without_transport_continuation");
+  assert.equal(result.reasonCode, "COMPACTION_CHECKPOINT_STALE");
+  assert.equal(result.continuationConsumed, false);
+  assert.equal(result.userDecisionRequired, false);
+  assert.equal(result.ordinaryWorkBlocked, false);
+  assert.equal(result.recoveryDependentWorkBlocked, false);
+  assert.equal(result.conversationEntry.restore.checkpoint.checkpointId, newer.checkpointId);
+  assert.equal(result.conversationEntry.restore.projection.consumerInstruction.nextExpectedResult, newer.nextExpectedResult);
+  assert.equal(inspectCompaction({ root }).epoch.state, "aborted");
+  host.acknowledge = acknowledge;
+  const replay = processCompactionLifecycle({ root, hostAdapter: host });
+  assert.equal(replay.status, "conversation_direction_restored_without_transport_continuation");
+  assert.equal(replay.continuationConsumed, false);
+  assert.equal(replay.conversationEntry.restore.checkpoint.checkpointId, newer.checkpointId);
+  assert.equal(host.inspectHostState().pendingEventCount, 0);
+  enqueue(host, event(root, "after-compaction", { epochId: prepared.epoch.epochId, outcome: "failed" }));
+  assert.throws(() => processCompactionLifecycle({ root, hostAdapter: host }), { code: "COMPACTION_LIFECYCLE_DIVERGENT_OUTCOME" });
+});
+
 test("missing Host lifecycle hooks stay optional while artifact entry recovery remains available", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

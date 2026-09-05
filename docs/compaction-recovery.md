@@ -68,7 +68,18 @@ The same operation creates one `CompactionEpoch`. The epoch contains the checkpo
 
 `compact-verify` accepts explicit provider-success evidence and the current trusted real-user-turn sequence. It re-reads and digest-verifies the checkpoint and current Session/Run pointers. A newer real user turn supersedes the continuation. Provider failure, checkpoint tamper, state drift, or a non-canonical recovery source aborts or rejects recovery; the Core never fills missing direction from a summary.
 
-`compact-continue` consumes the checkpoint-bound token through an atomic create and returns the exact checkpoint plus a bounded continuation instruction. A second consumption fails. The returned `CompactionRecoveryReceipt` is derived evidence with no instruction, recovery, objective-rewrite, Product Canon, or review authority.
+`compact-continue` revalidates the current checkpoint, Session, Run, and epoch immediately before consuming the checkpoint-bound token through an atomic create. A newer checkpoint invalidates the old continuation even without a new user turn. A successful consumption returns the exact checkpoint plus a bounded continuation instruction; a second consumption fails. The returned `CompactionRecoveryReceipt` is derived evidence with no instruction, recovery, objective-rewrite, Product Canon, or review authority.
+
+Prepare validates its inputs and any existing open epoch before changing the
+current checkpoint. Mutating Session/Run recovery operations share a transient
+project-local P5 lock; reads never acquire it. Contention asks the caller to retry
+the affected operation, not the user to approve it. An interrupted prepare closes
+only its uncertain token epoch on the next mutation, preserving the complete P2
+checkpoint that was actually published. This is process-interruption recovery,
+not a guarantee of power-loss durability. A dead local owner can be reclaimed;
+an unknown or foreign-host owner is not guessed dead. A reused PID can require
+Host-side ownership inspection and operational lock cleanup; Core does not steal
+a possibly live lock based on age. This does not block read-only or ordinary work.
 
 ## Provider-neutral Host lifecycle boundary
 
@@ -117,8 +128,9 @@ The mutating commands are advanced `help-all` operations; read-only
 `compact-status` remains a light diagnostic. Observe and ordinary Session work
 create no epoch by default. An active Run should prepare at a natural idle
 boundary before provider compaction. Compaction never approves an open review,
-changes Product Canon or candidate bytes, performs an external write, or
-replaces a recovery checkpoint.
+changes Product Canon or candidate bytes, or performs an external write. Explicit
+prepare may publish HEAD-authored P2 direction as a new checkpoint; provider
+compaction and continuation never author or replace that direction.
 
 Host integration additionally uses `head_conversation_enter` and
 `head_compaction_lifecycle_step`; they are not a user setup ritual. The lifecycle

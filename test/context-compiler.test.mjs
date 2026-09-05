@@ -160,6 +160,15 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
   assert.equal(exactPath.capsule.coverageAssessment.status, "coverage-complete");
   assert.equal(exactPath.capsule.repositoryContext.some((item) => item.path === "src/opaque-engine.mjs"), true);
   assert.equal(exactPath.capsule.evidenceNeedContract.needs[0].paths[0], "src/opaque-engine.mjs");
+  assert.deepEqual(exactPath.capsule.coverageAssessment.proofs[0].includedEvidence[0].representation, {
+    kind: "repository-metadata",
+    sourceBodyIncluded: false,
+    sourceBodyConsumptionVerified: false,
+  });
+  const metadataIsNotContent = compileContext({ root, task, evidenceNeeds: [{
+    id: "source-content-not-coverage-label", kind: "repository-source", paths: ["src/opaque-engine.mjs"], facets: ["consumption"],
+  }] });
+  assert.equal(metadataIsNotContent.capsule.coverageAssessment.proofs[0].availableMatchCount, 0);
   assert.equal(exactPath.capsule.compiler.lexicalRole, "fallback-ranking-only-never-candidate-eligibility-or-semantic-acceptance");
   const unguided = compileContext({ root, task: "Repair the user-facing command routing defect" });
   assert.equal(unguided.capsule.repositoryContext.some((item) => item.path === "src/opaque-engine.mjs"), true);
@@ -199,6 +208,86 @@ test("HEAD defines task evidence needs and Compiler proves only actual inclusion
     () => compileContext({ root, task, evidenceNeeds: [{ id: "bad-path", kind: "repository-source", paths: ["../outside.mjs"] }] }),
     { code: "INVALID_EVIDENCE_NEEDS" },
   );
+});
+
+test("HEAD relation paths preserve source and target evidence despite zero lexical overlap and discovery limits", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  const imports = Array.from({ length: 8 }, (_, index) => {
+    fs.writeFileSync(path.join(root, "src", `store${index}.mjs`), `export const value${index} = ${index};\n`);
+    return `import { value${index} } from './store${index}.mjs';`;
+  });
+  fs.writeFileSync(path.join(root, "src", "router.mjs"), `${imports.join("\n")}\nexport function route() { return value7; }\n`);
+  fs.writeFileSync(path.join(root, "src", "unrelated.mjs"), "export const untouched = true;\n");
+  for (let index = 0; index < 40; index += 1) {
+    fs.writeFileSync(path.join(root, "src", `qzxvplmn-${index}.mjs`), "export const lexicalDistractor = true;\n");
+  }
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const indexed = await buildWorldModel({ root });
+  const before = managedTreeSnapshot(root);
+  const task = "qzxvplmn";
+  const noNeeds = compileContext({ root, task });
+  const baselineRouter = noNeeds.capsule.repositoryContext.find((item) => item.path === "src/router.mjs");
+  assert.ok(baselineRouter);
+  assert.equal(baselineRouter.semanticRelationships.length, 0);
+  assert.ok(baselineRouter.evidenceOmissions.semanticRelationships >= 8, "Unexpanded adjacency must be disclosed instead of reported as absent.");
+
+  const sourceNeed = [{ id: "source-imports", kind: "semantic-relation", paths: ["src\\router.mjs"], relationTypes: ["IMPORTS"], minimumItems: 6 }];
+  const source = compileContext({ root, task, evidenceNeeds: sourceNeed });
+  assert.equal(source.capsule.coverageAssessment.status, "coverage-complete");
+  const sourceProof = source.capsule.coverageAssessment.proofs[0];
+  assert.ok(sourceProof.includedMatchCount >= 6, "The four-edge discovery sample must not override HEAD's explicit minimum.");
+  const multiNeed = compileContext({ root, task, evidenceNeeds: [
+    ...sourceNeed,
+    { id: "last-two-targets", kind: "semantic-relation", paths: ["src/store6.mjs", "src/store7.mjs"], relationTypes: ["IMPORTS"], minimumItems: 2 },
+  ] });
+  assert.equal(multiNeed.capsule.coverageAssessment.status, "coverage-complete");
+  for (const proof of multiNeed.capsule.coverageAssessment.proofs) {
+    assert.ok(new Set(proof.includedEvidence.map((item) => item.id)).size >= proof.requiredMinimumItems);
+  }
+  for (const carrier of source.capsule.repositoryContext) {
+    const containedEdges = carrier.semanticRelationships;
+    assert.equal(carrier.evidenceOmissions.semanticRelationships,
+      indexed.snapshot.semanticGraph.edges.filter((edge) => {
+        const nodes = new Map(indexed.snapshot.semanticGraph.nodes.map((node) => [node.id, node]));
+        return [edge.evidence?.path, nodes.get(edge.from)?.path, nodes.get(edge.to)?.path].includes(carrier.path);
+      }).length - containedEdges.length);
+  }
+  for (const proof of sourceProof.includedEvidence) {
+    const relation = source.capsule.repositoryContext.flatMap((item) => item.semanticRelationships).find((item) => item.id === proof.id);
+    assert.equal(relation.from.path, "src/router.mjs");
+    assert.equal(relation.evidence.path, "src/router.mjs");
+    assert.ok(relation.endpointPaths.includes(relation.from.path));
+    assert.ok(relation.endpointPaths.includes(relation.to.path));
+    assert.ok(relation.endpointPaths.includes(relation.evidence.path));
+  }
+  const targetNeed = [{ id: "target-import", kind: "semantic-relation", paths: ["src/store7.mjs"], relationTypes: ["IMPORTS"] }];
+  const target = compileContext({ root, task, evidenceNeeds: targetNeed });
+  assert.equal(target.capsule.coverageAssessment.status, "coverage-complete");
+  const targetProof = target.capsule.coverageAssessment.proofs[0];
+  assert.equal(targetProof.availableMatchCount, 1);
+  const targetRelation = target.capsule.repositoryContext.flatMap((item) => item.semanticRelationships).find((item) => item.id === targetProof.includedEvidence[0].id);
+  assert.equal(targetRelation.to.path, "src/store7.mjs");
+  const noPath = compileContext({ root, task, evidenceNeeds: [{ id: "any-import", kind: "semantic-relation", relationTypes: ["IMPORTS"] }] });
+  assert.equal(noPath.capsule.coverageAssessment.status, "coverage-complete");
+  for (const wrongPath of ["src/unrelated.mjs", "src/missing.mjs"]) {
+    const missing = compileContext({ root, task, evidenceNeeds: [{ ...targetNeed[0], paths: [wrongPath] }] });
+    assert.equal(missing.capsule.coverageAssessment.status, "coverage-incomplete");
+    assert.equal(missing.capsule.coverageAssessment.proofs[0].availableMatchCount, 0);
+  }
+  const throughMcp = await dispatchMcp({ jsonrpc: "2.0", id: 91, method: "tools/call", params: {
+    name: "head_context_preview", arguments: { project_root: root, task, evidence_needs: targetNeed },
+  } });
+  const needsFile = path.join(root, ".head", "relation-needs.json");
+  fs.writeFileSync(needsFile, JSON.stringify(targetNeed));
+  const throughCli = runCommand(["context-preview", root, "--task", task, "--evidence-needs", needsFile]);
+  fs.unlinkSync(needsFile);
+  assert.equal(throughMcp.result.structuredContent.capsule.capsuleId, target.capsule.capsuleId);
+  assert.equal(throughCli.capsule.capsuleId, target.capsule.capsuleId);
+  assert.deepEqual(managedTreeSnapshot(root), before, "Preview must not persist new authority or recovery artifacts.");
+  assert.equal(target.capsule.coverageAssessment.semanticAcceptance, "not-assessed-HEAD-owned");
+  assert.equal(target.capsule.coverageAssessment.authorityEffect, "none");
 });
 
 test("Context workflow guides World freshness without mutation or authority", async (t) => {

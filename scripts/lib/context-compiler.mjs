@@ -6,8 +6,8 @@ import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 import { loadObservationProjection } from "./observation-projection.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.16.0";
-export const CONTEXT_COVERAGE_VERSION = "1.0.0";
+export const CONTEXT_COMPILER_VERSION = "0.17.0";
+export const CONTEXT_COVERAGE_VERSION = "1.1.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
 export const DEFAULT_CONTEXT_BUDGET = CONTEXT_BUDGET_TIERS[0];
@@ -329,7 +329,23 @@ function queryTemporalProjection(worldModel, graphProjectionAdapter, query) {
   }).result;
 }
 
-function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET) {
+function relationEndpointPaths(relation) {
+  return [...new Set([
+    ...(relation.endpointPaths || []),
+    relation.from?.path,
+    relation.to?.path,
+    relation.evidence?.path,
+  ].filter((value) => typeof value === "string" && value).map((value) => value.replaceAll("\\", "/")))].sort();
+}
+
+function relationMatchesNeed(relation, need, carrierPath = "") {
+  const relationType = String(relation.type || "").toUpperCase();
+  if (need.relationTypes.length && !need.relationTypes.includes(relationType)) return false;
+  if (need.paths.length && !relationEndpointPaths(relation).some((item) => need.paths.includes(item))) return false;
+  return facetMatch(`${carrierPath} ${canonicalJson(relation)}`, need.facets);
+}
+
+function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET, needs = []) {
   if (!worldModel || worldModel.status !== "current") return [];
   const taskTerms = terms(task);
   const graph = worldModel.snapshot.semanticGraph || null;
@@ -345,10 +361,21 @@ function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET)
   } : null;
   const relationshipEdgesByPath = new Map();
   for (const edge of graph?.edges || []) {
-    const paths = new Set([edge.evidence?.path, nodes.get(edge.from)?.path, nodes.get(edge.to)?.path].filter(Boolean));
-    for (const filePath of paths) {
+    const relation = {
+      id: edge.id,
+      type: edge.type,
+      from: nodeReference(nodes.get(edge.from)),
+      to: nodeReference(nodes.get(edge.to)),
+      evidence: edge.evidence,
+      confidence: edge.confidence,
+      specifier: edge.specifier,
+      callee: edge.callee,
+      trustBoundary: "evidence-not-instruction",
+    };
+    relation.endpointPaths = relationEndpointPaths(relation);
+    for (const filePath of relation.endpointPaths) {
       if (!relationshipEdgesByPath.has(filePath)) relationshipEdgesByPath.set(filePath, []);
-      relationshipEdgesByPath.get(filePath).push(edge);
+      relationshipEdgesByPath.get(filePath).push(relation);
     }
   }
   const ranked = worldModel.snapshot.files.map((file) => {
@@ -378,7 +405,7 @@ function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET)
   const expandedPaths = new Set(relevantRanked.slice(0, seedLimit).map((item) => item.file.path));
   for (const seed of relevantRanked.slice(0, seedLimit)) {
     if (expandedPaths.size >= expansionLimit) break;
-    const neighbors = (relationshipEdgesByPath.get(seed.file.path) || []).flatMap((edge) => [nodes.get(edge.from)?.path, nodes.get(edge.to)?.path])
+    const neighbors = (relationshipEdgesByPath.get(seed.file.path) || []).flatMap((edge) => edge.endpointPaths)
       .filter((filePath) => filePath && filePath !== seed.file.path)
       .sort();
     for (const filePath of neighbors) {
@@ -390,27 +417,33 @@ function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET)
     if (expandedPaths.size >= expansionLimit) break;
     expandedPaths.add(item.file.path);
   }
+  const relationNeeds = needs.filter((need) => need.kind === "semantic-relation");
   return ranked.map(({ file, relevance: lightweightRelevance, matchedTerms: lightweightMatches, pathMatchedTerms, importance, score: lightweightScore }) => {
     const expanded = expandedPaths.has(file.path);
-    const allRelationships = (expanded ? relationshipEdgesByPath.get(file.path) || [] : []).map((edge) => ({
-      id: edge.id,
-      type: edge.type,
-      from: nodeReference(nodes.get(edge.from)),
-      to: nodeReference(nodes.get(edge.to)),
-      evidence: edge.evidence,
-      confidence: edge.confidence,
-      specifier: edge.specifier,
-      callee: edge.callee,
-      trustBoundary: "evidence-not-instruction",
-    }));
-    const relationships = rankBounded(allRelationships, taskTerms, (item) => [
+    const allRelationships = relationshipEdgesByPath.get(file.path) || [];
+    const relationBody = (item) => [
       item.type,
       item.from?.path,
       item.from?.name,
       item.to?.path,
       item.to?.name,
       item.to?.specifier,
-    ].filter(Boolean).join(" "), MAX_CONTEXT_RELATIONSHIPS_PER_FILE);
+    ].filter(Boolean).join(" ");
+    // Discovery limits must not make HEAD-requested evidence ineligible.
+    // Each need reserves its explicit minimum; the shared Capsule budget still
+    // controls packing, and every remaining adjacency is counted as omitted.
+    const requiredRelationships = relationNeeds.flatMap((need) => rankBounded(
+      allRelationships.filter((relation) => relationMatchesNeed(relation, need, file.path)),
+      taskTerms, relationBody, need.minimumItems,
+    ));
+    const relationshipsById = new Map(requiredRelationships.map((relation) => [relation.id, relation]));
+    if (expanded) {
+      for (const relation of rankBounded(allRelationships, taskTerms, relationBody, MAX_CONTEXT_RELATIONSHIPS_PER_FILE)) {
+        if (relationshipsById.size >= Math.max(MAX_CONTEXT_RELATIONSHIPS_PER_FILE, requiredRelationships.length)) break;
+        relationshipsById.set(relation.id, relation);
+      }
+    }
+    const relationships = [...relationshipsById.values()];
     const body = [
       file.path,
       file.classification,
@@ -431,6 +464,11 @@ function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET)
       freshness: file.freshness,
       classification: file.classification,
       language: file.language,
+      representation: {
+        kind: "repository-metadata",
+        sourceBodyIncluded: false,
+        sourceBodyConsumptionVerified: false,
+      },
       symbols,
       dependencies,
       semanticRelationships: relationships,
@@ -440,7 +478,7 @@ function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET)
         semanticRelationships: Math.max(0, allRelationships.length - relationships.length),
       },
       semanticGraphId: graph?.semanticGraphId || null,
-      graphExpansion: expanded ? "bounded-semantic-adjacency" : "not-expanded-by-relevance-bound",
+      graphExpansion: requiredRelationships.length ? "head-evidence-need-adjacency" : expanded ? "bounded-semantic-adjacency" : "not-expanded-by-discovery-bound",
       worldModelId: worldModel.snapshot.worldModelId,
       trustBoundary: "evidence-not-instruction",
     };
@@ -883,19 +921,22 @@ function evidenceItem(candidate, { id = candidate.id, kind, path = null, relatio
     kind,
     path,
     relationType,
+    ...(kind?.startsWith("repository-") ? { representation: candidate.record.representation } : {}),
     digest: digest(canonicalJson(value)),
   };
 }
 
 function candidateEvidenceMatches(candidate, need) {
   const record = candidate.record;
-  const candidateBody = canonicalJson(record);
+  // Descriptive coverage metadata cannot manufacture a lexical facet match.
+  const { representation, ...evidenceRecord } = record;
+  const candidateBody = canonicalJson(evidenceRecord);
   if (need.kind === "observation") {
     return candidate.kind === "ObservationEvidence" && need.observationIds.includes(candidate.id)
       ? [evidenceItem(candidate, { kind: need.kind })]
       : [];
   }
-  if (need.paths.length && candidate.kind !== "GraphTraversalEvidence" && (!record.path || !need.paths.includes(record.path))) return [];
+  if (need.paths.length && !["semantic-relation", "temporal-relation"].includes(need.kind) && (!record.path || !need.paths.includes(record.path))) return [];
   if (candidate.kind === "GraphTraversalEvidence" && record.evidenceNeedId !== need.id) return [];
   let matchedEntityKeys = [];
   if (need.entityKeys.length) {
@@ -936,12 +977,7 @@ function candidateEvidenceMatches(candidate, need) {
     : candidate.kind === "RepositoryFile"
       ? record.temporalRelationships || []
       : ["ProductContext", "GraphTraversalEvidence"].includes(candidate.kind) ? record.relationships || [] : [];
-  return relationValues.filter((relation) => {
-    const relationType = String(relation.type || "").toUpperCase();
-    if (need.relationTypes.length && !need.relationTypes.includes(relationType)) return false;
-    if (need.paths.length && !(relation.endpointPaths || []).some((item) => need.paths.includes(item))) return false;
-    return facetMatch(`${record.path || ""} ${canonicalJson(relation)}`, need.facets);
-  }).map((relation, index) => {
+  return relationValues.filter((relation) => relationMatchesNeed(relation, need, record.path || "")).map((relation, index) => {
     const relationType = String(relation.type || "").toUpperCase();
     const relationId = relation.id || relation.edgeId || `${candidate.id}:${relationType}:${index}`;
     return evidenceItem(candidate, {
@@ -1145,7 +1181,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     ...activeCandidates(sources.knowledge, task, historyClass),
     ...productContextCandidates(sources.worldModel, task, graphProjectionAdapter, needContract.needs),
     ...graphTraversalCandidates(sources.worldModel, needContract.needs, graphProjectionAdapter),
-    ...repositoryCandidates(sources.worldModel, task, maxApproxTokens),
+    ...repositoryCandidates(sources.worldModel, task, maxApproxTokens, needContract.needs),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
     ...observationCandidates(projectRoot, inspected.project.projectId, needContract.needs),

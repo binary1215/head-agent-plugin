@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.12+codex.20260904062728",
+  "version": "0.3.0-beta.12+codex.20260905144828",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"

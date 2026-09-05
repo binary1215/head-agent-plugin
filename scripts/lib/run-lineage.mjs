@@ -4,6 +4,7 @@ import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, createResultPacket, createReviewDecision, readLineageArtifact } from "./execution-lineage.mjs";
+import { withProjectMutation } from "./project-mutation-lock.mjs";
 
 const fail = (message, code = "RUN_LINEAGE_ERROR") => {
   const error = new Error(message);
@@ -80,7 +81,11 @@ export function getPendingReviewContext({ root = "." } = {}) {
   return { ...built, pendingReview: bundle.pending };
 }
 
-export function startRun({ root = ".", executionContractId } = {}) {
+export function startRun(options = {}) {
+  return withProjectMutation({ root: options.root, scope: "session-recovery" }, () => startRunLocked(options));
+}
+
+function startRunLocked({ root = ".", executionContractId } = {}) {
   if (typeof executionContractId !== "string" || !executionContractId.trim()) {
     fail("A verified Execution Contract is required to start a Run.", "EXECUTION_CONTRACT_REQUIRED");
   }
@@ -129,7 +134,11 @@ export function startRun({ root = ".", executionContractId } = {}) {
   return { status: "run_started", run, state };
 }
 
-export function finishRun({ root = ".", outcome, evidence, planDelta = "", impactRadius = [], verification, unknowns = [], knowledgeProposals = [] } = {}) {
+export function finishRun(options = {}) {
+  return withProjectMutation({ root: options.root, scope: "session-recovery" }, () => finishRunLocked(options));
+}
+
+function finishRunLocked({ root = ".", outcome, evidence, planDelta = "", impactRadius = [], verification, unknowns = [], knowledgeProposals = [] } = {}) {
   const inspected = readyProject(root, "a Run finishes");
   const runId = inspected.state.activeRunId;
   if (!runId) fail("No active Run exists.", "NO_ACTIVE_RUN");
@@ -174,7 +183,11 @@ export function finishRun({ root = ".", outcome, evidence, planDelta = "", impac
   return { status: "run_awaiting_review", run: completedRun, resultPacket: result.artifact, state };
 }
 
-export function reviewRun({ root = ".", reviewContextId, disposition, rationale, nextActions = [], knowledgeProposalRecommendations = [] } = {}) {
+export function reviewRun(options = {}) {
+  return withProjectMutation({ root: options.root, scope: "session-recovery" }, () => reviewRunLocked(options));
+}
+
+function reviewRunLocked({ root = ".", reviewContextId, disposition, rationale, nextActions = [], knowledgeProposalRecommendations = [] } = {}) {
   if (typeof reviewContextId !== "string" || !reviewContextId.trim()) {
     fail("The current Fresh HEAD review context id is required.", "FRESH_HEAD_REVIEW_REQUIRED");
   }

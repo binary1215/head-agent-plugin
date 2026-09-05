@@ -28,6 +28,15 @@ HEAD Agent Core는 한 표현이 다른 표현의 권한을 물려받게 하지 
 
 ## 비증폭
 
+승인 경계는 로컬 호출자가 실제 사용자 결정을 전달한다고 신뢰합니다.
+Core는 정확한 대상, 처분, digest와 허용된 전이를 검증하지만, 요청이 사용자를
+지칭하거나 확인 플래그를 설정했다는 이유로 사람의 의사를 인증하지는 않습니다.
+Host와 provider HEAD는 보호된 변경을 호출하기 전에 현재 사용자 결정을
+변경되지 않은 후보에 연결해야 합니다. 도구 annotation은 효과를 설명할 뿐
+승인이 아닙니다. 더 강한 인증이 필요한 Host는 Core 호출 전에 자체 사용자 행동
+영수증을 검증할 수 있으며, 영수증과 provider identity는 Host 경계에 남습니다.
+일반 작업에 추가 승인 절차가 생기지는 않습니다.
+
 한 평면이 다른 평면을 가리킨다는 이유만으로 권한이 위로 이동할 수 없습니다. P3 후보는 명시적으로 검증된 ReviewDecision과 정확히 검토된 변경 작업을 통해서만 P1에 영향을 줄 수 있습니다. P4 그래프 쓰기는 정확한 Product Canon 바이트로 차단됩니다. adapter가 해당 바이트를 변경하거나 삭제하면 Core는 그 바이트를 복원하고 World Model pointer를 전진시키기 전에 `GRAPH_PROJECTION_AUTHORITY_AMPLIFICATION`으로 실패합니다.
 
 후보 제품 개념과 검토된 제품 개념은 이름과 평면이 서로 다릅니다. 그래프 node가 일반 또는 미검토 Feature/Policy label을 사용한다는 이유만으로 해당 개념이 P1로 분류되는 일은 없습니다. Product Canon 또는 별도로 검토된 Feature/Policy만 P1이며, FeatureCandidate, ProductFeatureCandidate, PolicyCandidate는 P3에 남습니다.

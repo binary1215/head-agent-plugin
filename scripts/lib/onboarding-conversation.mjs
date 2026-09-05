@@ -68,7 +68,7 @@ function compactCandidateSet(candidateSet, limit) {
 }
 
 function actionFor({ status, world, graph, documents }) {
-  if (status === "not_initialized") return "initialize_or_resume";
+  if (status === "not_initialized" || status === "promotion_recovery_pending") return "initialize_or_resume";
   if (new Set(["migration_required", "initialized", "awaiting_evidence", "rejected"]).has(status)) return "initialize_or_resume";
   if (new Set(["awaiting_review", "revision_required"]).has(status)) return "review_candidates";
   if (status === "ready_world_changed" || world?.status !== "current") return "refresh_or_reconcile_world";
@@ -149,7 +149,7 @@ export function inspectConversationalOnboarding({ root = ".", candidateLimit = 2
       localFallback: onboarding.storageSelection.localFallback,
       credentialValuesPersisted: false,
     },
-    review: compactCandidateSet(onboarding.candidateSet, limit),
+    review: compactCandidateSet(onboarding.status === "promotion_recovery_pending" ? null : onboarding.candidateSet, limit),
     readiness: {
       world: onboarding.worldModel?.status || "missing",
       worldModelId: onboarding.worldModel?.worldModelId || null,

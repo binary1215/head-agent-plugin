@@ -873,6 +873,14 @@ Session/Run 복구 상태, 명시적인 ReviewDecision의 지배를 받습니다
 
 ## 소스에서 검증
 
+Core는 신뢰하는 로컬 호출자가 전달한 결정의 정확한 대상과 허용된 전이를
+검증합니다. Host와 HEAD는 실제 사용자 승인을 전달해야 하며, digest와
+확인 플래그 자체가 사람의 의사를 인증하지는 않습니다.
+
+Fixture 테스트는 재현성과 상태 전이를 입증합니다. HEAD의 증거 발견률이나
+전체 코딩 작업의 정확성을 입증하지는 않습니다.
+[검증 증거와 로컬 진단](docs/ko/verification-evidence.md)을 참고하세요.
+
 ```powershell
 npm test
 npm run verify:newcomer

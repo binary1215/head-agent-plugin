@@ -56,7 +56,19 @@ immutable Session pointer는 provider 독립적인 artifact restore를 반증 �
 
 `compact-verify`는 명시적인 provider-success 증거와 현재의 신뢰된 real-user-turn sequence를 받습니다. checkpoint와 현재 Session/Run pointer를 다시 읽어 digest를 검증합니다. 더 새로운 실제 사용자 turn이 있으면 continuation은 superseded됩니다. Provider failure, checkpoint tamper, state drift 또는 non-canonical recovery source가 있으면 복구를 abort하거나 거부합니다. Core는 누락된 방향을 summary에서 채우지 않습니다.
 
-`compact-continue`는 atomic create를 통해 checkpoint에 결속된 token을 소비하고 정확한 checkpoint와 제한된 continuation instruction을 반환합니다. 두 번째 소비는 실패합니다. 반환되는 `CompactionRecoveryReceipt`는 instruction, recovery, objective-rewrite, Product Canon 또는 review authority가 없는 파생 증거입니다.
+`compact-continue`는 atomic create로 token을 소비하기 직전에 현재 checkpoint·Session·Run·epoch를 다시 검증합니다. 새 사용자 turn이 없어도 더 새로운 checkpoint가 있으면 이전 continuation은 무효입니다. 성공하면 정확한 checkpoint와 제한된 continuation instruction을 반환하며, 두 번째 소비는 실패합니다. 반환되는 `CompactionRecoveryReceipt`는 instruction, recovery, objective-rewrite, Product Canon 또는 review authority가 없는 파생 증거입니다.
+
+Prepare는 현재 checkpoint를 바꾸기 전에 입력과 기존 open epoch를 검증합니다.
+Session/Run 복구를 변경하는 작업은 프로젝트 로컬의 임시 P5 lock을 공유하며,
+조회는 lock을 취득하지 않습니다. 경합 시 호출자에게 해당 작업의 재시도를 안내할
+뿐 사용자에게 승인을 요구하지 않습니다. 준비 중 프로세스가 중단되면 다음 변경
+호출에서 전달 여부가 불확실한 token epoch만 닫고, 실제 게시된 완전한 P2
+checkpoint는 보존합니다. 이는 프로세스 중단 복구이며 전원 손실까지의 내구성을
+보장하지는 않습니다. 종료가 확인된 로컬 소유자의 lock은 회수할 수 있지만,
+소유권이 불명확하거나 다른 host의 소유자를 종료됐다고 추측하지 않습니다. PID가
+재사용되면 Host에서 소유 관계를 확인하고 운영 lock을 정리해야 할 수 있습니다.
+Core는 오래됐다는 이유만으로 사용 중일 수 있는 lock을 빼앗지 않으며, 이러한
+제한이 읽기 전용 조회나 일반 작업을 막지는 않습니다.
 
 ## Provider-neutral Host lifecycle 경계
 
@@ -104,7 +116,9 @@ head compact-abort <project> --input <abort.json>
 기본적으로 epoch를 만들지 않습니다. active Run은 provider compaction 전에
 자연스러운 idle boundary에서 prepare해야 합니다. Compaction은 open review를
 승인하거나, Product Canon 또는 candidate 바이트를 변경하거나, 외부 write를
-수행하거나, 복구 checkpoint를 대체하지 않습니다.
+수행하지 않습니다. 명시적 prepare는 HEAD가 작성한 P2 방향을 새 checkpoint로
+게시할 수 있지만, provider compaction과 continuation이 그 방향을 작성하거나
+대체하지는 않습니다.
 
 Host 통합은 `head_conversation_enter`와 `head_compaction_lifecycle_step`도 사용하지만,
 이는 사용자 설정 절차가 아닙니다. adapter가 주입되지 않으면 lifecycle step은

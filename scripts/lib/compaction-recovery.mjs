@@ -5,11 +5,12 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
+import { withProjectMutation } from "./project-mutation-lock.mjs";
 
 export const COMPACTION_RECOVERY_VERSION = "0.3.0";
 const RUN_RESULT_INTEGRATION_VERSION = "0.1.0";
 
-const OPEN_STATES = new Set(["prepared", "provider_compacted", "verified"]);
+const OPEN_STATES = new Set(["preparing", "prepared", "provider_compacted", "verified"]);
 const TERMINAL_STATES = new Set(["continued", "superseded", "aborted"]);
 
 const fail = (message, code = "COMPACTION_RECOVERY_ERROR") => {
@@ -317,12 +318,21 @@ function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, curr
   };
 }
 
-export function createRecoveryCheckpoint({ root = ".", purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [], reviewedRunIntegration = null } = {}) {
+export function createRecoveryCheckpoint(options = {}) {
+  return withRecoveryMutation(options, () => createRecoveryCheckpointLocked(options));
+}
+
+function createRecoveryCheckpointLocked({ root = ".", purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [], reviewedRunIntegration = null } = {}) {
   const inspected = readyProject(root, "a recovery checkpoint is created");
   const payload = recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds, reviewedRunIntegration });
   const checkpointDigest = digest(canonicalJson(payload));
   const checkpointId = `checkpoint-${checkpointDigest.slice(0, 24)}`;
   const checkpoint = { ...payload, checkpointId, checkpointDigest };
+  return persistRecoveryCheckpoint(inspected, checkpoint);
+}
+
+function persistRecoveryCheckpoint(inspected, checkpoint) {
+  const { checkpointId } = checkpoint;
   const file = checkpointFile(inspected.project.projectRoot, checkpointId);
   let existed = fs.existsSync(file);
   if (!existed) {
@@ -386,6 +396,23 @@ function currentEpoch(root) {
   if (!fs.existsSync(file)) return null;
   const pointer = readJson(file, "Current compaction epoch pointer");
   return readEpoch(root, pointer.epochId).epoch;
+}
+
+function withRecoveryMutation(options, operation) {
+  return withProjectMutation({ root: options.root, scope: "session-recovery" }, () => {
+    const inspected = readyProject(options.root, "a recovery operation runs");
+    const previous = currentEpoch(inspected.project.projectRoot);
+    if (previous?.state === "preparing") {
+      // The previous process stopped before prepare returned. Preserve whichever
+      // complete P2 checkpoint was published, and close only the P5 token whose
+      // delivery is now uncertain. No raw token or direction is reconstructed.
+      writeEpoch(epochFile(inspected.project.projectRoot, previous.epochId), previous, "aborted", {
+        abortReason: "prepare-interrupted-before-token-delivery",
+        continuationTokenBindingHash: null,
+      });
+    }
+    return operation();
+  });
 }
 
 function assertCurrentStateMatchesCheckpoint(inspected, checkpoint) {
@@ -455,7 +482,7 @@ function validateCompactionRuntime(runtime) {
   return runtime;
 }
 
-function createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPrepare }) {
+function createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPrepare, commitCheckpoint = null }) {
   const previous = currentEpoch(inspected.project.projectRoot);
   if (previous && OPEN_STATES.has(previous.state)) fail(`Compaction epoch is already open: ${previous.epochId}`, "COMPACTION_EPOCH_ALREADY_OPEN");
   if (inspected.state.activeRunId && !checkpoint.runPointer) {
@@ -476,37 +503,76 @@ function createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPre
     userTurnIdAtPrepare: turnId(userTurnIdAtPrepare, "User turn id at prepare"),
     continuationTokenBindingHash: digest(`${epochId}\n${checkpoint.checkpointDigest}\n${continuationToken}`),
     runtime: validateCompactionRuntime(runtime),
-    state: "prepared",
+    state: "preparing",
     createdAt: now(),
     updatedAt: now(),
     providerSessionIdentityPersisted: false,
   };
   const file = epochFile(inspected.project.projectRoot, epochId);
-  atomicWrite(file, json(epoch));
-  replaceJson(currentEpochFile(inspected.project.projectRoot), { schemaVersion: SCHEMA_VERSION, epochId, updatedAt: now() });
+  const pointerFile = currentEpochFile(inspected.project.projectRoot);
+  const sessionFile = path.join(inspected.project.projectRoot, ".head", "sessions", "current.json");
+  const previousPointer = fs.existsSync(pointerFile) ? fs.readFileSync(pointerFile) : null;
+  const previousSession = fs.readFileSync(sessionFile);
+  const checkpointPath = checkpointFile(inspected.project.projectRoot, checkpoint.checkpointId);
+  const checkpointExisted = fs.existsSync(checkpointPath);
+  let prepared;
+  try {
+    atomicWrite(file, json(epoch));
+    replaceJson(pointerFile, { schemaVersion: SCHEMA_VERSION, epochId, updatedAt: now() });
+    if (commitCheckpoint) commitCheckpoint();
+    prepared = writeEpoch(file, epoch, "prepared");
+  } catch (error) {
+    // Synchronous failures restore exact pointers. Abrupt process death is
+    // handled by the preparing state on the next mutation, without replaying
+    // the lost token or treating a P5 journal as recovery authority.
+    atomicWrite(sessionFile, previousSession);
+    if (previousPointer) atomicWrite(pointerFile, previousPointer);
+    else if (fs.existsSync(pointerFile)) fs.unlinkSync(pointerFile);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+    if (!checkpointExisted && fs.existsSync(checkpointPath)) fs.unlinkSync(checkpointPath);
+    throw error;
+  }
   return {
     status: "compaction_prepared",
     checkpoint,
-    epoch,
+    epoch: prepared,
     continuationToken,
     warning: "Compaction is lossy; recovery authority remains the Session/Run checkpoint.",
     providerAction: "Perform provider compaction explicitly, then verify it with trusted user-turn evidence.",
   };
 }
 
-export function prepareCompaction({ root = ".", runtime = "manual", userTurnIdAtPrepare, purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] } = {}) {
+export function prepareCompaction(options = {}) {
+  validateCompactionRuntime(options.runtime ?? "manual");
+  turnId(options.userTurnIdAtPrepare, "User turn id at prepare");
+  return withRecoveryMutation(options, () => prepareCompactionLocked(options));
+}
+
+function prepareCompactionLocked({ root = ".", runtime = "manual", userTurnIdAtPrepare, purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] } = {}) {
   const inspected = readyProject(root, "compaction is prepared");
   validateCompactionRuntime(runtime);
-  const checkpointResult = createRecoveryCheckpoint({ root: inspected.project.projectRoot, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
+  turnId(userTurnIdAtPrepare, "User turn id at prepare");
+  const previous = currentEpoch(inspected.project.projectRoot);
+  if (previous && OPEN_STATES.has(previous.state)) fail(`Compaction epoch is already open: ${previous.epochId}`, "COMPACTION_EPOCH_ALREADY_OPEN");
+  const payload = recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
+  const checkpointDigest = digest(canonicalJson(payload));
+  const checkpoint = { ...payload, checkpointId: `checkpoint-${checkpointDigest.slice(0, 24)}`, checkpointDigest };
   return createCompactionEpoch({
-    inspected: inspectProject(inspected.project.projectRoot),
-    checkpoint: checkpointResult.checkpoint,
+    inspected,
+    checkpoint,
     runtime,
     userTurnIdAtPrepare,
+    commitCheckpoint: () => persistRecoveryCheckpoint(inspected, checkpoint),
   });
 }
 
-export function prepareCompactionFromCurrentCheckpoint({ root = ".", runtime = "manual", userTurnIdAtPrepare } = {}) {
+export function prepareCompactionFromCurrentCheckpoint(options = {}) {
+  validateCompactionRuntime(options.runtime ?? "manual");
+  turnId(options.userTurnIdAtPrepare, "User turn id at prepare");
+  return withRecoveryMutation(options, () => prepareCompactionFromCurrentCheckpointLocked(options));
+}
+
+function prepareCompactionFromCurrentCheckpointLocked({ root = ".", runtime = "manual", userTurnIdAtPrepare } = {}) {
   const inspected = readyProject(root, "compaction is prepared from the current recovery checkpoint");
   validateCompactionRuntime(runtime);
   if (!inspected.state.latestCheckpoint) {
@@ -526,7 +592,12 @@ export function prepareCompactionFromCurrentCheckpoint({ root = ".", runtime = "
   };
 }
 
-export function verifyCompaction({ root = ".", epochId, checkpointDigest, currentUserTurnId, providerCompacted = false, recoverySource = "canonical-checkpoint" } = {}) {
+export function verifyCompaction(options = {}) {
+  turnId(options.currentUserTurnId, "Current user turn id");
+  return withRecoveryMutation(options, () => verifyCompactionLocked(options));
+}
+
+function verifyCompactionLocked({ root = ".", epochId, checkpointDigest, currentUserTurnId, providerCompacted = false, recoverySource = "canonical-checkpoint" } = {}) {
   const inspected = readyProject(root, "compaction recovery is verified");
   const loaded = readEpoch(inspected.project.projectRoot, epochId);
   let epoch = maybeSupersede(inspected.project.projectRoot, loaded.file, loaded.epoch, currentUserTurnId);
@@ -562,7 +633,12 @@ export function verifyCompaction({ root = ".", epochId, checkpointDigest, curren
   };
 }
 
-export function continueCompaction({ root = ".", epochId, continuationToken, currentUserTurnId } = {}) {
+export function continueCompaction(options = {}) {
+  turnId(options.currentUserTurnId, "Current user turn id");
+  return withRecoveryMutation(options, () => continueCompactionLocked(options));
+}
+
+function continueCompactionLocked({ root = ".", epochId, continuationToken, currentUserTurnId } = {}) {
   const inspected = readyProject(root, "compaction continuation is authorized");
   const loaded = readEpoch(inspected.project.projectRoot, epochId);
   let epoch = maybeSupersede(inspected.project.projectRoot, loaded.file, loaded.epoch, currentUserTurnId);
@@ -574,6 +650,12 @@ export function continueCompaction({ root = ".", epochId, continuationToken, cur
   const token = requiredText(continuationToken, "Continuation token");
   const bindingHash = digest(`${epochId}\n${epoch.checkpointDigest}\n${token}`);
   if (bindingHash !== epoch.continuationTokenBindingHash) fail("Continuation token does not match this epoch and checkpoint.", "INVALID_COMPACTION_TOKEN");
+  const checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: epoch.checkpointId }).checkpoint;
+  if (checkpoint.checkpointDigest !== epoch.checkpointDigest || epoch.projectId !== inspected.project.projectId
+    || epoch.sessionId !== inspected.state.sessionId || currentEpoch(inspected.project.projectRoot)?.epochId !== epoch.epochId) {
+    fail("The continuation no longer matches the current Project, Session, epoch, and checkpoint.", "COMPACTION_CHECKPOINT_STALE");
+  }
+  assertCurrentStateMatchesCheckpoint(readyProject(inspected.project.projectRoot, "continuation is consumed"), checkpoint);
   const consumption = {
     schemaVersion: SCHEMA_VERSION,
     kind: "CompactionContinuationConsumption",
@@ -591,7 +673,6 @@ export function continueCompaction({ root = ".", epochId, continuationToken, cur
     throw error;
   }
   epoch = writeEpoch(loaded.file, epoch, "continued", { continuedAt: now(), continuationTokenBindingHash: null });
-  const checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: epoch.checkpointId }).checkpoint;
   const receipt = writeRecoveryReceipt(inspected.project.projectRoot, epoch, {
     verifiedDigest: checkpoint.checkpointDigest,
     continuationSubmitted: true,
@@ -606,7 +687,11 @@ export function continueCompaction({ root = ".", epochId, continuationToken, cur
   };
 }
 
-export function abortCompaction({ root = ".", epochId, reason = "explicit-abort" } = {}) {
+export function abortCompaction(options = {}) {
+  return withRecoveryMutation(options, () => abortCompactionLocked(options));
+}
+
+function abortCompactionLocked({ root = ".", epochId, reason = "explicit-abort" } = {}) {
   const inspected = readyProject(root, "compaction is aborted");
   const loaded = readEpoch(inspected.project.projectRoot, epochId);
   if (TERMINAL_STATES.has(loaded.epoch.state)) fail(`Compaction epoch is already terminal: ${loaded.epoch.state}.`, "COMPACTION_ALREADY_TERMINAL");
@@ -626,7 +711,7 @@ export function inspectCompaction({ root = "." } = {}) {
   try { checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: epoch.checkpointId }).checkpoint; }
   catch (error) { checkpointVerification = { status: "failed", code: error.code || "COMPACTION_RECOVERY_ERROR" }; }
   return {
-    status: OPEN_STATES.has(epoch.state) ? "open" : "terminal",
+    status: epoch.state === "preparing" ? "interrupted-prepare" : OPEN_STATES.has(epoch.state) ? "open" : "terminal",
     epoch: { ...epoch, continuationTokenBindingHash: epoch.continuationTokenBindingHash ? "present-not-disclosed" : null },
     checkpoint,
     checkpointVerification,

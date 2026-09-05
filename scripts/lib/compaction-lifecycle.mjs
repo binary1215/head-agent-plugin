@@ -202,6 +202,31 @@ function currentEpochForEvent(root, event) {
   return status;
 }
 
+function currentDirectionAfterContinuationDrift(error, { root, event, hostAdapter }) {
+  if (!new Set(["COMPACTION_CHECKPOINT_STALE", "COMPACTION_SESSION_DRIFT", "COMPACTION_RUN_DRIFT", "COMPACTION_RUN_POINTER_MISMATCH"]).has(error.code)) throw error;
+  const current = inspectCompaction({ root });
+  if (current.epoch?.epochId === event.epochId && ["prepared", "provider_compacted", "verified"].includes(current.epoch.state)) {
+    abortCompaction({ root, epochId: event.epochId, reason: "current-p2-direction-superseded-transport-continuation" });
+  }
+  const conversationEntry = enterConversationRecovery({ root });
+  return {
+    status: conversationEntry.status === "recovery_attention_required"
+      ? "recovery_attention_required"
+      : "conversation_direction_restored_without_transport_continuation",
+    reasonCode: error.code,
+    eventKind: event.kind,
+    conversationEntry,
+    continuationConsumed: false,
+    freshLogicalHeadRequired: true,
+    acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
+    recoveryDependentWorkBlocked: conversationEntry.recoveryDependentWorkBlocked,
+    ordinaryWorkBlocked: false,
+    userDecisionRequired: false,
+    headActionRequired: conversationEntry.headActionRequired,
+    authorityChanged: false,
+  };
+}
+
 export function processCompactionLifecycle({ root = ".", hostAdapter = null, direction = null } = {}) {
   const entry = enterConversationRecovery({ root });
   if (!hostAdapter) {
@@ -333,6 +358,27 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
     fail("Host reported an outcome that conflicts with the already-consumed continuation.", "COMPACTION_LIFECYCLE_DIVERGENT_OUTCOME");
   }
   if (compaction.epoch.state === "aborted") {
+    const transportOnlyAbort = new Set([
+      "current-p2-direction-superseded-transport-continuation",
+      "host-continuation-unavailable-fresh-logical-head",
+      "COMPACTION_CHECKPOINT_STALE", "COMPACTION_SESSION_DRIFT", "COMPACTION_RUN_DRIFT", "COMPACTION_RUN_POINTER_MISMATCH",
+    ]).has(compaction.epoch.abortReason);
+    if (transportOnlyAbort) {
+      if (event.outcome !== "succeeded") fail("Host outcome conflicts with the successful compaction whose transport continuation was closed.", "COMPACTION_LIFECYCLE_DIVERGENT_OUTCOME");
+      return {
+        status: "conversation_direction_restored_without_transport_continuation",
+        eventKind: event.kind,
+        conversationEntry: restored,
+        continuationConsumed: false,
+        freshLogicalHeadRequired: true,
+        acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
+        recoveryDependentWorkBlocked: false,
+        ordinaryWorkBlocked: false,
+        userDecisionRequired: false,
+        headActionRequired: false,
+        authorityChanged: false,
+      };
+    }
     if (event.outcome !== "failed") fail("Host outcome conflicts with the terminal aborted epoch.", "COMPACTION_LIFECYCLE_DIVERGENT_OUTCOME");
     return {
       status: "provider_compaction_failure_already_recorded",
@@ -433,13 +479,15 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
     };
   }
   if (compaction.epoch.state === "prepared" || compaction.epoch.state === "provider_compacted") {
-    verifyCompaction({
+    try { verifyCompaction({
       root: identity.projectRoot,
       epochId: event.epochId,
       checkpointDigest: compaction.epoch.checkpointDigest,
       currentUserTurnId: event.userTurnId,
       providerCompacted: true,
-    });
+    }); } catch (error) {
+      return currentDirectionAfterContinuationDrift(error, { root: identity.projectRoot, event, hostAdapter });
+    }
   } else if (compaction.epoch.state !== "verified") {
     fail(`After-compaction success cannot continue from state ${compaction.epoch.state}.`, "INVALID_COMPACTION_STATE");
   }
@@ -471,12 +519,15 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
       authorityChanged: false,
     };
   }
-  const continued = continueCompaction({
+  let continued;
+  try { continued = continueCompaction({
     root: identity.projectRoot,
     epochId: event.epochId,
     continuationToken: loaded.continuationToken,
     currentUserTurnId: event.userTurnId,
-  });
+  }); } catch (error) {
+    return currentDirectionAfterContinuationDrift(error, { root: identity.projectRoot, event, hostAdapter });
+  }
   return {
     status: "compaction_lifecycle_continued",
     eventKind: event.kind,

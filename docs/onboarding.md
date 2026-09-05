@@ -246,7 +246,23 @@ node scripts/head.mjs onboarding-review-read C:\path\to\project --review onboard
 
 ## Promotion and recovery
 
-Acceptance validates stable keys and references, rejects conflicts, records previous and resulting Product Model hashes, writes immutable Product Model revisions, and rebuilds the World Model with the reviewed source snapshot as an explicit parent. Onboarding becomes `ready` only when the resulting Product Canon identity appears in a current digest-verified temporal GraphSnapshot. A failed rebuild restores the previous Product Canon and World Model pointer; any partial snapshot remains non-current derived evidence.
+Acceptance validates stable keys and references, rejects conflicts, then persists
+the explicit P1 ReviewDecision, followed by the previous/resulting immutable
+Product Model revisions, before publishing Canon and its onboarding pointer. Graph rebuild
+comes afterwards and cannot create or revoke approval. Public readiness becomes
+`ready` only with a current digest-verified projection of that approved identity.
+
+If publication is interrupted, read-only status exposes
+`promotion_recovery_pending` without repairing state or blocking ordinary Core
+work. Product resume or an exact retry completes the already approved transition
+from its verified ReviewDecision and revisions; a missing revision can be
+reconstructed only from the exact approved candidates/edits and the verified
+previous Canon, with the resulting hash checked against that decision. No duplicate user review is
+required. A divergent retry, tampered revision, or unrelated current Canon cannot
+overwrite the accepted decision or newer state. If only Graph rebuild fails,
+`onboarding_approved_projection_pending` preserves approval and reports the
+remaining projection work. A partial graph is derived evidence, never recovery
+authority. No additional transaction artifact is created for each retry.
 
 Later source changes do not erase the historical onboarding decision. Read-only status reports `ready_world_changed` when the current World Model is stale or has advanced beyond the snapshot that completed onboarding; normal World Model refresh and HEAD drift handling must then decide how execution context advances.
 

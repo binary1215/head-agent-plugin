@@ -49,6 +49,8 @@
 
 ## 배포와 검증
 
+- [검증 증거와 한계](verification-evidence.md)
+
 - [Codex 마켓플레이스 배포](codex-marketplace.md)
 - [Claude Code 마켓플레이스 배포](claude-marketplace.md)
 - [규칙 표면 감사](rule-surface-audit.md)

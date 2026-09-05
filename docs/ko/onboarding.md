@@ -298,12 +298,22 @@ node scripts/head.mjs onboarding-review-read C:\path\to\project --review onboard
 
 ## 승격과 복구
 
-수락은 stable key와 reference를 검증하고, conflict를 거부하고, 이전 및 결과 Product Model
-hash를 기록하고, 변경 불가능한 Product Model revision을 작성하며, review된 source
-snapshot을 명시적 parent로 삼아 World Model을 다시 빌드합니다. 결과 Product Canon
-identity가 digest 검증된 current temporal GraphSnapshot에 나타나야만 온보딩이 `ready`가
-됩니다. rebuild 실패 시 이전 Product Canon과 World Model pointer가 복원됩니다. 일부만
-생성된 snapshot은 non-current derived evidence로 남습니다.
+수락은 stable key와 reference를 검증하고 충돌을 거부한 뒤, 명시적 P1 ReviewDecision,
+이전·결과 Product Model의 변경 불가능한 revision 순으로 기록합니다. 그 다음 Canon과
+온보딩 pointer를 게시합니다. Graph 재구축은 이후에 수행하며 승인을 만들거나 취소할
+수 없습니다. 공개 준비도는 승인된 identity의 current digest-verified projection이
+있어야만 `ready`가 됩니다.
+
+게시 중 중단되면 읽기 전용 status는 상태를 복구하거나 일반 Core 작업을 막지 않고
+`promotion_recovery_pending`을 표시합니다. Product resume 또는 정확히 같은 재시도는
+검증된 ReviewDecision과 revision으로 이미 승인된 전이를 완료합니다. 누락된 revision은
+정확히 승인된 candidate·edit와 검증된 이전 Canon으로만 재구축하고 결과 hash가
+해당 결정과 일치하는지 확인합니다. 사용자에게 중복
+검토를 요구하지 않습니다. 다른 내용의 재시도, 변조된 revision, 무관한 현재 Canon은
+승인된 결정이나 더 새로운 상태를 덮어쓸 수 없습니다. Graph 재구축만 실패하면
+`onboarding_approved_projection_pending`으로 승인을 보존하고 남은 projection 작업을
+알립니다. 부분 graph는 파생 증거이며 복구 권한이 아닙니다. 재시도마다 별도의
+transaction artifact를 만들지 않습니다.
 
 이후 source 변경은 과거 온보딩 결정을 지우지 않습니다. current World Model이 stale이거나
 온보딩을 완료한 snapshot보다 앞서 나간 경우, 읽기 전용 status는 `ready_world_changed`를

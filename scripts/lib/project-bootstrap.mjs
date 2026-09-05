@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
-import { inspectOnboarding, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
+import { inspectOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 import { restoreSessionFromArtifacts } from "./session-recovery.mjs";
 import { actionability, withExperienceProjections } from "./experience-projection.mjs";
@@ -110,6 +110,12 @@ function productReadiness(status) {
       status: "product_refresh_required",
       action: "refresh_product_world",
       summary: "Reviewed Product Canon is preserved, but its derived World projection must be refreshed or reconciled.",
+    },
+    promotion_recovery_pending: {
+      state: "refresh_required",
+      status: "product_refresh_required",
+      action: "resume_product_governance",
+      summary: "The Product decision is already recorded. Product resume completes its interrupted application and derived projection without another user review; ordinary Core work remains available.",
     },
   };
   return states[status] || {
@@ -455,6 +461,7 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     installation = convergeProjectInstallation({ root, pluginRoot, runtimes });
   }
 
+  if (profile === "product") await recoverOnboardingPromotion({ root });
   let current = inspectOnboarding({ root });
   if (profile === "core") {
     const productGovernanceActivated = !["initialized", "migration_required"].includes(current.status);
@@ -541,14 +548,15 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     }
   }
 
-  const resumableWithoutMutation = new Set(["awaiting_review", "revision_required", "ready", "ready_world_changed"]);
+  const resumableWithoutMutation = new Set(["awaiting_review", "revision_required", "ready", "ready_world_changed", "promotion_recovery_pending"]);
   if (!resumableWithoutMutation.has(current.status)) {
     fail("PROJECT_BOOTSTRAP_STATE_UNSUPPORTED", `Unsupported onboarding resume status: ${current.status}`);
   }
   return bootstrapResponse({
     root,
     profile,
-    onboardingAction: current.status === "awaiting_review" || current.status === "revision_required" ? "review-required" : "already-ready",
+    onboardingAction: current.status === "promotion_recovery_pending" ? "approved-projection-pending"
+      : current.status === "awaiting_review" || current.status === "revision_required" ? "review-required" : "already-ready",
     inputDisposition: Object.keys(onboardingInput).length ? "not-reapplied-to-existing-authority-state" : "not-required",
     before,
     installation,

@@ -139,6 +139,62 @@ const conformanceFindingInputSchema = {
   },
   required: ["canon_anchor", "evidence_anchors", "claim"], additionalProperties: false,
 };
+// Host presentation hints describe the implemented effect; they do not grant
+// permission or prove that a caller obtained a user's approval.
+const supplementalReadOnlyHints = {
+  head_core_contract: true,
+  head_runtime_adapters: true,
+  head_runtime_invocation_authorization: true,
+  head_runtime_invocation_lease_status: true,
+  head_runtime_invocation_result: true,
+  head_onboarding_status: true,
+  head_feature_mapping_status: true,
+  head_change_set_status: true,
+  head_vcs_evidence: true,
+  head_context_capsule: true,
+  head_lineage_artifact: true,
+  head_pending_review: true,
+  head_incremental_refresh_status: true,
+  head_incremental_refresh_receipt: true,
+  head_refresh_trigger_status: true,
+  head_refresh_trigger_delivery: true,
+  head_graph_projection_status: true,
+  head_markdown_projection_status: true,
+  head_post_refresh_projection_status: true,
+  head_post_refresh_projection_receipt: true,
+  head_document_change_candidates: true,
+  head_document_change_review_status: true,
+  head_document_change_review: true,
+  head_document_change_application: true,
+  head_world_query: true,
+  head_git_history: true,
+  head_temporal_graph: true,
+  head_graph_lineage_status: true,
+  head_graph_lineage_trace: true,
+  head_graph_lineage_diff: true,
+  head_runtime_state: true,
+  head_operating_lane_recommend: true,
+  head_compact_status: true,
+  head_product_note: true,
+  head_product_operating_status: true,
+  head_release_status: true,
+  head_continuity_snapshot: true,
+  head_feature_mapping_propose: false,
+  head_feature_mapping_review: false,
+  head_conformance_propose: false,
+  head_conformance_disposition: false,
+  head_conformance_resolution_propose: false,
+  head_conformance_trigger_prepare: false,
+  head_compact_prepare: false,
+  head_compact_verify: false,
+  head_compact_continue: false,
+  head_compact_abort: false,
+  head_product_signal_record: false,
+  head_product_hypothesis_record: false,
+  head_product_initiative_propose: false,
+  head_product_initiative_review: false,
+  head_product_outcome_observe: false,
+};
 export const tools = [
   {
     name: "head_core_contract",
@@ -1428,6 +1484,12 @@ export const tools = [
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, fresh: { type: "boolean", default: false } }, required: ["project_root"], additionalProperties: false },
   },
 ];
+
+for (const tool of tools) {
+  if (tool.annotations?.readOnlyHint === undefined && Object.hasOwn(supplementalReadOnlyHints, tool.name)) {
+    tool.annotations = { ...tool.annotations, readOnlyHint: supplementalReadOnlyHints[tool.name] };
+  }
+}
 
 const success = (id, result) => ({ jsonrpc: "2.0", id, result });
 const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, message } });
