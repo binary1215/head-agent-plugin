@@ -14,6 +14,7 @@ import {
   createConformanceDispositionReceipt,
   createConformanceFindingCandidate,
   createConformanceResolutionCandidate,
+  normalizeConformanceEvidenceAnchor,
   verifyConformanceDispositionReceipt,
   verifyConformanceFindingCandidate,
   verifyConformanceResolutionCandidate,
@@ -185,9 +186,10 @@ function inspectSourceAnchor(projectRoot, anchor) {
 }
 
 function verifyEvidenceAnchors({ projectRoot, projectId, baseline, world, anchors }) {
+  const normalizedAnchors = anchors.map(normalizeConformanceEvidenceAnchor);
   const disclosures = new Set();
-  if (!anchors.some((anchor) => anchor.kind === "graph")) disclosures.add(world.status === "current" ? "graph-not-used" : "graph-unavailable");
-  for (const anchor of anchors) {
+  if (!normalizedAnchors.some((anchor) => anchor.kind === "graph")) disclosures.add(world.status === "current" ? "graph-not-used" : "graph-unavailable");
+  for (const anchor of normalizedAnchors) {
     if (anchor.kind === "source") {
       const normalized = inspectSourceAnchor(projectRoot, anchor);
       disclosures.add("direct-source-anchor-used");
@@ -446,13 +448,21 @@ export function recordConformanceDisposition({ root = ".", findingId, dispositio
   const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId);
   const finding = artifacts.findingsById.get(findingId);
   if (!finding) fail(`Conformance Finding not found: ${findingId}`, "CONFORMANCE_FINDING_NOT_FOUND");
-  const current = currentBaseline(inspected.project.projectRoot);
   const resolution = resolutionId ? artifacts.resolutions.find((item) => item.resolutionId === resolutionId && item.findingId === findingId) || null : null;
   if (resolutionId && !resolution) fail("Conformance resolution candidate is missing.", "CONFORMANCE_RESOLUTION_NOT_FOUND");
-  if (resolution && (resolution.assessment !== "appears-resolved" || conformanceCanonicalJson(resolution.baseline) !== conformanceCanonicalJson(current.baseline))) fail("Conformance resolution is not an exact current appears-resolved candidate.", "CONFORMANCE_RESOLUTION_STALE");
   const normalizedDeferUntil = deferUntil == null ? null : Number.isNaN(Date.parse(deferUntil)) ? fail("Conformance defer-until time is invalid.", "INVALID_CONFORMANCE_DISPOSITION") : new Date(deferUntil).toISOString();
   const previous = artifacts.tails.get(findingId);
   if (previous && previous.disposition === disposition && previous.rationale === String(rationale || "").trim() && previous.deferUntil === normalizedDeferUntil && previous.resolutionId === (resolution?.resolutionId || null)) return { status: "existing", disposition: previous, ordinaryWorkBlocked: false };
+  if (resolution) {
+    const current = currentBaseline(inspected.project.projectRoot);
+    if (resolution.assessment !== "appears-resolved" || conformanceCanonicalJson(resolution.baseline) !== conformanceCanonicalJson(current.baseline)) fail("Conformance resolution is not an exact current appears-resolved candidate.", "CONFORMANCE_RESOLUTION_STALE");
+    try {
+      verifyEvidenceAnchors({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, baseline: resolution.baseline, world: current.world, anchors: resolution.evidenceAnchors });
+    } catch (error) {
+      if (new Set(["CONFORMANCE_SOURCE_DRIFT", "CONFORMANCE_SOURCE_TOO_LARGE", "CONFORMANCE_EVIDENCE_NOT_FOUND", "CONFORMANCE_BASELINE_DRIFT"]).has(error.code)) fail("Conformance resolution evidence changed; ask HEAD to reassess the exact current evidence before accepting it. Ordinary work remains available.", "CONFORMANCE_RESOLUTION_STALE");
+      throw error;
+    }
+  }
   const receipt = createConformanceDispositionReceipt({ projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, finding, disposition, rationale, deferUntil, previousDisposition: previous, resolution });
   const persisted = persistImmutable(inspected.project.projectRoot, DIRECTORIES.dispositions, receipt.dispositionId, receipt, "Conformance disposition");
   return { ...persisted, disposition: receipt, ordinaryWorkBlocked: false, authority: { disposition: "P3-exact-finding-evidence", executionAuthorized: false, productCanonMutated: false, recoveryDirectionMutated: false } };

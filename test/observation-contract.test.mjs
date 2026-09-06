@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import {
   JsonEventFileObservationAdapter,
   ObservationAdapterRegistry,
+  StructuredObservationAdapter,
   collectObservation,
   ingestJsonObservationEventFile,
   ingestStructuredObservation,
@@ -17,7 +19,7 @@ import {
 } from "../scripts/lib/observation-adapter.mjs";
 import { createObservationTypeDescriptor } from "../scripts/lib/observation-contract.mjs";
 import { inspectObservations, loadObservationProjection, queryObservations } from "../scripts/lib/observation-projection.mjs";
-import { recordDerivedObservation } from "../scripts/lib/observation-store.mjs";
+import { recordCollectedObservation, recordDerivedObservation } from "../scripts/lib/observation-store.mjs";
 import { prepareObservationEvidence } from "../scripts/lib/observation-workflow.mjs";
 import { recordProductHypothesis, recordProductSignal } from "../scripts/lib/product-operating-loop.mjs";
 import { buildWorldModel, inspectWorldModelStatus, readWorldModel } from "../scripts/lib/world-model.mjs";
@@ -533,4 +535,122 @@ test("admits Observation evidence only by exact HEAD need and keeps semantic int
 
   assert.throws(() => compileContext({ root, task, evidenceNeeds: [{ id: "invalid-observation", kind: "observation", observationIds: [] }] }), { code: "INVALID_EVIDENCE_NEEDS" });
   await assert.rejects(() => recordProductHypothesis({ root, statement: "Unsupported", observationIds: ["observation-000000000000000000000000"] }), (error) => error.code === "UNKNOWN_OBSERVATION");
+});
+
+function observationAuthorityDigests(root) {
+  return Object.fromEntries([".head/context/product-model.json", ".head/sessions/current.json"].map((relative) => [relative, sha(fs.readFileSync(path.join(root, ...relative.split("/"))))]));
+}
+
+function observationJsonFiles(root, relative) {
+  const directory = path.join(root, ...relative.split("/"));
+  return fs.existsSync(directory)
+    ? fs.readdirSync(directory).filter((name) => name.endsWith(".json")).map((name) => JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")))
+    : [];
+}
+
+test("publishes one Observation and one receipt when divergent writers collide at the create-only boundary", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const before = observationAuthorityDigests(root);
+  const type = descriptor("example.concurrent.build-result", [{ key: "succeeded", type: "boolean", required: true }], ["event"]);
+  const firstInput = input({ suffix: "same-concurrent-event", subjectType: "example.concurrent.target", payload: { succeeded: true } });
+  const secondInput = { ...structuredClone(firstInput), sourceEvidenceDigest: sha("different-concurrent-evidence"), payload: { succeeded: false } };
+  const recordDirectory = path.join(root, ".head", "observations", "records", "by-source-key");
+  const originalLink = fs.linkSync;
+  let injected = false;
+  let secondResult = null;
+  let secondError = null;
+  fs.linkSync = function (source, destination, ...rest) {
+    if (!injected && path.dirname(path.resolve(String(destination))) === recordDirectory && String(destination).endsWith(".json")) {
+      injected = true;
+      const adapter = new StructuredObservationAdapter({ descriptor: type, input: secondInput });
+      try {
+        secondResult = recordCollectedObservation({ root, descriptor: type, input: secondInput, adapterDescriptor: adapter.describe(), sourceScopeDigest: binding().sourceScopeDigest });
+      } catch (error) { secondError = error; }
+    }
+    return originalLink.call(fs, source, destination, ...rest);
+  };
+  let firstError = null;
+  try {
+    await ingestStructuredObservation({ root, binding: binding(), descriptor: type, input: firstInput });
+  } catch (error) { firstError = error; }
+  finally { fs.linkSync = originalLink; }
+  assert.equal(injected, true);
+  assert.equal(secondError, null);
+  assert.equal(secondResult.status, "recorded");
+  assert.equal(firstError?.code, "DIVERGENT_OBSERVATION_REPLAY");
+  const records = observationJsonFiles(root, ".head/observations/records/by-source-key");
+  const receipts = observationJsonFiles(root, ".head/observations/receipts");
+  assert.equal(records.length, 1);
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].observationId, records[0].observationId);
+  assert.equal(inspectObservations({ root }).projection.counts.observations, 1);
+  assert.equal((await ingestStructuredObservation({ root, binding: binding(), descriptor: type, input: secondInput })).status, "existing");
+  await assert.rejects(() => ingestStructuredObservation({ root, binding: binding(), descriptor: type, input: firstInput }), (error) => error.code === "DIVERGENT_OBSERVATION_REPLAY");
+  assert.deepEqual(observationAuthorityDigests(root), before);
+  assert.equal(fs.readdirSync(recordDirectory).some((name) => name.endsWith(".tmp")), false);
+});
+
+test("keeps divergent Observation replay process-safe across independent Node writers", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const before = observationAuthorityDigests(root);
+  const type = descriptor("example.process.build-result", [{ key: "succeeded", type: "boolean", required: true }], ["event"]);
+  const firstInput = input({ suffix: "same-process-event", subjectType: "example.process.target", payload: { succeeded: true } });
+  const secondInput = { ...structuredClone(firstInput), sourceEvidenceDigest: sha("different-process-evidence"), payload: { succeeded: false } };
+  const startFile = path.join(root, "start-observation-writers.flag");
+  const adapterUrl = pathToFileURL(path.join(pluginRoot, "scripts", "lib", "observation-adapter.mjs")).href;
+  const workerSource = `
+    import fs from "node:fs";
+    import { setTimeout as delay } from "node:timers/promises";
+    import { ingestStructuredObservation } from ${JSON.stringify(adapterUrl)};
+    const request = JSON.parse(process.argv[1]);
+    while (!fs.existsSync(request.startFile)) await delay(2);
+    try {
+      const result = await ingestStructuredObservation(request.operation);
+      process.stdout.write(JSON.stringify({ status: result.status, observationId: result.observation.observationId }));
+    } catch (error) {
+      process.stdout.write(JSON.stringify({ code: error.code || null, message: error.message }));
+      process.exitCode = error.code === "DIVERGENT_OBSERVATION_REPLAY" ? 2 : 3;
+    }
+  `;
+  const children = [];
+  t.after(() => { for (const child of children) if (child.exitCode == null && child.signalCode == null) child.kill(); });
+  function launch(observed) {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", workerSource, JSON.stringify({ startFile, operation: { root, binding: binding(), descriptor: type, input: observed } })], { cwd: pluginRoot, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    children.push(child);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const started = new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+    const completed = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => resolve({ code, signal, stdout, stderr, result: JSON.parse(stdout) }));
+    });
+    return { started, completed };
+  }
+  let first;
+  let second;
+  try {
+    first = launch(firstInput);
+    second = launch(secondInput);
+  } catch (error) {
+    if (error?.code === "EPERM") { t.skip("The local sandbox forbids nested process creation; the atomic collision test still runs."); return; }
+    throw error;
+  }
+  await Promise.all([first.started, second.started]);
+  fs.writeFileSync(startFile, "start\n", { flag: "wx" });
+  const outcomes = await Promise.all([first.completed, second.completed]);
+  assert.deepEqual(outcomes.map((item) => item.code).sort(), [0, 2]);
+  assert.equal(outcomes.filter((item) => item.result.status === "recorded").length, 1);
+  assert.equal(outcomes.filter((item) => item.result.code === "DIVERGENT_OBSERVATION_REPLAY").length, 1);
+  assert.equal(outcomes.every((item) => item.signal === null && item.stderr === ""), true);
+  const records = observationJsonFiles(root, ".head/observations/records/by-source-key");
+  const receipts = observationJsonFiles(root, ".head/observations/receipts");
+  assert.equal(records.length, 1);
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].observationId, records[0].observationId);
+  assert.equal(inspectObservations({ root }).projection.counts.observations, 1);
+  assert.deepEqual(observationAuthorityDigests(root), before);
 });

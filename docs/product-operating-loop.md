@@ -1,6 +1,6 @@
 # Product Operating Loop
 
-Status: implemented minimal vertical under Product Operating Loop protocol `0.3.0`, with digest-readable `0.1.0` and `0.2.0` compatibility.
+Status: implemented minimal vertical under Product Operating Loop protocol `0.4.0`, with digest-readable `0.1.0`, `0.2.0`, and `0.3.0` compatibility.
 
 The Product Operating Loop connects product learning to reviewed execution without turning observations, model inference, GraphDB, or a continuity summary into HEAD or user authority.
 
@@ -48,6 +48,10 @@ accepted execution ReviewDecision + ResultPacket -> ChangeSet
 ```
 
 The persisted Signal/Hypothesis path remains available for explicit audit boundaries. The lighter path may create an immutable `ProductInitiativeCandidate` directly from explicit inline reasoning. It may defer Feature resolution until accept review, so no `ProductFeatureCandidate` exists before the user decision. The reviewed Initiative preserves the candidate's title, description, reasoning, and hypothesis references byte-independently while adding exactly one `existing-feature | candidate | gap` resolution in the separate reviewed artifact.
+
+The current Initiative `ReviewDecision` also binds the candidate's full hash, the exact effective Feature resolution, and the complete `ProductFeatureCandidate` when that candidate was selected at review time. Product Operating writers are serialized by one project-local P5 mutation lease, and every affected directory's existing count, individual bytes, total bytes, and all compound outputs are checked before the first durable write. An exact retry after a partial filesystem failure may create only the missing reviewed output from that unchanged decision. A different disposition, rationale, or Feature choice cannot replace it. Completed legacy decisions remain readable and replayable. When a legacy candidate already froze its Feature resolution, that exact evidence may recover a missing output; Core never guesses a deferred legacy selection and returns bounded recovery guidance instead.
+
+These are mutation-integrity checks, not additional user gates. The existing explicit review remains the only authority boundary, ordinary reads and work remain available, and transient writer contention is handled internally without changing Product Canon or P2 recovery direction.
 
 An `OutcomeObservation` must reference a ChangeSet whose `ResultPacket` has an accepted execution `ReviewDecision`. It can also reference a reviewed Initiative. It cannot mark a Feature successful, change Feature status, or promote Product Canon.
 

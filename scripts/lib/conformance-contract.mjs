@@ -94,7 +94,7 @@ function normalizeCanonAnchor(value) {
   return { entityKind, entityKey: stableKey(value.entityKey, "Conformance Canon entityKey", 128) };
 }
 
-function normalizeEvidenceAnchor(value) {
+export function normalizeConformanceEvidenceAnchor(value) {
   exactFields(value, ["kind", "path", "fileDigest", "startLine", "endLine", "excerptDigest", "revisionId", "symbolId", "changeSetId", "changeSetHash", "changeId", "observationId", "observationHash", "graphSnapshotId", "nodeId"], "Conformance evidence anchor");
   const kind = text(value.kind, "Conformance evidence kind", 32);
   if (kind === "source") {
@@ -123,7 +123,7 @@ export function createConformanceFindingCandidate({ projectId, sessionId, baseli
   const claimKind = text(claim.kind, "Conformance claim kind", 64);
   const riskHint = text(claim.riskHint || "unknown", "Conformance risk hint", 16);
   if (!CONFORMANCE_CLAIM_KINDS.includes(claimKind) || !CONFORMANCE_RISK_HINTS.includes(riskHint)) fail("Conformance claim kind or risk hint is invalid.", "INVALID_CONFORMANCE_CLAIM");
-  const anchors = evidenceAnchors.map(normalizeEvidenceAnchor).sort((a, b) => conformanceCanonicalJson(a).localeCompare(conformanceCanonicalJson(b)));
+  const anchors = evidenceAnchors.map(normalizeConformanceEvidenceAnchor).sort((a, b) => conformanceCanonicalJson(a).localeCompare(conformanceCanonicalJson(b)));
   if (new Set(anchors.map(conformanceCanonicalJson)).size !== anchors.length) fail("Conformance Finding contains duplicate evidence anchors.", "DUPLICATE_CONFORMANCE_EVIDENCE");
   const normalizedBaseline = normalizeBaseline(baseline);
   const normalizedCanonAnchor = normalizeCanonAnchor(canonAnchor);
@@ -163,7 +163,7 @@ export function verifyConformanceFindingCandidate(document, projectId = "") {
     || !authorityValid(document, "non-authoritative-conformance-finding-candidate")) fail("ConformanceFindingCandidate fields or authority are invalid.", "INVALID_CONFORMANCE_FINDING");
   normalizeBaseline(document.baseline); normalizeCanonAnchor(document.canonAnchor);
   if (!Array.isArray(document.evidenceAnchors) || document.evidenceAnchors.length < 1 || document.evidenceAnchors.length > 64) fail("Conformance Finding evidence count is invalid.", "INVALID_CONFORMANCE_EVIDENCE_COUNT");
-  const anchors = document.evidenceAnchors.map(normalizeEvidenceAnchor).sort((a, b) => conformanceCanonicalJson(a).localeCompare(conformanceCanonicalJson(b)));
+  const anchors = document.evidenceAnchors.map(normalizeConformanceEvidenceAnchor).sort((a, b) => conformanceCanonicalJson(a).localeCompare(conformanceCanonicalJson(b)));
   if (conformanceCanonicalJson(anchors) !== conformanceCanonicalJson(document.evidenceAnchors) || new Set(anchors.map(conformanceCanonicalJson)).size !== anchors.length) fail("Conformance Finding evidence normalization is invalid.", "INVALID_CONFORMANCE_EVIDENCE_ANCHOR");
   exactFields(document.claim, ["kind", "summary", "rationale", "riskHint"], "Conformance claim");
   if (!CONFORMANCE_CLAIM_KINDS.includes(document.claim.kind) || !CONFORMANCE_RISK_HINTS.includes(document.claim.riskHint)) fail("Conformance claim is invalid.", "INVALID_CONFORMANCE_CLAIM");
@@ -238,7 +238,7 @@ export function createConformanceResolutionCandidate({ projectId, sessionId, fin
   const normalizedAssessment = text(assessment, "Conformance resolution assessment", 32);
   if (!new Set(["appears-resolved", "still-present", "uncertain"]).has(normalizedAssessment)) fail("Conformance resolution assessment is invalid.", "INVALID_CONFORMANCE_RESOLUTION");
   if (!Array.isArray(evidenceAnchors) || evidenceAnchors.length < 1 || evidenceAnchors.length > 64) fail("Conformance resolution requires exact evidence.", "INVALID_CONFORMANCE_RESOLUTION");
-  const anchors = evidenceAnchors.map(normalizeEvidenceAnchor).sort((a, b) => conformanceCanonicalJson(a).localeCompare(conformanceCanonicalJson(b)));
+  const anchors = evidenceAnchors.map(normalizeConformanceEvidenceAnchor).sort((a, b) => conformanceCanonicalJson(a).localeCompare(conformanceCanonicalJson(b)));
   if (new Set(anchors.map(conformanceCanonicalJson)).size !== anchors.length) fail("Conformance resolution contains duplicate evidence anchors.", "DUPLICATE_CONFORMANCE_EVIDENCE");
   const body = {
     schemaVersion: SCHEMA_VERSION,
@@ -277,7 +277,7 @@ export function verifyConformanceResolutionCandidate(document, finding, projectI
     || document.epistemicClass !== "inferred-meaning" || !authorityValid(document, "non-authoritative-conformance-resolution-candidate")) fail("ConformanceResolutionCandidate fields or authority are invalid.", "INVALID_CONFORMANCE_RESOLUTION");
   normalizeBaseline(document.baseline);
   if (!Array.isArray(document.evidenceAnchors) || document.evidenceAnchors.length < 1 || document.evidenceAnchors.length > 64) fail("Conformance resolution evidence is invalid.", "INVALID_CONFORMANCE_RESOLUTION");
-  const anchors = document.evidenceAnchors.map(normalizeEvidenceAnchor).sort((a, b) => conformanceCanonicalJson(a).localeCompare(conformanceCanonicalJson(b)));
+  const anchors = document.evidenceAnchors.map(normalizeConformanceEvidenceAnchor).sort((a, b) => conformanceCanonicalJson(a).localeCompare(conformanceCanonicalJson(b)));
   if (conformanceCanonicalJson(anchors) !== conformanceCanonicalJson(document.evidenceAnchors) || new Set(anchors.map(conformanceCanonicalJson)).size !== anchors.length) fail("Conformance resolution evidence normalization is invalid.", "INVALID_CONFORMANCE_RESOLUTION");
   text(document.rationale, "Conformance resolution rationale", 8192); normalizeDisclosures(document.disclosures);
   verifyArtifactAuthorityBoundary("ConformanceResolutionCandidate", document.authorityBoundary);

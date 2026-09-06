@@ -49,6 +49,10 @@ Supported exact-Finding dispositions are `acknowledge`, `defer`, `dismiss`, `req
 
 Source or Canon drift changes an open row to `needs-recheck`; it never proves resolution. Provider HEAD may submit an exact fresh `ConformanceResolutionCandidate` with `appears-resolved`, `still-present`, or `uncertain`. Only an explicit user-confirmed `accept-resolution` for one current `appears-resolved` candidate closes that exact Finding. This closure is queue state, not Product Canon or a general suppression rule.
 
+Immediately before recording a new `accept-resolution`, Core revalidates that resolution candidate's own exact evidence anchors against the current source, ChangeSet, Observation, or Graph state. It does not reuse the original Finding anchors and does not require Graph. If those anchors drift, only the new closure attempt returns `CONFORMANCE_RESOLUTION_STALE`; ordinary work and the existing queue remain available. An exact replay of an already recorded disposition returns the immutable receipt without reinterpreting later evidence, which preserves at-most-once user decisions.
+
+Whole-file source anchors may omit `startLine`, `endLine`, `excerptDigest`, `revisionId`, and `symbolId`. The shared Core boundary normalizes those omitted optional fields to `null` before verification, so CLI and typed MCP produce the same identity and users are not required to write placeholder fields.
+
 The P4 audit graph uses only `CHECKS_AGAINST`, `EVIDENCED_BY`, `DISPOSITIONED_BY`, and `REASSESSED_BY`. It never automatically emits `VIOLATES`, `CONFORMS_TO`, `SATISFIES`, or `RESOLVED`, and candidate nodes stay hidden from default product traversal.
 
 ## Optional Host triggers
@@ -83,6 +87,8 @@ Pages contain at most 64 entities or Findings. This is an output bound, not an e
 - stale read-only cursors resynchronize without user ceremony;
 - wording-only duplicate claims converge by exact semantic anchor fingerprint both across calls and within one proposal batch;
 - source drift creates `needs-recheck`, never automatic resolution;
+- a new resolution acceptance revalidates the resolution candidate's own fresh exact evidence, while an already recorded exact disposition replay remains stable;
+- omitted whole-file source optionals and explicit `null` normalize to the same CLI/MCP identity;
 - resolution requires fresh exact evidence and explicit user confirmation to close one Finding;
 - Host monitor execution is opt-in, failed preparation retains queued triggers, duplicate delivery converges, refresh omission counts stay batch-local, uncertain outcomes do not auto-replay, and Host state remains outside the Project;
 - CLI and MCP return the same Core identities, and the 65th item remains reachable.

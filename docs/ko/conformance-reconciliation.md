@@ -51,6 +51,10 @@ Core가 disclosure를 계산합니다. 공급자와 사용자는 connector가 �
 
 Source 또는 Canon drift는 열린 row를 `needs-recheck`로 바꾸며 resolution을 증명하지 않습니다. 공급자 HEAD는 `appears-resolved`, `still-present`, `uncertain` 중 하나인 정확하고 fresh한 `ConformanceResolutionCandidate`를 제출할 수 있습니다. 현재 `appears-resolved` 후보 하나에 대한 명시적 사용자 확인 `accept-resolution`만 그 정확한 Finding을 닫습니다. 이 closure는 queue 상태이지 Product Canon이나 일반 suppression rule이 아닙니다.
 
+새 `accept-resolution`을 기록하기 직전에 Core는 그 resolution candidate 자신의 exact evidence anchor를 현재 source, ChangeSet, Observation 또는 Graph 상태와 다시 대조합니다. 원래 Finding anchor를 재사용하지 않으며 Graph를 요구하지도 않습니다. anchor가 drift하면 새 closure 시도만 `CONFORMANCE_RESOLUTION_STALE`을 반환하고 일반 작업과 기존 queue는 계속 사용할 수 있습니다. 이미 기록된 disposition의 exact replay는 이후 evidence를 재해석하지 않고 immutable receipt를 반환하므로 at-most-once 사용자 결정을 보존합니다.
+
+전체 파일 source anchor에서는 `startLine`, `endLine`, `excerptDigest`, `revisionId`, `symbolId`를 생략할 수 있습니다. 공유 Core boundary는 검증 전에 생략된 optional field를 `null`로 정규화하므로 CLI와 typed MCP가 동일 identity를 만들며 사용자가 placeholder field를 작성할 필요가 없습니다.
+
 P4 감사 graph는 `CHECKS_AGAINST`, `EVIDENCED_BY`, `DISPOSITIONED_BY`, `REASSESSED_BY`만 사용합니다. `VIOLATES`, `CONFORMS_TO`, `SATISFIES`, `RESOLVED`를 자동으로 내보내지 않으며 candidate node는 기본 product traversal에서 숨겨집니다.
 
 ## 선택적 Host trigger
@@ -85,6 +89,8 @@ head conformance-resolution-propose <project> --input <provider-head-resolution.
 - stale read-only cursor는 사용자 절차 없이 재동기화합니다.
 - wording만 다른 중복 claim은 호출 사이와 하나의 proposal batch 내부 모두에서 exact semantic anchor fingerprint로 수렴합니다.
 - source drift는 `needs-recheck`를 만들며 자동 resolution을 만들지 않습니다.
+- 새 resolution acceptance는 resolution candidate 자신의 fresh exact evidence를 다시 검증하고, 이미 기록된 exact disposition replay는 안정적으로 유지됩니다.
+- 생략된 whole-file source optional과 명시적 `null`은 동일 CLI/MCP identity로 정규화됩니다.
 - resolution은 fresh exact evidence가 필요하며 Finding 하나를 닫으려면 명시적 사용자 확인이 필요합니다.
 - Host monitor execution은 opt-in이고, 실패한 preparation은 queued trigger를 보존하며, duplicate delivery는 수렴하고, refresh omission count는 batch-local로 유지되며, uncertain outcome은 auto-replay되지 않고, Host state는 Project 밖에 남습니다.
 - CLI와 MCP는 같은 Core identity를 반환하며 65번째 항목도 접근할 수 있습니다.

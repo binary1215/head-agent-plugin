@@ -355,3 +355,74 @@ test("exposes the same conversational Core flow through typed MCP without Host c
   assert.equal(unavailable.result.structuredContent.status, "optional-host-adapter-unavailable");
   assert.equal(unavailable.result.structuredContent.ordinaryWorkBlocked, false);
 });
+
+test("normalizes omitted whole-file source fields before shared CLI and Core verification", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"));
+  const sourceFile = path.join(root, "src", "whole-file.mjs");
+  fs.writeFileSync(sourceFile, "export const wholeFile = true;\n");
+  const prepared = prepareConformanceAssessment({ root });
+  const omitted = { kind: "source", path: "src/whole-file.mjs", fileDigest: sha(fs.readFileSync(sourceFile)) };
+  const explicitNull = { ...omitted, startLine: null, endLine: null, excerptDigest: null, revisionId: null, symbolId: null };
+  const findingInput = (anchor, summary) => ({
+    root,
+    baseline: prepared.baseline,
+    findings: [{
+      canonAnchor: { entityKind: "Constraint", entityKey: "constraint.0" },
+      evidenceAnchors: [anchor],
+      claim: { kind: "potential-conflict", summary, rationale: "The whole-file digest is exact mechanical evidence.", riskHint: "low" },
+    }],
+  });
+  const omittedFinding = proposeConformanceFindings(findingInput(omitted, "Whole-file omitted-field proposal."));
+  const nullReplay = proposeConformanceFindings(findingInput(explicitNull, "Equivalent explicit-null proposal."));
+  assert.equal(omittedFinding.status, "recorded");
+  assert.equal(nullReplay.status, "existing");
+  assert.equal(nullReplay.findings[0].findingId, omittedFinding.findings[0].findingId);
+  const stored = readConformanceFinding({ root, findingId: omittedFinding.findings[0].findingId });
+  assert.deepEqual(stored.finding.evidenceAnchors[0], explicitNull);
+  const omittedResolution = proposeConformanceResolution({ root, findingId: stored.finding.findingId, baseline: prepared.baseline, evidenceAnchors: [omitted], assessment: "appears-resolved", rationale: "The same whole-file evidence now appears resolved." });
+  const nullResolutionReplay = proposeConformanceResolution({ root, findingId: stored.finding.findingId, baseline: prepared.baseline, evidenceAnchors: [explicitNull], assessment: "appears-resolved", rationale: "The same whole-file evidence now appears resolved." });
+  assert.equal(omittedResolution.status, "recorded");
+  assert.equal(nullResolutionReplay.status, "existing");
+  assert.equal(nullResolutionReplay.resolution.resolutionId, omittedResolution.resolution.resolutionId);
+});
+
+test("revalidates resolution evidence only for a new acceptance and preserves exact recorded replay", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"));
+  const sourceFile = path.join(root, "src", "resolution.mjs");
+  fs.writeFileSync(sourceFile, "export const enabled = false;\n");
+  const canonFile = path.join(root, ".head", "context", "product-model.json");
+  const sessionFile = path.join(root, ".head", "sessions", "current.json");
+  const canonBefore = fs.readFileSync(canonFile, "utf8");
+  const sessionBefore = fs.readFileSync(sessionFile, "utf8");
+  const initial = prepareConformanceAssessment({ root });
+  const finding = proposeConformanceFindings(proposal(root, initial, "src/resolution.mjs")).findings[0];
+  fs.writeFileSync(sourceFile, "export const enabled = true;\n");
+  const resolutionBaseline = prepareConformanceAssessment({ root });
+  const staleResolution = proposeConformanceResolution({ root, findingId: finding.findingId, baseline: resolutionBaseline.baseline, evidenceAnchors: [sourceAnchor(root, "src/resolution.mjs")], assessment: "appears-resolved", rationale: "The exact current source appears to resolve the Finding." }).resolution;
+  fs.writeFileSync(sourceFile, "export const enabled = false; // later edit\n");
+  await assert.rejects(
+    async () => recordConformanceDisposition({ root, findingId: finding.findingId, disposition: "accept-resolution", rationale: "Accept this exact resolution candidate.", resolutionId: staleResolution.resolutionId, confirmUserDisposition: true }),
+    (error) => error.code === "CONFORMANCE_RESOLUTION_STALE" && /Ordinary work remains available/.test(error.message),
+  );
+  assert.equal(readConformanceFinding({ root, findingId: finding.findingId }).dispositions.length, 0);
+  assert.notEqual(inspectConformanceQueue({ root }).findings[0].status, "closed-resolved");
+  assert.equal(inspectConformanceQueue({ root }).ordinaryWorkBlocked, false);
+
+  const currentBaseline = prepareConformanceAssessment({ root });
+  const currentResolution = proposeConformanceResolution({ root, findingId: finding.findingId, baseline: currentBaseline.baseline, evidenceAnchors: [sourceAnchor(root, "src/resolution.mjs")], assessment: "appears-resolved", rationale: "HEAD reassessed the later exact source." }).resolution;
+  const request = { root, findingId: finding.findingId, disposition: "accept-resolution", rationale: "Accept the current exact resolution candidate.", resolutionId: currentResolution.resolutionId, confirmUserDisposition: true };
+  const accepted = recordConformanceDisposition(request);
+  assert.equal(accepted.status, "recorded");
+  assert.equal(inspectConformanceQueue({ root }).findings[0].status, "closed-resolved");
+  fs.writeFileSync(sourceFile, "export const enabled = true; // post-decision edit\n");
+  const exactReplay = recordConformanceDisposition(request);
+  assert.equal(exactReplay.status, "existing");
+  assert.equal(exactReplay.disposition.dispositionId, accepted.disposition.dispositionId);
+  assert.equal(readConformanceFinding({ root, findingId: finding.findingId }).dispositions.length, 1);
+  assert.equal(fs.readFileSync(canonFile, "utf8"), canonBefore);
+  assert.equal(fs.readFileSync(sessionFile, "utf8"), sessionBefore);
+});

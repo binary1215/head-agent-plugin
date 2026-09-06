@@ -14,6 +14,8 @@ adapter는 정확한 `ObservationSourceBinding`과 제한된 input을 제공합�
 
 credential, provider session, process ID, socket과 source cursor는 Host 로컬에 남습니다. binding에는 credential reference name만 나타날 수 있고 observation record에는 복사되지 않습니다. replay identity는 정확한 adapter key, adapter version, source-scope digest, source-event-key digest 범위로 제한됩니다. 해당 binding 안의 동일 replay는 같은 record로 수렴하고 내용이 다르면 fail closed됩니다. 서로 독립적인 source binding은 충돌 없이 같은 upstream event key를 재사용할 수 있습니다.
 
+Core는 같은 디렉터리의 atomic hard-link commit으로 각 create-only Observation artifact를 발행합니다. 따라서 동시 writer는 기존 replay key를 대체할 수 없습니다. 동일한 내용은 수렴하고, 서로 다른 내용을 가진 패배 writer는 receipt를 만들기 전에 중단합니다. receipt는 실제로 이겼거나 이미 존재한 record identity에 대해서만 기록되므로, 후속 reader는 record/receipt split-brain을 물려받지 않습니다. 이 process-safe storage fence는 ingestion 승인이나 semantic judgment를 추가하지 않습니다.
+
 ## Coverage와 graph
 
 Coverage는 complete, sampled, partial, unknown으로 명시됩니다. bounded enumeration이 query digest, 동일한 examined/source total과 omission 0을 제공할 때만 complete coverage를 받아들입니다. adapter가 sample을 complete라고 주장할 수 없습니다.
@@ -110,6 +112,7 @@ Context compilation은 기본적으로 공통 observation을 제외합니다. HE
 
 - 서로 다른 제품 domain이 Core의 domain vocabulary 없이 같은 계약을 사용합니다.
 - 독립 source binding은 같은 upstream event key를 재사용할 수 있고, 하나의 정확한 binding 안에서 divergent replay는 fail closed합니다.
+- 동시 identical writer는 수렴하고, 동시 divergent writer는 정확히 하나의 record와 일치하는 receipt 하나만 보존합니다.
 - observation write는 Product Canon과 Session recovery byte를 변경하지 않습니다.
 - Product Signal과 그 밖의 관련 없는 operating flow는 사용하지 않는 Observation storage를 load하거나 의존하지 않습니다.
 - false completeness, schema drift, authority drift와 divergent replay는 fail closed됩니다.

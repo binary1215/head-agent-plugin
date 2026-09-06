@@ -98,6 +98,8 @@ Common observations preserve the same split. `ObservationTypeDescriptor`, `Obser
 
 Conformance reconciliation also preserves the split. Finding and resolution candidates plus exact-Finding disposition receipts are P3; preparation, queue, audit graph, and trigger-batch projections are P4; optional process-local trigger bindings are P5. Missing Graph, partial coverage, advisory risk, optional adapter loss, open Findings, and queue length cannot block ordinary work. Only cross-Project evidence, tampering, stale mutation input, path escape, divergent replay, or authority amplification fails the affected operation. A request to fix code still needs the ordinary execution lane, and a request to revise Canon still needs the existing exact user `ReviewDecision`. See [`conformance-reconciliation.md`](conformance-reconciliation.md).
 
+Product Initiative review uses the same non-amplification rule. Its current scoped `ReviewDecision` binds the complete candidate hash and exact reviewed Feature selection before any reviewed output is published. One project-local P5 writer lease serializes capacity checks and the single-decision-per-candidate invariant without becoming a user gate or recovery record. Exact retry may complete only missing outputs from that immutable decision; divergent retry cannot branch it. A legacy candidate's already frozen resolution may be reused as exact recovery evidence, but a missing deferred legacy selection is never guessed.
+
 ## Graph versus record
 
 Product semantic Canon remains P1. Core temporal `GraphSnapshot` is P4: a

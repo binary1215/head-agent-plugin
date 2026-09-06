@@ -12,6 +12,8 @@ An adapter supplies an exact `ObservationSourceBinding` and bounded input. Core 
 
 Credentials, provider sessions, process IDs, sockets, and source cursors remain Host-local. Only credential reference names may appear in the binding, and they are not copied into observation records. Replay identity is scoped to the exact adapter key, adapter version, source-scope digest, and source-event-key digest. Identical replay inside that binding converges on the same record, while divergent content fails closed. Independent source bindings may reuse an upstream event key without colliding.
 
+Core publishes each create-only Observation artifact with an atomic same-directory hard-link commit. Concurrent writers therefore cannot replace an existing replay key: identical content converges, while a losing divergent writer stops before creating its receipt. A receipt is written only for the record identity that actually won or already existed, so later readers never inherit a record/receipt split-brain. This process-safe storage fence adds no ingestion approval or semantic judgment.
+
 ## Coverage and graph
 
 Coverage is explicit: complete, sampled, partial, or unknown. Complete coverage is accepted only when a bounded enumeration supplies a query digest, equal examined and source totals, and zero omissions. An adapter cannot claim completeness from a sample.
@@ -108,6 +110,7 @@ Ordinary inspection remains ephemeral. Persist an Observation only when cross-Ru
 
 - unrelated product domains use the same contract without domain vocabulary in Core;
 - independent source bindings may reuse the same upstream event key, while divergent replay inside one exact binding fails closed;
+- concurrent identical writers converge and concurrent divergent writers retain exactly one record with exactly one matching receipt;
 - observation writes leave Product Canon and Session recovery bytes unchanged;
 - Product Signal and other unrelated operating flows do not load or depend on unused Observation storage;
 - false completeness, schema drift, authority drift, and divergent replay fail closed;

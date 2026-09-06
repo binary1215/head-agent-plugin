@@ -36,21 +36,38 @@ function safeDirectory(projectRoot, relative) {
   return directory;
 }
 
-function atomicWrite(file, content) {
+function atomicCreate(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  try { fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" }); fs.renameSync(temporary, file); }
+  try {
+    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
+    try { fs.linkSync(temporary, file); return true; }
+    catch (error) { if (error?.code === "EEXIST") return false; throw error; }
+  }
   finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+}
+
+function readCreateOnly(file, label) {
+  const stat = fs.lstatSync(file);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > LIMITS.maxArtifactBytes) fail(`${label} is unsafe or too large.`, "OBSERVATION_STORE_LIMIT");
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (error) { fail(`${label} contains invalid JSON: ${error.message}`, "INVALID_OBSERVATION_ARTIFACT"); }
 }
 
 function persistCreateOnly(projectRoot, relative, fileName, document, divergentCode = "OBSERVATION_IMMUTABLE_COLLISION") {
   const file = path.join(safeDirectory(projectRoot, relative), fileName);
+  const content = json(document);
+  if (Buffer.byteLength(content, "utf8") > LIMITS.maxArtifactBytes) fail("Observation artifact exceeds its byte bound.", "OBSERVATION_STORE_LIMIT");
   if (fs.existsSync(file)) {
-    const existing = JSON.parse(fs.readFileSync(file, "utf8"));
+    const existing = readCreateOnly(file, "Create-only Observation artifact");
     if (observationCanonicalJson(existing) !== observationCanonicalJson(document)) fail(`Create-only Observation key has divergent content: ${fileName}`, divergentCode);
     return { status: "existing", file };
   }
-  atomicWrite(file, json(document));
+  if (!atomicCreate(file, content)) {
+    const existing = readCreateOnly(file, "Create-only Observation artifact");
+    if (observationCanonicalJson(existing) !== observationCanonicalJson(document)) fail(`Create-only Observation key has divergent content: ${fileName}`, divergentCode);
+    return { status: "existing", file };
+  }
   return { status: "recorded", file };
 }
 

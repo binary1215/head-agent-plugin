@@ -59,6 +59,8 @@ context와 조정에도 같은 규칙이 적용됩니다.
 
 Conformance 재정도 같은 분리를 보존합니다. Finding 및 resolution candidate와 exact-Finding disposition receipt는 P3이고, preparation, queue, audit graph, trigger-batch projection은 P4이며, 선택적 process-local trigger binding은 P5입니다. Graph 부재, partial coverage, advisory risk, 선택적 adapter 손실, 열린 Finding, queue 길이는 일반 작업을 막을 수 없습니다. 교차 Project 증거, tampering, stale mutation input, path escape, divergent replay 또는 authority amplification만 영향받는 동작을 실패시킵니다. 코드 수정 요청에는 여전히 일반 execution lane이 필요하고 Canon 개정 요청에는 기존 exact 사용자 `ReviewDecision`이 필요합니다. [`conformance-reconciliation.md`](conformance-reconciliation.md)를 참고하세요.
 
+Product Initiative review도 같은 non-amplification 규칙을 사용합니다. 현재 범위가 지정된 `ReviewDecision`은 reviewed output을 발행하기 전에 완전한 candidate hash와 exact reviewed Feature selection을 결속합니다. project-local P5 writer lease 하나가 capacity check와 candidate당 단일 decision 불변조건을 직렬화하지만 사용자 gate나 recovery record가 되지는 않습니다. exact retry는 해당 immutable decision에서 누락된 output만 완성할 수 있고 divergent retry는 이를 분기할 수 없습니다. legacy candidate에 이미 동결된 resolution은 exact recovery evidence로 재사용할 수 있지만, 누락된 deferred legacy selection은 절대 추측하지 않습니다.
+
 ## 그래프와 레코드의 차이
 
 제품의 의미 Canon은 P1에 남습니다. Core의 시간적 `GraphSnapshot`은 P4입니다. 이는 검증된 Canon과 레코드 위에 구축된, 내용에서 파생되고 재구축 가능한 관계 및 검색 index입니다. `productModelId`와 hash는 projection의 출처를 결속할 뿐, Product Canon 권한을 그래프로 이전하지 않습니다. GraphDB는 그 정확한 snapshot을 대체 가능하게 구체화한 것일 뿐입니다. GraphDB와 생성된 Markdown을 삭제해도 Product Canon, Session/Run 복구, ReviewDecision lineage가 온전해야 합니다.

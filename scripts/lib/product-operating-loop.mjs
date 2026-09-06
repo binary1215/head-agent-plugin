@@ -6,8 +6,9 @@ import { readChangeSet } from "./change-set.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { readProductModelCanon } from "./product-model.mjs";
 import { loadObservationArtifacts } from "./observation-store.mjs";
+import { withProjectMutationAsync } from "./project-mutation-lock.mjs";
 
-export const PRODUCT_OPERATING_LOOP_VERSION = "0.3.0";
+export const PRODUCT_OPERATING_LOOP_VERSION = "0.4.0";
 export const PRODUCT_SIGNAL_DIRECTORY = ".head/product-operations/signals";
 export const PRODUCT_HYPOTHESIS_DIRECTORY = ".head/product-operations/hypotheses";
 export const PRODUCT_INITIATIVE_CANDIDATE_DIRECTORY = ".head/product-operations/initiative-candidates";
@@ -27,7 +28,8 @@ const DIRECTORIES = Object.freeze({
 });
 
 const LIMITS = Object.freeze({ maxArtifacts: 512, maxArtifactBytes: 1024 * 1024, maxTotalBytes: 32 * 1024 * 1024 });
-const LEGACY_PROTOCOL_VERSIONS = new Set(["0.1.0", "0.2.0"]);
+const LEGACY_PROTOCOL_VERSIONS = new Set(["0.1.0", "0.2.0", "0.3.0"]);
+const OBSERVATION_REFERENCE_PROTOCOL_VERSIONS = new Set(["0.3.0", PRODUCT_OPERATING_LOOP_VERSION]);
 const projectionReadCache = new Map();
 const worldSummaryReadCache = new Map();
 const fail = (message, code = "PRODUCT_OPERATING_LOOP_ERROR") => { const error = new Error(message); error.code = code; throw error; };
@@ -143,23 +145,87 @@ function safeDirectory(projectRoot, relative) {
   return directory;
 }
 
-function atomicWrite(file, content) {
+function atomicCreate(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  try { fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" }); fs.renameSync(temporary, file); }
+  try {
+    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
+    try { fs.linkSync(temporary, file); return true; }
+    catch (error) { if (error?.code === "EEXIST") return false; throw error; }
+  }
   finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
 }
 
-function persistImmutable(projectRoot, relative, id, document) {
-  const file = path.join(safeDirectory(projectRoot, relative), `${id}.json`);
-  if (fs.existsSync(file)) {
-    const existing = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (productOperatingCanonicalJson(existing) !== productOperatingCanonicalJson(document)) fail(`Immutable identity collision: ${id}`, "PRODUCT_OPERATING_IMMUTABLE_COLLISION");
-    return { status: "existing", file };
+function readImmutableDocument(file, id) {
+  const stat = fs.lstatSync(file);
+  if (stat.isSymbolicLink() || !stat.isFile()) fail(`Product operating artifact is unsafe: ${id}`, "INVALID_PRODUCT_OPERATING_ARTIFACT");
+  if (stat.size > LIMITS.maxArtifactBytes) fail("Product operating artifacts exceed their byte bound.", "PRODUCT_OPERATING_LIMIT");
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (error) { fail(`Product operating artifact is invalid JSON: ${error.message}`, "INVALID_PRODUCT_OPERATING_ARTIFACT"); }
+}
+
+function prepareImmutableWrites(projectRoot, writes) {
+  const prepared = writes.map(({ relative, id, document }) => {
+    const directory = safeDirectory(projectRoot, relative);
+    const content = json(document);
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > LIMITS.maxArtifactBytes) fail("Product operating artifact exceeds its byte bound.", "PRODUCT_OPERATING_LIMIT");
+    return { relative, id, document, directory, file: path.join(directory, `${id}.json`), content, bytes, existing: false };
+  });
+  const uniqueFiles = new Map();
+  for (const item of prepared) {
+    const prior = uniqueFiles.get(item.file);
+    if (prior && productOperatingCanonicalJson(prior.document) !== productOperatingCanonicalJson(item.document)) fail(`Immutable identity collision: ${item.id}`, "PRODUCT_OPERATING_IMMUTABLE_COLLISION");
+    if (!prior) uniqueFiles.set(item.file, item);
   }
-  atomicWrite(file, json(document));
+  const byDirectory = new Map();
+  for (const item of uniqueFiles.values()) {
+    if (!byDirectory.has(item.directory)) byDirectory.set(item.directory, []);
+    byDirectory.get(item.directory).push(item);
+  }
+  for (const [directory, additions] of byDirectory) {
+    const entries = fs.existsSync(directory)
+      ? fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.name.endsWith(".json"))
+      : [];
+    if (entries.length > LIMITS.maxArtifacts) fail("Product operating artifact count exceeds its bound.", "PRODUCT_OPERATING_LIMIT");
+    let totalBytes = 0;
+    const existingNames = new Set();
+    for (const entry of entries) {
+      const existingFile = path.join(directory, entry.name);
+      const stat = fs.lstatSync(existingFile);
+      if (stat.isSymbolicLink() || !stat.isFile()) fail("Product operating artifact is unsafe.", "INVALID_PRODUCT_OPERATING_ARTIFACT");
+      if (stat.size > LIMITS.maxArtifactBytes) fail("Product operating artifacts exceed their byte bound.", "PRODUCT_OPERATING_LIMIT");
+      totalBytes += stat.size;
+      if (totalBytes > LIMITS.maxTotalBytes) fail("Product operating artifacts exceed their byte bound.", "PRODUCT_OPERATING_LIMIT");
+      existingNames.add(entry.name);
+    }
+    const newItems = [];
+    for (const item of additions) {
+      if (existingNames.has(path.basename(item.file))) {
+        const existing = readImmutableDocument(item.file, item.id);
+        if (productOperatingCanonicalJson(existing) !== productOperatingCanonicalJson(item.document)) fail(`Immutable identity collision: ${item.id}`, "PRODUCT_OPERATING_IMMUTABLE_COLLISION");
+        item.existing = true;
+      } else newItems.push(item);
+    }
+    if (entries.length + newItems.length > LIMITS.maxArtifacts) fail("Product operating artifact count exceeds its bound.", "PRODUCT_OPERATING_LIMIT");
+    if (totalBytes + newItems.reduce((sum, item) => sum + item.bytes, 0) > LIMITS.maxTotalBytes) fail("Product operating artifacts exceed their byte bound.", "PRODUCT_OPERATING_LIMIT");
+  }
+  return prepared;
+}
+
+function persistPreparedImmutable(projectRoot, prepared) {
+  if (prepared.existing) return { status: "existing", file: prepared.file };
+  if (!atomicCreate(prepared.file, prepared.content)) {
+    const existing = readImmutableDocument(prepared.file, prepared.id);
+    if (productOperatingCanonicalJson(existing) !== productOperatingCanonicalJson(prepared.document)) fail(`Immutable identity collision: ${prepared.id}`, "PRODUCT_OPERATING_IMMUTABLE_COLLISION");
+    return { status: "existing", file: prepared.file };
+  }
   invalidateProductOperatingReadCache(projectRoot);
-  return { status: "recorded", file };
+  return { status: "recorded", file: prepared.file };
+}
+
+function persistImmutable(projectRoot, relative, id, document) {
+  return persistPreparedImmutable(projectRoot, prepareImmutableWrites(projectRoot, [{ relative, id, document }])[0]);
 }
 
 function artifact(payload, prefix, idField, hashField) {
@@ -197,7 +263,7 @@ export function verifyProductHypothesis(document, projectId = "") {
   if (!commonValid(document, "ProductHypothesis", projectId, "hypothesis", "non-authoritative-hypothesis")
     || typeof document.statement !== "string" || !document.statement || !signalIds.length && !observationIds.length
     || observationIds.some((id) => !/^(?:observation|derived-observation)-[a-f0-9]{24}$/.test(id))) fail("ProductHypothesis fields are invalid.", "INVALID_PRODUCT_HYPOTHESIS");
-  if (document.protocol.version !== PRODUCT_OPERATING_LOOP_VERSION && document.observationIds != null) fail("Legacy ProductHypothesis may not gain Observation references.", "INVALID_PRODUCT_HYPOTHESIS");
+  if (!OBSERVATION_REFERENCE_PROTOCOL_VERSIONS.has(document.protocol.version) && document.observationIds != null) fail("Legacy ProductHypothesis may not gain Observation references.", "INVALID_PRODUCT_HYPOTHESIS");
   return document;
 }
 
@@ -234,6 +300,18 @@ export function verifyProductInitiativeReviewDecision(document, projectId = "") 
     || document.decisionScope !== "product-initiative" || !["accept", "reject"].includes(document.disposition) || !document.rationale
     || document.authority !== "explicit-user-product-initiative-review" || document.instructionAuthority !== true
     || document.promotionAuthority !== (document.disposition === "accept")) fail("Product Initiative ReviewDecision fields are invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
+  if (document.protocol.version === PRODUCT_OPERATING_LOOP_VERSION) {
+    if (!/^[a-f0-9]{64}$/.test(document.initiativeCandidateHash || "")
+      || !Object.hasOwn(document, "featureResolution") || !Object.hasOwn(document, "featureCandidate")) fail("Current Product Initiative ReviewDecision lacks its exact reviewed Feature selection.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
+    if (document.disposition === "reject") {
+      if (document.featureResolution !== null || document.featureCandidate !== null) fail("Rejected Product Initiative ReviewDecision cannot bind a Feature resolution.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
+    } else {
+      verifyFeatureResolution(document.featureResolution);
+      if (document.featureResolution.kind === "candidate") {
+        if (!document.featureCandidate || verifyProductFeatureCandidate(document.featureCandidate, projectId).featureCandidateId !== document.featureResolution.featureCandidateId) fail("Product Initiative ReviewDecision Feature candidate binding is invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
+      } else if (document.featureCandidate !== null) fail("Product Initiative ReviewDecision embeds an unrelated Feature candidate.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
+    }
+  }
   return document;
 }
 
@@ -323,8 +401,10 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
   }
   const reviewedCandidateIds = new Set();
   for (const review of arrays.initiativeReviews) {
-    if (!initiatives.has(review.initiativeCandidateId)) fail("Product Initiative review references an unknown candidate.", "UNKNOWN_PRODUCT_INITIATIVE_CANDIDATE");
+    const candidate = initiatives.get(review.initiativeCandidateId);
+    if (!candidate) fail("Product Initiative review references an unknown candidate.", "UNKNOWN_PRODUCT_INITIATIVE_CANDIDATE");
     if (reviewedCandidateIds.has(review.initiativeCandidateId)) fail("Product Initiative candidate has conflicting ReviewDecisions.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+    verifyReviewDecisionCandidateLineage(review, candidate);
     reviewedCandidateIds.add(review.initiativeCandidateId);
   }
   for (const reviewed of arrays.reviewedInitiatives) {
@@ -334,7 +414,8 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
     const reviewedMeaning = { title: reviewed.title, description: reviewed.description, reasoning: reviewed.reasoning || "", hypothesisIds: reviewed.hypothesisIds };
     const candidateMeaning = { title: candidate?.title, description: candidate?.description, reasoning: candidate?.reasoning || "", hypothesisIds: candidate?.hypothesisIds };
     if (!candidate || productOperatingCanonicalJson(reviewedMeaning) !== productOperatingCanonicalJson(candidateMeaning)
-      || (candidate.featureResolution != null && productOperatingCanonicalJson(reviewed.featureResolution) !== productOperatingCanonicalJson(candidate.featureResolution))) {
+      || (candidate.featureResolution != null && productOperatingCanonicalJson(reviewed.featureResolution) !== productOperatingCanonicalJson(candidate.featureResolution))
+      || (review.protocol.version === PRODUCT_OPERATING_LOOP_VERSION && productOperatingCanonicalJson(reviewed.featureResolution) !== productOperatingCanonicalJson(review.featureResolution))) {
       fail("ReviewedProductInitiative rewrites its immutable candidate.", "REVIEWED_PRODUCT_INITIATIVE_CANDIDATE_MISMATCH");
     }
     if (reviewed.featureResolution.kind === "candidate") {
@@ -435,7 +516,7 @@ async function projectProductOperatingGraph(inspected) {
   return { projectionInputId: projection.projectionInputId, worldModelId: built.snapshot.worldModelId, graphSnapshotId: built.snapshot.temporalProvenanceGraph.graphSnapshotId };
 }
 
-export async function recordProductSignal({ root = ".", statement, observedAt = new Date().toISOString(), evidenceIds = [], source = "" } = {}) {
+async function recordProductSignalUnlocked({ root = ".", statement, observedAt = new Date().toISOString(), evidenceIds = [], source = "" } = {}) {
   const inspected = readyProject(root, "a ProductSignal is recorded");
   const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductSignal", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, statement: requiredText(statement, "ProductSignal statement"), observedAt: new Date(observedAt).toISOString(), source: optionalText(source, "ProductSignal source"), evidenceIds: sortedIds(evidenceIds, "ProductSignal evidenceIds"), epistemicClass: "observed-fact", authority: "non-authoritative-observation", instructionAuthority: false, promotionAuthority: false };
   const signal = verifyProductSignal(artifact(payload, "product-signal", "signalId", "signalHash"), inspected.project.projectId);
@@ -443,7 +524,7 @@ export async function recordProductSignal({ root = ".", statement, observedAt = 
   return { ...persisted, signal, productGraph: await projectProductOperatingGraph(inspected) };
 }
 
-export async function recordProductHypothesis({ root = ".", statement, signalIds = [], observationIds = [], rationale = "" } = {}) {
+async function recordProductHypothesisUnlocked({ root = ".", statement, signalIds = [], observationIds = [], rationale = "" } = {}) {
   const inspected = readyProject(root, "a ProductHypothesis is recorded");
   const ids = sortedIds(signalIds, "ProductHypothesis signalIds");
   const exactObservationIds = sortedIds(observationIds, "ProductHypothesis observationIds");
@@ -480,7 +561,79 @@ function resolveFeature(projectRoot, projectId, featureResolution, initiativeCan
   return { resolution: { kind: "candidate", pendingFeature: normalized }, featureCandidatePayload: payload };
 }
 
-export async function proposeProductInitiative({ root = ".", title, description = "", reasoning = "", hypothesisIds = [], featureResolution = null } = {}) {
+function initiativeSeed(candidate) {
+  const seedInput = { projectId: candidate.projectId, title: candidate.title, description: candidate.description, hypothesisIds: candidate.hypothesisIds };
+  if (candidate.protocol?.version !== "0.1.0") seedInput.reasoning = candidate.reasoning || "";
+  return productOperatingDigest(productOperatingCanonicalJson(seedInput));
+}
+
+function verifyReviewDecisionCandidateLineage(reviewDecision, candidate) {
+  if (reviewDecision.protocol.version !== PRODUCT_OPERATING_LOOP_VERSION) return;
+  if (reviewDecision.initiativeCandidateHash !== candidate.initiativeCandidateHash) fail("Product Initiative ReviewDecision candidate binding is stale or invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW_LINEAGE");
+  if (reviewDecision.disposition === "accept" && candidate.featureResolution != null && productOperatingCanonicalJson(reviewDecision.featureResolution) !== productOperatingCanonicalJson(candidate.featureResolution)) fail("Product Initiative ReviewDecision replaces the candidate's frozen Feature resolution.", "INVALID_PRODUCT_INITIATIVE_REVIEW_LINEAGE");
+  if (reviewDecision.featureCandidate && reviewDecision.featureCandidate.initiativeCandidateSeed !== initiativeSeed(candidate)) fail("Product Initiative ReviewDecision Feature candidate seed is invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW_LINEAGE");
+}
+
+function materializeFeatureSelection(projectRoot, projectId, candidate, featureResolution) {
+  const resolved = resolveFeature(projectRoot, projectId, featureResolution, initiativeSeed(candidate));
+  if (!resolved.featureCandidatePayload) return { resolution: resolved.resolution, featureCandidate: null };
+  const featureCandidate = verifyProductFeatureCandidate(artifact(resolved.featureCandidatePayload, "product-feature-candidate", "featureCandidateId", "featureCandidateHash"), projectId);
+  return { resolution: { kind: "candidate", featureCandidateId: featureCandidate.featureCandidateId }, featureCandidate };
+}
+
+function selectedFeatureForReview(projectRoot, projectId, candidate, disposition, featureResolution) {
+  if (disposition === "reject") {
+    if (featureResolution != null) fail("A rejected Product Initiative cannot resolve a Feature.", "REJECTED_PRODUCT_INITIATIVE_FEATURE_RESOLUTION");
+    return { resolution: null, featureCandidate: null };
+  }
+  if (candidate.featureResolution != null) {
+    if (featureResolution != null) fail("Review cannot replace the candidate's frozen Feature resolution.", "PRODUCT_INITIATIVE_FEATURE_RESOLUTION_ALREADY_FROZEN");
+    const featureCandidate = candidate.featureResolution.kind === "candidate"
+      ? findById(projectRoot, PRODUCT_FEATURE_CANDIDATE_DIRECTORY, candidate.featureResolution.featureCandidateId, "product-feature-candidate", verifyProductFeatureCandidate, projectId).artifact
+      : null;
+    return { resolution: candidate.featureResolution, featureCandidate };
+  }
+  if (featureResolution == null) fail("Accepted Product Initiative review requires existing Feature, Feature candidate, or honest gap resolution.", "PRODUCT_INITIATIVE_REVIEW_FEATURE_RESOLUTION_REQUIRED");
+  return materializeFeatureSelection(projectRoot, projectId, candidate, featureResolution);
+}
+
+function replayFeatureSelection(projectRoot, projectId, candidate, disposition, featureResolution, persistedResolution, persistedFeatureCandidate = null) {
+  if (disposition === "reject") {
+    if (featureResolution != null || persistedResolution !== null) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+    return { resolution: null, featureCandidate: null };
+  }
+  if (candidate.featureResolution != null) {
+    if (featureResolution != null || productOperatingCanonicalJson(candidate.featureResolution) !== productOperatingCanonicalJson(persistedResolution)) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+    const featureCandidate = persistedResolution.kind === "candidate"
+      ? findById(projectRoot, PRODUCT_FEATURE_CANDIDATE_DIRECTORY, persistedResolution.featureCandidateId, "product-feature-candidate", verifyProductFeatureCandidate, projectId).artifact
+      : null;
+    return { resolution: persistedResolution, featureCandidate };
+  }
+  if (featureResolution == null) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+  if (featureResolution.kind === "existing-feature") {
+    const featureKey = stableKey(featureResolution.featureKey, "Existing Feature key");
+    if (persistedResolution?.kind !== "existing-feature" || persistedResolution.featureKey !== featureKey) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+    return { resolution: persistedResolution, featureCandidate: null };
+  }
+  if (featureResolution.kind === "gap") {
+    const resolution = { kind: "gap", reason: requiredText(featureResolution.reason, "Feature gap reason") };
+    if (productOperatingCanonicalJson(resolution) !== productOperatingCanonicalJson(persistedResolution)) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+    return { resolution: persistedResolution, featureCandidate: null };
+  }
+  if (featureResolution.kind !== "candidate" || persistedResolution?.kind !== "candidate" || !persistedFeatureCandidate) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+  const feature = featureResolution.feature;
+  if (!feature || typeof feature !== "object") fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+  const normalized = { key: stableKey(feature.key, "Feature candidate key"), name: requiredText(feature.name, "Feature candidate name"), description: optionalText(feature.description, "Feature candidate description"), capabilityKeys: sortedIds(feature.capabilityKeys || [], "Feature candidate capabilityKeys") };
+  if (persistedResolution.featureCandidateId !== persistedFeatureCandidate.featureCandidateId || productOperatingCanonicalJson(normalized) !== productOperatingCanonicalJson(persistedFeatureCandidate.feature)) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+  return { resolution: persistedResolution, featureCandidate: persistedFeatureCandidate };
+}
+
+function buildReviewedInitiative(candidate, reviewDecision) {
+  const approved = { schemaVersion: SCHEMA_VERSION, kind: "ReviewedProductInitiative", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: candidate.projectId, initiativeCandidateId: candidate.initiativeCandidateId, reviewDecisionId: reviewDecision.reviewDecisionId, title: candidate.title, description: candidate.description, reasoning: candidate.reasoning || "", hypothesisIds: candidate.hypothesisIds, featureResolution: reviewDecision.featureResolution, epistemicClass: "approved-decision", authority: "reviewed-product-initiative-not-product-canon", instructionAuthority: false, promotionAuthority: false };
+  return verifyReviewedProductInitiative(artifact(approved, "reviewed-product-initiative", "initiativeId", "initiativeHash"), candidate.projectId);
+}
+
+async function proposeProductInitiativeUnlocked({ root = ".", title, description = "", reasoning = "", hypothesisIds = [], featureResolution = null } = {}) {
   const inspected = readyProject(root, "a ProductInitiativeCandidate is proposed");
   const ids = sortedIds(hypothesisIds, "ProductInitiativeCandidate hypothesisIds");
   for (const id of ids) findById(inspected.project.projectRoot, PRODUCT_HYPOTHESIS_DIRECTORY, id, "product-hypothesis", verifyProductHypothesis, inspected.project.projectId);
@@ -498,47 +651,70 @@ export async function proposeProductInitiative({ root = ".", title, description 
   }
   const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductInitiativeCandidate", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, title: normalizedTitle, description: normalizedDescription, reasoning: normalizedReasoning, hypothesisIds: ids, featureResolution: resolution, epistemicClass: "inferred-meaning", authority: "candidate-not-approved-decision", instructionAuthority: false, promotionAuthority: false };
   const initiativeCandidate = verifyProductInitiativeCandidate(artifact(payload, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash"), inspected.project.projectId);
-  if (featureCandidate) {
-    persistImmutable(inspected.project.projectRoot, PRODUCT_FEATURE_CANDIDATE_DIRECTORY, featureCandidate.featureCandidateId, featureCandidate);
-  }
-  const persisted = persistImmutable(inspected.project.projectRoot, PRODUCT_INITIATIVE_CANDIDATE_DIRECTORY, initiativeCandidate.initiativeCandidateId, initiativeCandidate);
+  const writes = [
+    ...(featureCandidate ? [{ relative: PRODUCT_FEATURE_CANDIDATE_DIRECTORY, id: featureCandidate.featureCandidateId, document: featureCandidate }] : []),
+    { relative: PRODUCT_INITIATIVE_CANDIDATE_DIRECTORY, id: initiativeCandidate.initiativeCandidateId, document: initiativeCandidate },
+  ];
+  const prepared = prepareImmutableWrites(inspected.project.projectRoot, writes);
+  for (const item of prepared.slice(0, -1)) persistPreparedImmutable(inspected.project.projectRoot, item);
+  const persisted = persistPreparedImmutable(inspected.project.projectRoot, prepared.at(-1));
   return { ...persisted, initiativeCandidate, featureCandidate, productGraph: await projectProductOperatingGraph(inspected) };
 }
 
-export async function reviewProductInitiative({ root = ".", initiativeCandidateId, disposition, rationale, featureResolution = null } = {}) {
+async function reviewProductInitiativeUnlocked({ root = ".", initiativeCandidateId, disposition, rationale, featureResolution = null } = {}) {
   const inspected = readyProject(root, "a Product Initiative is reviewed");
   const candidate = findById(inspected.project.projectRoot, PRODUCT_INITIATIVE_CANDIDATE_DIRECTORY, initiativeCandidateId, "product-initiative-candidate", verifyProductInitiativeCandidate, inspected.project.projectId).artifact;
-  const current = loadProductOperatingProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
-  if (current.initiativeReviews.some((review) => review.initiativeCandidateId === initiativeCandidateId)) fail("Product Initiative candidate already has a ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
   if (!["accept", "reject"].includes(disposition)) fail("Product Initiative review disposition must be accept or reject.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
-  if (disposition === "reject" && featureResolution != null) fail("A rejected Product Initiative cannot resolve a Feature.", "REJECTED_PRODUCT_INITIATIVE_FEATURE_RESOLUTION");
-  if (candidate.featureResolution != null && featureResolution != null) fail("Review cannot replace the candidate's frozen Feature resolution.", "PRODUCT_INITIATIVE_FEATURE_RESOLUTION_ALREADY_FROZEN");
-  let reviewedFeatureResolution = candidate.featureResolution;
-  let featureCandidate = null;
-  if (disposition === "accept" && reviewedFeatureResolution == null) {
-    if (featureResolution == null) fail("Accepted Product Initiative review requires existing Feature, Feature candidate, or honest gap resolution.", "PRODUCT_INITIATIVE_REVIEW_FEATURE_RESOLUTION_REQUIRED");
-    const seed = productOperatingDigest(productOperatingCanonicalJson({ projectId: candidate.projectId, title: candidate.title, description: candidate.description, hypothesisIds: candidate.hypothesisIds, reasoning: candidate.reasoning || "" }));
-    const resolved = resolveFeature(inspected.project.projectRoot, inspected.project.projectId, featureResolution, seed);
-    reviewedFeatureResolution = resolved.resolution;
-    if (resolved.featureCandidatePayload) {
-      featureCandidate = verifyProductFeatureCandidate(artifact(resolved.featureCandidatePayload, "product-feature-candidate", "featureCandidateId", "featureCandidateHash"), inspected.project.projectId);
-      reviewedFeatureResolution = { kind: "candidate", featureCandidateId: featureCandidate.featureCandidateId };
+  const normalizedRationale = requiredText(rationale, "Product Initiative review rationale");
+  const current = loadProductOperatingProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const existingReview = current.initiativeReviews.find((review) => review.initiativeCandidateId === initiativeCandidateId) || null;
+  if (existingReview) {
+    if (existingReview.disposition !== disposition || existingReview.rationale !== normalizedRationale) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+    const existingReviewed = current.reviewedInitiatives.find((item) => item.reviewDecisionId === existingReview.reviewDecisionId) || null;
+    if (existingReview.protocol.version !== PRODUCT_OPERATING_LOOP_VERSION) {
+      if (disposition === "accept" && !existingReviewed && candidate.featureResolution == null) fail("Legacy Product Initiative ReviewDecision lacks the exact Feature selection needed to reconstruct its missing reviewed output. Preserve it and create a new candidate for any further user review.", "PRODUCT_INITIATIVE_REVIEW_RECOVERY_UNAVAILABLE");
+      const persistedResolution = disposition === "reject" ? null : existingReviewed?.featureResolution || candidate.featureResolution || null;
+      const persistedFeatureCandidate = persistedResolution?.kind === "candidate" ? current.featureCandidates.find((item) => item.featureCandidateId === persistedResolution.featureCandidateId) || null : null;
+      const selected = replayFeatureSelection(inspected.project.projectRoot, inspected.project.projectId, candidate, disposition, featureResolution, persistedResolution, persistedFeatureCandidate);
+      let reviewedInitiative = existingReviewed;
+      let persistenceStatus = "existing";
+      if (disposition === "accept" && !reviewedInitiative) {
+        reviewedInitiative = buildReviewedInitiative(candidate, { ...existingReview, featureResolution: persistedResolution });
+        const preparedRecovery = prepareImmutableWrites(inspected.project.projectRoot, [{ relative: REVIEWED_PRODUCT_INITIATIVE_DIRECTORY, id: reviewedInitiative.initiativeId, document: reviewedInitiative }]);
+        persistenceStatus = persistPreparedImmutable(inspected.project.projectRoot, preparedRecovery[0]).status === "recorded" ? "recovered" : "existing";
+      }
+      return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", persistenceStatus, reviewDecision: existingReview, reviewedInitiative, featureCandidate: selected.featureCandidate, productCanonMutated: false, productGraph: await projectProductOperatingGraph(inspected) };
     }
+    if (existingReview.initiativeCandidateHash !== candidate.initiativeCandidateHash) fail("Product Initiative ReviewDecision candidate binding is stale or invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW_LINEAGE");
+    const selected = replayFeatureSelection(inspected.project.projectRoot, inspected.project.projectId, candidate, disposition, featureResolution, existingReview.featureResolution, existingReview.featureCandidate);
+    if (productOperatingCanonicalJson(selected.featureCandidate) !== productOperatingCanonicalJson(existingReview.featureCandidate)) fail("Product Initiative candidate already has a different ReviewDecision.", "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+    let reviewedInitiative = existingReviewed;
+    const recoveryWrites = [];
+    if (existingReview.featureCandidate) recoveryWrites.push({ relative: PRODUCT_FEATURE_CANDIDATE_DIRECTORY, id: existingReview.featureCandidate.featureCandidateId, document: existingReview.featureCandidate });
+    if (disposition === "accept") {
+      reviewedInitiative = buildReviewedInitiative(candidate, existingReview);
+      recoveryWrites.push({ relative: REVIEWED_PRODUCT_INITIATIVE_DIRECTORY, id: reviewedInitiative.initiativeId, document: reviewedInitiative });
+    }
+    const preparedRecovery = prepareImmutableWrites(inspected.project.projectRoot, recoveryWrites);
+    const recoveryStatuses = preparedRecovery.map((item) => persistPreparedImmutable(inspected.project.projectRoot, item).status);
+    return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", persistenceStatus: recoveryStatuses.some((status) => status === "recorded") ? "recovered" : "existing", reviewDecision: existingReview, reviewedInitiative, featureCandidate: existingReview.featureCandidate, productCanonMutated: false, productGraph: await projectProductOperatingGraph(inspected) };
   }
-  const payload = { schemaVersion: SCHEMA_VERSION, kind: "ReviewDecision", protocol: { name: "head-agent-core-product-initiative-review", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, decisionScope: "product-initiative", initiativeCandidateId, disposition, rationale: requiredText(rationale, "Product Initiative review rationale"), authority: "explicit-user-product-initiative-review", instructionAuthority: true, promotionAuthority: disposition === "accept" };
+  const selected = selectedFeatureForReview(inspected.project.projectRoot, inspected.project.projectId, candidate, disposition, featureResolution);
+  const payload = { schemaVersion: SCHEMA_VERSION, kind: "ReviewDecision", protocol: { name: "head-agent-core-product-initiative-review", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, decisionScope: "product-initiative", initiativeCandidateId, initiativeCandidateHash: candidate.initiativeCandidateHash, disposition, rationale: normalizedRationale, featureResolution: selected.resolution, featureCandidate: selected.featureCandidate, authority: "explicit-user-product-initiative-review", instructionAuthority: true, promotionAuthority: disposition === "accept" };
   const reviewDecision = verifyProductInitiativeReviewDecision(artifact(payload, "product-initiative-review", "reviewDecisionId", "reviewDecisionHash"), inspected.project.projectId);
-  persistImmutable(inspected.project.projectRoot, PRODUCT_INITIATIVE_REVIEW_DIRECTORY, reviewDecision.reviewDecisionId, reviewDecision);
-  let reviewedInitiative = null;
-  if (disposition === "accept") {
-    if (featureCandidate) persistImmutable(inspected.project.projectRoot, PRODUCT_FEATURE_CANDIDATE_DIRECTORY, featureCandidate.featureCandidateId, featureCandidate);
-    const approved = { schemaVersion: SCHEMA_VERSION, kind: "ReviewedProductInitiative", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, initiativeCandidateId, reviewDecisionId: reviewDecision.reviewDecisionId, title: candidate.title, description: candidate.description, reasoning: candidate.reasoning || "", hypothesisIds: candidate.hypothesisIds, featureResolution: reviewedFeatureResolution, epistemicClass: "approved-decision", authority: "reviewed-product-initiative-not-product-canon", instructionAuthority: false, promotionAuthority: false };
-    reviewedInitiative = verifyReviewedProductInitiative(artifact(approved, "reviewed-product-initiative", "initiativeId", "initiativeHash"), inspected.project.projectId);
-    persistImmutable(inspected.project.projectRoot, REVIEWED_PRODUCT_INITIATIVE_DIRECTORY, reviewedInitiative.initiativeId, reviewedInitiative);
-  }
-  return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", reviewDecision, reviewedInitiative, featureCandidate, productCanonMutated: false, productGraph: await projectProductOperatingGraph(inspected) };
+  verifyReviewDecisionCandidateLineage(reviewDecision, candidate);
+  const reviewedInitiative = disposition === "accept" ? buildReviewedInitiative(candidate, reviewDecision) : null;
+  const writes = [
+    { relative: PRODUCT_INITIATIVE_REVIEW_DIRECTORY, id: reviewDecision.reviewDecisionId, document: reviewDecision },
+    ...(selected.featureCandidate ? [{ relative: PRODUCT_FEATURE_CANDIDATE_DIRECTORY, id: selected.featureCandidate.featureCandidateId, document: selected.featureCandidate }] : []),
+    ...(reviewedInitiative ? [{ relative: REVIEWED_PRODUCT_INITIATIVE_DIRECTORY, id: reviewedInitiative.initiativeId, document: reviewedInitiative }] : []),
+  ];
+  const prepared = prepareImmutableWrites(inspected.project.projectRoot, writes);
+  for (const item of prepared) persistPreparedImmutable(inspected.project.projectRoot, item);
+  return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", persistenceStatus: "recorded", reviewDecision, reviewedInitiative, featureCandidate: selected.featureCandidate, productCanonMutated: false, productGraph: await projectProductOperatingGraph(inspected) };
 }
 
-export async function observeProductOutcome({ root = ".", changeSetId, statement, epistemicClass = "observed-fact", evidenceIds = [], initiativeId = "" } = {}) {
+async function observeProductOutcomeUnlocked({ root = ".", changeSetId, statement, epistemicClass = "observed-fact", evidenceIds = [], initiativeId = "" } = {}) {
   const inspected = readyProject(root, "an OutcomeObservation is recorded");
   const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId }).changeSet;
   const result = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: changeSet.resultPacketId }).artifact;
@@ -550,6 +726,35 @@ export async function observeProductOutcome({ root = ".", changeSetId, statement
   const outcomeObservation = verifyOutcomeObservation(artifact(payload, "outcome-observation", "outcomeObservationId", "outcomeObservationHash"), inspected.project.projectId);
   const persisted = persistImmutable(inspected.project.projectRoot, OUTCOME_OBSERVATION_DIRECTORY, outcomeObservation.outcomeObservationId, outcomeObservation);
   return { ...persisted, outcomeObservation, featureStatusMutated: false, successJudgmentRecorded: false, productGraph: await projectProductOperatingGraph(inspected) };
+}
+
+async function serializedProductMutation(options, action, operation) {
+  const requested = options && typeof options === "object" ? options : {};
+  const inspected = readyProject(requested.root || ".", action);
+  return withProjectMutationAsync(
+    { root: inspected.project.projectRoot, scope: "product-operating-write" },
+    () => operation({ ...requested, root: inspected.project.projectRoot }),
+  );
+}
+
+export async function recordProductSignal(options = {}) {
+  return serializedProductMutation(options, "a ProductSignal is recorded", recordProductSignalUnlocked);
+}
+
+export async function recordProductHypothesis(options = {}) {
+  return serializedProductMutation(options, "a ProductHypothesis is recorded", recordProductHypothesisUnlocked);
+}
+
+export async function proposeProductInitiative(options = {}) {
+  return serializedProductMutation(options, "a ProductInitiativeCandidate is proposed", proposeProductInitiativeUnlocked);
+}
+
+export async function reviewProductInitiative(options = {}) {
+  return serializedProductMutation(options, "a Product Initiative is reviewed", reviewProductInitiativeUnlocked);
+}
+
+export async function observeProductOutcome(options = {}) {
+  return serializedProductMutation(options, "an OutcomeObservation is recorded", observeProductOutcomeUnlocked);
 }
 
 export function inspectProductOperatingLoop({ root = ".", fresh = false } = {}) {

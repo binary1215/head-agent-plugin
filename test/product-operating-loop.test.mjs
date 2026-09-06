@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { recordChangeSet } from "../scripts/lib/change-set.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
@@ -13,6 +14,9 @@ import {
   inspectProductOperatingLoop,
   observeProductOutcome,
   prepareProductLearningNote,
+  PRODUCT_OPERATING_LOOP_VERSION,
+  productOperatingCanonicalJson,
+  productOperatingDigest,
   proposeProductInitiative,
   recordProductHypothesis,
   recordProductSignal,
@@ -225,4 +229,439 @@ test("keeps everyday learning ephemeral, defers Feature resolution to review, an
     reviewProductInitiative({ root, initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId, disposition: "reject", rationale: "A cached read must never replace review-time candidate verification." }),
     (error) => error.code === "PRODUCT_OPERATING_DIGEST_MISMATCH",
   );
+});
+
+function productArtifact(payload, prefix, idField, hashField) {
+  const hash = productOperatingDigest(productOperatingCanonicalJson(payload));
+  return { ...payload, [idField]: `${prefix}-${hash.slice(0, 24)}`, [hashField]: hash };
+}
+
+test("recovers an exact accepted Initiative after the final create-only write fails and rejects divergent retries", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const proposed = await proposeProductInitiative({ root, title: "Recover an accepted initiative", reasoning: "A durable user decision must remain replay-safe after a transient output failure." });
+  const request = {
+    root,
+    initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId,
+    disposition: "accept",
+    rationale: "Accept this exact initiative and its explicit Feature gap.",
+    featureResolution: { kind: "gap", reason: "The initiative spans more than one current Feature." },
+  };
+  const reviewedDirectory = path.join(root, ".head", "product-operations", "reviewed-initiatives");
+  const originalLink = fs.linkSync;
+  let injected = 0;
+  fs.linkSync = function (source, destination, ...rest) {
+    if (!injected && path.dirname(path.resolve(String(destination))) === reviewedDirectory) {
+      injected += 1;
+      throw Object.assign(new Error("Injected one-time EIO at ReviewedProductInitiative publication"), { code: "EIO" });
+    }
+    return originalLink.call(fs, source, destination, ...rest);
+  };
+  try {
+    await assert.rejects(() => reviewProductInitiative(request), (error) => error.code === "EIO");
+  } finally { fs.linkSync = originalLink; }
+  assert.equal(injected, 1);
+  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
+  const decisionFiles = fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json"));
+  assert.equal(decisionFiles.length, 1);
+  const durableDecision = JSON.parse(fs.readFileSync(path.join(reviewDirectory, decisionFiles[0]), "utf8"));
+  assert.equal(durableDecision.initiativeCandidateHash, proposed.initiativeCandidate.initiativeCandidateHash);
+  assert.deepEqual(durableDecision.featureResolution, request.featureResolution);
+  assert.equal(durableDecision.featureCandidate, null);
+  assert.equal(fs.existsSync(reviewedDirectory) ? fs.readdirSync(reviewedDirectory).length : 0, 0);
+
+  const recovered = await reviewProductInitiative(request);
+  assert.equal(recovered.status, "initiative_accepted");
+  assert.equal(recovered.persistenceStatus, "recovered");
+  assert.equal(inspectProductOperatingLoop({ root, fresh: true }).projection.reviewedInitiatives.length, 1);
+  const decisionBytes = fs.readFileSync(path.join(reviewDirectory, decisionFiles[0]), "utf8");
+  const reviewedFile = path.join(reviewedDirectory, `${recovered.reviewedInitiative.initiativeId}.json`);
+  const reviewedBytes = fs.readFileSync(reviewedFile, "utf8");
+  await assert.rejects(() => reviewProductInitiative({ ...request, rationale: "A divergent replacement rationale." }), (error) => error.code === "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+  await assert.rejects(() => reviewProductInitiative({ ...request, featureResolution: { kind: "gap", reason: "A different Feature choice." } }), (error) => error.code === "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
+  assert.equal(fs.readFileSync(path.join(reviewDirectory, decisionFiles[0]), "utf8"), decisionBytes);
+  assert.equal(fs.readFileSync(reviewedFile, "utf8"), reviewedBytes);
+  assert.equal(fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")).length, 1);
+  assert.equal(fs.readdirSync(reviewedDirectory).filter((name) => name.endsWith(".json")).length, 1);
+  assert.equal(fs.readdirSync(reviewedDirectory).some((name) => name.endsWith(".tmp")), false);
+});
+
+test("keeps completed legacy Initiative reviews readable but never guesses a missing legacy Feature selection", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const proposed = await proposeProductInitiative({ root, title: "Legacy review compatibility", reasoning: "Older digest-valid records remain audit-readable." });
+  const request = {
+    root,
+    initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId,
+    disposition: "accept",
+    rationale: "Accept the legacy-compatible test initiative.",
+    featureResolution: { kind: "gap", reason: "No exact current Feature represents this test initiative." },
+  };
+  const completed = await reviewProductInitiative(request);
+  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
+  const reviewedDirectory = path.join(root, ".head", "product-operations", "reviewed-initiatives");
+  const currentDecisionFile = path.join(reviewDirectory, `${completed.reviewDecision.reviewDecisionId}.json`);
+  const currentReviewedFile = path.join(reviewedDirectory, `${completed.reviewedInitiative.initiativeId}.json`);
+  const legacyDecisionPayload = structuredClone(completed.reviewDecision);
+  delete legacyDecisionPayload.reviewDecisionId;
+  delete legacyDecisionPayload.reviewDecisionHash;
+  delete legacyDecisionPayload.initiativeCandidateHash;
+  delete legacyDecisionPayload.featureResolution;
+  delete legacyDecisionPayload.featureCandidate;
+  legacyDecisionPayload.protocol.version = "0.3.0";
+  const legacyDecision = productArtifact(legacyDecisionPayload, "product-initiative-review", "reviewDecisionId", "reviewDecisionHash");
+  const legacyReviewedPayload = structuredClone(completed.reviewedInitiative);
+  delete legacyReviewedPayload.initiativeId;
+  delete legacyReviewedPayload.initiativeHash;
+  legacyReviewedPayload.protocol.version = "0.3.0";
+  legacyReviewedPayload.reviewDecisionId = legacyDecision.reviewDecisionId;
+  const legacyReviewed = productArtifact(legacyReviewedPayload, "reviewed-product-initiative", "initiativeId", "initiativeHash");
+  fs.unlinkSync(currentDecisionFile);
+  fs.unlinkSync(currentReviewedFile);
+  fs.writeFileSync(path.join(reviewDirectory, `${legacyDecision.reviewDecisionId}.json`), `${JSON.stringify(legacyDecision, null, 2)}\n`);
+  fs.writeFileSync(path.join(reviewedDirectory, `${legacyReviewed.initiativeId}.json`), `${JSON.stringify(legacyReviewed, null, 2)}\n`);
+  const legacyProjection = inspectProductOperatingLoop({ root, fresh: true }).projection;
+  assert.equal(legacyProjection.initiativeReviews[0].protocol.version, "0.3.0");
+  const exactReplay = await reviewProductInitiative(request);
+  assert.equal(exactReplay.persistenceStatus, "existing");
+  assert.equal(exactReplay.reviewedInitiative.initiativeId, legacyReviewed.initiativeId);
+  fs.unlinkSync(path.join(reviewedDirectory, `${legacyReviewed.initiativeId}.json`));
+  await assert.rejects(() => reviewProductInitiative(request), (error) => error.code === "PRODUCT_INITIATIVE_REVIEW_RECOVERY_UNAVAILABLE" && /create a new candidate/.test(error.message));
+});
+
+test("uses legacy frozen Feature evidence for review and missing-output recovery without another user gate", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const project = JSON.parse(fs.readFileSync(path.join(root, ".head", "project.json"), "utf8"));
+  const candidateMeaning = { projectId: project.projectId, title: "Legacy frozen Feature candidate", description: "", hypothesisIds: [] };
+  const legacySeed = productOperatingDigest(productOperatingCanonicalJson(candidateMeaning));
+  const featureCandidatePayload = {
+    schemaVersion: 1,
+    kind: "ProductFeatureCandidate",
+    protocol: { name: "head-agent-core-product-operating-loop", version: "0.1.0" },
+    projectId: project.projectId,
+    initiativeCandidateSeed: legacySeed,
+    feature: { key: "legacy-frozen-feature", name: "Legacy frozen Feature", description: "", capabilityKeys: [] },
+    epistemicClass: "inferred-meaning",
+    authority: "candidate-not-product-canon",
+    instructionAuthority: false,
+    promotionAuthority: false,
+  };
+  const featureCandidate = productArtifact(featureCandidatePayload, "product-feature-candidate", "featureCandidateId", "featureCandidateHash");
+  const initiativePayload = {
+    schemaVersion: 1,
+    kind: "ProductInitiativeCandidate",
+    protocol: { name: "head-agent-core-product-operating-loop", version: "0.1.0" },
+    projectId: project.projectId,
+    title: candidateMeaning.title,
+    description: candidateMeaning.description,
+    reasoning: "Legacy reasoning is intentionally excluded from the 0.1.0 Feature seed.",
+    hypothesisIds: [],
+    featureResolution: { kind: "candidate", featureCandidateId: featureCandidate.featureCandidateId },
+    epistemicClass: "inferred-meaning",
+    authority: "candidate-not-approved-decision",
+    instructionAuthority: false,
+    promotionAuthority: false,
+  };
+  const initiative = productArtifact(initiativePayload, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash");
+  const featureDirectory = path.join(root, ".head", "product-operations", "feature-candidates");
+  const candidateDirectory = path.join(root, ".head", "product-operations", "initiative-candidates");
+  fs.mkdirSync(featureDirectory, { recursive: true });
+  fs.mkdirSync(candidateDirectory, { recursive: true });
+  fs.writeFileSync(path.join(featureDirectory, `${featureCandidate.featureCandidateId}.json`), `${JSON.stringify(featureCandidate, null, 2)}\n`);
+  fs.writeFileSync(path.join(candidateDirectory, `${initiative.initiativeCandidateId}.json`), `${JSON.stringify(initiative, null, 2)}\n`);
+  const request = { root, initiativeCandidateId: initiative.initiativeCandidateId, disposition: "accept", rationale: "Accept the exact frozen legacy Feature candidate." };
+  const accepted = await reviewProductInitiative(request);
+  assert.equal(accepted.status, "initiative_accepted");
+  assert.equal(accepted.reviewDecision.featureCandidate.featureCandidateId, featureCandidate.featureCandidateId);
+
+  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
+  const reviewedDirectory = path.join(root, ".head", "product-operations", "reviewed-initiatives");
+  const legacyDecisionPayload = structuredClone(accepted.reviewDecision);
+  delete legacyDecisionPayload.reviewDecisionId;
+  delete legacyDecisionPayload.reviewDecisionHash;
+  delete legacyDecisionPayload.initiativeCandidateHash;
+  delete legacyDecisionPayload.featureResolution;
+  delete legacyDecisionPayload.featureCandidate;
+  legacyDecisionPayload.protocol.version = "0.3.0";
+  const legacyDecision = productArtifact(legacyDecisionPayload, "product-initiative-review", "reviewDecisionId", "reviewDecisionHash");
+  fs.unlinkSync(path.join(reviewDirectory, `${accepted.reviewDecision.reviewDecisionId}.json`));
+  fs.unlinkSync(path.join(reviewedDirectory, `${accepted.reviewedInitiative.initiativeId}.json`));
+  fs.writeFileSync(path.join(reviewDirectory, `${legacyDecision.reviewDecisionId}.json`), `${JSON.stringify(legacyDecision, null, 2)}\n`);
+  const recovered = await reviewProductInitiative(request);
+  assert.equal(recovered.persistenceStatus, "recovered");
+  assert.equal(recovered.reviewedInitiative.featureResolution.featureCandidateId, featureCandidate.featureCandidateId);
+  assert.equal(inspectProductOperatingLoop({ root, fresh: true }).projection.reviewedInitiatives.length, 1);
+});
+
+test("replays an exact legacy rejection without treating its frozen Feature proposal as approved", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const proposed = await proposeProductInitiative({
+    root,
+    title: "Legacy rejected frozen Feature gap",
+    reasoning: "A rejected proposal retains its evidence without adopting the proposed Feature resolution.",
+    featureResolution: { kind: "gap", reason: "This proposal spans current Features." },
+  });
+  const request = {
+    root,
+    initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId,
+    disposition: "reject",
+    rationale: "Do not adopt this Product Initiative.",
+  };
+  const rejected = await reviewProductInitiative(request);
+  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
+  const currentDecisionFile = path.join(reviewDirectory, `${rejected.reviewDecision.reviewDecisionId}.json`);
+  const legacyDecisionPayload = structuredClone(rejected.reviewDecision);
+  delete legacyDecisionPayload.reviewDecisionId;
+  delete legacyDecisionPayload.reviewDecisionHash;
+  delete legacyDecisionPayload.initiativeCandidateHash;
+  delete legacyDecisionPayload.featureResolution;
+  delete legacyDecisionPayload.featureCandidate;
+  legacyDecisionPayload.protocol.version = "0.3.0";
+  const legacyDecision = productArtifact(legacyDecisionPayload, "product-initiative-review", "reviewDecisionId", "reviewDecisionHash");
+  fs.unlinkSync(currentDecisionFile);
+  fs.writeFileSync(path.join(reviewDirectory, `${legacyDecision.reviewDecisionId}.json`), `${JSON.stringify(legacyDecision, null, 2)}\n`);
+
+  const replay = await reviewProductInitiative(request);
+  assert.equal(replay.status, "initiative_rejected");
+  assert.equal(replay.persistenceStatus, "existing");
+  assert.equal(replay.reviewDecision.reviewDecisionId, legacyDecision.reviewDecisionId);
+  assert.equal(replay.featureCandidate, null);
+  assert.equal(inspectProductOperatingLoop({ root, fresh: true }).projection.reviewedInitiatives.length, 0);
+  assert.equal(fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")).length, 1);
+});
+
+test("rejects Product Operating size, count, total-byte, and compound-output limits before durable writes", async (t) => {
+  const roots = [];
+  t.after(() => { for (const root of roots) fs.rmSync(root, { recursive: true, force: true }); });
+
+  const oversizedRoot = fixture(); roots.push(oversizedRoot);
+  const oversizedSignals = path.join(oversizedRoot, ".head", "product-operations", "signals");
+  await assert.rejects(() => recordProductSignal({ root: oversizedRoot, statement: "x".repeat(1024 * 1024) }), (error) => error.code === "PRODUCT_OPERATING_LIMIT");
+  assert.equal(fs.existsSync(oversizedSignals), false);
+  const laterSignal = await recordProductSignal({ root: oversizedRoot, statement: "A later bounded signal remains usable." });
+  assert.equal(laterSignal.status, "recorded");
+  assert.equal(inspectProductOperatingLoop({ root: oversizedRoot, fresh: true }).projection.signals.length, 1);
+
+  const countRoot = fixture(); roots.push(countRoot);
+  const countDirectory = path.join(countRoot, ".head", "product-operations", "signals");
+  fs.mkdirSync(countDirectory, { recursive: true });
+  for (let index = 0; index < 512; index += 1) fs.writeFileSync(path.join(countDirectory, `count-${String(index).padStart(3, "0")}.json`), "{}\n");
+  await assert.rejects(() => recordProductSignal({ root: countRoot, statement: "The 513th artifact must not be written." }), (error) => error.code === "PRODUCT_OPERATING_LIMIT");
+  assert.equal(fs.readdirSync(countDirectory).filter((name) => name.endsWith(".json")).length, 512);
+
+  const totalRoot = fixture(); roots.push(totalRoot);
+  const totalDirectory = path.join(totalRoot, ".head", "product-operations", "signals");
+  fs.mkdirSync(totalDirectory, { recursive: true });
+  for (let index = 0; index < 32; index += 1) {
+    const file = path.join(totalDirectory, `total-${String(index).padStart(2, "0")}.json`);
+    fs.closeSync(fs.openSync(file, "wx"));
+    fs.truncateSync(file, 1024 * 1024);
+  }
+  await assert.rejects(() => recordProductSignal({ root: totalRoot, statement: "A write beyond the existing total-byte bound must not persist." }), (error) => error.code === "PRODUCT_OPERATING_LIMIT");
+  assert.equal(fs.readdirSync(totalDirectory).filter((name) => name.endsWith(".json")).length, 32);
+
+  const compoundRoot = fixture(); roots.push(compoundRoot);
+  const project = JSON.parse(fs.readFileSync(path.join(compoundRoot, ".head", "project.json"), "utf8"));
+  const baseCandidate = {
+    schemaVersion: 1,
+    kind: "ProductInitiativeCandidate",
+    protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION },
+    projectId: project.projectId,
+    title: "Bounded compound review output",
+    description: "",
+    reasoning: "x",
+    hypothesisIds: [],
+    featureResolution: null,
+    epistemicClass: "inferred-meaning",
+    authority: "candidate-not-approved-decision",
+    instructionAuthority: false,
+    promotionAuthority: false,
+  };
+  const probeCandidate = productArtifact(baseCandidate, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash");
+  const probeBytes = Buffer.byteLength(`${JSON.stringify(probeCandidate, null, 2)}\n`);
+  baseCandidate.reasoning = "x".repeat(1 + (1024 * 1024 - 1 - probeBytes));
+  const nearLimitCandidate = productArtifact(baseCandidate, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash");
+  const candidateBytes = `${JSON.stringify(nearLimitCandidate, null, 2)}\n`;
+  assert.equal(Buffer.byteLength(candidateBytes), 1024 * 1024 - 1);
+  const candidateDirectory = path.join(compoundRoot, ".head", "product-operations", "initiative-candidates");
+  fs.mkdirSync(candidateDirectory, { recursive: true });
+  fs.writeFileSync(path.join(candidateDirectory, `${nearLimitCandidate.initiativeCandidateId}.json`), candidateBytes);
+  const decisionDirectory = path.join(compoundRoot, ".head", "product-operations", "initiative-reviews");
+  await assert.rejects(() => reviewProductInitiative({
+    root: compoundRoot,
+    initiativeCandidateId: nearLimitCandidate.initiativeCandidateId,
+    disposition: "accept",
+    rationale: "The final reviewed artifact should exceed its bound.",
+    featureResolution: { kind: "gap", reason: "Synthetic bound test." },
+  }), (error) => error.code === "PRODUCT_OPERATING_LIMIT");
+  assert.equal(fs.existsSync(decisionDirectory), false);
+});
+
+test("serializes Product Operating writers without turning review or capacity checks into user gates", async (t) => {
+  const reviewRoot = fixture();
+  const countRoot = fixture();
+  t.after(() => {
+    fs.rmSync(reviewRoot, { recursive: true, force: true });
+    fs.rmSync(countRoot, { recursive: true, force: true });
+  });
+
+  const rejectedCandidate = await proposeProductInitiative({
+    root: reviewRoot,
+    title: "Reject a frozen Feature gap normally",
+    reasoning: "A rejected Initiative does not adopt its candidate Feature resolution.",
+    featureResolution: { kind: "gap", reason: "This candidate intentionally has no one-to-one Feature." },
+  });
+  const rejected = await reviewProductInitiative({ root: reviewRoot, initiativeCandidateId: rejectedCandidate.initiativeCandidate.initiativeCandidateId, disposition: "reject", rationale: "Do not adopt this Initiative." });
+  assert.equal(rejected.status, "initiative_rejected");
+  assert.equal(rejected.reviewDecision.featureResolution, null);
+  assert.equal(inspectProductOperatingLoop({ root: reviewRoot, fresh: true }).projection.reviewedInitiatives.length, 0);
+
+  const competingCandidate = await proposeProductInitiative({
+    root: reviewRoot,
+    title: "Competing review decisions",
+    reasoning: "Only one exact user decision may become durable for one candidate.",
+    featureResolution: { kind: "gap", reason: "Synthetic concurrency scope." },
+  });
+  const competing = await Promise.allSettled([
+    reviewProductInitiative({ root: reviewRoot, initiativeCandidateId: competingCandidate.initiativeCandidate.initiativeCandidateId, disposition: "accept", rationale: "Accept the first exact decision." }),
+    reviewProductInitiative({ root: reviewRoot, initiativeCandidateId: competingCandidate.initiativeCandidate.initiativeCandidateId, disposition: "reject", rationale: "Reject through a competing decision." }),
+  ]);
+  assert.equal(competing.filter((item) => item.status === "fulfilled").length, 1);
+  assert.equal(competing.filter((item) => item.status === "rejected" && item.reason.code === "PRODUCT_INITIATIVE_ALREADY_REVIEWED").length, 1);
+  const reviewProjection = inspectProductOperatingLoop({ root: reviewRoot, fresh: true }).projection;
+  assert.equal(reviewProjection.initiativeReviews.filter((item) => item.initiativeCandidateId === competingCandidate.initiativeCandidate.initiativeCandidateId).length, 1);
+
+  const project = JSON.parse(fs.readFileSync(path.join(countRoot, ".head", "project.json"), "utf8"));
+  const signalsDirectory = path.join(countRoot, ".head", "product-operations", "signals");
+  fs.mkdirSync(signalsDirectory, { recursive: true });
+  for (let index = 0; index < 511; index += 1) {
+    const payload = {
+      schemaVersion: 1,
+      kind: "ProductSignal",
+      protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION },
+      projectId: project.projectId,
+      statement: `Seed signal ${index}.`,
+      observedAt: "2026-09-07T00:00:00.000Z",
+      source: "",
+      evidenceIds: [],
+      epistemicClass: "observed-fact",
+      authority: "non-authoritative-observation",
+      instructionAuthority: false,
+      promotionAuthority: false,
+    };
+    const signal = productArtifact(payload, "product-signal", "signalId", "signalHash");
+    fs.writeFileSync(path.join(signalsDirectory, `${signal.signalId}.json`), `${JSON.stringify(signal, null, 2)}\n`);
+  }
+  const bounded = await Promise.allSettled([
+    recordProductSignal({ root: countRoot, statement: "Concurrent bounded signal A.", observedAt: "2026-09-07T00:00:01.000Z" }),
+    recordProductSignal({ root: countRoot, statement: "Concurrent bounded signal B.", observedAt: "2026-09-07T00:00:02.000Z" }),
+  ]);
+  assert.equal(bounded.filter((item) => item.status === "fulfilled").length, 1);
+  assert.equal(bounded.filter((item) => item.status === "rejected" && item.reason.code === "PRODUCT_OPERATING_LIMIT").length, 1);
+  assert.equal(fs.readdirSync(signalsDirectory).filter((name) => name.endsWith(".json")).length, 512);
+  assert.equal(inspectProductOperatingLoop({ root: countRoot, fresh: true }).projection.signals.length, 512);
+});
+
+test("serializes competing Product decisions and capacity checks across independent Node writers", async (t) => {
+  const reviewRoot = fixture();
+  const countRoot = fixture();
+  const children = [];
+  t.after(() => {
+    for (const child of children) if (child.exitCode == null && child.signalCode == null) child.kill();
+    fs.rmSync(reviewRoot, { recursive: true, force: true });
+    fs.rmSync(countRoot, { recursive: true, force: true });
+  });
+  const productUrl = pathToFileURL(path.join(pluginRoot, "scripts", "lib", "product-operating-loop.mjs")).href;
+  const workerSource = `
+    import fs from "node:fs";
+    import { setTimeout as delay } from "node:timers/promises";
+    import * as product from ${JSON.stringify(productUrl)};
+    const request = JSON.parse(process.argv[1]);
+    while (!fs.existsSync(request.startFile)) await delay(2);
+    try {
+      const result = await product[request.method](request.options);
+      process.stdout.write(JSON.stringify({ status: result.status, persistenceStatus: result.persistenceStatus || null }));
+    } catch (error) {
+      process.stdout.write(JSON.stringify({ code: error.code || null, message: error.message }));
+      process.exitCode = 2;
+    }
+  `;
+  function launch(startFile, method, options) {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", workerSource, JSON.stringify({ startFile, method, options })], { cwd: pluginRoot, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    children.push(child);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const started = new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+    const completed = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        try { resolve({ code, signal, stderr, result: JSON.parse(stdout) }); }
+        catch (error) { reject(Object.assign(error, { stdout, stderr, code, signal })); }
+      });
+    });
+    return { started, completed };
+  }
+  async function race(startFile, calls) {
+    const workers = calls.map((call) => launch(startFile, call.method, call.options));
+    try { await Promise.all(workers.map((worker) => worker.started)); }
+    catch (error) {
+      if (error?.code === "EPERM") { t.skip("The local sandbox forbids nested process creation; same-process serialization still runs."); return null; }
+      throw error;
+    }
+    fs.writeFileSync(startFile, "start\n", { flag: "wx" });
+    return Promise.all(workers.map((worker) => worker.completed));
+  }
+
+  const proposed = await proposeProductInitiative({
+    root: reviewRoot,
+    title: "Cross-process competing review",
+    reasoning: "Only one exact user decision may become durable.",
+    featureResolution: { kind: "gap", reason: "Synthetic process-race scope." },
+  });
+  const reviewStart = path.join(reviewRoot, "start-product-review-writers.flag");
+  const reviews = await race(reviewStart, [
+    { method: "reviewProductInitiative", options: { root: reviewRoot, initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId, disposition: "accept", rationale: "Accept the exact candidate." } },
+    { method: "reviewProductInitiative", options: { root: reviewRoot, initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId, disposition: "reject", rationale: "Reject the exact candidate." } },
+  ]);
+  if (reviews == null) return;
+  assert.equal(reviews.filter((item) => item.code === 0 && item.result.status === "initiative_accepted").length
+    + reviews.filter((item) => item.code === 0 && item.result.status === "initiative_rejected").length, 1);
+  assert.equal(reviews.filter((item) => item.code === 2 && item.result.code === "PRODUCT_INITIATIVE_ALREADY_REVIEWED").length, 1);
+  assert.equal(reviews.every((item) => item.signal === null && item.stderr === ""), true);
+  assert.equal(inspectProductOperatingLoop({ root: reviewRoot, fresh: true }).projection.initiativeReviews.length, 1);
+
+  const project = JSON.parse(fs.readFileSync(path.join(countRoot, ".head", "project.json"), "utf8"));
+  const signalsDirectory = path.join(countRoot, ".head", "product-operations", "signals");
+  fs.mkdirSync(signalsDirectory, { recursive: true });
+  for (let index = 0; index < 511; index += 1) {
+    const payload = {
+      schemaVersion: 1,
+      kind: "ProductSignal",
+      protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION },
+      projectId: project.projectId,
+      statement: `Process seed signal ${index}.`,
+      observedAt: "2026-09-07T00:00:00.000Z",
+      source: "",
+      evidenceIds: [],
+      epistemicClass: "observed-fact",
+      authority: "non-authoritative-observation",
+      instructionAuthority: false,
+      promotionAuthority: false,
+    };
+    const signal = productArtifact(payload, "product-signal", "signalId", "signalHash");
+    fs.writeFileSync(path.join(signalsDirectory, `${signal.signalId}.json`), `${JSON.stringify(signal, null, 2)}\n`);
+  }
+  const countStart = path.join(countRoot, "start-product-capacity-writers.flag");
+  const signals = await race(countStart, [
+    { method: "recordProductSignal", options: { root: countRoot, statement: "Cross-process bounded signal A.", observedAt: "2026-09-07T00:00:01.000Z" } },
+    { method: "recordProductSignal", options: { root: countRoot, statement: "Cross-process bounded signal B.", observedAt: "2026-09-07T00:00:02.000Z" } },
+  ]);
+  assert.equal(signals.filter((item) => item.code === 0 && item.result.status === "recorded").length, 1);
+  assert.equal(signals.filter((item) => item.code === 2 && item.result.code === "PRODUCT_OPERATING_LIMIT").length, 1);
+  assert.equal(signals.every((item) => item.signal === null && item.stderr === ""), true);
+  assert.equal(fs.readdirSync(signalsDirectory).filter((name) => name.endsWith(".json")).length, 512);
 });
