@@ -19,7 +19,20 @@ A provider HEAD may propose mappings after reading current project evidence. Cor
 
 An explicit user-authored mapping `ReviewDecision` may accept all candidates, accept a named selection, or reject the batch. Acceptance does not mutate a candidate. It creates a separate `ReviewedRelationship` receipt linked to the candidate by `PROMOTED_FROM` and to the decision by `PRODUCES`, then materializes the reviewed canonical `IMPLEMENTS` or `VERIFIED_BY` edge. Rejection records `REJECTED_BY` and creates no canonical mapping edge.
 
-Product Canon is not modified by mapping review. Review is rejected if repository evidence, Product Canon, the current candidate set, or any content digest drifted after proposal verification, or while a Run is active or awaiting review.
+Product Canon is not modified by mapping review. Every review requires the exact
+current candidate set, verified digests, and no active or awaiting-review Run.
+Acceptance additionally requires current repository and Product evidence matching
+the proposal. An explicit user rejection may close that exact candidate set after
+source or Product evidence changes; it cannot promote a relationship.
+
+Rejection retains the immutable proposal and its historical bindings, while the
+derived graph uses verified current Product identity. If World is verifiably
+stale, the same explicit rejection operation refreshes it with preserved ancestry.
+A missing World still needs explicit rebuilding; a corrupt World remains an
+integrity error, not permission to overwrite it. After rejection, HEAD can inspect
+current evidence and propose a replacement without source rollback or manual
+state deletion. Drift or a request to start another proposal never invents a
+user rejection, and prior reviewed relationship records remain intact.
 
 Starting a proposal reuses the verified current World rather than rebuilding it
 with empty ancestry. Derived mapping publication preserves the current source

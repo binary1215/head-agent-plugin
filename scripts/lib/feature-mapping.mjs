@@ -397,7 +397,7 @@ export async function startFeatureMapping({ root = ".", semanticProposal = null 
     ? verifyState(readJson(currentStateFile, "Feature mapping state pointer"), { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId })
     : null;
   if (previousState?.phase === "awaiting-review") {
-    fail("The current Feature mapping candidate set requires review before a new proposal can start.", "FEATURE_MAPPING_REVIEW_REQUIRED");
+    fail(`Review the exact Feature mapping candidate set ${previousState.candidateSetId} before starting another proposal. If its evidence is obsolete, explicitly reject that set; rejection does not revoke earlier approved mappings.`, "FEATURE_MAPPING_REVIEW_REQUIRED");
   }
   let indexed;
   try { indexed = inspectWorldModel({ root: projectRoot }); }
@@ -464,7 +464,11 @@ export function readFeatureMappingCandidateSet({ root = ".", candidateSetId } = 
   const inspected = readyProject(root, "Feature mapping candidate-set inspection");
   const file = candidateSetFile(inspected.project.projectRoot, candidateSetId);
   if (!fs.existsSync(file)) fail(`Feature mapping candidate set not found: ${candidateSetId}`, "FEATURE_MAPPING_CANDIDATE_SET_NOT_FOUND");
-  return { status: "verified", file, candidateSet: verifyFeatureMappingCandidateSet(readJson(file, "Feature mapping candidate set"), inspected.project.projectId) };
+  const candidateSet = verifyFeatureMappingCandidateSet(readJson(file, "Feature mapping candidate set"), inspected.project.projectId);
+  if (candidateSet.candidateSetId !== candidateSetId) {
+    fail("Feature mapping candidate-set filename does not match its exact identity.", "FEATURE_MAPPING_CANDIDATE_SET_IDENTITY_MISMATCH");
+  }
+  return { status: "verified", file, candidateSet };
 }
 
 export function readFeatureMappingReviewDecision({ root = ".", reviewDecisionId } = {}) {
@@ -473,7 +477,11 @@ export function readFeatureMappingReviewDecision({ root = ".", reviewDecisionId 
   if (!fs.existsSync(file)) fail(`Feature mapping ReviewDecision not found: ${reviewDecisionId}`, "FEATURE_MAPPING_REVIEW_NOT_FOUND");
   const review = readJson(file, "Feature mapping ReviewDecision");
   const candidateSet = readFeatureMappingCandidateSet({ root: inspected.project.projectRoot, candidateSetId: review.candidateSetId }).candidateSet;
-  return { status: "verified", file, reviewDecision: verifyFeatureMappingReviewDecision(review, candidateSet, inspected.project.projectId) };
+  const reviewDecision = verifyFeatureMappingReviewDecision(review, candidateSet, inspected.project.projectId);
+  if (reviewDecision.reviewDecisionId !== reviewDecisionId) {
+    fail("Feature mapping ReviewDecision filename does not match its exact identity.", "FEATURE_MAPPING_REVIEW_IDENTITY_MISMATCH");
+  }
+  return { status: "verified", file, reviewDecision };
 }
 
 export async function reviewFeatureMapping({ root = ".", candidateSetId, disposition, acceptedCandidateIds = [], rationale } = {}) {
@@ -489,12 +497,8 @@ export async function reviewFeatureMapping({ root = ".", candidateSetId, disposi
     fail("Feature mapping review references a stale or non-reviewable candidate set.", "STALE_FEATURE_MAPPING_CANDIDATE_SET");
   }
   const candidateSet = readFeatureMappingCandidateSet({ root: projectRoot, candidateSetId }).candidateSet;
-  const currentWorld = inspectWorldModel({ root: projectRoot });
-  if (currentWorld.status !== "current"
-    || currentWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId
-    || currentWorld.snapshot.productModel.productModelId !== candidateSet.productModelId
-    || currentWorld.snapshot.productModel.productModelHash !== candidateSet.productModelHash) {
-    fail("Repository evidence or Product Canon changed after mapping proposal; re-index and create a new candidate set.", "FEATURE_MAPPING_SOURCE_DRIFT");
+  if (candidateSet.sessionId !== state.sessionId) {
+    fail("Feature mapping candidate set belongs to a different HEAD Session.", "FEATURE_MAPPING_CANDIDATE_SET_IDENTITY_MISMATCH");
   }
   const normalizedDisposition = requiredText(disposition, "Review disposition").toLocaleLowerCase();
   if (!["accept-all", "accept-selection", "reject"].includes(normalizedDisposition)) {
@@ -519,10 +523,24 @@ export async function reviewFeatureMapping({ root = ".", candidateSetId, disposi
     rejectedCandidateIds: rejectedIds,
     rationale,
   });
+  let currentWorld = inspectWorldModel({ root: projectRoot });
+  if (normalizedDisposition !== "reject" && !candidateEvidenceIsCurrent(candidateSet, currentWorld)) {
+    fail(`Repository evidence or Product Canon changed after mapping proposal. Explicitly reject the outdated candidate set ${candidateSetId}, then have HEAD propose fresh evidence; stale candidates cannot be accepted.`, "FEATURE_MAPPING_SOURCE_DRIFT");
+  }
+  if (normalizedDisposition === "reject" && currentWorld.status !== "current") {
+    // A rejection closes an exact historical proposal, not a claim that its
+    // evidence is current. Refresh only its derived view, preserving ancestry.
+    // All request/authority validation above must finish before this write.
+    await refreshWorldModel({ root: projectRoot });
+    currentWorld = inspectWorldModel({ root: projectRoot });
+    if (currentWorld.status !== "current") {
+      fail("World evidence changed during rejection refresh; retry the same explicit rejection after concurrent changes settle.", "FEATURE_MAPPING_SOURCE_DRIFT");
+    }
+  }
   const projected = await rebuildWithProjection({
     projectRoot,
     projectId: inspected.project.projectId,
-    currentProductModelId: candidateSet.productModelId,
+    currentProductModelId: currentWorld.snapshot.productModel.productModelId,
     sourceWorld: currentWorld.snapshot,
     additionalReviewDecisions: [review],
   });
@@ -549,6 +567,13 @@ export async function reviewFeatureMapping({ root = ".", candidateSetId, disposi
   };
 }
 
+function candidateEvidenceIsCurrent(candidateSet, world) {
+  return world.status === "current"
+    && world.snapshot.temporalProvenanceGraph.sourceSnapshotId === candidateSet.sourceSnapshotId
+    && world.snapshot.productModel.productModelId === candidateSet.productModelId
+    && world.snapshot.productModel.productModelHash === candidateSet.productModelHash;
+}
+
 export function inspectFeatureMapping({ root = "." } = {}) {
   const inspected = readyProject(root, "Feature mapping inspection");
   const file = stateFile(inspected.project.projectRoot);
@@ -564,15 +589,33 @@ export function inspectFeatureMapping({ root = "." } = {}) {
   const candidateSet = state.candidateSetId
     ? readFeatureMappingCandidateSet({ root: inspected.project.projectRoot, candidateSetId: state.candidateSetId }).candidateSet
     : null;
+  if (candidateSet && candidateSet.sessionId !== state.sessionId) {
+    fail("Feature mapping candidate set belongs to a different HEAD Session.", "FEATURE_MAPPING_CANDIDATE_SET_IDENTITY_MISMATCH");
+  }
   const reviewDecision = state.reviewDecisionId
     ? readFeatureMappingReviewDecision({ root: inspected.project.projectRoot, reviewDecisionId: state.reviewDecisionId }).reviewDecision
     : null;
   const world = inspectWorldModel({ root: inspected.project.projectRoot });
+  const awaitingReview = state.phase === "awaiting-review";
+  const currentEvidence = candidateSet && candidateEvidenceIsCurrent(candidateSet, world);
+  const runConflict = Boolean(inspected.state.activeRunId || inspected.state.pendingReview);
   return {
     status: state.phase.replaceAll("-", "_"),
     state,
     candidateSet,
     reviewDecision,
+    reviewReadiness: awaitingReview ? {
+      candidateSetId: candidateSet.candidateSetId,
+      evidenceStatus: currentEvidence ? "current" : "stale",
+      acceptanceAvailable: currentEvidence && !runConflict,
+      explicitRejectionAvailable: !runConflict,
+      runConflict,
+      nextAction: runConflict
+        ? "Finish the existing Run or its pending review before changing the mapping review state."
+        : currentEvidence
+        ? "Ask the user to review this exact candidate set; only explicit acceptance promotes mappings."
+        : "Ask whether the user wants to reject this exact outdated candidate set, then have HEAD propose fresh evidence. Rejection preserves earlier approved mappings.",
+    } : null,
     worldModel: {
       status: world.status,
       worldModelId: world.snapshot.worldModelId,

@@ -10,7 +10,7 @@ import { inspectOnboarding, reviewOnboarding, startOnboarding } from "../scripts
 import { inspectConversationalOnboarding } from "../scripts/lib/onboarding-conversation.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
 import { refreshWorldModel } from "../scripts/lib/incremental-refresh.mjs";
-import { startFeatureMapping, reviewFeatureMapping } from "../scripts/lib/feature-mapping.mjs";
+import { inspectFeatureMapping, startFeatureMapping, reviewFeatureMapping } from "../scripts/lib/feature-mapping.mjs";
 import { inspectWorldModel } from "../scripts/lib/world-model.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 
@@ -35,7 +35,7 @@ function authority(root) {
 }
 
 async function approvedFixture(t) {
-  const root = fs.mkdtempSync(path.join(pluginRoot, ".qa-onboarding-world-"));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(pluginRoot, ".qa-onboarding-world-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "README.md"), "# Delivery service\n");
@@ -215,4 +215,94 @@ test("explicit mapping setup without a pinned proposal refreshes stale evidence 
   const started = await startFeatureMapping({ root, semanticProposal: proposal(root) });
   assert.equal(started.status, "awaiting_feature_mapping_review");
   assert.deepEqual(authority(root), protectedBytes);
+});
+
+test("explicit stale mapping rejection unblocks a fresh reviewed proposal and Context without revoking prior review", async (t) => {
+  for (const refreshFirst of [true, false]) {
+    const { root } = await approvedFixture(t);
+    const protectedBytes = authority(root);
+    const first = await startFeatureMapping({ root, semanticProposal: proposal(root) });
+    const prior = await reviewFeatureMapping({ root, candidateSetId: first.candidateSet.candidateSetId,
+      disposition: "accept-all", rationale: "Approve the first exact implementation relationship." });
+    const priorFile = path.join(root, ".head/feature-mappings/review-decisions", `${prior.reviewDecision.reviewDecisionId}.json`);
+    const priorBytes = fs.readFileSync(priorFile);
+    const nextInput = proposal(root);
+    nextInput.candidates[0].explanation += " A separate proposed evidence review.";
+    const pending = await startFeatureMapping({ root, semanticProposal: nextInput });
+    const historicalGraph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+    const previousRevision = historicalGraph.nodes.find((node) => node.kind === "FileRevision" && node.path === "src/delivery.mjs");
+    fs.appendFileSync(path.join(root, "src/delivery.mjs"), "\nexport const deliveryFormat = 'updated-message';\n");
+    if (refreshFirst) assert.equal((await runCommand(["world-refresh", root])).status, "refreshed");
+    const before = bytes(root);
+    const staleStatus = inspectFeatureMapping({ root });
+    assert.equal(staleStatus.reviewReadiness.evidenceStatus, "stale");
+    assert.equal(staleStatus.reviewReadiness.acceptanceAvailable, false);
+    assert.equal(staleStatus.reviewReadiness.explicitRejectionAvailable, true);
+    assert.match(staleStatus.reviewReadiness.nextAction, /reject.*exact outdated/i);
+    assert.deepEqual(await runCommand(["feature-mapping-status", root]), staleStatus);
+    const staleMcp = await dispatch({ jsonrpc: "2.0", id: "stale-mapping-status", method: "tools/call",
+      params: { name: "head_feature_mapping_status", arguments: { project_root: root } } });
+    assert.deepEqual(staleMcp.result.structuredContent, staleStatus);
+    await assert.rejects(() => startFeatureMapping({ root, semanticProposal: nextInput }), { code: "FEATURE_MAPPING_REVIEW_REQUIRED" });
+    for (const disposition of ["accept-all", "accept-selection"]) {
+      await assert.rejects(() => reviewFeatureMapping({ root, candidateSetId: pending.candidateSet.candidateSetId,
+        disposition, acceptedCandidateIds: [pending.candidateSet.candidates[0].candidateId], rationale: "Cannot approve changed evidence." }),
+      { code: "FEATURE_MAPPING_SOURCE_DRIFT" });
+    }
+    assert.deepEqual(bytes(root), before, "stale acceptance and replacement proposal cannot write");
+    const request = { candidateSetId: pending.candidateSet.candidateSetId, disposition: "reject",
+      rationale: "Explicitly reject the exact outdated proposal; keep prior approved relationships." };
+    const denied = await dispatch({ jsonrpc: "2.0", id: "unconfirmed-stale-reject", method: "tools/call",
+      params: { name: "head_feature_mapping_review", arguments: { project_root: root,
+        candidate_set_id: request.candidateSetId, disposition: request.disposition, rationale: request.rationale, confirm_user_review: false } } });
+    assert.match(denied.error.message, /explicit user confirmation/i);
+    assert.deepEqual(bytes(root), before, "read-only guidance and unconfirmed rejection cannot write");
+    let rejected;
+    if (refreshFirst) {
+      const inputFile = path.join(root, ".head/feature-mappings/reject-input.json");
+      fs.writeFileSync(inputFile, JSON.stringify(request));
+      rejected = await runCommand(["feature-mapping-review", root, "--input", inputFile]);
+      fs.unlinkSync(inputFile);
+    } else {
+      const response = await dispatch({ jsonrpc: "2.0", id: "stale-mapping-reject", method: "tools/call",
+        params: { name: "head_feature_mapping_review", arguments: { project_root: root,
+          candidate_set_id: request.candidateSetId, disposition: request.disposition, rationale: request.rationale, confirm_user_review: true } } });
+      assert.equal(response.error, undefined, JSON.stringify(response.error));
+      rejected = response.result.structuredContent;
+    }
+    assert.equal(rejected.status, "feature_mappings_rejected");
+    assert.equal(rejected.reviewDecision.promotionAuthority, false);
+    assert.deepEqual(rejected.reviewDecision.acceptedCandidateIds, []);
+    assert.equal(rejected.reviewDecision.sourceSnapshotId, pending.candidateSet.sourceSnapshotId, "decision retains historical evidence identity");
+    assert.equal(rejected.reviewDecision.productModelId, pending.candidateSet.productModelId);
+    const current = inspectWorldModel({ root });
+    assert.equal(current.status, "current");
+    const graph = current.snapshot.temporalProvenanceGraph;
+    assert.ok(graph.parentSourceSnapshotIds.includes(historicalGraph.sourceSnapshotId));
+    assert.ok(Object.values(graph.revisionParentIds).flat().includes(previousRevision.nodeId));
+    assert.deepEqual(fs.readFileSync(priorFile), priorBytes);
+    assert.deepEqual(graph.nodes.filter((node) => node.kind === "ReviewedRelationship").map((node) => node.reviewDecisionId), [prior.reviewDecision.reviewDecisionId]);
+    assert.ok(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.authorityClass === "reviewed"));
+    assert.ok(graph.edges.some((edge) => edge.type === "REJECTED_BY" && edge.to === rejected.reviewDecision.reviewDecisionId));
+    const direct = inspectFeatureMapping({ root });
+    const cli = await runCommand(["feature-mapping-status", root]);
+    const mcp = await dispatch({ jsonrpc: "2.0", id: "mapping-status", method: "tools/call",
+      params: { name: "head_feature_mapping_status", arguments: { project_root: root } } });
+    assert.equal(mcp.error, undefined);
+    assert.deepEqual(cli, direct);
+    assert.deepEqual(mcp.result.structuredContent, direct);
+    const fresh = await startFeatureMapping({ root, semanticProposal: proposal(root) });
+    assert.equal(fresh.status, "awaiting_feature_mapping_review");
+    const approved = await reviewFeatureMapping({ root, candidateSetId: fresh.candidateSet.candidateSetId,
+      disposition: "accept-all", rationale: "Approve the fresh exact evidence after rejecting the obsolete proposal." });
+    assert.equal(approved.status, "feature_mappings_reviewed");
+    assert.equal(inspectWorldModel({ root }).status, "current");
+    const capsule = compileContext({ root, task: "Explain current delivery implementation.", persist: false,
+      evidenceNeeds: [{ id: "delivery-product", kind: "product-context", entityKeys: ["delivery"], minimumItems: 1 },
+        { id: "delivery-source", kind: "repository-source", paths: ["src/delivery.mjs"], minimumItems: 1 }] }).capsule;
+    assert.equal(capsule.coverageAssessment.status, "coverage-complete");
+    assert.equal(capsule.coverageAssessment.semanticAcceptance, "not-assessed-HEAD-owned");
+    assert.deepEqual(authority(root), protectedBytes);
+    assert.deepEqual(fs.readFileSync(priorFile), priorBytes);
+  }
 });

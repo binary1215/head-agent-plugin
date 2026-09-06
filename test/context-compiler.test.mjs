@@ -497,6 +497,165 @@ test("exact Product keys survive bounded neighbors and same-key kinds remain dis
   assert.deepEqual(managedTreeSnapshot(root), sharedBefore);
 });
 
+test("mixed exact and facet Product needs preserve independent bounded discovery", async (t) => {
+  const root = temporaryProject();
+  t.after(() => {
+    const actual = fs.realpathSync(root);
+    assert.equal(path.dirname(actual), fs.realpathSync(path.dirname(root)));
+    fs.rmSync(actual, { recursive: true, force: true });
+  });
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const product = {
+    schemaVersion: 1, featureGroups: [], features: [], requirements: [], constraints: [], decisions: [],
+    capabilities: [{ key: "capability:refund", name: "Refund service" }, { key: "capability:audit", name: "Audit records" }],
+  };
+  const productFile = path.join(root, ".head", "context", "product-model.json");
+  fs.writeFileSync(productFile, JSON.stringify(product));
+  await buildWorldModel({ root });
+  const before = managedTreeSnapshot(root);
+  const refund = { id: "refund-product", kind: "product-context", facets: ["refund"] };
+  const audit = { id: "audit-product", kind: "product-context", entityKeys: ["capability:audit"] };
+  const compile = (evidenceNeeds, budget = 32_768, task = "refund audit") => compileContext({ root, task, evidenceNeeds, budget }).capsule;
+  const alone = compile([refund]);
+  const mixed = compile([refund, audit]);
+  const bothExact = compile([{ ...refund, entityKeys: ["capability:refund"] }, audit]);
+  assert.equal(alone.coverageAssessment.status, "coverage-complete");
+  assert.equal(mixed.coverageAssessment.status, "coverage-complete");
+  assert.equal(bothExact.coverageAssessment.status, "coverage-complete");
+  for (const carrier of bothExact.productContext) {
+    assert.ok(bothExact.selection.candidateIds.includes(`product-context:${carrier.temporalTraversal.resultId}`),
+      "Exact-only carriers keep their existing traversal-derived identity.");
+    assert.equal(carrier.temporalTraversal.traversalQuerySummary.anchorMode, "exact-head-proposed");
+  }
+  assert.equal(compile([audit, refund]).capsuleId, mixed.capsuleId);
+  for (const budget of [32_768, 524_288]) {
+    const capsule = compile([refund, audit], budget, "qzxvplmn");
+    for (const proof of capsule.coverageAssessment.proofs) {
+      assert.equal(proof.availableMatchCount, 1);
+      assert.equal(proof.includedMatchCount, 1);
+    }
+    const refundCarrier = capsule.productContext.find((carrier) => carrier.entities.some((entity) => entity.key === "capability:refund"));
+    assert.equal(refundCarrier.temporalTraversal.traversalQuerySummary.anchorMode, "lexical-discovery");
+    assert.equal(refundCarrier.temporalTraversal.traversalQuerySummary.maxNodes, 100);
+    assert.equal(refundCarrier.temporalTraversal.traversalQuerySummary.maxEdges, 200);
+    assert.ok(refundCarrier.entities.length <= 24);
+    assert.equal(capsule.coverageAssessment.semanticAcceptance, "not-assessed-HEAD-owned");
+    assert.equal(capsule.coverageAssessment.authorityEffect, "none");
+  }
+  const equivalent = compile([refund, audit, { ...refund, id: "refund-equivalent", facets: ["REFUND", "refund"] },
+    { id: "refund-exact", kind: "product-context", entityKeys: ["capability:refund", "capability:refund"] }]);
+  for (const proof of equivalent.coverageAssessment.proofs) assert.equal(proof.availableMatchCount, 1);
+  assert.equal(new Set(equivalent.coverageAssessment.proofs.flatMap((proof) => proof.includedEvidence.map((item) => item.id))).size, 2);
+  assert.equal(equivalent.selection.candidateIds.filter((id) => id.startsWith("product-context:")).length, 3,
+    "Equivalent normalized facet queries share a carrier; exact and lexical provenance remain separate.");
+  const missing = compile([refund, { ...audit, entityKeys: ["capability:absent"] }]);
+  assert.equal(missing.coverageAssessment.status, "coverage-incomplete");
+  assert.equal(missing.coverageAssessment.proofs.find((proof) => proof.evidenceNeedId === refund.id).includedMatchCount, 1);
+  assert.equal(missing.coverageAssessment.proofs.find((proof) => proof.evidenceNeedId === audit.id).availableMatchCount, 0);
+  assert.equal(missing.coverageAssessment.recommendedMinimumApproxTokens, null);
+  const preview = previewContextWorkflow({ root, task: "refund audit", evidenceNeeds: [refund, audit] });
+  assert.deepEqual(preview.workflow.budget.attemptedTiers, [32_768]);
+  assert.equal(preview.capsule.capsuleId, mixed.capsuleId);
+  const throughMcp = await dispatchMcp({ jsonrpc: "2.0", id: 94, method: "tools/call", params: {
+    name: "head_context_preview", arguments: { project_root: root, task: "refund audit", evidence_needs: [refund, audit] },
+  } });
+  assert.equal(throughMcp.result.structuredContent.capsule.capsuleId, mixed.capsuleId);
+  assert.deepEqual(managedTreeSnapshot(root), before);
+
+  const projectContextFile = path.join(root, ".head", "instructions", "project.md");
+  const originalContext = fs.readFileSync(projectContextFile, "utf8").trim();
+  const includedCost = mixed.productContext.reduce((total, record) => total + Math.ceil(JSON.stringify(record).length / 4), 0);
+  const baseCost = mixed.budget.usedApproxTokens - includedCost;
+  fs.writeFileSync(projectContextFile, originalContext + "x".repeat((32_768 - baseCost - 1) * 4));
+  const overflowBefore = managedTreeSnapshot(root);
+  const overflow = compile([refund, audit]);
+  assert.equal(overflow.coverageAssessment.status, "coverage-incomplete");
+  for (const proof of overflow.coverageAssessment.proofs) {
+    assert.equal(proof.availableMatchCount, 1);
+    assert.ok(proof.exclusionReasons.includes("context-budget"));
+  }
+  const recovered = previewContextWorkflow({ root, task: "refund audit", evidenceNeeds: [refund, audit] });
+  assert.deepEqual(recovered.workflow.budget.attemptedTiers, [32_768, 65_536]);
+  assert.equal(recovered.capsule.coverageAssessment.status, "coverage-complete");
+  assert.equal(compile([refund, audit], 524_288).coverageAssessment.status, "coverage-complete");
+  assert.deepEqual(managedTreeSnapshot(root), overflowBefore);
+});
+
+test("facet discovery is bounded per need without a global task-term eligibility limit", async (t) => {
+  const root = temporaryProject();
+  t.after(() => {
+    const actual = fs.realpathSync(root);
+    assert.equal(path.dirname(actual), fs.realpathSync(path.dirname(root)));
+    fs.rmSync(actual, { recursive: true, force: true });
+  });
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const facets = Array.from({ length: 24 }, (_, index) => `facet${String(index).padStart(2, "0")}`);
+  const product = {
+    schemaVersion: 1, featureGroups: [], features: [], requirements: [], constraints: [], decisions: [],
+    capabilities: [
+      { key: "capability:audit", name: "Audit records" },
+      ...facets.map((facet) => ({ key: `capability:${facet}`, name: `${facet} service` })),
+      ...Array.from({ length: 20 }, (_, index) => ({ key: `capability:collection-${index}`, name: `Collective service ${index}` })),
+      ...Array.from({ length: 20 }, (_, index) => ({ key: `capability:opaque-${index}`, name: `Refund service ${index}` })),
+    ],
+  };
+  product.features = Array.from({ length: 32 }, (_, index) => ({
+    key: `feature:hotfix-${index}`, name: "Hotfix operation", featureGroupKeys: [],
+    capabilityKeys: Array.from({ length: 20 }, (_, index) => `capability:opaque-${index}`), governedBy: [],
+  }));
+  fs.writeFileSync(path.join(root, ".head", "context", "product-model.json"), JSON.stringify(product));
+  await buildWorldModel({ root });
+  const before = managedTreeSnapshot(root);
+  const needs = [
+    { id: "audit-exact", kind: "product-context", entityKeys: ["capability:audit"] },
+    ...facets.map((facet) => ({ id: facet, kind: "product-context", facets: [facet] })),
+  ];
+  const task = "qzxvplmn";
+  const compile = (evidenceNeeds, budget = 32_768) => compileContext({ root, task, evidenceNeeds, budget }).capsule;
+  const many = compile(needs);
+  assert.equal(many.coverageAssessment.status, "coverage-complete");
+  assert.equal(compile([...needs].reverse()).capsuleId, many.capsuleId);
+  assert.equal(compile(needs, 524_288).coverageAssessment.status, "coverage-complete");
+  for (const need of needs) {
+    const proof = many.coverageAssessment.proofs.find((item) => item.evidenceNeedId === need.id);
+    const alone = compile([need]).coverageAssessment.proofs[0];
+    assert.equal(proof.availableMatchCount, alone.availableMatchCount);
+    assert.equal(proof.includedMatchCount, 1);
+  }
+  assert.equal(many.selection.candidateIds.filter((id) => id.startsWith("product-context:")).length, 25);
+  for (const carrier of many.productContext) {
+    assert.ok(carrier.entities.length <= 24);
+    assert.equal(carrier.temporalTraversal.traversalQuerySummary.maxDepth, 3);
+    assert.equal(carrier.temporalTraversal.traversalQuerySummary.maxNodes, 100);
+    assert.equal(carrier.temporalTraversal.traversalQuerySummary.maxEdges, 200);
+  }
+  const collectiveNeed = { id: "collective-products", kind: "product-context", facets: ["collective"], minimumItems: 20 };
+  const collective = compile([needs[0], collectiveNeed]);
+  assert.equal(collective.coverageAssessment.status, "coverage-complete");
+  assert.equal(collective.coverageAssessment.proofs.find((item) => item.evidenceNeedId === collectiveNeed.id).includedMatchCount, 20);
+  const distinctProjections = [needs[0], collectiveNeed, { ...collectiveNeed, id: "collective-single", minimumItems: 1 }];
+  const projected = compile(distinctProjections);
+  assert.equal(projected.selection.candidateIds.filter((id) => id.startsWith("product-context:")).length, 3,
+    "Different bounded projections of one traversal retain separate carrier identities.");
+  assert.equal(compile([...distinctProjections].reverse()).capsuleId, projected.capsuleId);
+  const nonexistentFacet = compile([needs[0], { ...collectiveNeed, facets: ["collective", "absentterm"], minimumItems: 1 }]);
+  assert.equal(nonexistentFacet.coverageAssessment.status, "coverage-incomplete");
+  assert.equal(nonexistentFacet.coverageAssessment.proofs.find((item) => item.evidenceNeedId === collectiveNeed.id).availableMatchCount, 0,
+    "Discovery selector metadata is not Product evidence for a missing facet.");
+  const crowded = compileContext({ root, task: "Hotfix operation", evidenceNeeds: [needs[0], {
+    id: "refund-crowded", kind: "product-context", facets: ["refund"], minimumItems: 20,
+  }] }).capsule;
+  assert.equal(crowded.coverageAssessment.status, "coverage-complete");
+  const crowdedCarrier = crowded.productContext.find((carrier) => carrier.taskAnchor.selectedTerm === "refund");
+  const reservedRefundRevisions = crowdedCarrier.entities.filter((entity) => entity.kind === "CapabilityRevision" && entity.semantic?.name.startsWith("Refund"));
+  assert.equal(new Set(reservedRefundRevisions.map((entity) => entity.logicalEntityId)).size, 20,
+    "Twenty requested matching revisions survive more than 24 task-matching neighbors without reserving duplicate logical representations.");
+  assert.ok(crowdedCarrier.entities.length <= 24);
+  assert.ok(crowdedCarrier.projectionOmissions.entities > 0);
+  assert.equal(crowdedCarrier.temporalTraversal.traversalQuerySummary.anchorMode, "lexical-discovery");
+  assert.deepEqual(managedTreeSnapshot(root), before);
+});
+
 test("Context workflow guides World freshness without mutation or authority", async (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

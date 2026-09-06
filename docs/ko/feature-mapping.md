@@ -20,7 +20,19 @@ provider HEAD는 현재 프로젝트 증거를 읽은 뒤 매핑을 제안할 �
 
 사용자가 명시적으로 작성한 매핑 `ReviewDecision`은 모든 candidate를 수락하거나, 이름이 지정된 선택 항목을 수락하거나, 배치를 거부할 수 있습니다. 수락은 candidate를 변경하지 않습니다. 대신 candidate에는 `PROMOTED_FROM`으로, decision에는 `PRODUCES`로 연결된 별도의 `ReviewedRelationship` receipt를 생성한 다음, 검토된 정규 `IMPLEMENTS` 또는 `VERIFIED_BY` edge를 구체화합니다. 거부는 `REJECTED_BY`를 기록하며 정규 매핑 edge를 생성하지 않습니다.
 
-매핑 검토는 Product Canon을 수정하지 않습니다. 제안 검증 이후 저장소 evidence, Product Canon, 현재 candidate set 또는 콘텐츠 digest 중 하나라도 변경되었거나, Run이 활성 상태이거나 검토를 기다리는 동안에는 검토가 거부됩니다.
+매핑 검토는 Product Canon을 수정하지 않습니다. 모든 검토는 정확한 현재 candidate set과
+검증된 digest를 요구하며, 활성 Run이나 검토 대기 Run이 없어야 합니다. 수락에는
+제안과 일치하는 최신 저장소·Product evidence도 필요합니다. 사용자의 명시적 거절은
+source나 Product evidence가 변경된 후에도 그 정확한 candidate set을 종료할 수
+있지만 관계를 승격하지는 않습니다.
+
+거절은 불변 제안과 당시 바인딩을 보존하고, 파생 graph에는 검증된 현재 Product
+identity를 사용합니다. World가 검증 가능한 stale 상태라면 같은 명시적 거절 작업
+안에서 계보를 보존하며 갱신합니다. World가 없으면 명시적 재구축이 필요하며,
+손상된 World는 무결성 오류이지 덮어쓸 권한이 아닙니다. 거절 후 HEAD는
+소스를 되돌리거나 상태 파일을 수동 삭제하지 않고 현재 증거로 대체 제안을 만들 수
+있습니다. Drift나 새 제안 시작 요청만으로 사용자 거절을 생성하지 않으며, 기존에
+검토된 관계 기록도 보존합니다.
 
 제안을 시작할 때 검증된 현재 World를 재사용하며, 계보를 비워 재구축하지 않습니다.
 매핑 파생 투영을 게시할 때도 현재 source와 revision 계보를 보존합니다. 따라서 게시

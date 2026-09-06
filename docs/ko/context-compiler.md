@@ -29,7 +29,7 @@ Sources and promoted canon
   -> ContextCapsule + digest
 ```
 
-Context Compiler protocol `0.19.0`은 결정적 packaging과 semantic judgment를 분리합니다. provider HEAD가 task analysis를 수행하고 `EvidenceNeed[]`에 정확한 repository `paths`, Product Canon `entityKeys`, 현재 상태에 결속된 `graphAnchor` 또는 immutable `observationIds`를 지정할 수 있습니다. Core는 이를 현재 Project·World Model·GraphSnapshot·common Observation projection에 대조하고 실제 포함만 증명합니다. lexical normalization과 overlap은 anchor가 없는 evidence의 공개된 discovery/ranking fallback일 뿐입니다. repository retrieval은 더 이상 첫 token-matching file을 temporal anchor로 선택하지 않습니다.
+Context Compiler protocol `0.20.0`은 결정적 packaging과 semantic judgment를 분리합니다. provider HEAD가 task analysis를 수행하고 `EvidenceNeed[]`에 정확한 repository `paths`, Product Canon `entityKeys`, 현재 상태에 결속된 `graphAnchor` 또는 immutable `observationIds`를 지정할 수 있습니다. Core는 이를 현재 Project·World Model·GraphSnapshot·common Observation projection에 대조하고 실제 포함만 증명합니다. lexical normalization과 overlap은 anchor가 없는 evidence의 공개된 discovery/ranking fallback일 뿐입니다. repository retrieval은 더 이상 첫 token-matching file을 temporal anchor로 선택하지 않습니다.
 
 Coverage protocol `1.3.0`은 정규화한 출발·도착·증거 endpoint로 관계 경로를
 대조합니다. `semantic-relation` need가 요구한 최소 관계 수는 fallback 인접 관계
@@ -52,6 +52,12 @@ Product coverage는 ProductContext carrier 수가 아니라 검증된 Project, P
 key는 선택적 이웃 순위보다 먼저 확인하고 discovery 제한에 앞서 보존합니다.
 없는 key는 계속 미충족이며 요청한 evidence에도 Capsule 예산은 적용됩니다.
 이는 의미적 충분성 판단이나 candidate 승인이 아닙니다.
+
+Product 요구는 함께 사용할 수 있습니다. 정확한 key의 후보와 각 facet-only 요구를
+위한 제한된 어휘 탐색 후보를 합칩니다. 정확한 요구를 하나 추가해도 다른 요구의
+탐색을 끄지 않습니다. 탐색 출처는 계속 어휘 기반으로 표시하며, 공통 증거는 검증된
+논리적 identity로 셉니다. 모든 후보에 같은 Capsule 예산을 적용하고, 실제로 없는
+key는 증거나 승인을 만들어내지 않고 미충족으로 유지합니다.
 
 명시적 budget은 엄격한 상한이며 충분하다는 주장이 아닙니다. 이 `EvidenceNeed[]` 계약에서 `temporal-relation` need는 `graphAnchor: { projectId, worldModelId, graphSnapshotId, nodeIds, depth, maxNodes, maxEdges }`를 가질 수 있습니다. exact anchor에는 현재 적격 node, 비어 있지 않은 relation allowlist와 정확한 traversal bound가 필요하며 facet을 함께 쓸 수 없습니다. 일치하는 relation 또는 Product entity key마다 독립된 기계적 evidence item이 됩니다. Compiler는 이러한 need를 스스로 만들지 않고 실제 포함만 입증합니다.
 

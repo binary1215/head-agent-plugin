@@ -6,7 +6,7 @@ import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 import { loadObservationProjection } from "./observation-projection.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.19.0";
+export const CONTEXT_COMPILER_VERSION = "0.20.0";
 export const CONTEXT_COVERAGE_VERSION = "1.3.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
@@ -498,7 +498,7 @@ function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET,
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
-function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapter, anchorTerm, matchingTerms, selectedEntityKey = null) {
+function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapter, anchorTerm, matchingTerms, selectedEntityKey = null, discoveryNeed = null) {
   const graph = worldModel.snapshot.temporalProvenanceGraph;
   const productModel = worldModel.snapshot.productModel;
   const taskTerms = terms(task);
@@ -533,7 +533,15 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
   const relevance = matches.length;
   const exactNodeIdSet = new Set(exactNodeIds);
   const requiredNodes = traversal.nodes.filter((node) => exactNodeIdSet.has(node.nodeId));
-  const compactNodes = [...requiredNodes, ...rankBounded(traversal.nodes.filter((node) => !exactNodeIdSet.has(node.nodeId)), taskTerms, (node) => canonicalJson(node.semantic || {
+  if (discoveryNeed) {
+    requiredNodes.push(...rankBounded(traversal.nodes.filter((node) => node.semantic
+      && PRODUCT_ENTITY_KINDS.has(node.kind.replace(/Revision$/, ""))
+      && node.authorityClass === "canon-projected" && node.freshness === "current"
+      && facetMatch(canonicalJson(node.semantic), discoveryNeed.facets)),
+    taskTerms, (node) => canonicalJson(node.semantic), discoveryNeed.minimumItems));
+  }
+  const requiredNodeIds = new Set(requiredNodes.map((node) => node.nodeId));
+  const compactNodes = [...requiredNodes, ...rankBounded(traversal.nodes.filter((node) => !requiredNodeIds.has(node.nodeId)), taskTerms, (node) => canonicalJson(node.semantic || {
     kind: node.kind,
     key: node.key,
     path: node.path,
@@ -576,7 +584,9 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
     productModelId: productModel.productModelId,
     productModelHash: productModel.productModelHash,
     source: worldModel.snapshot.productModelSource,
-    taskAnchor: { selectedTerm: anchorTerm, selectedEntityKey, matchingTerms },
+    taskAnchor: { selectedTerm: anchorTerm, selectedEntityKey, matchingTerms,
+      ...(discoveryNeed ? { discoverySelection: { facets: discoveryNeed.facets, minimumItems: discoveryNeed.minimumItems } } : {}),
+    },
     entities: compactEntities,
     relationships: compactRelationships,
     projectionOmissions: {
@@ -590,7 +600,7 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
     trustBoundary: "derived-projection-of-user-owned-product-canon",
   };
   return [{
-    id: `product-context:${traversal.resultId}`,
+    id: `product-context:${discoveryNeed ? digest(canonicalJson(record)) : traversal.resultId}`,
     kind: "ProductContext",
     score: relevance * 25 + 20,
     relevance,
@@ -610,12 +620,20 @@ function productContextCandidates(worldModel, task, graphProjectionAdapter = nul
   const productCorpus = graph.nodes.filter((node) => node.semantic).map((node) => canonicalJson(node.semantic).toLocaleLowerCase()).join(" ");
   const matchingTerms = [...taskTerms].filter((term) => productCorpus.includes(term))
     .sort((left, right) => right.length - left.length || left.localeCompare(right));
-  const entityKeys = [...new Set(evidenceNeeds.filter((need) => need.kind === "product-context").flatMap((need) => need.entityKeys || []))].sort();
-  const anchors = entityKeys.length
-    ? entityKeys.map((key) => ({ anchorTerm: key, matchingTerms: [], selectedEntityKey: key }))
-    : matchingTerms.length ? [{ anchorTerm: matchingTerms[0], matchingTerms, selectedEntityKey: null }] : [];
-  const candidates = anchors.flatMap(({ anchorTerm, matchingTerms: anchorMatches, selectedEntityKey }) => (
-    productContextCandidateForAnchor(worldModel, task, graphProjectionAdapter, anchorTerm, anchorMatches, selectedEntityKey)
+  const productNeeds = evidenceNeeds.filter((need) => need.kind === "product-context");
+  const entityKeys = [...new Set(productNeeds.flatMap((need) => need.entityKeys || []))].sort();
+  const anchors = entityKeys.map((key) => ({ anchorTerm: key, matchingTerms: [], selectedEntityKey: key }));
+  // Each independent lexical need gets its own bounded discovery, even when
+  // another need requests exact keys. The validated need count bounds queries;
+  // the existing 100-node/200-edge traversal and 24-entity carrier remain fixed.
+  for (const need of productNeeds.filter((item) => !item.entityKeys.length)) {
+    const needTerms = need.facets.length ? need.facets : matchingTerms;
+    const anchorTerm = needTerms.find((term) => productCorpus.includes(term));
+    if (anchorTerm) anchors.push({ anchorTerm, matchingTerms: needTerms, selectedEntityKey: null, discoveryNeed: need });
+  }
+  if (!productNeeds.length && matchingTerms.length) anchors.push({ anchorTerm: matchingTerms[0], matchingTerms, selectedEntityKey: null });
+  const candidates = anchors.flatMap(({ anchorTerm, matchingTerms: anchorMatches, selectedEntityKey, discoveryNeed }) => (
+    productContextCandidateForAnchor(worldModel, task, graphProjectionAdapter, anchorTerm, anchorMatches, selectedEntityKey, discoveryNeed)
   ));
   return [...new Map(candidates.map((candidate) => [candidate.id, candidate])).values()]
     .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
@@ -946,7 +964,7 @@ function evidenceItem(candidate, { id = candidate.id, kind, path = null, relatio
 function candidateEvidenceMatches(candidate, need) {
   const record = candidate.record;
   // Descriptive coverage metadata cannot manufacture a lexical facet match.
-  const { representation, ...evidenceRecord } = record;
+  const { representation, taskAnchor, ...evidenceRecord } = record;
   const candidateBody = canonicalJson(evidenceRecord);
   if (need.kind === "observation") {
     return candidate.kind === "ObservationEvidence" && need.observationIds.includes(candidate.id)

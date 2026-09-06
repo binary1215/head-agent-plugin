@@ -5,9 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
+import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import {
   inspectFeatureMapping,
   readFeatureMappingCandidateSet,
+  readFeatureMappingReviewDecision,
   reviewFeatureMapping,
   startFeatureMapping,
 } from "../scripts/lib/feature-mapping.mjs";
@@ -18,14 +20,30 @@ import {
 } from "../scripts/lib/feature-mapping-projection.mjs";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { inspectWorldModel, queryWorldTemporalGraph } from "../scripts/lib/world-model.mjs";
+import { refreshWorldModel } from "../scripts/lib/incremental-refresh.mjs";
+import { startRun } from "../scripts/lib/run-lineage.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
+import { runCommand } from "../scripts/head.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
 
 function temporaryProject() {
   fs.mkdirSync(testParent, { recursive: true });
-  return fs.mkdtempSync(path.join(testParent, "head-agent-feature-mapping-"));
+  return fs.realpathSync(fs.mkdtempSync(path.join(testParent, "head-agent-feature-mapping-")));
+}
+
+function treeBytes(root) {
+  const result = {};
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else result[path.relative(root, file).replaceAll("\\", "/")] = fs.readFileSync(file).toString("base64");
+    }
+  };
+  visit(root);
+  return result;
 }
 
 function productDocument() {
@@ -240,6 +258,14 @@ test("records rejection without creating reviewed implementation relations", asy
   const explicit = queryWorldTemporalGraph({ root, query: started.candidateSet.candidateSetId, includeUnreviewedCandidates: true, depth: 2 });
   assert.equal(explicit.edges.some((edge) => ["IMPLEMENTS", "VERIFIED_BY"].includes(edge.type)), false);
   assert.equal(explicit.edges.filter((edge) => edge.type === "REJECTED_BY").length, started.candidateSet.candidates.length);
+  const aliasId = `feature-mapping-review-decision-${"0".repeat(24)}`;
+  const aliasFile = path.join(root, ".head/feature-mappings/review-decisions", `${aliasId}.json`);
+  fs.writeFileSync(aliasFile, JSON.stringify(rejected.reviewDecision));
+  const beforeAliasRead = treeBytes(root);
+  assert.throws(() => readFeatureMappingReviewDecision({ root, reviewDecisionId: aliasId }), { code: "FEATURE_MAPPING_REVIEW_IDENTITY_MISMATCH" });
+  assert.deepEqual(treeBytes(root), beforeAliasRead);
+  fs.unlinkSync(aliasFile);
+  assert.deepEqual(readFeatureMappingReviewDecision({ root, reviewDecisionId: rejected.reviewDecision.reviewDecisionId }).reviewDecision, rejected.reviewDecision);
 });
 
 test("blocks stale and tampered Feature mapping review artifacts", async (t) => {
@@ -264,4 +290,170 @@ test("blocks stale and tampered Feature mapping review artifacts", async (t) => 
   assert.throws(() => readFeatureMappingCandidateSet({ root: tamperRoot, candidateSetId: started.candidateSet.candidateSetId }), {
     code: "FEATURE_MAPPING_DIGEST_MISMATCH",
   });
+});
+
+test("rejecting a historical Product mapping projects the current Canon and retains the reviewed target", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const started = await startWithSemanticProposal(root);
+  // This isolated fixture supplies the next valid Canon as a fixture boundary;
+  // rejection itself must neither create nor rewrite product authority.
+  const canonFile = path.join(root, ".head/context/product-model.json");
+  const changed = productDocument();
+  changed.features[0].description = "Deliver a current version of the user-authored message";
+  fs.writeFileSync(canonFile, JSON.stringify(changed));
+  await refreshWorldModel({ root });
+  const current = inspectWorldModel({ root });
+  assert.equal(current.status, "current");
+  assert.notEqual(current.snapshot.productModel.productModelId, started.candidateSet.productModelId);
+  const before = treeBytes(root);
+  await assert.rejects(() => reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId,
+    disposition: "accept-all", rationale: "Cannot approve a different Canon." }), { code: "FEATURE_MAPPING_SOURCE_DRIFT" });
+  assert.deepEqual(treeBytes(root), before);
+  const rejected = await reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId,
+    disposition: "reject", rationale: "Reject the old product-evidence proposal, not current Canon." });
+  assert.equal(rejected.status, "feature_mappings_rejected");
+  assert.equal(rejected.reviewDecision.productModelId, started.candidateSet.productModelId);
+  assert.equal(rejected.reviewDecision.productModelHash, started.candidateSet.productModelHash);
+  const projected = inspectWorldModel({ root });
+  assert.equal(projected.status, "current");
+  assert.equal(projected.snapshot.productModel.productModelId, current.snapshot.productModel.productModelId);
+  assert.equal(projected.snapshot.temporalProvenanceGraph.summary.reviewedRelationshipCount, 0);
+  for (const [name, value] of Object.entries(before).filter(([name]) => name.startsWith(".head/sessions/")
+    || name === ".head/project.json" || name === ".head/context/product-model.json")) {
+    assert.equal(treeBytes(root)[name], value);
+  }
+  assert.equal((await startFeatureMapping({ root, semanticProposal: semanticMappingProposal(root) })).status, "awaiting_feature_mapping_review");
+});
+
+test("stale rejection validates the exact request, candidate and Session before refreshing or writing", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const started = await startWithSemanticProposal(root);
+  fs.appendFileSync(path.join(root, "src/message-delivery.mjs"), "export const changed = true;\n");
+  const request = { root, candidateSetId: started.candidateSet.candidateSetId, disposition: "reject", rationale: "Reject the exact obsolete candidate." };
+  const noWrite = async (input, code) => {
+    const before = treeBytes(root);
+    await assert.rejects(() => reviewFeatureMapping(input), { code });
+    assert.deepEqual(treeBytes(root), before);
+  };
+  await noWrite({ ...request, candidateSetId: `feature-mapping-candidates-${"0".repeat(24)}` }, "STALE_FEATURE_MAPPING_CANDIDATE_SET");
+  await noWrite({ ...request, disposition: "abandon" }, "INVALID_FEATURE_MAPPING_REVIEW_DISPOSITION");
+  await noWrite({ ...request, rationale: " " }, "INVALID_FEATURE_MAPPING_INPUT");
+  await noWrite({ ...request, acceptedCandidateIds: "not-an-array" }, "INVALID_FEATURE_MAPPING_REVIEW_SELECTION");
+  const candidateFile = path.join(root, ".head/feature-mappings/candidate-sets", `${request.candidateSetId}.json`);
+  const candidateBytes = fs.readFileSync(candidateFile);
+  const pointerFile = path.join(root, ".head/feature-mappings/current.json");
+  const pointerBytes = fs.readFileSync(pointerFile);
+  fs.writeFileSync(candidateFile, JSON.stringify({ ...started.candidateSet, candidateSetHash: "0".repeat(64) }));
+  await noWrite(request, "FEATURE_MAPPING_DIGEST_MISMATCH");
+  fs.writeFileSync(candidateFile, candidateBytes);
+  fs.writeFileSync(pointerFile, JSON.stringify({ ...started.state, pointerHash: "0".repeat(64) }));
+  await noWrite(request, "FEATURE_MAPPING_STATE_DIGEST_MISMATCH");
+  fs.writeFileSync(pointerFile, pointerBytes);
+  const foreign = { ...started.candidateSet, sessionId: "different-head-session" };
+  delete foreign.candidateSetId;
+  delete foreign.candidateSetHash;
+  foreign.candidateSetHash = featureMappingDigest(featureMappingCanonicalJson(foreign));
+  foreign.candidateSetId = `feature-mapping-candidates-${foreign.candidateSetHash.slice(0, 24)}`;
+  fs.writeFileSync(candidateFile, JSON.stringify(foreign));
+  await noWrite(request, "FEATURE_MAPPING_CANDIDATE_SET_IDENTITY_MISMATCH");
+  fs.writeFileSync(candidateFile, candidateBytes);
+  const foreignFile = path.join(root, ".head/feature-mappings/candidate-sets", `${foreign.candidateSetId}.json`);
+  fs.writeFileSync(foreignFile, JSON.stringify(foreign));
+  const foreignPointer = { ...started.state, candidateSetId: foreign.candidateSetId };
+  delete foreignPointer.pointerHash;
+  foreignPointer.pointerHash = featureMappingDigest(featureMappingCanonicalJson(foreignPointer));
+  fs.writeFileSync(pointerFile, JSON.stringify(foreignPointer));
+  await noWrite({ ...request, candidateSetId: foreign.candidateSetId }, "FEATURE_MAPPING_CANDIDATE_SET_IDENTITY_MISMATCH");
+  const beforeStatus = treeBytes(root);
+  assert.throws(() => inspectFeatureMapping({ root }), { code: "FEATURE_MAPPING_CANDIDATE_SET_IDENTITY_MISMATCH" });
+  assert.deepEqual(treeBytes(root), beforeStatus);
+  fs.writeFileSync(pointerFile, pointerBytes);
+  fs.unlinkSync(foreignFile);
+  assert.equal((await reviewFeatureMapping(request)).status, "feature_mappings_rejected");
+});
+
+test("rejection does not silently rebuild missing World or replace corrupt World", async (t) => {
+  for (const damage of ["missing", "corrupt"]) {
+    const root = initializedProject();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const started = await startWithSemanticProposal(root);
+    const current = inspectWorldModel({ root });
+    const file = path.join(root, ".head/world-model/snapshots", `${current.snapshot.worldModelId}.json`);
+    if (damage === "missing") fs.unlinkSync(file);
+    else fs.writeFileSync(file, JSON.stringify({ ...current.snapshot, worldModelHash: "0".repeat(64) }));
+    const before = treeBytes(root);
+    await assert.rejects(() => reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId,
+      disposition: "reject", rationale: "Reject cannot use an unverified or absent projection as authority." }));
+    assert.deepEqual(treeBytes(root), before);
+  }
+});
+
+test("mapping readiness discloses the existing active Run restriction consistently without writing", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const started = await startWithSemanticProposal(root);
+  const capsule = compileContext({ root, task: "Inspect message delivery", persist: true });
+  const plan = createWholePlanSnapshot({ root, objective: "Inspect delivery in a bounded Run", plan: [{ id: "inspect", outcome: "Report evidence" }] });
+  const contract = createExecutionContract({ root, wholePlanId: plan.artifact.wholePlanId, capsuleId: capsule.capsule.capsuleId,
+    scope: "Read message delivery", acceptanceCriteria: ["Report exact inspected evidence"] });
+  startRun({ root, executionContractId: contract.artifact.executionContractId });
+  const before = treeBytes(root);
+  const status = inspectFeatureMapping({ root });
+  assert.equal(status.reviewReadiness.runConflict, true);
+  assert.equal(status.reviewReadiness.acceptanceAvailable, false);
+  assert.equal(status.reviewReadiness.explicitRejectionAvailable, false);
+  assert.match(status.reviewReadiness.nextAction, /existing Run/);
+  assert.deepEqual(await runCommand(["feature-mapping-status", root]), status);
+  const mcp = await dispatchMcp({ jsonrpc: "2.0", id: "active-run-mapping-status", method: "tools/call",
+    params: { name: "head_feature_mapping_status", arguments: { project_root: root } } });
+  assert.deepEqual(mcp.result.structuredContent, status);
+  await assert.rejects(() => reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId,
+    disposition: "reject", rationale: "The existing Run restriction still applies." }), { code: "FEATURE_MAPPING_RUN_CONFLICT" });
+  assert.deepEqual(treeBytes(root), before);
+});
+
+test("the same explicit stale rejection retries after projection, decision or state write interruption", async (t) => {
+  for (const boundary of ["projection", "decision", "state"]) {
+    const root = initializedProject();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const started = await startWithSemanticProposal(root);
+    fs.appendFileSync(path.join(root, "src/message-delivery.mjs"), "export const format = 'updated';\n");
+    await refreshWorldModel({ root });
+    const request = { root, candidateSetId: started.candidateSet.candidateSetId, disposition: "reject",
+      rationale: "One explicit decision for the exact obsolete proposal, retried unchanged." };
+    const stateFile = path.join(root, ".head/feature-mappings/current.json");
+    const stateBytes = fs.readFileSync(stateFile);
+    const protectedBytes = Object.fromEntries(Object.entries(treeBytes(root)).filter(([name]) => name.startsWith(".head/sessions/")
+      || name === ".head/project.json" || name === ".head/context/product-model.json"));
+    const rename = fs.renameSync;
+    let injected = false;
+    try {
+      fs.renameSync = function(from, to) {
+        const relative = path.relative(root, String(to)).replaceAll("\\", "/");
+        const matches = boundary === "projection" ? relative === ".head/world-model/current.json"
+          : boundary === "decision" ? relative.startsWith(".head/feature-mappings/review-decisions/")
+            : relative === ".head/feature-mappings/current.json";
+        if (!injected && matches) {
+          injected = true;
+          throw Object.assign(new Error(`Injected ${boundary} write interruption`), { code: "TEST_MAPPING_WRITE_INTERRUPTION" });
+        }
+        return rename.apply(this, arguments);
+      };
+      await assert.rejects(() => reviewFeatureMapping(request), { code: "TEST_MAPPING_WRITE_INTERRUPTION" });
+    } finally { fs.renameSync = rename; }
+    assert.equal(injected, true, boundary);
+    assert.deepEqual(fs.readFileSync(stateFile), stateBytes, `${boundary}: interrupted state must remain awaiting-review`);
+    const reviewDirectory = path.join(root, ".head/feature-mappings/review-decisions");
+    const decisionsBefore = fs.existsSync(reviewDirectory) ? fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")) : [];
+    assert.equal(decisionsBefore.length, boundary === "state" ? 1 : 0, "an orphan projection is not a durable decision");
+    const retried = await reviewFeatureMapping(request);
+    assert.equal(retried.status, "feature_mappings_rejected");
+    assert.equal(retried.reviewDecision.rationale, request.rationale);
+    assert.equal(inspectWorldModel({ root }).status, "current");
+    assert.deepEqual(fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")), [`${retried.reviewDecision.reviewDecisionId}.json`]);
+    assert.equal(inspectWorldModel({ root }).snapshot.temporalProvenanceGraph.summary.reviewedRelationshipCount, 0);
+    for (const [name, value] of Object.entries(protectedBytes)) assert.equal(treeBytes(root)[name], value);
+  }
 });
