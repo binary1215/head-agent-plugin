@@ -194,6 +194,13 @@ test("concurrent continuation consumes once and an interrupted consumption never
     const input = { root, epochId: prepared.epoch.epochId, continuationToken: prepared.continuationToken, currentUserTurnId: 7 };
     if (crashAfterConsumption) {
       await recoveryChild(t, "continue", input, { crashAfterConsumption }).done;
+      assert.equal(inspectCompaction({ root }).continuationOutcome, "uncertain");
+      const next = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 8 }) });
+      assert.notEqual(next.epoch.epochId, prepared.epoch.epochId);
+      const previous = JSON.parse(fs.readFileSync(path.join(root, ".head/sessions/compaction/epochs", `${prepared.epoch.epochId}.json`), "utf8"));
+      assert.equal(previous.state, "aborted");
+      assert.equal(previous.abortReason, "continuation-consumed-outcome-uncertain");
+      assert.equal(previous.continuationTokenBindingHash, null);
       assert.throws(() => continueCompaction(input), { code: "COMPACTION_TOKEN_CONSUMED" });
     } else {
       const outcomes = await Promise.all(Array.from({ length: 8 }, () => recoveryChild(t, "continue", input).done));
@@ -232,6 +239,268 @@ test("refresh lease recovers an empty legacy lock and a crash before owner publi
   assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId }).status, "idle");
   assert.equal(fs.readdirSync(path.join(root, ".head", "refresh")).some((name) => name.includes("writer.lock")), false);
   assert.equal(fs.existsSync(path.join(root, ".head", ".operations")), false);
+});
+
+function refreshPublication(source, target) {
+  return typeof source === "string" && source.endsWith(".staging")
+    && typeof target === "string" && target.replaceAll("\\", "/").endsWith("/refresh/writer.lock");
+}
+
+test("refresh publication retries the same owned Windows staging without replaying work", { skip: process.platform !== "win32" }, async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectId = inspectProject(root).project.projectId;
+  const before = projectBytes(root);
+  const rename = fs.renameSync;
+  const staged = [];
+  let calls = 0;
+  let work = 0;
+  fs.renameSync = (source, target) => {
+    if (refreshPublication(source, target)) {
+      staged.push([source, fs.readFileSync(path.join(source, "owner.json"), "utf8")]);
+      if (++calls <= 2) throw Object.assign(new Error("Transient Windows sharing contention"), { code: calls === 1 ? "EPERM" : "EACCES" });
+    }
+    return rename(source, target);
+  };
+  try {
+    assert.equal(await withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; return "once"; }), "once");
+  } finally { fs.renameSync = rename; }
+  assert.equal(calls, 3);
+  assert.equal(work, 1);
+  assert.equal(new Set(staged.map(([file]) => file)).size, 1);
+  assert.equal(new Set(staged.map(([, bytes]) => bytes)).size, 1);
+  assert.deepEqual(projectBytes(root), before);
+  assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId }).status, "idle");
+  assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+});
+
+test("refresh publication exhausts a finite Windows retry bound without running work", { skip: process.platform !== "win32" }, async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectId = inspectProject(root).project.projectId;
+  const before = projectBytes(root);
+  const originalError = Object.assign(new Error("Persistent Windows publication denial"), { code: "EPERM" });
+  const rename = fs.renameSync;
+  let attempts = 0;
+  let work = 0;
+  fs.renameSync = (source, target) => {
+    if (refreshPublication(source, target)) { attempts += 1; throw originalError; }
+    return rename(source, target);
+  };
+  try { await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), (error) => error === originalError); }
+  finally { fs.renameSync = rename; }
+  assert.equal(attempts, 5);
+  assert.equal(work, 0);
+  assert.deepEqual(projectBytes(root), before);
+  assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+});
+
+test("refresh publication never overwrites an owner appearing during publication", async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectId = inspectProject(root).project.projectId;
+  const rename = fs.renameSync;
+  let attempts = 0;
+  let work = 0;
+  let occupiedFile;
+  let occupiedBytes;
+  fs.renameSync = (source, target) => {
+    if (refreshPublication(source, target)) {
+      attempts += 1;
+      const owner = JSON.parse(fs.readFileSync(path.join(source, "owner.json"), "utf8"));
+      owner.token = owner.token === "a".repeat(32) ? "b".repeat(32) : "a".repeat(32);
+      occupiedBytes = JSON.stringify(owner);
+      occupiedFile = path.join(target, "owner.json");
+      fs.mkdirSync(target);
+      fs.writeFileSync(occupiedFile, occupiedBytes);
+      throw Object.assign(new Error("Owner appeared"), { code: "EPERM" });
+    }
+    return rename(source, target);
+  };
+  try { await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), { code: "REFRESH_WRITER_BUSY" }); }
+  finally { fs.renameSync = rename; }
+  assert.equal(attempts, 1);
+  assert.equal(work, 0);
+  assert.equal(fs.readFileSync(occupiedFile, "utf8"), occupiedBytes);
+  assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), ["writer.lock"]);
+});
+
+test("refresh publication preserves tampered staging instead of retrying or deleting it", { skip: process.platform !== "win32" }, async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectId = inspectProject(root).project.projectId;
+  const rename = fs.renameSync;
+  let work = 0;
+  let attempts = 0;
+  let stagedOwner;
+  fs.renameSync = (source, target) => {
+    if (refreshPublication(source, target)) {
+      attempts += 1;
+      stagedOwner = path.join(source, "owner.json");
+      fs.writeFileSync(stagedOwner, "tampered publication owner");
+      throw Object.assign(new Error("Windows publication failure with staging drift"), { code: "EPERM" });
+    }
+    return rename(source, target);
+  };
+  try {
+    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), (error) => {
+      assert.equal(error.code, "UNSAFE_REFRESH_WRITER_LEASE");
+      assert.equal(error.cleanupFailure.code, "UNSAFE_REFRESH_WRITER_LEASE");
+      return true;
+    });
+  } finally { fs.renameSync = rename; }
+  assert.equal(attempts, 1);
+  assert.equal(work, 0);
+  assert.equal(fs.readFileSync(stagedOwner, "utf8"), "tampered publication owner");
+  assert.equal(fs.existsSync(path.join(root, ".head", "refresh", "writer.lock")), false);
+});
+
+test("refresh publication preserves an invalid appearing owner and treats denied stat as unknown", async (t) => {
+  for (const mode of ["invalid-owner", "denied-stat"]) {
+    const root = initialize(temporaryProject());
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const projectId = inspectProject(root).project.projectId;
+    const targetDirectory = path.join(root, ".head", "refresh", "writer.lock");
+    const rename = fs.renameSync;
+    const stat = fs.lstatSync;
+    let work = 0;
+    let attempts = 0;
+    fs.lstatSync = (file, ...args) => {
+      if (mode === "denied-stat" && file === targetDirectory) throw Object.assign(new Error("Destination state unknown"), { code: "EACCES" });
+      return stat(file, ...args);
+    };
+    fs.renameSync = (source, target) => {
+      if (refreshPublication(source, target)) {
+        attempts += 1;
+        fs.mkdirSync(target);
+        fs.writeFileSync(path.join(target, "owner.json"), "invalid owner must survive");
+        throw Object.assign(new Error("Unknown owner appeared"), { code: "EPERM" });
+      }
+      return rename(source, target);
+    };
+    try {
+      await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), { code: mode === "invalid-owner" ? "INVALID_REFRESH_WRITER_LEASE" : "EACCES" });
+    } finally { fs.renameSync = rename; fs.lstatSync = stat; }
+    assert.equal(work, 0);
+    assert.equal(attempts, mode === "invalid-owner" ? 1 : 0);
+    if (mode === "invalid-owner") assert.equal(fs.readFileSync(path.join(targetDirectory, "owner.json"), "utf8"), "invalid owner must survive");
+    else assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+  }
+});
+
+test("refresh publication converges a completed rename with a reported error and releases it", async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectId = inspectProject(root).project.projectId;
+  const before = projectBytes(root);
+  const rename = fs.renameSync;
+  let attempts = 0;
+  let work = 0;
+  fs.renameSync = (source, target) => {
+    const result = rename(source, target);
+    if (refreshPublication(source, target)) {
+      attempts += 1;
+      throw Object.assign(new Error("Reported failure after successful rename"), { code: "EIO" });
+    }
+    return result;
+  };
+  try { await withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }); }
+  finally { fs.renameSync = rename; }
+  assert.equal(attempts, 1);
+  assert.equal(work, 1);
+  assert.deepEqual(projectBytes(root), before);
+  assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+});
+
+test("refresh publication preserves cleanup diagnostics when a competing owner and staging drift coexist", async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectId = inspectProject(root).project.projectId;
+  const rename = fs.renameSync;
+  let attempts = 0;
+  let work = 0;
+  let stagedOwner;
+  let competingOwner;
+  let competingBytes;
+  fs.renameSync = (source, target) => {
+    if (refreshPublication(source, target)) {
+      attempts += 1;
+      stagedOwner = path.join(source, "owner.json");
+      const owner = JSON.parse(fs.readFileSync(stagedOwner, "utf8"));
+      owner.token = owner.token === "a".repeat(32) ? "b".repeat(32) : "a".repeat(32);
+      competingBytes = JSON.stringify(owner);
+      competingOwner = path.join(target, "owner.json");
+      fs.mkdirSync(target);
+      fs.writeFileSync(competingOwner, competingBytes);
+      fs.writeFileSync(stagedOwner, "changed staging must survive");
+      throw Object.assign(new Error("Competing owner and staging drift"), { code: "EPERM" });
+    }
+    return rename(source, target);
+  };
+  try {
+    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), (error) => {
+      assert.equal(error.code, "EEXIST");
+      assert.equal(error.cleanupFailure.code, "UNSAFE_REFRESH_WRITER_LEASE");
+      return true;
+    });
+  } finally { fs.renameSync = rename; }
+  assert.equal(attempts, 1);
+  assert.equal(work, 0);
+  assert.equal(fs.readFileSync(competingOwner, "utf8"), competingBytes);
+  assert.equal(fs.readFileSync(stagedOwner, "utf8"), "changed staging must survive");
+});
+
+test("refresh publication does not retry unrelated errors or a failed callback", async (t) => {
+  for (const code of ["EIO", "ENOENT", "CALLBACK_FAILURE"]) {
+    const root = initialize(temporaryProject());
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const projectId = inspectProject(root).project.projectId;
+    const before = projectBytes(root);
+    const originalError = Object.assign(new Error("Do not repeat this operation"), { code: code === "CALLBACK_FAILURE" ? "EPERM" : code });
+    const rename = fs.renameSync;
+    let attempts = 0;
+    let work = 0;
+    fs.renameSync = (source, target) => {
+      if (refreshPublication(source, target)) { attempts += 1; if (code !== "CALLBACK_FAILURE") throw originalError; }
+      return rename(source, target);
+    };
+    try {
+      await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; throw originalError; }), (error) => error === originalError);
+    } finally { fs.renameSync = rename; }
+    assert.equal(attempts, 1);
+    assert.equal(work, code === "CALLBACK_FAILURE" ? 1 : 0);
+    assert.deepEqual(projectBytes(root), before);
+    assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+  }
+});
+
+test("refresh publication retains its original failure and reports an owned cleanup failure", async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectId = inspectProject(root).project.projectId;
+  const originalError = Object.assign(new Error("Publication failed"), { code: "EIO" });
+  const rename = fs.renameSync;
+  const unlink = fs.unlinkSync;
+  let stagedOwner;
+  let work = 0;
+  fs.renameSync = (source, target) => {
+    if (refreshPublication(source, target)) { stagedOwner = path.join(source, "owner.json"); throw originalError; }
+    return rename(source, target);
+  };
+  fs.unlinkSync = (file) => {
+    if (file === stagedOwner) throw Object.assign(new Error("Owned cleanup denied"), { code: "EACCES" });
+    return unlink(file);
+  };
+  try {
+    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), (error) => {
+      assert.equal(error, originalError);
+      assert.equal(error.cleanupFailure.code, "EACCES");
+      return true;
+    });
+  } finally { fs.renameSync = rename; fs.unlinkSync = unlink; }
+  assert.equal(work, 0);
+  assert.equal(fs.existsSync(stagedOwner), true);
+  assert.equal(fs.existsSync(path.join(root, ".head", "refresh", "writer.lock")), false);
 });
 
 test("compaction recovers only from a canonical checkpoint and consumes continuation once", (t) => {

@@ -117,6 +117,12 @@ function productReadiness(status) {
       action: "resume_product_governance",
       summary: "The Product decision is already recorded. Product resume completes its interrupted application and derived projection without another user review; ordinary Core work remains available.",
     },
+    review_recovery_pending: {
+      state: "refresh_required",
+      status: "product_refresh_required",
+      action: "resume_product_governance",
+      summary: "The revision or rejection is already recorded. Product resume completes its interrupted application without another user decision; ordinary Core work remains available.",
+    },
   };
   return states[status] || {
     state: "inspection_required",
@@ -137,9 +143,9 @@ function contextReadiness({ coreState, productState, onboardingInspection = null
     worldModelId: null,
     entrypoint,
   };
-  if (productState === "refresh_required") return {
+  if (productState === "refresh_required" || (onboardingInspection?.worldModel && onboardingInspection.worldModel.status !== "current")) return {
     state: "world-refresh-required",
-    repositoryEvidence: "stale-excluded",
+    repositoryEvidence: onboardingInspection?.worldModel?.status === "unavailable" ? "missing-excluded" : "stale-excluded",
     worldModelId: onboardingInspection?.state?.worldModelId || null,
     entrypoint,
   };
@@ -374,7 +380,9 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
     });
   }
 
-  const product = onboardingInspection ? productReadiness(onboardingInspection.status) : {
+  const pendingCandidateNeedsWorld = ["awaiting_review", "revision_required"].includes(onboardingInspection?.status)
+    && (onboardingInspection.worldModel?.status !== "current" || onboardingInspection.worldModel.matchesCandidateSource === false);
+  const product = onboardingInspection ? productReadiness(pendingCandidateNeedsWorld ? "ready_world_changed" : onboardingInspection.status) : {
     state: "inspection_blocked",
     status: "core_drifted",
     action: "review_managed_projection_drift",
@@ -477,7 +485,8 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   }
 
   let onboardingAction;
-  if (["initialized", "migration_required", "rejected"].includes(current.status)
+  if (["initialized", "migration_required"].includes(current.status)
+    || (current.status === "rejected" && Object.keys(onboardingInput).length)
     || (current.status === "awaiting_evidence" && Object.keys(onboardingInput).length)) {
     const started = await startOnboarding({ root, ...onboardingInput });
     onboardingAction = current.status === "initialized" || current.status === "migration_required" ? "started" : "resumed-analysis";
@@ -508,8 +517,8 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
 
   if (current.status === "awaiting_review" || current.status === "revision_required") {
     const refresh = await refreshOnboardingCandidates({ root, semanticProposal: onboardingInput.semanticProposal || null });
+    current = inspectOnboarding({ root });
     if (refresh.refreshed) {
-      current = inspectOnboarding({ root });
       return bootstrapResponse({
         root,
         profile,
@@ -548,7 +557,7 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     }
   }
 
-  const resumableWithoutMutation = new Set(["awaiting_review", "revision_required", "ready", "ready_world_changed", "promotion_recovery_pending"]);
+  const resumableWithoutMutation = new Set(["awaiting_review", "revision_required", "ready", "ready_world_changed", "promotion_recovery_pending", "review_recovery_pending", "rejected"]);
   if (!resumableWithoutMutation.has(current.status)) {
     fail("PROJECT_BOOTSTRAP_STATE_UNSUPPORTED", `Unsupported onboarding resume status: ${current.status}`);
   }
@@ -556,6 +565,8 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     root,
     profile,
     onboardingAction: current.status === "promotion_recovery_pending" ? "approved-projection-pending"
+      : current.status === "review_recovery_pending" ? "review-projection-pending"
+      : current.status === "rejected" ? "rejected-preserved"
       : current.status === "awaiting_review" || current.status === "revision_required" ? "review-required" : "already-ready",
     inputDisposition: Object.keys(onboardingInput).length ? "not-reapplied-to-existing-authority-state" : "not-required",
     before,

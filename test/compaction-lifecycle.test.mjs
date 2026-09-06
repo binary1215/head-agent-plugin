@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
-import { createRecoveryCheckpoint, inspectCompaction } from "../scripts/lib/compaction-recovery.mjs";
+import { createRecoveryCheckpoint, inspectCompaction, prepareCompactionFromCurrentCheckpoint, settleCompactionContinuation } from "../scripts/lib/compaction-recovery.mjs";
 import {
   enterConversationRecovery,
   InMemoryCompactionLifecycleHostAdapter,
@@ -65,6 +65,97 @@ function projectFiles(root) {
     .map((entry) => path.relative(root, path.join(entry.parentPath, entry.name)).replaceAll("\\", "/"))
     .sort();
 }
+
+test("durable continuation consumption with interrupted epoch commit closes only P5 and restores P2 without replay", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const canonical = checkpoint(root);
+  const host = enqueue(new InMemoryCompactionLifecycleHostAdapter(), event(root, "before-compaction"));
+  const prepared = processCompactionLifecycle({ root, hostAdapter: host });
+  const epochId = prepared.epoch.epochId;
+  enqueue(host, event(root, "after-compaction", { epochId, outcome: "succeeded" }));
+  const nonTransportBytes = () => Object.fromEntries(projectFiles(root)
+    .filter((file) => !file.startsWith(".head/sessions/compaction/"))
+    .map((file) => [file, fs.readFileSync(path.join(root, file), "base64")]));
+  const authorityBefore = nonTransportBytes();
+  const rename = fs.renameSync;
+  let faultInjected = false;
+  fs.renameSync = (source, target) => {
+    if (String(target).endsWith(`${epochId}.json`) && JSON.parse(fs.readFileSync(source, "utf8")).state === "continued") {
+      faultInjected = true;
+      throw Object.assign(new Error("injected continued epoch commit failure"), { code: "EIO" });
+    }
+    return rename(source, target);
+  };
+  try { assert.throws(() => processCompactionLifecycle({ root, hostAdapter: host }), { code: "EIO" }); }
+  finally { fs.renameSync = rename; }
+  assert.equal(faultInjected, true);
+  const epochFile = path.join(root, ".head/sessions/compaction/epochs", `${epochId}.json`);
+  const interruptedBytes = fs.readFileSync(epochFile);
+  const status = inspectCompaction({ root });
+  assert.equal(status.epoch.state, "verified");
+  assert.equal(status.continuationOutcome, "uncertain");
+  assert.equal(enterConversationRecovery({ root }).restore.checkpoint.checkpointId, canonical.checkpointId);
+  assert.deepEqual(fs.readFileSync(epochFile), interruptedBytes, "read-only status must not settle transport");
+  assert.deepEqual(nonTransportBytes(), authorityBefore);
+  host.loadContinuation = () => { assert.fail("a consumed continuation must never be loaded again"); };
+  for (const kind of ["conversation-entry", "provider-replaced"]) {
+    const replacementHost = enqueue(new InMemoryCompactionLifecycleHostAdapter(), event(root, kind, { userTurnId: 11 }));
+    const entry = processCompactionLifecycle({ root, hostAdapter: replacementHost });
+    assert.equal(entry.status, "conversation_direction_restored");
+    assert.equal(entry.conversationEntry.restore.checkpoint.checkpointId, canonical.checkpointId);
+    assert.equal(entry.ordinaryWorkBlocked, false);
+    assert.equal(entry.userDecisionRequired, false);
+    assert.equal(replacementHost.inspectHostState().pendingEventCount, 0);
+    assert.deepEqual(nonTransportBytes(), authorityBefore);
+  }
+  const acknowledge = host.acknowledge.bind(host);
+  host.acknowledge = () => { throw new Error("lost ack"); };
+  const resumed = processCompactionLifecycle({ root, hostAdapter: host });
+  assert.equal(resumed.status, "conversation_direction_restored_after_uncertain_continuation");
+  assert.equal(resumed.providerContinuationOutcome, "uncertain");
+  assert.equal(resumed.continuationConsumed, true);
+  assert.equal(resumed.retryAllowed, false);
+  assert.equal(resumed.freshLogicalHeadRequired, true);
+  assert.equal(resumed.ordinaryWorkBlocked, false);
+  assert.equal(resumed.userDecisionRequired, false);
+  assert.equal(resumed.authorityChanged, false);
+  assert.equal(resumed.conversationEntry.restore.checkpoint.checkpointId, canonical.checkpointId);
+  assert.equal(Object.hasOwn(resumed, "continuation"), false);
+  const settledBytes = fs.readFileSync(epochFile);
+  host.acknowledge = acknowledge;
+  assert.equal(processCompactionLifecycle({ root, hostAdapter: host }).status, resumed.status);
+  assert.equal(host.inspectHostState().pendingEventCount, 0);
+  assert.deepEqual(fs.readFileSync(epochFile), settledBytes, "ack retry must be byte-idempotent");
+  assert.deepEqual(nonTransportBytes(), authorityBefore);
+  const next = prepareCompactionFromCurrentCheckpoint({ root, runtime: "codex", userTurnIdAtPrepare: 11 });
+  assert.equal(next.checkpoint.checkpointId, canonical.checkpointId);
+  assert.notEqual(next.epoch.epochId, epochId);
+  assert.deepEqual(nonTransportBytes(), authorityBefore);
+  assert.equal(fs.readdirSync(path.join(root, ".head/sessions/compaction/consumptions")).length, 1);
+  assert.throws(() => settleCompactionContinuation({ root, epochId }), { code: "COMPACTION_CHECKPOINT_STALE" });
+});
+
+test("P5 interrupted-consumption settlement rejects invented or mismatched evidence without modifying P2", (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  checkpoint(root);
+  const prepared = prepareCompactionFromCurrentCheckpoint({ root, runtime: "codex", userTurnIdAtPrepare: 10 });
+  const epochId = prepared.epoch.epochId;
+  const session = fs.readFileSync(path.join(root, ".head/sessions/current.json"));
+  assert.throws(() => settleCompactionContinuation({ root, epochId }), { code: "INVALID_COMPACTION_CONSUMPTION" });
+  const consumptionDir = path.join(root, ".head/sessions/compaction/consumptions");
+  fs.mkdirSync(consumptionDir, { recursive: true });
+  fs.writeFileSync(path.join(consumptionDir, `${epochId}.json`), JSON.stringify({
+    schemaVersion: prepared.epoch.schemaVersion, kind: "CompactionContinuationConsumption",
+    epochId, checkpointId: prepared.checkpoint.checkpointId, checkpointDigest: "0".repeat(64),
+    consumedAt: new Date().toISOString(), providerSessionIdentityPersisted: false,
+  }));
+  assert.throws(() => settleCompactionContinuation({ root, epochId }), { code: "INVALID_COMPACTION_CONSUMPTION" });
+  assert.equal(inspectCompaction({ root }).continuationConsumption, "invalid");
+  assert.equal(inspectCompaction({ root }).epoch.state, "prepared");
+  assert.deepEqual(fs.readFileSync(path.join(root, ".head/sessions/current.json")), session);
+});
 
 test("conversation entry restores current P2 direction automatically and otherwise creates no gate", (t) => {
   const root = temporaryProject();

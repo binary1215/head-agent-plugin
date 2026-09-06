@@ -597,8 +597,12 @@ export function readWorldModel({ root = ".", storeAdapter = null } = {}) {
   const pointerEntry = adapter.readPointer();
   if (!pointerEntry) fail("Repository World Model has not been built.", "WORLD_MODEL_NOT_BUILT");
   const pointer = pointerEntry.document;
-  if (pointer.projectId !== inspected.project.projectId || typeof pointer.worldModelId !== "string") {
+  if (pointer.schemaVersion !== SCHEMA_VERSION || pointer.kind !== "WorldModelPointer"
+    || pointer.projectId !== inspected.project.projectId || !/^world-model-[a-f0-9]{24}$/.test(pointer.worldModelId || "")) {
     fail("World Model pointer does not match this project.", "WORLD_MODEL_IDENTITY_MISMATCH");
+  }
+  if (!/^[a-f0-9]{64}$/.test(pointer.worldModelHash || "") || pointer.worldModelId !== `world-model-${pointer.worldModelHash.slice(0, 24)}`) {
+    fail("World Model pointer hash does not match its identity.", "WORLD_MODEL_POINTER_MISMATCH");
   }
   const snapshotEntry = adapter.readSnapshot(pointer.worldModelId);
   if (!snapshotEntry) fail("World Model snapshot is missing.", "WORLD_MODEL_SNAPSHOT_MISSING");
@@ -1233,9 +1237,16 @@ async function buildWorldModelLocked({
     fail("World Model current pointer changed during refresh.", "REFRESH_POINTER_CONFLICT");
   }
   if (currentPointerEntry) {
-    const current = readWorldModel({ root: project.projectRoot, storeAdapter: adapter });
-    previous = current.snapshot;
-    previousPointer = current.pointer;
+    try {
+      const current = readWorldModel({ root: project.projectRoot, storeAdapter: adapter });
+      previous = current.snapshot;
+      previousPointer = current.pointer;
+    } catch (error) {
+      // Only an explicitly requested rebuild may replace this missing P4 view.
+      // readWorldModel already verified the pointer's Project/type/hash identity;
+      // no prior snapshot content or canonical authority is inferred from it.
+      if (error.code !== "WORLD_MODEL_SNAPSHOT_MISSING") throw error;
+    }
   }
   const existingSnapshot = adapter.readSnapshot(worldModelId);
   let snapshotEntry;

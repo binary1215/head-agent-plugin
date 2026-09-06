@@ -16,6 +16,8 @@ test/*
 !test/release-observation.test.mjs
 !test/session-recovery-integration.test.mjs
 !test/compaction-lifecycle.test.mjs
+!test/run-transition-recovery.test.mjs
+!test/native-smoke-cleanup.test.mjs
 .test-tmp-*/
 .qa-*/
 *.log

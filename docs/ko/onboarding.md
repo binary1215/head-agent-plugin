@@ -315,6 +315,25 @@ node scripts/head.mjs onboarding-review-read C:\path\to\project --review onboard
 알립니다. 부분 graph는 파생 증거이며 복구 권한이 아닙니다. 재시도마다 별도의
 transaction artifact를 만들지 않습니다.
 
+수정과 거부도 정확한 P1 결정을 먼저 저장한 뒤 후속 candidate나 phase pointer를
+게시하고 Graph를 재구축합니다. 적용 중단은 `review_recovery_pending`, 파생 투영
+게시 실패는 `onboarding_review_projection_pending`으로 표시합니다. Resume은 새로운
+사용자 결정 없이 기록된 결정을 완료하며, 같은 요청의 재시도도 같은 결과로 수렴합니다.
+단순 resume은 거부된 set을 거부 상태로 유지합니다. 저장되지 않은 결정이 남은 과거의
+고아 Graph는 정본 artifact로 재구축하며, 그 Graph에서 누락된 결정을 만들어내지 않습니다.
+
+World pointer나 snapshot 부재는 선택적인 파생 데이터의 유실이며 Product 승인이나
+P2 방향의 유실이 아닙니다. 진입·status·Core resume은 읽기 전용으로 계속 사용할 수
+있고 Product/Context의 refresh 필요성을 표시합니다. 명시적 Product resume은 보존된
+artifact로 파생 뷰를 재구축할 수 있지만 Canon을 다시 승인하지는 않습니다. 잘못된
+Canon·결정·digest 불일치는 무해한 부재로 분류하지 않고 계속 오류로 처리합니다.
+
+Windows에서는 사용 중이지 않은 refresh lock의 게시도 일시적으로 거부될 수 있습니다.
+P5 lease는 기존 관리 mutex 안에서 검증된 같은 staging 디렉터리의 게시만 재시도하며,
+총 대기 시간은 최대 150 ms입니다. World 작업이나 사용자 결정을 반복하지 않으며,
+점유되거나 변경된 경로를 덮어쓰지 않습니다. 재시도를 소진하면 저장된 승인은
+보존하고 운영 실패를 알립니다.
+
 이후 source 변경은 과거 온보딩 결정을 지우지 않습니다. current World Model이 stale이거나
 온보딩을 완료한 snapshot보다 앞서 나간 경우, 읽기 전용 status는 `ready_world_changed`를
 보고합니다. 그러면 정상 World Model refresh 및 HEAD drift handling이 execution context가

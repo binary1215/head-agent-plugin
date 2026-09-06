@@ -5,6 +5,7 @@ import {
   inspectCompaction,
   prepareCompaction,
   prepareCompactionFromCurrentCheckpoint,
+  settleCompactionContinuation,
   verifyCompaction,
 } from "./compaction-recovery.mjs";
 import { inspectProjectExperience, recoveryReadiness } from "./project-bootstrap.mjs";
@@ -259,7 +260,11 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
   validateEvent(event, identity);
 
   if (event.kind === "conversation-entry" || event.kind === "provider-replaced") {
-    const compaction = inspectCompaction({ root: identity.projectRoot });
+    let compaction = inspectCompaction({ root: identity.projectRoot });
+    if (compaction.continuationOutcome === "uncertain") {
+      settleCompactionContinuation({ root: identity.projectRoot, epochId: compaction.epoch.epochId });
+      compaction = inspectCompaction({ root: identity.projectRoot });
+    }
     let superseded = false;
     if (compaction.epoch && ["prepared", "provider_compacted", "verified"].includes(compaction.epoch.state)
       && event.userTurnId > compaction.epoch.userTurnIdAtPrepare) {
@@ -353,6 +358,28 @@ export function processCompactionLifecycle({ root = ".", hostAdapter = null, dir
   const restored = enterConversationRecovery({ root: identity.projectRoot });
   if (restored.recoveryDependentWorkBlocked) {
     return recoveryAttention({ code: restored.reasonCode }, { eventKind: event.kind, conversationEntry: restored });
+  }
+  if (compaction.continuationOutcome === "uncertain") {
+    if (event.outcome !== "succeeded") {
+      fail("Host outcome conflicts with the compaction whose continuation was already consumed.", "COMPACTION_LIFECYCLE_DIVERGENT_OUTCOME");
+    }
+    settleCompactionContinuation({ root: identity.projectRoot, epochId: event.epochId });
+    return {
+      status: "conversation_direction_restored_after_uncertain_continuation",
+      reasonCode: "COMPACTION_CONTINUATION_OUTCOME_UNCERTAIN",
+      eventKind: event.kind,
+      conversationEntry: restored,
+      continuationConsumed: true,
+      providerContinuationOutcome: "uncertain",
+      retryAllowed: false,
+      freshLogicalHeadRequired: true,
+      acknowledgement: safeAcknowledge(hostAdapter, event, "processed"),
+      recoveryDependentWorkBlocked: false,
+      ordinaryWorkBlocked: false,
+      userDecisionRequired: false,
+      headActionRequired: false,
+      authorityChanged: false,
+    };
   }
   if (compaction.epoch.state === "continued" && event.outcome !== "succeeded") {
     fail("Host reported an outcome that conflicts with the already-consumed continuation.", "COMPACTION_LIFECYCLE_DIVERGENT_OUTCOME");

@@ -81,6 +81,14 @@ an unknown or foreign-host owner is not guessed dead. A reused PID can require
 Host-side ownership inspection and operational lock cleanup; Core does not steal
 a possibly live lock based on age. This does not block read-only or ordinary work.
 
+If the continuation consumption is durable but committing the terminal epoch
+fails, status reports an uncertain outcome without repairing anything. The next
+mutation closes that exact P5 epoch as aborted; it never replays the token or
+claims provider execution. Lifecycle retry restores current verified P2 direction,
+acknowledges the retained event, and requests a fresh logical HEAD without another
+user approval. A lost acknowledgement can be retried without new artifacts. A new
+prepare is then possible. Neither settlement nor status authors a checkpoint.
+
 ## Provider-neutral Host lifecycle boundary
 
 The Core does not invoke provider compaction. An injected Host adapter may expose

@@ -70,6 +70,14 @@ checkpoint는 보존합니다. 이는 프로세스 중단 복구이며 전원 �
 Core는 오래됐다는 이유만으로 사용 중일 수 있는 lock을 빼앗지 않으며, 이러한
 제한이 읽기 전용 조회나 일반 작업을 막지는 않습니다.
 
+continuation 소비 기록은 저장됐지만 epoch를 종료 상태로 저장하지 못했다면, 조회는
+아무것도 고치지 않고 결과가 불확실하다고 표시합니다. 다음 변경 호출은 정확히 해당
+P5 epoch만 aborted로 닫으며 token을 재실행하거나 provider 실행을 주장하지 않습니다.
+Lifecycle 재시도는 현재의 검증된 P2 방향을 복원하고 보류된 event를 확인 처리하며,
+추가 사용자 승인 없이 새로운 논리적 HEAD로 이어갑니다. 확인 응답이 유실돼도 새
+artifact 없이 재시도할 수 있고, 이후 새 prepare도 가능합니다. 종료 처리와 조회
+어느 쪽도 checkpoint를 작성하지 않습니다.
+
 ## Provider-neutral Host lifecycle 경계
 
 Core는 provider compaction을 호출하지 않습니다. 주입된 Host adapter는 한 번에

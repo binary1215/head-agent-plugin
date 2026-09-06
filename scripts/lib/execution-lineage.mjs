@@ -191,7 +191,7 @@ export function readLineageArtifact({ root = ".", artifactId } = {}) {
   delete payload[definition.idField];
   delete payload.artifactHash;
   const actualHash = digest(canonicalJson(payload));
-  if (recordedHash !== actualHash || artifactId !== `${definition.prefix}-${actualHash.slice(0, 24)}`) {
+  if (artifact[definition.idField] !== artifactId || recordedHash !== actualHash || artifactId !== `${definition.prefix}-${actualHash.slice(0, 24)}`) {
     fail("Lineage artifact digest verification failed.", "LINEAGE_DIGEST_MISMATCH");
   }
   return { status: "verified", file, artifact };

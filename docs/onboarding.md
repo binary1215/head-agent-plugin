@@ -264,6 +264,28 @@ overwrite the accepted decision or newer state. If only Graph rebuild fails,
 remaining projection work. A partial graph is derived evidence, never recovery
 authority. No additional transaction artifact is created for each retry.
 
+Revision and rejection also persist their exact P1 decision before publishing a
+successor or phase pointer, then rebuild Graph. Interrupted application reports
+`review_recovery_pending`; failed derived publication reports
+`onboarding_review_projection_pending`. Resume completes the recorded decision
+without another user decision, and an exact retry returns the same result. A
+rejected set stays rejected on a plain resume. A legacy orphan Graph containing
+an unrecorded decision is rebuilt from persisted canonical artifacts, never used
+to manufacture that missing decision.
+
+Missing World pointers or snapshots are optional derived-data loss, not loss of
+Product approval or P2 direction. Entry, status, and Core resume remain read-only
+and usable while reporting Product/Context refresh needs. Explicit Product resume
+can rebuild the derived view from retained artifacts; it does not reapprove Canon.
+Malformed Canon, decisions, or digest mismatches remain errors rather than being
+classified as harmless absence.
+
+Windows may briefly reject publication of an otherwise free refresh lock. The
+P5 lease retries only the same verified staging directory, with at most 150 ms
+of backoff, under its existing management mutex. It never repeats the World
+operation or user decision. Occupied or modified paths are not overwritten;
+exhaustion reports the operational failure while preserving any durable approval.
+
 Later source changes do not erase the historical onboarding decision. Read-only status reports `ready_world_changed` when the current World Model is stale or has advanced beyond the snapshot that completed onboarding; normal World Model refresh and HEAD drift handling must then decide how execution context advances.
 
 The read-only MCP tool `head_onboarding_status` verifies the state pointer, Session record, storage selection, current candidate set, successor-producing ReviewDecision, latest phase-appropriate ReviewDecision, Product Model revisions, Product Canon identity, and World Model freshness. For a review-pending successor the producer is also the latest decision; for `ready` or `rejected`, the latest decision must directly review the current successor and carry the matching acceptance or rejection disposition. The separate `head_onboarding_review` transaction accepts only an explicit user-authored disposition against the exact current candidate-set identity and delegates every promotion check to Core.

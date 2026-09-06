@@ -14,6 +14,8 @@ const fail = (message, code = "REFRESH_WRITER_LEASE_ERROR") => {
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const HOST = crypto.createHash("sha256").update(os.hostname()).digest("hex").slice(0, 16);
+const PUBLICATION_DELAYS_MS = [10, 20, 40, 80];
+const pause = new Int32Array(new SharedArrayBuffer(4));
 
 function leaseDirectory(projectRoot) {
   return path.join(path.resolve(projectRoot), ".head", "refresh", "writer.lock");
@@ -56,6 +58,57 @@ function processState(pid) {
   } catch (error) {
     if (error?.code === "ESRCH") return "absent";
     return "unknown";
+  }
+}
+
+function statOrAbsent(file) {
+  try { return fs.lstatSync(file); }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
+}
+
+function verifyPublicationDirectory(directory, expectedBytes, { allowEmpty = false } = {}) {
+  const parent = fs.lstatSync(path.dirname(directory));
+  const stat = fs.lstatSync(directory);
+  if (!parent.isDirectory() || parent.isSymbolicLink() || !stat.isDirectory() || stat.isSymbolicLink()) {
+    fail("Refresh publication path is not a safe directory.", "UNSAFE_REFRESH_WRITER_LEASE");
+  }
+  const entries = fs.readdirSync(directory);
+  if (allowEmpty && entries.length === 0) return false;
+  if (entries.length !== 1 || entries[0] !== "owner.json") fail("Refresh publication contains unexpected files.", "UNSAFE_REFRESH_WRITER_LEASE");
+  const file = path.join(directory, "owner.json");
+  const ownerStat = fs.lstatSync(file);
+  if (!ownerStat.isFile() || ownerStat.isSymbolicLink() || fs.readFileSync(file, "utf8") !== expectedBytes) {
+    fail("Refresh publication owner changed.", "UNSAFE_REFRESH_WRITER_LEASE");
+  }
+  return true;
+}
+
+function publishOwnedDirectory(staging, directory, expectedBytes) {
+  let firstError;
+  for (let attempt = 0; ; attempt += 1) {
+    verifyPublicationDirectory(staging, expectedBytes);
+    if (statOrAbsent(directory)) throw Object.assign(new Error("Refresh writer lock exists."), { code: "EEXIST" });
+    try {
+      fs.renameSync(staging, directory);
+      return;
+    } catch (error) {
+      firstError ||= error;
+      const source = statOrAbsent(staging);
+      const destination = statOrAbsent(directory);
+      if (!source && destination) {
+        // A wrapper or OS boundary may report failure after the move happened.
+        // Exact owned bytes prove this publication completed; never replay it.
+        verifyPublicationDirectory(directory, expectedBytes);
+        return;
+      }
+      if (destination) throw Object.assign(new Error("Refresh writer lock exists."), { code: "EEXIST", cause: error });
+      if (!source || process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+      if (attempt >= PUBLICATION_DELAYS_MS.length) throw firstError;
+      verifyPublicationDirectory(staging, expectedBytes);
+      // Only repeat this unpublished owned rename under the management mutex.
+      // 150ms total accommodates Windows sharing contention, not work admission.
+      Atomics.wait(pause, 0, 0, PUBLICATION_DELAYS_MS[attempt]);
+    }
   }
 }
 
@@ -130,19 +183,29 @@ function acquire({ projectRoot, projectId }) {
         canonMutationAuthority: false,
       };
       const staging = `${directory}.${HOST}.${owner.pid}.${owner.token}.staging`;
+      const ownerBytes = json(owner);
+      let publicationError = null;
       try {
         fs.mkdirSync(staging);
-        fs.writeFileSync(path.join(staging, "owner.json"), json(owner), { encoding: "utf8", flag: "wx" });
-        fs.renameSync(staging, directory);
+        fs.writeFileSync(path.join(staging, "owner.json"), ownerBytes, { encoding: "utf8", flag: "wx" });
+        publishOwnedDirectory(staging, directory, ownerBytes);
         return owner;
+      } catch (error) {
+        publicationError = error;
+        throw error;
       } finally {
-        if (fs.existsSync(staging)) {
-          try { fs.unlinkSync(path.join(staging, "owner.json")); } catch (error) { if (error.code !== "ENOENT") throw error; }
-          fs.rmdirSync(staging);
+        try {
+          if (statOrAbsent(staging)) {
+            if (verifyPublicationDirectory(staging, ownerBytes, { allowEmpty: true })) fs.unlinkSync(path.join(staging, "owner.json"));
+            fs.rmdirSync(staging);
+          }
+        } catch (cleanupError) {
+          if (!publicationError) throw cleanupError;
+          publicationError.cleanupFailure = { code: cleanupError.code, message: cleanupError.message };
         }
       }
     } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
+      if (error?.code !== "EEXIST" || error.cleanupFailure) throw error;
       if (attempt === 0 && recoverDeadOwner(projectRoot, projectId)) continue;
       fail("Refresh writer is already active.", "REFRESH_WRITER_BUSY");
     }

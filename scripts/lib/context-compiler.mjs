@@ -6,8 +6,8 @@ import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 import { loadObservationProjection } from "./observation-projection.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.17.0";
-export const CONTEXT_COVERAGE_VERSION = "1.1.0";
+export const CONTEXT_COMPILER_VERSION = "0.18.0";
+export const CONTEXT_COVERAGE_VERSION = "1.2.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
 export const DEFAULT_CONTEXT_BUDGET = CONTEXT_BUDGET_TIERS[0];
@@ -1008,9 +1008,11 @@ function selectedEvidenceCount(selected, needId) {
 
 function coverageGain(candidate, selected, needs) {
   return needs.reduce((gain, need) => {
-    const remaining = Math.max(0, need.minimumItems - selectedEvidenceCount(selected, need.id));
+    const coveredIds = new Set(selected.flatMap((item) => (item.evidenceNeedMatches[need.id] || []).map((evidence) => evidence.id)));
+    const remaining = Math.max(0, need.minimumItems - coveredIds.size);
     if (!remaining) return gain;
-    return gain + Math.min(remaining, (candidate.evidenceNeedMatches[need.id] || []).length);
+    const newIds = new Set((candidate.evidenceNeedMatches[need.id] || []).map((evidence) => evidence.id).filter((id) => !coveredIds.has(id)));
+    return gain + Math.min(remaining, newIds.size);
   }, 0);
 }
 
@@ -1044,7 +1046,7 @@ function selectCandidates(candidates, budget, baseTokens, needs) {
   }
   const excluded = candidates.filter((candidate) => !includedIds.has(candidate.id)).map((candidate) => {
     const evidenceNeedIds = Object.entries(candidate.evidenceNeedMatches).filter(([, items]) => items.length).map(([needId]) => needId).sort();
-    const stillNeeded = needs.some((need) => evidenceNeedIds.includes(need.id) && selectedEvidenceCount(included, need.id) < need.minimumItems);
+    const stillNeeded = coverageGain(candidate, included, needs) > 0;
     const reason = !needs.length || stillNeeded
       ? "context-budget"
       : evidenceNeedIds.length
@@ -1075,8 +1077,9 @@ function evaluateCoverage(candidates, contract, selection, budget) {
   const excludedReasonById = new Map(selection.excluded.map((item) => [item.id, item.reason]));
   const proofs = needs.map((need) => {
     const includedEvidence = uniqueEvidence(selection.included.flatMap((candidate) => candidate.evidenceNeedMatches[need.id] || []));
-    const availableEvidence = uniqueEvidence(candidates.flatMap((candidate) => candidate.evidenceNeedMatches[need.id] || []));
-    const availableCandidateIds = [...new Set(availableEvidence.map((item) => item.carrierCandidateId))].sort();
+    const allAvailableEvidence = candidates.flatMap((candidate) => candidate.evidenceNeedMatches[need.id] || []);
+    const availableEvidence = uniqueEvidence(allAvailableEvidence);
+    const availableCandidateIds = [...new Set(allAvailableEvidence.map((item) => item.carrierCandidateId))].sort();
     return {
       evidenceNeedId: need.id,
       requiredMinimumItems: need.minimumItems,

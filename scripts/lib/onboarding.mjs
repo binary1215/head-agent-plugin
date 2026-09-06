@@ -64,6 +64,7 @@ const fail = (message, code = "ONBOARDING_ERROR") => {
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const now = () => new Date().toISOString();
 const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+const ABSENT_WORLD_CODES = new Set(["WORLD_MODEL_NOT_BUILT", "WORLD_MODEL_SNAPSHOT_MISSING"]);
 
 function requiredText(value, label) {
   if (typeof value !== "string" || !value.trim()) fail(`${label} is required.`, "INVALID_ONBOARDING_INPUT");
@@ -698,14 +699,24 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
     fail("Onboarding candidate refresh requires a review-pending candidate set.", "ONBOARDING_REFRESH_NOT_AVAILABLE");
   }
   const previousSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
-  if (previousSet.inputMode !== "existing" || previousSet.briefEvidenceId) {
-    return { status: "onboarding_candidates_current", refreshed: false, reason: "user-brief-requires-explicit-review", state, candidateSet: previousSet };
-  }
   const productCanon = readProductModelCanon({ projectRoot });
   if (productCanon.model.productModelId !== state.productModelId || productCanon.model.productModelId !== previousSet.productModelId) {
     fail("Product Canon changed after candidate proposal; candidate evidence cannot refresh automatically.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
-  const world = await buildWorldModel({ root: projectRoot, persist: true });
+  let currentWorld;
+  try {
+    currentWorld = await reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet: previousSet, world: inspectWorldModel({ root: projectRoot }) });
+  } catch (error) {
+    if (!ABSENT_WORLD_CODES.has(error.code)) throw error;
+    // Explicit Product resume may reconstruct a missing view, never a decision.
+    // Read-only status and Core resume do not enter this mutation path.
+    await buildWorldModel({ root: projectRoot, persist: true });
+    currentWorld = inspectWorldModel({ root: projectRoot });
+  }
+  if (currentWorld.status === "current" && currentWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId === previousSet.sourceSnapshotId && semanticProposal == null) {
+    return { status: "onboarding_candidates_current", refreshed: false, reason: "source-snapshot-current", state, candidateSet: previousSet };
+  }
+  const world = currentWorld.status === "current" ? currentWorld : await buildWorldModel({ root: projectRoot, persist: true });
   if (world.snapshot.temporalProvenanceGraph.sourceSnapshotId === previousSet.sourceSnapshotId && semanticProposal == null) {
     return { status: "onboarding_candidates_current", refreshed: false, reason: "source-snapshot-current", state, candidateSet: previousSet };
   }
@@ -966,18 +977,18 @@ function readProductRevision(projectRoot, productModelId) {
   return { file, revision };
 }
 
-function acceptanceForState(projectRoot, state) {
-  if (!state.candidateSetId) return null;
+function decisionForCandidate(projectRoot, candidateSetId) {
+  if (!candidateSetId) return null;
   const directory = relativeFile(projectRoot, ONBOARDING_REVIEW_DIRECTORY);
   if (!fs.existsSync(directory)) return null;
   const decisions = [];
   for (const name of fs.readdirSync(directory).sort()) {
     if (!/^onboarding-review-decision-[a-f0-9]{24}\.json$/.test(name)) continue;
     const document = readJson(relativeFile(projectRoot, `${ONBOARDING_REVIEW_DIRECTORY}/${name}`), "Onboarding ReviewDecision");
-    if (document.candidateSetId !== state.candidateSetId || !document.disposition?.startsWith("accept")) continue;
+    if (document.candidateSetId !== candidateSetId) continue;
     decisions.push(readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: name.slice(0, -5) }).reviewDecision);
   }
-  if (decisions.length > 1) fail("The current candidate set has conflicting acceptance decisions.", "ONBOARDING_REVIEW_CONFLICT");
+  if (decisions.length > 1) fail("The candidate set has conflicting durable decisions.", "ONBOARDING_REVIEW_CONFLICT");
   return decisions[0] || null;
 }
 
@@ -1058,7 +1069,7 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
         world = readWorldModelSnapshot({ root: projectRoot, worldModelId: state.worldModelId });
         const current = inspectWorldModel({ root: projectRoot });
         if (current.status !== "current" || current.snapshot.worldModelId !== state.worldModelId) reasonCode = "WORLD_MODEL_STALE";
-      } catch (error) { reasonCode = error.code || "ONBOARDING_GRAPH_REBUILD_FAILED"; }
+      } catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; reasonCode = error.code; }
       return { ...promotionResult({ state, review, productModel: normalizeProductModelDocument(verified.resulting.document), world, reasonCode }), productCanonChanged: false };
     }
   }
@@ -1093,7 +1104,7 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
   try {
     let currentWorld = null;
     try { currentWorld = inspectWorldModel({ root: projectRoot }); }
-    catch (error) { if (error.code !== "WORLD_MODEL_NOT_BUILT") throw error; }
+    catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; }
     const alreadyProjected = currentWorld?.status === "current"
       && currentWorld.snapshot.productModel.productModelId === nextModel.productModelId
       && currentWorld.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds.includes(candidateSet.sourceSnapshotId)
@@ -1139,12 +1150,170 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
   }
 }
 
+function normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds) {
+  const revisionItems = editedCandidates(candidateSet, userEdits, addedEntities, removedCandidateIds);
+  const normalizedUserEdits = recordList(userEdits, "userEdits").map((edit) => {
+    const revised = revisionItems.find((item) => item.source?.candidateId === edit.candidateId);
+    if (!revised) fail(`Edited candidate was removed or is unavailable: ${edit.candidateId}`, "INVALID_ONBOARDING_EDIT");
+    return { candidateId: edit.candidateId, entity: revised.entity };
+  }).sort((left, right) => compareText(left.candidateId, right.candidateId));
+  const normalizedAddedEntities = revisionItems.filter((item) => !item.source)
+    .map((item) => ({ kind: item.kind, entity: item.entity }))
+    .sort((left, right) => (KIND_ORDER.get(left.kind) - KIND_ORDER.get(right.kind)) || compareText(left.entity.key, right.entity.key));
+  return { revisionItems, normalizedUserEdits, normalizedAddedEntities };
+}
+
+function verifiedNonPromotion({ projectRoot, state, review, allowUnpublishedReview = false }) {
+  if (!["revise", "reject"].includes(review.disposition)) fail("A non-promoting decision is required.", "INVALID_ONBOARDING_REVIEW");
+  if (fs.existsSync(reviewDecisionFile(projectRoot, review.reviewDecisionId))) {
+    const durable = readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: review.reviewDecisionId }).reviewDecision;
+    if (durable.reviewDecisionHash !== review.reviewDecisionHash) fail("Onboarding decision changed during application.", "ONBOARDING_REVIEW_CONFLICT");
+  } else if (!allowUnpublishedReview) fail("Onboarding recovery requires its durable decision.", "ONBOARDING_REVIEW_NOT_FOUND");
+  const candidateSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: review.candidateSetId }).candidateSet;
+  const canon = readProductModelCanon({ projectRoot });
+  if (canon.model.productModelHash !== review.previousProductModelHash || state.productModelId !== review.previousProductModelId
+    || candidateSet.productModelId !== review.previousProductModelId) {
+    fail("A reviewed disposition cannot replace later Product Canon.", "ONBOARDING_PRODUCT_CANON_DRIFT");
+  }
+  if (review.sessionId !== state.sessionId || review.projectId !== state.projectId) fail("Onboarding decision belongs to another Session.", "ONBOARDING_SESSION_MISMATCH");
+  const successor = review.disposition === "revise" ? revisionCandidateSet({
+    candidateSet,
+    revisionItems: editedCandidates(candidateSet, review.userEdits, review.addedEntities, review.rejectedCandidateIds),
+    reviewDecision: review,
+    // These exact source identities belong to the reviewed immutable candidate;
+    // a newer or missing P4 World cannot change the successor's meaning or ID.
+    worldModel: { productModel: { productModelId: review.previousProductModelId }, temporalProvenanceGraph: { sourceSnapshotId: candidateSet.sourceSnapshotId } },
+  }) : null;
+  const applied = onboardingStateLatestReviewDecisionId(state) === review.reviewDecisionId
+    && (successor ? state.candidateSetId === successor.candidateSetId && ["awaiting-review", "awaiting-evidence"].includes(state.phase)
+      : state.candidateSetId === candidateSet.candidateSetId && state.phase === "rejected");
+  if (successor && fs.existsSync(candidateSetFile(projectRoot, successor.candidateSetId))) {
+    const stored = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: successor.candidateSetId }).candidateSet;
+    if (stored.candidateSetHash !== successor.candidateSetHash) fail("Onboarding successor differs from its reviewed inputs.", "ONBOARDING_REVIEW_CONFLICT");
+  } else if (successor && applied) fail("The applied revision is missing its successor candidate set.", "ONBOARDING_CANDIDATE_SET_NOT_FOUND");
+  if (!applied && (state.candidateSetId !== candidateSet.candidateSetId
+    || !["awaiting-review", "awaiting-evidence", "revision-required"].includes(state.phase)
+    || onboardingStateLatestReviewDecisionId(state) !== onboardingCandidateProducerReviewDecisionId(candidateSet))) {
+    fail("A historical disposition cannot replace later onboarding direction.", "ONBOARDING_REVIEW_CONFLICT");
+  }
+  let projectedWorld = null;
+  if (applied && state.worldModelId) {
+    try {
+      const stored = readWorldModelSnapshot({ root: projectRoot, worldModelId: state.worldModelId });
+      const projection = stored.snapshot.temporalProvenanceGraph.onboardingProjection;
+      if (projection.reviewDecisionIds.includes(review.reviewDecisionId)
+        && (!successor || projection.candidateSetIds.includes(successor.candidateSetId))) projectedWorld = stored;
+    } catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; }
+  }
+  return { candidateSet, successor, canon, applied, projectedWorld };
+}
+
+function nonPromotionResult({ state, review, successor, world, reasonCode = null }) {
+  return {
+    status: reasonCode ? "onboarding_review_projection_pending" : review.disposition === "revise" ? "onboarding_revision_awaiting_review" : "onboarding_rejected",
+    state, reviewDecision: review, productCanonChanged: false,
+    ...(successor ? { candidateSet: successor } : {}),
+    ...(reasonCode ? { projection: { status: "refresh_required", reasonCode, ordinaryWorkBlocked: false, userReviewRequired: false } } : {}),
+    worldModel: world ? { worldModelId: world.snapshot.worldModelId,
+      sourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+      graphSnapshotId: world.snapshot.temporalProvenanceGraph.graphSnapshotId } : null,
+  };
+}
+
+async function applyNonPromotingReview({ projectRoot, state, review, publishReview = false }) {
+  const prepared = withProjectMutation({ root: projectRoot, scope: "session-recovery" }, () => {
+    const verified = verifiedNonPromotion({ projectRoot, state, review, allowUnpublishedReview: publishReview });
+    const inspected = readyProject(projectRoot, "onboarding review recovery");
+    if (inspected.state.sessionId !== state.sessionId || inspected.state.activeRunId || inspected.state.pendingReview) fail("Onboarding review conflicts with current Session or Run.", "ONBOARDING_RUN_CONFLICT");
+    if (ensureOnboardingState(inspected).pointerHash !== state.pointerHash) fail("Onboarding state changed before review application.", "ONBOARDING_REVIEW_CONFLICT");
+    if (publishReview) persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
+    if (verified.successor) persistImmutable(candidateSetFile(projectRoot, verified.successor.candidateSetId), verified.successor, "Onboarding candidate set");
+    const nextState = verified.applied ? state : writeState(projectRoot, state, {
+      phase: verified.successor ? verified.successor.candidates.length ? "awaiting-review" : "awaiting-evidence" : "rejected",
+      candidateSetId: verified.successor?.candidateSetId || verified.candidateSet.candidateSetId,
+      latestReviewDecisionId: review.reviewDecisionId,
+      sourceSnapshotId: verified.candidateSet.sourceSnapshotId,
+    });
+    return { ...verified, state: nextState };
+  });
+  let nextState = prepared.state;
+  if (prepared.projectedWorld) {
+    let reasonCode = null;
+    try { if (inspectWorldModel({ root: projectRoot }).status !== "current") reasonCode = "WORLD_MODEL_STALE"; }
+    catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; reasonCode = error.code; }
+    return nonPromotionResult({ state: nextState, review, successor: prepared.successor, world: prepared.projectedWorld, reasonCode });
+  }
+  try {
+    let sourceWorld = { snapshot: { temporalProvenanceGraph: {} } };
+    try { sourceWorld = readWorldModelSnapshot({ root: projectRoot, worldModelId: state.worldModelId }); }
+    catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; }
+    const world = await rebuildWithOnboardingProjection({ projectRoot, projectId: state.projectId,
+      currentProductModelId: prepared.canon.model.productModelId, sourceWorld,
+      parentSourceSnapshotIds: sourceWorld.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds || [],
+      revisionParentIds: sourceWorld.snapshot.temporalProvenanceGraph.revisionParentIds || {},
+    });
+    const current = inspectWorldModel({ root: projectRoot });
+    const graph = world.snapshot.temporalProvenanceGraph;
+    if (current.status !== "current" || !graph.onboardingProjection.reviewDecisionIds.includes(review.reviewDecisionId)
+      || (prepared.successor && !graph.onboardingProjection.candidateSetIds.includes(prepared.successor.candidateSetId))) fail("The reviewed disposition projection did not verify.", "ONBOARDING_GRAPH_VERIFICATION_FAILED");
+    withProjectMutation({ root: projectRoot, scope: "session-recovery" }, () => {
+      const after = ensureOnboardingState(readyProject(projectRoot));
+      verifiedNonPromotion({ projectRoot, state: after, review });
+      if (after.pointerHash !== nextState.pointerHash) fail("Onboarding state changed during projection.", "ONBOARDING_REVIEW_CONFLICT");
+      if (after.worldModelId !== world.snapshot.worldModelId || after.sourceSnapshotId !== graph.sourceSnapshotId) {
+        nextState = writeState(projectRoot, after, { worldModelId: world.snapshot.worldModelId, sourceSnapshotId: graph.sourceSnapshotId });
+      }
+    });
+    return nonPromotionResult({ state: nextState, review, successor: prepared.successor, world });
+  } catch (error) {
+    verifiedNonPromotion({ projectRoot, state: ensureOnboardingState(readyProject(projectRoot)), review });
+    if (["ONBOARDING_REVIEW_CONFLICT", "ONBOARDING_PRODUCT_CANON_DRIFT", "ONBOARDING_RUN_CONFLICT", "ONBOARDING_STATE_IDENTITY_MISMATCH"].includes(error.code)) throw error;
+    return nonPromotionResult({ state: nextState, review, successor: prepared.successor, world: null, reasonCode: error.code || "ONBOARDING_GRAPH_REBUILD_FAILED" });
+  }
+}
+
+function nonPromotingDecisionForState(projectRoot, state, own = decisionForCandidate(projectRoot, state.candidateSetId)) {
+  if (own) return own.promotionAuthority ? null : own;
+  const latestId = onboardingStateLatestReviewDecisionId(state);
+  if (!latestId || !state.candidateSetId) return null;
+  const latest = readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: latestId }).reviewDecision;
+  const candidate = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
+  return latest.disposition === "revise" && onboardingCandidateProducerReviewDecisionId(candidate) === latestId ? latest : null;
+}
+
+async function reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet, world }) {
+  const changes = world.changes;
+  const onlyOnboardingChanged = changes.onboardingProjectionChanged
+    && Object.entries(changes).every(([key, value]) => ["onboardingProjectionChanged", "temporalProvenanceChanged"].includes(key)
+      || (Array.isArray(value) ? value.length === 0 : value === false));
+  if (world.status === "current" || !onlyOnboardingChanged) return world;
+  // Older code could publish a P4 graph containing a decision that never reached
+  // its P1 file. Rebuild from persisted records; never extract that decision.
+  let sourceWorld = world;
+  try { sourceWorld = readWorldModelSnapshot({ root: projectRoot, worldModelId: state.worldModelId }); }
+  catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; }
+  await rebuildWithOnboardingProjection({ projectRoot, projectId: state.projectId,
+    currentProductModelId: state.productModelId, sourceWorld,
+  });
+  const current = inspectWorldModel({ root: projectRoot });
+  if (current.status !== "current" || current.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId) {
+    fail("Canonical evidence changed while reconciling the orphaned projection.", "ONBOARDING_SOURCE_DRIFT");
+  }
+  return current;
+}
+
 async function recoverOnboardingPromotionLocked({ root = "." } = {}) {
   const inspected = readyProject(root, "onboarding promotion recovery");
   const projectRoot = inspected.project.projectRoot;
   if (!fs.existsSync(stateFile(projectRoot))) return null;
   const state = ensureOnboardingState(inspected);
-  const review = acceptanceForState(projectRoot, state);
+  const own = decisionForCandidate(projectRoot, state.candidateSetId);
+  const nonPromoting = nonPromotingDecisionForState(projectRoot, state, own);
+  if (nonPromoting) {
+    const verified = verifiedNonPromotion({ projectRoot, state, review: nonPromoting });
+    return verified.projectedWorld ? null : applyNonPromotingReview({ projectRoot, state, review: nonPromoting });
+  }
+  const review = own?.promotionAuthority ? own : null;
   if (!review) return null;
   // A completed historical review is not a request to refresh every later World.
   if (state.phase === "ready" && state.sourceSnapshotId !== readOnboardingCandidateSet({ root: projectRoot, candidateSetId: review.candidateSetId }).candidateSet.sourceSnapshotId) return null;
@@ -1188,6 +1357,21 @@ function assertAcceptanceReplay({ projectRoot, state, candidateSet, review, disp
   }
 }
 
+function assertNonPromotionReplay({ projectRoot, state, candidateSet, review, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale }) {
+  const normalizedDisposition = requiredText(disposition, "Review disposition").toLowerCase();
+  if (normalizedDisposition !== review.disposition || acceptedCandidateIds.length
+    || (normalizedDisposition === "reject" && (userEdits.length || addedEntities.length || removedCandidateIds.length))) {
+    fail("A divergent retry cannot replace a durable disposition.", "ONBOARDING_REVIEW_REPLAY_CONFLICT");
+  }
+  const { normalizedUserEdits, normalizedAddedEntities } = normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds);
+  const { canon } = verifiedNonPromotion({ projectRoot, state, review });
+  const requested = buildReviewDecision({ candidateSet, disposition: normalizedDisposition, acceptedCandidateIds: [],
+    rejectedCandidateIds: normalizedDisposition === "reject" ? candidateSet.candidates.map((item) => item.candidateId) : textList(removedCandidateIds, "removedCandidateIds"),
+    userEdits: normalizedUserEdits, addedEntities: normalizedAddedEntities, rationale, previousProductModel: canon.model,
+  });
+  if (requested.reviewDecisionHash !== review.reviewDecisionHash) fail("A divergent retry cannot rewrite the durable user decision.", "ONBOARDING_REVIEW_REPLAY_CONFLICT");
+}
+
 async function reviewOnboardingLocked({
   root = ".",
   candidateSetId,
@@ -1205,17 +1389,21 @@ async function reviewOnboardingLocked({
   const projectRoot = inspected.project.projectRoot;
   const state = ensureOnboardingState(inspected);
   const reviewedSetId = requiredText(candidateSetId, "candidateSetId");
-  if (state.candidateSetId !== reviewedSetId) fail("Onboarding review references a stale candidate set.", "STALE_ONBOARDING_CANDIDATE_SET");
   const candidateSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: reviewedSetId }).candidateSet;
-  const recordedAcceptance = acceptanceForState(projectRoot, state);
-  if (recordedAcceptance) {
-    assertAcceptanceReplay({ projectRoot, state, candidateSet, review: recordedAcceptance, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale });
-    return applyApprovedPromotion({ projectRoot, state, review: recordedAcceptance });
+  const recorded = decisionForCandidate(projectRoot, reviewedSetId);
+  if (recorded) {
+    if (recorded.promotionAuthority) {
+      assertAcceptanceReplay({ projectRoot, state, candidateSet, review: recorded, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale });
+      return applyApprovedPromotion({ projectRoot, state, review: recorded });
+    }
+    assertNonPromotionReplay({ projectRoot, state, candidateSet, review: recorded, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale });
+    return applyNonPromotingReview({ projectRoot, state, review: recorded });
   }
+  if (state.candidateSetId !== reviewedSetId) fail("Onboarding review references a stale candidate set.", "STALE_ONBOARDING_CANDIDATE_SET");
   if (candidateSet.sourceSnapshotId !== state.sourceSnapshotId) {
     fail("Onboarding candidate set no longer matches the recorded source snapshot.", "ONBOARDING_SOURCE_SNAPSHOT_CONFLICT");
   }
-  const currentWorld = inspectWorldModel({ root: projectRoot });
+  const currentWorld = await reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet, world: inspectWorldModel({ root: projectRoot }) });
   if (currentWorld.status !== "current"
     || currentWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId) {
     fail("Observed project state changed after candidate proposal; re-index and create a new candidate set.", "ONBOARDING_SOURCE_DRIFT");
@@ -1228,16 +1416,8 @@ async function reviewOnboardingLocked({
   if (currentCanon.model.productModelId !== candidateSet.productModelId || currentCanon.model.productModelId !== state.productModelId) {
     fail("Product Canon changed after candidate proposal; a new onboarding candidate set is required.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
-  const revisionItems = editedCandidates(candidateSet, userEdits, addedEntities, removedCandidateIds);
+  const { revisionItems, normalizedUserEdits, normalizedAddedEntities } = normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds);
   const allCandidateIds = candidateSet.candidates.map((candidate) => candidate.candidateId);
-  const normalizedUserEdits = recordList(userEdits, "userEdits").map((edit) => {
-    const revised = revisionItems.find((item) => item.source?.candidateId === edit.candidateId);
-    if (!revised) fail(`Edited candidate was removed or is unavailable: ${edit.candidateId}`, "INVALID_ONBOARDING_EDIT");
-    return { candidateId: edit.candidateId, entity: revised.entity };
-  }).sort((left, right) => compareText(left.candidateId, right.candidateId));
-  const normalizedAddedEntities = revisionItems.filter((item) => !item.source)
-    .map((item) => ({ kind: item.kind, entity: item.entity }))
-    .sort((left, right) => (KIND_ORDER.get(left.kind) - KIND_ORDER.get(right.kind)) || compareText(left.entity.key, right.entity.key));
 
   if (normalizedDisposition === "revise") {
     if (!userEdits.length && !addedEntities.length && !removedCandidateIds.length) {
@@ -1254,36 +1434,7 @@ async function reviewOnboardingLocked({
       previousProductModel: currentCanon.model,
     });
     verifyReviewDecision(review, inspected.project.projectId);
-    const sourceWorld = readWorldModel({ root: projectRoot }).snapshot;
-    const nextSet = revisionCandidateSet({ candidateSet, revisionItems, reviewDecision: review, worldModel: sourceWorld });
-    const projectedWorld = await rebuildWithOnboardingProjection({
-      projectRoot,
-      projectId: inspected.project.projectId,
-      currentProductModelId: currentCanon.model.productModelId,
-      sourceWorld: { snapshot: sourceWorld },
-      additionalCandidateSets: [nextSet],
-      additionalReviewDecisions: [review],
-    });
-    persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
-    persistImmutable(candidateSetFile(projectRoot, nextSet.candidateSetId), nextSet, "Onboarding candidate set");
-    const nextState = writeState(projectRoot, state, {
-      phase: nextSet.candidates.length ? "awaiting-review" : "awaiting-evidence",
-      candidateSetId: nextSet.candidateSetId,
-      latestReviewDecisionId: review.reviewDecisionId,
-      worldModelId: projectedWorld.snapshot.worldModelId,
-      sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-    });
-    return {
-      status: "onboarding_revision_awaiting_review",
-      state: nextState,
-      reviewDecision: review,
-      candidateSet: nextSet,
-      worldModel: {
-        worldModelId: projectedWorld.snapshot.worldModelId,
-        sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-        graphSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
-      },
-    };
+    return applyNonPromotingReview({ projectRoot, state, review, publishReview: true });
   }
 
   if (normalizedDisposition === "reject") {
@@ -1301,32 +1452,7 @@ async function reviewOnboardingLocked({
       previousProductModel: currentCanon.model,
     });
     verifyReviewDecision(review, inspected.project.projectId);
-    const sourceWorld = readWorldModel({ root: projectRoot });
-    const projectedWorld = await rebuildWithOnboardingProjection({
-      projectRoot,
-      projectId: inspected.project.projectId,
-      currentProductModelId: currentCanon.model.productModelId,
-      sourceWorld,
-      additionalReviewDecisions: [review],
-    });
-    persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
-    const nextState = writeState(projectRoot, state, {
-      phase: "rejected",
-      latestReviewDecisionId: review.reviewDecisionId,
-      worldModelId: projectedWorld.snapshot.worldModelId,
-      sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-    });
-    return {
-      status: "onboarding_rejected",
-      state: nextState,
-      reviewDecision: review,
-      productCanonChanged: false,
-      worldModel: {
-        worldModelId: projectedWorld.snapshot.worldModelId,
-        sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-        graphSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
-      },
-    };
+    return applyNonPromotingReview({ projectRoot, state, review, publishReview: true });
   }
 
   if (!candidateSet.candidates.length) fail("An empty candidate set cannot be accepted.", "ONBOARDING_EVIDENCE_REQUIRED");
@@ -1460,8 +1586,19 @@ export function inspectOnboarding({ root = "." } = {}) {
     ? readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: latestReviewDecisionId }).reviewDecision
     : null;
   const productCanon = readProductModelCanon({ projectRoot });
+  const own = decisionForCandidate(projectRoot, state.candidateSetId);
+  const pendingDisposition = nonPromotingDecisionForState(projectRoot, state, own);
+  if (pendingDisposition) {
+    const disposition = verifiedNonPromotion({ projectRoot, state, review: pendingDisposition });
+    if (!disposition.projectedWorld) return {
+      status: "review_recovery_pending", state, sessionRecord, storageSelection, candidateSet,
+      reviewDecision: pendingDisposition, productModel: productCanon.model, worldModel: null,
+      recovery: { nextAction: "resume_product_governance", userReviewRequired: false, ordinaryWorkBlocked: false },
+      authority: { productCanon: "user-owned-project-canon", candidates: "non-authoritative-until-review", graph: "rebuildable-derived-evidence" },
+    };
+  }
   const pendingAcceptance = candidateSet && state.sourceSnapshotId === candidateSet.sourceSnapshotId
-    ? acceptanceForState(projectRoot, state) : null;
+    ? own?.promotionAuthority ? own : null : null;
   if (pendingAcceptance) {
     const promotion = verifiedPromotion({ projectRoot, state, review: pendingAcceptance });
     return {
@@ -1497,15 +1634,23 @@ export function inspectOnboarding({ root = "." } = {}) {
   } : null;
   let world = null;
   if (state.worldModelId) {
-    const inspectedWorld = inspectWorldModel({ root: projectRoot });
-    world = {
-      status: inspectedWorld.status,
-      worldModelId: inspectedWorld.snapshot.worldModelId,
-      sourceSnapshotId: inspectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-      graphSnapshotId: inspectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
-      matchesOnboardingSnapshot: inspectedWorld.snapshot.worldModelId === state.worldModelId
-        && inspectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId === state.sourceSnapshotId,
-    };
+    try {
+      const inspectedWorld = inspectWorldModel({ root: projectRoot });
+      world = {
+        status: inspectedWorld.status,
+        worldModelId: inspectedWorld.snapshot.worldModelId,
+        sourceSnapshotId: inspectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+        graphSnapshotId: inspectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
+        matchesCandidateSource: !candidateSet || inspectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId === candidateSet.sourceSnapshotId,
+        matchesOnboardingSnapshot: inspectedWorld.snapshot.worldModelId === state.worldModelId
+          && inspectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId === state.sourceSnapshotId,
+      };
+    } catch (error) {
+      if (!ABSENT_WORLD_CODES.has(error.code)) throw error;
+      world = { status: "unavailable", reasonCode: error.code, worldModelId: state.worldModelId,
+        sourceSnapshotId: state.sourceSnapshotId, graphSnapshotId: null, matchesOnboardingSnapshot: false,
+        ordinaryWorkBlocked: false, nextAction: "refresh_product_world" };
+    }
   }
   const status = state.phase === "ready"
     ? world?.status === "current" && world.matchesOnboardingSnapshot ? "ready" : "ready_world_changed"

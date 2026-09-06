@@ -20,6 +20,15 @@ Run은 자유 형식 목표에서 시작할 수 없습니다. 영속화되고 �
 
 Run은 성공 문자열만으로 끝날 수 없습니다. 완료 시 증거와 검증을 포함하는 `ResultPacket`이 생성됩니다. 프로젝트는 Review 모드에 들어가며, HEAD가 `ReviewDecision`을 기록할 때까지 다음 Run을 차단합니다.
 
+완료와 검토는 검증된 정확한 요청을 기존 Run에 먼저 결속하고, 그 artifact·Run 종료
+상태·Session pointer 순으로 게시합니다. 도중에 중단돼도 재시작 후 같은 요청으로
+누락된 쓰기를 마칠 수 있습니다. Artifact는 별도로 검증해야 하며, 처리 의도만으로
+결과나 승인이 생기지 않습니다. Session 전후 hash는 그 사이에 진행된 다른 작업을
+덮어쓰지 못하게 합니다. 완료 응답만 유실된 경우 재시도는 읽기 전용이고, 입력이
+달라지면 해당 전이만 거부합니다. Checkpoint나 새 검토 게이트, 재시도별 별도 journal을
+만들지 않습니다. 일반 status 조회는 상태를 복구하지 않으며, 명시적 checkpoint
+통합은 계속 별도의 HEAD 작업입니다.
+
 활성 계보 프로토콜은 `0.4.0`입니다. 현재의 각 계보 아티팩트에는 검증된 [`AuthorityPlaneContract`](authority-plane-contract.md) 경계가 포함됩니다. WholePlanSnapshot과 ExecutionContract는 P2 복구/계보 레코드이고, ResultPacket은 복구, Canon 변경 및 검토 권한이 거짓으로 설정된 P3 증거이며, ReviewDecision은 P1 규범 레코드입니다. ResultPacket은 의사결정을 뒷받침할 수 있지만, 의사결정을 만들거나 유일한 복구 소스가 될 수 없습니다.
 
 현재 구현은 결정론적 Fresh HEAD 검토 프로젝션을 만들며, 공통 감독 런타임 경로를 통해 권한이 부여된 Codex 또는 OpenCode 일회성 호출을 실행할 수 있습니다. 실패로 폐쇄되는 적용 브리지는 완료되고 검증되었으며 트랜스크립트가 없는 Run 초안만 정규 `ResultPacket`과 Fresh HEAD 프로젝션으로 변환합니다. 공급자 세션 재개 또는 하이드레이션은 의미나 복구에 필요하지 않으며, 어떤 런타임 결과도 `ReviewDecision`을 만들어 내지 않습니다. 호출한 HEAD가 검증된 프로젝션을 소비하고 해당 의사결정을 제공해야 합니다.

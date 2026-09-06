@@ -9,6 +9,7 @@ import { installDistribution, inspectDistribution, rollbackDistribution, uninsta
 import { createGoWorkerManifest } from "./lib/go-worker-adapter.mjs";
 import { createProcessSupervisorManifest } from "./lib/runtime-process-supervisor.mjs";
 import { createArcadeDbNativeBridgeManifest } from "./lib/arcadedb-native-bridge.mjs";
+import { createNativeSmokeCleanup } from "./lib/native-smoke-cleanup.mjs";
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryParent = path.join(sourceRoot, "tmp");
@@ -18,48 +19,23 @@ const nativeRoot = path.join(scratchRoot, "native");
 const installRoot = path.join(scratchRoot, "installation");
 const binDirectory = path.join(scratchRoot, "bin with spaces");
 const ownedChildren = new Map();
-const completedPids = new Set();
+const completedChildren = new Set();
 let interrupted = false;
-
-function alive(pid) {
-  try { process.kill(pid, 0); return true; }
-  catch (error) { if (error.code === "ESRCH") return false; throw error; }
-}
-
-async function stop(child) {
-  if (!child.pid) return;
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const windowsTreeStop = async (force) => {
-    const args = ["/PID", String(child.pid), "/T", ...(force ? ["/F"] : [])];
-    // Request tree termination before the root disappears; killing only the
-    // root first loses Windows descendant ownership information.
-    const cleanup = spawn("taskkill.exe", args, { shell: false, windowsHide: true, stdio: "ignore" });
-    process.stderr.write(`CHILD_START pid=${cleanup.pid} parent=${process.pid} command=taskkill.exe ${args.join(" ")} cwd=${sourceRoot} ports=none\n`);
-    await new Promise((resolve, reject) => { cleanup.once("error", reject); cleanup.once("close", resolve); });
-    process.stderr.write(`CHILD_END pid=${cleanup.pid} command=taskkill.exe\n`);
-  };
-  if (process.platform === "win32") await windowsTreeStop(false);
-  else { try { process.kill(-child.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; } }
-  await Promise.race([new Promise((resolve) => child.once("close", resolve)), new Promise((resolve) => setTimeout(resolve, 1_000))]);
-  if (!alive(child.pid)) return;
-  if (process.platform === "win32") {
-    await windowsTreeStop(true);
-  } else { try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } }
-}
 
 async function run(command, args, { cwd = sourceRoot, env = {}, timeoutMs = 120_000, ...options } = {}) {
   assert.equal(interrupted, false, "Host smoke was interrupted.");
   process.stderr.write(`CHILD_PREPARE parent=${process.pid} command=${JSON.stringify([command, ...args])} cwd=${cwd} ports=none\n`);
   const child = spawn(command, args, {
     cwd, env: { ...process.env, ...env }, shell: false, windowsHide: true,
-    detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], ...options,
+    stdio: ["ignore", "pipe", "pipe"], ...options, detached: process.platform !== "win32",
   });
-  if (child.pid) ownedChildren.set(child.pid, child);
+  const cleanup = createNativeSmokeCleanup(child, { cwd });
+  if (child.pid) ownedChildren.set(child.pid, cleanup);
   process.stderr.write(`CHILD_START pid=${child.pid ?? "spawn-failed"} parent=${process.pid} command=${command} cwd=${cwd} ports=none\n`);
   let output = "";
   let errorOutput = "";
   let limitError = null;
-  const terminate = (message) => { limitError ||= new Error(message); void stop(child).catch((error) => { limitError ||= error; }); };
+  const terminate = (message) => { limitError ||= new Error(message); void cleanup.stop().catch((error) => { limitError ||= error; }); };
   child.stdout.on("data", (chunk) => {
     output += chunk.toString("utf8");
     if (Buffer.byteLength(output) > 4 * 1024 * 1024) terminate(`Output limit exceeded: ${command}`);
@@ -77,17 +53,21 @@ async function run(command, args, { cwd = sourceRoot, env = {}, timeoutMs = 120_
     return output.trim();
   } finally {
     clearTimeout(timer);
-    await stop(child);
+    await cleanup.stop();
     if (child.pid) {
-      assert.equal(alive(child.pid), false, `Owned child remains: ${child.pid}`);
+      assert.equal(cleanup.isAlive(), false, `Owned child/group remains: ${child.pid}`);
       ownedChildren.delete(child.pid);
-      completedPids.add(child.pid);
+      completedChildren.add(cleanup);
     }
     process.stderr.write(`CHILD_END pid=${child.pid ?? "spawn-failed"} exit=${child.exitCode} signal=${child.signalCode || "none"}\n`);
   }
 }
 
-const interrupt = () => { interrupted = true; for (const child of ownedChildren.values()) void stop(child); };
+const interrupt = () => {
+  interrupted = true;
+  // finally awaits the same promises, including any cleanup failure.
+  for (const cleanup of ownedChildren.values()) void cleanup.stop().catch(() => {});
+};
 process.on("SIGINT", interrupt);
 process.on("SIGTERM", interrupt);
 
@@ -164,8 +144,8 @@ try {
     providerSessionCreated: false, projectAuthorityChanged: false,
   }, null, 2)}\n`);
 } finally {
-  for (const child of ownedChildren.values()) await stop(child);
-  for (const pid of completedPids) assert.equal(alive(pid), false, `Owned process remains: ${pid}`);
+  for (const cleanup of ownedChildren.values()) await cleanup.stop();
+  for (const cleanup of completedChildren) assert.equal(cleanup.isAlive(), false, `Owned process/group remains: ${cleanup.pid}`);
   // Scratch is a unique directory directly below this verifier's source tmp root.
   assert.equal(path.dirname(scratchRoot), temporaryParent);
   fs.rmSync(scratchRoot, { recursive: true, force: true });

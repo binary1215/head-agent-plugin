@@ -12,6 +12,7 @@ const RUN_RESULT_INTEGRATION_VERSION = "0.1.0";
 
 const OPEN_STATES = new Set(["preparing", "prepared", "provider_compacted", "verified"]);
 const TERMINAL_STATES = new Set(["continued", "superseded", "aborted"]);
+const UNCERTAIN_CONTINUATION_REASON = "continuation-consumed-outcome-uncertain";
 
 const fail = (message, code = "COMPACTION_RECOVERY_ERROR") => {
   const error = new Error(message);
@@ -398,6 +399,56 @@ function currentEpoch(root) {
   return readEpoch(root, pointer.epochId).epoch;
 }
 
+function continuationConsumption(root, epoch) {
+  const file = consumptionFile(root, epoch.epochId);
+  if (!fs.existsSync(file)) return { status: "absent" };
+  let value;
+  try { value = readJson(file, "Compaction continuation consumption"); }
+  catch (error) {
+    if (error.code !== "INVALID_COMPACTION_CANON") throw error;
+    return { status: "invalid" };
+  }
+  const valid = value?.schemaVersion === SCHEMA_VERSION
+    && value.kind === "CompactionContinuationConsumption"
+    && value.epochId === epoch.epochId && value.checkpointId === epoch.checkpointId
+    && value.checkpointDigest === epoch.checkpointDigest
+    && typeof value.consumedAt === "string" && Number.isFinite(Date.parse(value.consumedAt))
+    && value.providerSessionIdentityPersisted === false;
+  return { status: valid ? "consumed" : "invalid" };
+}
+
+function settleInterruptedContinuation(inspected, epoch) {
+  if (epoch?.state !== "verified" || epoch.projectId !== inspected.project.projectId
+    || epoch.sessionId !== inspected.state.sessionId
+    || continuationConsumption(inspected.project.projectRoot, epoch).status !== "consumed") return epoch;
+  // The at-most-once claim is durable, but returning/submitting the continuation
+  // is not proven. Close only P5; never recreate a token, receipt of success, or P2.
+  return writeEpoch(epochFile(inspected.project.projectRoot, epoch.epochId), epoch, "aborted", {
+    abortReason: UNCERTAIN_CONTINUATION_REASON,
+    continuationTokenBindingHash: null,
+  });
+}
+
+// Host lifecycle mutation, not a read-side repair or a new recovery authority.
+export function settleCompactionContinuation({ root = ".", epochId } = {}) {
+  return withProjectMutation({ root, scope: "session-recovery" }, () => {
+    const inspected = readyProject(root, "interrupted continuation is closed");
+    const epoch = currentEpoch(inspected.project.projectRoot);
+    if (!epoch || epoch.epochId !== epochId || epoch.projectId !== inspected.project.projectId
+      || epoch.sessionId !== inspected.state.sessionId) {
+      fail("Interrupted continuation does not match the current Project, Session and epoch.", "COMPACTION_CHECKPOINT_STALE");
+    }
+    if (continuationConsumption(inspected.project.projectRoot, epoch).status !== "consumed") {
+      fail("Interrupted continuation requires its exact durable consumption.", "INVALID_COMPACTION_CONSUMPTION");
+    }
+    const settled = settleInterruptedContinuation(inspected, epoch);
+    if (settled.state !== "aborted" || settled.abortReason !== UNCERTAIN_CONTINUATION_REASON) {
+      fail("Continuation is not an interrupted consumption.", "INVALID_COMPACTION_STATE");
+    }
+    return { status: "compaction_continuation_outcome_uncertain", epoch: settled, retryAllowed: false, authorityChanged: false };
+  });
+}
+
 function withRecoveryMutation(options, operation) {
   return withProjectMutation({ root: options.root, scope: "session-recovery" }, () => {
     const inspected = readyProject(options.root, "a recovery operation runs");
@@ -411,6 +462,7 @@ function withRecoveryMutation(options, operation) {
         continuationTokenBindingHash: null,
       });
     }
+    settleInterruptedContinuation(inspected, previous);
     return operation();
   });
 }
@@ -706,6 +758,7 @@ export function inspectCompaction({ root = "." } = {}) {
   const inspected = readyProject(root, "compaction status is read");
   const epoch = currentEpoch(inspected.project.projectRoot);
   if (!epoch) return { status: "idle", sessionId: inspected.state.sessionId, recoveryAuthority: "session-run-checkpoint" };
+  const consumption = continuationConsumption(inspected.project.projectRoot, epoch);
   let checkpoint = null;
   let checkpointVerification = { status: "verified", code: null };
   try { checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: epoch.checkpointId }).checkpoint; }
@@ -715,6 +768,9 @@ export function inspectCompaction({ root = "." } = {}) {
     epoch: { ...epoch, continuationTokenBindingHash: epoch.continuationTokenBindingHash ? "present-not-disclosed" : null },
     checkpoint,
     checkpointVerification,
+    continuationConsumption: consumption.status,
+    continuationOutcome: consumption.status === "consumed" && (epoch.state === "verified"
+      || (epoch.state === "aborted" && epoch.abortReason === UNCERTAIN_CONTINUATION_REASON)) ? "uncertain" : null,
     recoveryAuthority: "session-run-checkpoint",
     providerSessionIdentityPersisted: false,
   };

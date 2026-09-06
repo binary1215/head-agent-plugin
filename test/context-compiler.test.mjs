@@ -290,6 +290,91 @@ test("HEAD relation paths preserve source and target evidence despite zero lexic
   assert.equal(target.capsule.coverageAssessment.authorityEffect, "none");
 });
 
+test("Context coverage packs only new relation IDs while retaining independently requested source carriers", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  for (const label of ["alpha", "opaque"]) {
+    fs.writeFileSync(path.join(root, "src", `${label}-entry.mjs`), `import { ${label}Value } from './${label}-store.mjs';\nexport function ${label}Read() { return ${label}Value; }\n`);
+    fs.writeFileSync(path.join(root, "src", `${label}-store.mjs`), `export const ${label}Value = 1;\n`);
+  }
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  await buildWorldModel({ root });
+  const before = managedTreeSnapshot(root);
+  const task = "Inspect alpha";
+  const needs = [{ id: "two-imports", kind: "semantic-relation", paths: ["src/alpha-entry.mjs", "src/opaque-entry.mjs"], relationTypes: ["IMPORTS"], minimumItems: 2 }];
+  const compile = (evidenceNeeds = needs) => compileContext({ root, task, evidenceNeeds, budget: 32_768 }).capsule;
+  const plain = compile();
+  assert.equal(plain.coverageAssessment.status, "coverage-complete");
+  assert.equal(plain.repositoryContext.length, 2);
+  const seen = new Set();
+  for (const carrier of plain.repositoryContext) {
+    const edgeIds = carrier.semanticRelationships.filter((edge) => edge.type === "IMPORTS").map((edge) => edge.id);
+    assert.ok(edgeIds.some((id) => !seen.has(id)), "A relation-only carrier must contribute a previously uncovered relation.");
+    edgeIds.forEach((id) => seen.add(id));
+  }
+  assert.equal(seen.size, 2);
+  const proof = plain.coverageAssessment.proofs[0];
+  assert.equal(proof.includedMatchCount, 2);
+  assert.equal(proof.availableMatchCount, 2);
+  assert.deepEqual(proof.availableCandidateIds, [
+    "repository-file:src/alpha-entry.mjs", "repository-file:src/alpha-store.mjs",
+    "repository-file:src/opaque-entry.mjs", "repository-file:src/opaque-store.mjs",
+  ], "Deduplicated evidence counts must not hide alternative carriers from the proof.");
+  const overlapping = compile([...needs, { id: "alpha-import", kind: "semantic-relation", paths: ["src/alpha-store.mjs"], relationTypes: ["IMPORTS"] }]);
+  assert.equal(overlapping.coverageAssessment.status, "coverage-complete");
+  assert.equal(overlapping.repositoryContext.length, 2);
+  const independent = compile([...needs, {
+    id: "alpha-source-files", kind: "repository-source", paths: ["src/alpha-entry.mjs", "src/alpha-store.mjs"], minimumItems: 2,
+  }]);
+  assert.equal(independent.coverageAssessment.status, "coverage-complete");
+  assert.equal(independent.repositoryContext.length, 3);
+  assert.ok(independent.repositoryContext.some((item) => item.path === "src/alpha-entry.mjs"));
+  assert.ok(independent.repositoryContext.some((item) => item.path === "src/alpha-store.mjs"));
+  const throughMcp = await dispatchMcp({ jsonrpc: "2.0", id: 92, method: "tools/call", params: {
+    name: "head_context_preview", arguments: { project_root: root, task, evidence_needs: needs },
+  } });
+  assert.equal(throughMcp.result.structuredContent.capsule.capsuleId, plain.capsuleId);
+  assert.deepEqual(managedTreeSnapshot(root), before);
+
+  // Adjust only the fixture's existing user-authored context to exercise fixed
+  // tier boundaries without adding a test-only arbitrary-budget API.
+  const projectContextFile = path.join(root, ".head", "instructions", "project.md");
+  const originalContext = fs.readFileSync(projectContextFile, "utf8").trim();
+  const carrierCosts = plain.repositoryContext.map((record) => Math.ceil(JSON.stringify(record).length / 4));
+  const includedCost = carrierCosts.reduce((total, cost) => total + cost, 0);
+  const baseCost = plain.budget.usedApproxTokens - includedCost;
+  const setRemaining = (remaining) => fs.writeFileSync(projectContextFile, originalContext + "x".repeat((32_768 - baseCost - remaining) * 4));
+
+  setRemaining(includedCost);
+  const fittingBefore = managedTreeSnapshot(root);
+  const fits = previewContextWorkflow({ root, task, evidenceNeeds: needs, budget: 32_768 });
+  assert.equal(fits.capsule.coverageAssessment.status, "coverage-complete");
+  assert.equal(fits.capsule.repositoryContext.length, 2);
+  assert.equal(fits.capsule.budget.usedApproxTokens, 32_768);
+  assert.deepEqual(fits.workflow.budget.attemptedTiers, [32_768], "A duplicate carrier must not cause an otherwise sufficient tier to expand.");
+  assert.deepEqual(managedTreeSnapshot(root), fittingBefore);
+
+  setRemaining(1);
+  const emptyBefore = managedTreeSnapshot(root);
+  const noneFit = compile();
+  assert.equal(noneFit.repositoryContext.length, 0);
+  assert.equal(noneFit.coverageAssessment.status, "coverage-incomplete");
+  assert.equal(noneFit.coverageAssessment.recommendedMinimumApproxTokens, noneFit.budget.usedApproxTokens + includedCost,
+    "Additional-budget estimation must count only the two carriers adding unique coverage.");
+  assert.deepEqual(managedTreeSnapshot(root), emptyBefore);
+
+  setRemaining(carrierCosts[0]);
+  const partialBefore = managedTreeSnapshot(root);
+  const partial = compile();
+  assert.equal(partial.repositoryContext.length, 1);
+  assert.equal(partial.coverageAssessment.status, "coverage-incomplete");
+  assert.equal(partial.coverageAssessment.recommendedMinimumApproxTokens, partial.budget.usedApproxTokens + carrierCosts[1]);
+  const alphaDuplicate = partial.selection.excluded.find((item) => item.id.startsWith("repository-file:src/alpha-"));
+  assert.equal(alphaDuplicate.reason, "evidence-coverage-satisfied", "An already covered edge is not a budget gap even while another edge is missing.");
+  assert.deepEqual(managedTreeSnapshot(root), partialBefore);
+});
+
 test("Context workflow guides World freshness without mutation or authority", async (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

@@ -19,6 +19,15 @@ A Run cannot start from a free-form goal. It requires a persisted and digest-ver
 
 A Run cannot finish with only a success string. Completion creates a `ResultPacket` containing evidence and verification. The project enters Review mode and blocks the next Run until HEAD records a `ReviewDecision`.
 
+Finish and review bind the exact validated request to the existing Run before
+publishing its artifact, terminal Run state, and Session pointer. If interrupted,
+the same request may finish the missing writes after restart. The artifact must
+still independently verify; an intent is not a result or an approval. Session
+before/after hashes prevent overwriting intervening work. Completed response-loss
+replay is read-only, and changed inputs fail only that transition. No checkpoint,
+new review gate, or separate per-retry journal is created. Normal status reads do
+not repair state; explicit checkpoint integration remains a separate HEAD action.
+
 The active lineage protocol is `0.4.0`. Each current lineage artifact embeds its
 verified [`AuthorityPlaneContract`](authority-plane-contract.md) boundary:
 WholePlanSnapshot and ExecutionContract are P2 recovery/lineage records,
