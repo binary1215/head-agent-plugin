@@ -6,7 +6,7 @@ import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 import { loadObservationProjection } from "./observation-projection.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.20.0";
+export const CONTEXT_COMPILER_VERSION = "0.21.0";
 export const CONTEXT_COVERAGE_VERSION = "1.3.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
@@ -343,7 +343,7 @@ function relationMatchesNeed(relation, need, carrierPath = "") {
   const relationType = String(relation.type || "").toUpperCase();
   if (need.relationTypes.length && !need.relationTypes.includes(relationType)) return false;
   if (need.paths.length && !relationEndpointPaths(relation).some((item) => need.paths.includes(item))) return false;
-  return facetMatch(`${carrierPath} ${canonicalJson(relation)}`, need.facets);
+  return facetMatch(facetContentText([carrierPath, relationFacetValues(relation)]), need.facets);
 }
 
 function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET, needs = []) {
@@ -537,7 +537,7 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
     requiredNodes.push(...rankBounded(traversal.nodes.filter((node) => node.semantic
       && PRODUCT_ENTITY_KINDS.has(node.kind.replace(/Revision$/, ""))
       && node.authorityClass === "canon-projected" && node.freshness === "current"
-      && facetMatch(canonicalJson(node.semantic), discoveryNeed.facets)),
+      && facetMatch(facetContentText(productEntityFacetValues(node)), discoveryNeed.facets)),
     taskTerms, (node) => canonicalJson(node.semantic), discoveryNeed.minimumItems));
   }
   const requiredNodeIds = new Set(requiredNodes.map((node) => node.nodeId));
@@ -948,6 +948,56 @@ function facetMatch(value, facets) {
   return facets.every((facet) => available.has(facet));
 }
 
+// Only allowlisted evidence values enter lexical coverage. JSON property names,
+// generated identities and query/selection/diagnostic provenance remain in the
+// original record and its digest, but cannot satisfy their own request.
+function facetContentText(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(facetContentText).join(" ");
+  return "";
+}
+
+function relationFacetValues(relation) {
+  const endpoint = (value) => value && typeof value === "object"
+    ? [value.kind, value.path, value.name, value.specifier, value.symbolKind] : [];
+  return [relation.type, relation.endpointPaths, endpoint(relation.from), endpoint(relation.to),
+    relation.evidence?.path, relation.specifier, relation.callee];
+}
+
+function productEntityFacetValues(entity) {
+  const semantic = entity.semantic || {};
+  return [entity.kind?.replace(/Revision$/, ""), entity.key, entity.path, entity.name, entity.relationshipType, entity.subject,
+    semantic.key, semantic.name, semantic.description, semantic.statement, semantic.status,
+    semantic.parentFeatureGroupKeys, semantic.featureGroupKeys, semantic.capabilityKeys,
+    (semantic.governedBy || []).map((reference) => [reference.kind, reference.key])];
+}
+
+function candidateFacetContent(candidate) {
+  const record = candidate.record;
+  const evidenceSummaries = Array.isArray(record.evidence) ? record.evidence.map((item) => item.summary) : [];
+  switch (candidate.kind) {
+    case "Claim":
+    case "Unknown":
+      return facetContentText([record.statement, record.tags, evidenceSummaries]);
+    case "Decision":
+      return facetContentText([record.title, record.decision, record.reason, record.constraints, record.tags, evidenceSummaries]);
+    case "RepositoryFile":
+      return facetContentText([record.path, record.classification, record.language,
+        (record.symbols || []).map((item) => [item.kind, item.name]),
+        (record.dependencies || []).map((item) => [item.kind, item.specifier]),
+        (record.semanticRelationships || []).map(relationFacetValues),
+        (record.temporalRelationships || []).map(relationFacetValues)]);
+    case "ProductContext":
+      return facetContentText([(record.entities || []).map(productEntityFacetValues), (record.relationships || []).map(relationFacetValues)]);
+    case "GitDecisionEvidence":
+      return facetContentText([record.subject, record.body, record.author?.name, record.author?.email, record.refs]);
+    case "RuntimeStateEvidence":
+      return facetContentText([record.runtime, record.kind, record.state, record.providerVersion, record.capabilities]);
+    default:
+      return "";
+  }
+}
+
 function evidenceItem(candidate, { id = candidate.id, kind, path = null, relationType = null, value = candidate.record } = {}) {
   return {
     id,
@@ -963,9 +1013,7 @@ function evidenceItem(candidate, { id = candidate.id, kind, path = null, relatio
 
 function candidateEvidenceMatches(candidate, need) {
   const record = candidate.record;
-  // Descriptive coverage metadata cannot manufacture a lexical facet match.
-  const { representation, taskAnchor, ...evidenceRecord } = record;
-  const candidateBody = canonicalJson(evidenceRecord);
+  const candidateBody = candidateFacetContent(candidate);
   if (need.kind === "observation") {
     return candidate.kind === "ObservationEvidence" && need.observationIds.includes(candidate.id)
       ? [evidenceItem(candidate, { kind: need.kind })]

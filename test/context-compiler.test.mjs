@@ -9,6 +9,8 @@ import test from "node:test";
 import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, compileContext, requireSufficientContextCapsule } from "../scripts/lib/context-compiler.mjs";
 import { prepareContextWorkflow, previewContextWorkflow } from "../scripts/lib/context-workflow.mjs";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { GIT_HISTORY_ADAPTER_VERSION } from "../scripts/lib/git-history.mjs";
+import { RuntimeStateFileAdapter } from "../scripts/lib/runtime-state.mjs";
 import { buildWorldModel, readWorldModel } from "../scripts/lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
@@ -654,6 +656,155 @@ test("facet discovery is bounded per need without a global task-term eligibility
   assert.ok(crowdedCarrier.projectionOmissions.entities > 0);
   assert.equal(crowdedCarrier.temporalTraversal.traversalQuerySummary.anchorMode, "lexical-discovery");
   assert.deepEqual(managedTreeSnapshot(root), before);
+});
+
+test("Product facets use actual content equally for exact and discovery retrieval without query echo", async (t) => {
+  for (const name of ["Repayment", "Pay service"]) {
+    await t.test(name, async () => {
+      const root = temporaryProject();
+      try {
+        initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+        const key = "capability:opaque";
+        const product = { schemaVersion: 1, featureGroups: [], features: [], requirements: [], constraints: [], decisions: [],
+          capabilities: [{ key, name }] };
+        fs.writeFileSync(path.join(root, ".head", "context", "product-model.json"), JSON.stringify(product));
+        await buildWorldModel({ root });
+        const before = managedTreeSnapshot(root);
+        const need = { id: "pay-evidence", kind: "product-context", facets: ["pay"] };
+        const compile = (evidenceNeeds, budget = 32_768) => compileContext({ root, task: "qzxvplmn", evidenceNeeds, budget }).capsule;
+        const expectedCount = name === "Repayment" ? 0 : 1;
+        const discovery = compile([need]);
+        const exact = compile([{ ...need, entityKeys: [key] }]);
+        for (const capsule of [discovery, exact, compile([need], 524_288)]) {
+          assert.equal(capsule.coverageAssessment.proofs[0].availableMatchCount, expectedCount,
+            "The retrieval query is provenance, not evidence for its own facet.");
+          assert.equal(capsule.coverageAssessment.proofs[0].includedMatchCount, expectedCount);
+          assert.equal(capsule.coverageAssessment.semanticAcceptance, "not-assessed-HEAD-owned");
+          assert.equal(capsule.coverageAssessment.authorityEffect, "none");
+        }
+        // Independently request the same entity so even a non-matching discovery
+        // carrier is included and its full provenance can be inspected.
+        const retain = { id: "retain-product", kind: "product-context" };
+        const inspectable = compile([need, retain]);
+        const carrier = inspectable.productContext[0];
+        assert.equal(carrier.temporalTraversal.traversalQuerySummary.normalizedQuery, "pay");
+        assert.equal(carrier.temporalTraversal.traversalQuerySummary.anchorMode, "lexical-discovery");
+        assert.equal(carrier.taskAnchor.selectedTerm, "pay");
+        assert.equal(carrier.entities.some((entity) => entity.semantic?.name === name), true);
+        assert.equal(inspectable.coverageAssessment.proofs.find((proof) => proof.evidenceNeedId === need.id).includedMatchCount, expectedCount);
+        assert.equal(inspectable.coverageAssessment.proofs.find((proof) => proof.evidenceNeedId === retain.id).includedMatchCount, 1);
+        assert.equal(compile([retain, need]).capsuleId, inspectable.capsuleId);
+        const preview = previewContextWorkflow({ root, task: "qzxvplmn", evidenceNeeds: [need] });
+        assert.equal(preview.capsule.capsuleId, discovery.capsuleId);
+        assert.deepEqual(preview.workflow.budget.attemptedTiers, [32_768]);
+        const metadataNeeds = ["freshness", "traversal", "projection", "instruction", "description", "key", "authority"].map((facet) => ({
+          id: `metadata-${facet}`, kind: "product-context", entityKeys: [key], facets: [facet],
+        }));
+        const metadataOnly = compile(metadataNeeds);
+        assert.equal(metadataOnly.coverageAssessment.proofs.every((proof) => proof.availableMatchCount === 0), true,
+          "Property names and diagnostic values are not Product content.");
+        const temporal = compile([{ ...retain, entityKeys: [key] }, ...["revision", "authority", "edge"].map((facet) => ({
+          id: `relation-${facet}`, kind: "temporal-relation", relationTypes: ["CURRENT_REVISION"], facets: [facet],
+        }))]);
+        assert.equal(temporal.coverageAssessment.proofs.find((proof) => proof.evidenceNeedId === "relation-revision").includedMatchCount, 1);
+        for (const facet of ["authority", "edge"]) assert.equal(temporal.coverageAssessment.proofs.find((proof) => proof.evidenceNeedId === `relation-${facet}`).availableMatchCount, 0,
+          "Temporal relation types are content; generated edge IDs and authority labels are not.");
+        assert.deepEqual(managedTreeSnapshot(root), before);
+      } finally {
+        const actual = fs.realpathSync(root);
+        assert.equal(path.dirname(actual), fs.realpathSync(path.dirname(root)));
+        fs.rmSync(actual, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("Curated facets use supported content values rather than IDs, provenance or arbitrary fields", (t) => {
+  const root = temporaryProject();
+  t.after(() => {
+    const actual = fs.realpathSync(root);
+    assert.equal(path.dirname(actual), fs.realpathSync(path.dirname(root)));
+    fs.rmSync(actual, { recursive: true, force: true });
+  });
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const knowledgeFile = path.join(root, ".head", "context", "knowledge.json");
+  const evidence = { id: "evidence-pay", summary: "Repayment source", uri: "file:pay", digest: "a".repeat(64) };
+  const record = { statement: "Repayment rule", title: "Repayment rule", decision: "Repayment rule", reason: "Repayment rule",
+    evidenceIds: [evidence.id], diagnostic: "pay", importance: 3, tags: [] };
+  const knowledge = { schemaVersion: 1, evidence: [evidence],
+    claims: [{ ...record, id: "claim-pay" }], decisions: [{ ...record, id: "decision-pay" }], unknowns: [{ ...record, id: "unknown-pay" }] };
+  const kinds = ["claim", "decision", "unknown"];
+  const compile = (evidenceNeeds) => compileContext({ root, task: "qzxvplmn", evidenceNeeds }).capsule;
+  fs.writeFileSync(knowledgeFile, JSON.stringify(knowledge));
+  const before = managedTreeSnapshot(root);
+  const negative = compile(kinds.flatMap((kind) => ["pay", "statement", "importance", "diagnostic", "instruction"].map((facet) => ({
+    id: `${kind}-${facet}`, kind, facets: [facet],
+  }))));
+  assert.equal(negative.coverageAssessment.proofs.every((proof) => proof.availableMatchCount === 0), true);
+  const raw = compile(kinds.map((kind) => ({ id: kind, kind })));
+  assert.equal(raw.claims[0].diagnostic, "pay");
+  assert.equal(raw.claims[0].evidence[0].uri, "file:pay", "Provenance is retained, not erased to fix matching.");
+  assert.deepEqual(managedTreeSnapshot(root), before);
+
+  knowledge.evidence[0].summary = "Pay instruction evidence";
+  fs.writeFileSync(knowledgeFile, JSON.stringify(knowledge));
+  const positiveBefore = managedTreeSnapshot(root);
+  const positive = compile(kinds.map((kind) => ({ id: kind, kind, facets: ["pay", "instruction"] })));
+  assert.equal(positive.coverageAssessment.proofs.every((proof) => proof.includedMatchCount === 1), true);
+  assert.deepEqual(managedTreeSnapshot(root), positiveBefore);
+});
+
+test("Repository, relationship, Git and runtime facets exclude diagnostic text but retain observed values", async (t) => {
+  for (const positive of [false, true]) await t.test(positive ? "actual values" : "metadata only", async () => {
+    const root = temporaryProject();
+    try {
+      fs.mkdirSync(path.join(root, "src"), { recursive: true });
+      fs.writeFileSync(path.join(root, "src", "plain.mjs"), `import { other } from './other.mjs';\nexport function ${positive ? "payInvoice" : "repayment"}() { return other(); }\n`);
+      fs.writeFileSync(path.join(root, "src", "other.mjs"), "export function other() { return true; }\n");
+      initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+      const commit = "a".repeat(40);
+      fs.mkdirSync(path.join(root, ".git", "refs", "heads"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+      fs.writeFileSync(path.join(root, ".git", "refs", "heads", "main"), `${commit}\n`);
+      const gitHistoryAdapter = {
+        adapterVersion: GIT_HISTORY_ADAPTER_VERSION,
+        describe: () => ({ adapterKind: "synthetic-content-values", adapterVersion: GIT_HISTORY_ADAPTER_VERSION,
+          authority: "derived-evidence-only", rebuildable: true, uniqueAuthority: false, remote: false }),
+        readHistory: () => ({ status: "available", coverage: "all-reachable-commits", reasonCode: "", commits: [{
+          commit, parents: [], authoredAt: "2026-09-06T00:00:00Z", committedAt: "2026-09-06T00:00:00Z",
+          author: { name: "Synthetic fixture" }, refs: ["HEAD -> main"], subject: positive ? "Pay invoices" : "Repayment", body: "",
+        }] }),
+      };
+      const inputFile = path.join(root, ".head", "runtime-input.json");
+      fs.writeFileSync(inputFile, JSON.stringify({ schemaVersion: 1, kind: "HeadRuntimeStateExport", observedAt: "2026-09-06T00:00:00Z", observations: [{
+        runtime: "codex", kind: "session", state: "idle", externalId: "synthetic-pay", workspaceRoot: root,
+        providerVersion: "1.0", capabilities: [positive ? "pay" : "repayment"],
+      }] }));
+      await buildWorldModel({ root, gitHistoryAdapter, runtimeStateAdapter: new RuntimeStateFileAdapter({ file: inputFile }) });
+      const before = managedTreeSnapshot(root);
+      const compile = (evidenceNeeds) => compileContext({ root, task: "history qzxvplmn", evidenceNeeds }).capsule;
+      const needs = [
+        { id: "source", kind: "repository-source", paths: ["src/plain.mjs"] },
+        { id: "relation", kind: "semantic-relation", paths: ["src/plain.mjs"], relationTypes: ["CALLS"] },
+        { id: "git", kind: "git-decision" }, { id: "runtime", kind: "runtime-state" },
+      ];
+      const evidence = compile(needs.map((need) => ({ ...need, facets: ["pay"] })));
+      for (const proof of evidence.coverageAssessment.proofs) assert.equal(proof.includedMatchCount, positive ? 1 : 0, proof.evidenceNeedId);
+      const metadata = compile(needs.flatMap((need) => ["instruction", "digest", "trust", "expansion", "specifier", "subject", "capabilities"].map((facet) => ({
+        ...need, id: `${need.id}-${facet}`, facets: [facet],
+      }))));
+      assert.equal(metadata.coverageAssessment.proofs.every((proof) => proof.availableMatchCount === 0), true);
+      const raw = compile(needs);
+      assert.equal(raw.repositoryContext[0].trustBoundary, "evidence-not-instruction");
+      assert.equal(raw.gitDecisionEvidence[0].evidence.instructionAuthority, false);
+      assert.equal(raw.runtimeStateEvidence[0].controlAuthority, false);
+      assert.deepEqual(managedTreeSnapshot(root), before);
+    } finally {
+      const actual = fs.realpathSync(root);
+      assert.equal(path.dirname(actual), fs.realpathSync(path.dirname(root)));
+      fs.rmSync(actual, { recursive: true, force: true });
+    }
+  });
 });
 
 test("Context workflow guides World freshness without mutation or authority", async (t) => {

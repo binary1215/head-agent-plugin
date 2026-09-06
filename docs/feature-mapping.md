@@ -34,6 +34,19 @@ current evidence and propose a replacement without source rollback or manual
 state deletion. Drift or a request to start another proposal never invents a
 user rejection, and prior reviewed relationship records remain intact.
 
+If a decision was saved but its final workflow pointer was not, the same
+normalized review request completes only that pointer after verifying the saved
+decision and its World projection. This is recovery of an existing decision,
+not another approval: later source drift is disclosed rather than grounds to
+rewrite the decision or ask for reapproval. A different disposition, selection,
+or rationale for that same candidate set fails before refresh or publication.
+Multiple conflicting saved decisions also fail without selecting or deleting
+one. Proposal and review writes share the existing Session mutation coordinator;
+read-only status remains non-mutating and exposes a pending pointer completion.
+Once completed, the unchanged request for the same current candidate returns the
+verified existing result without changing stored project records. This does not reopen a reviewed batch
+or allow replay against a newer candidate pointer.
+
 Starting a proposal reuses the verified current World rather than rebuilding it
 with empty ancestry. Derived mapping publication preserves the current source
 and revision lineage. This prevents publication itself from making a current

@@ -29,7 +29,7 @@ Sources and promoted canon
   -> ContextCapsule + digest
 ```
 
-Context Compiler protocol `0.20.0` keeps deterministic packaging separate from semantic judgment. The provider HEAD performs task analysis and may name exact normalized repository `paths`, exact Product Canon `entityKeys`, a current-bound `graphAnchor`, or immutable `observationIds` in `EvidenceNeed[]`; Core verifies those selectors against the current Project, World Model, GraphSnapshot, and common Observation projection and proves actual inclusion. Lexical normalization and overlap remain bounded discovery/ranking signals for unanchored evidence only. Zero lexical overlap never makes a current candidate ineligible, and lexical score never means semantic acceptance. Repository retrieval may expand bounded structural adjacency, but it no longer chooses a temporal anchor from the first token-matching file.
+Context Compiler protocol `0.21.0` keeps deterministic packaging separate from semantic judgment. The provider HEAD performs task analysis and may name exact normalized repository `paths`, exact Product Canon `entityKeys`, a current-bound `graphAnchor`, or immutable `observationIds` in `EvidenceNeed[]`; Core verifies those selectors against the current Project, World Model, GraphSnapshot, and common Observation projection and proves actual inclusion. Lexical normalization and overlap remain bounded discovery/ranking signals for unanchored evidence only. Zero lexical overlap never makes a current candidate ineligible, and lexical score never means semantic acceptance. Repository retrieval may expand bounded structural adjacency, but it no longer chooses a temporal anchor from the first token-matching file.
 
 Coverage protocol `1.3.0` matches relation paths against normalized source, target,
 and evidence endpoints. A `semantic-relation` need reserves its requested minimum
@@ -62,6 +62,13 @@ does not switch off another requirement's discovery. Discovery provenance stays
 lexical, and shared evidence is still counted by its verified logical identity.
 All candidates remain subject to the same Capsule budget; genuinely missing
 keys remain missing rather than triggering invented evidence or approval.
+
+Facet coverage checks the actual content fields of each evidence kind, not its
+query, selector, provenance, or diagnostic metadata. Those records remain in the
+Capsule for audit, but a requested word echoed in a traversal query cannot prove
+its own inclusion. The same evidence content and facets are assessed alike
+whether discovered lexically or requested by exact key; neither path decides
+semantic relevance or sufficiency.
 
 The explicit budget is a hard upper bound, not a claim of sufficiency. HEAD may provide a task-local `EvidenceNeed[]` contract naming exact project-relative paths, exact Product Canon entity keys, evidence kinds, optional lexical facets, relation types, and minimum item counts needed for the current task. A `temporal-relation` need may instead carry `graphAnchor: { projectId, worldModelId, graphSnapshotId, nodeIds, depth, maxNodes, maxEdges }`. Such anchors must name current eligible nodes, a non-empty relation allowlist, and exact traversal bounds; facets are forbidden on this exact mode. Each matching relation or Product entity key contributes one distinct mechanical evidence item. The Compiler never invents those needs from candidate availability and never imposes a universal source, test, ProductContext, or graph-neighborhood requirement. It only reserves budget for the supplied needs and proves whether matching evidence is actually present in the selected Capsule.
 
