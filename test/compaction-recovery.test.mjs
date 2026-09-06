@@ -143,7 +143,7 @@ test("independent concurrent prepares publish exactly one checkpoint and one epo
 });
 
 test("mutation release preserves the shared parent during a following writer's mkdir", async (t) => {
-  const root = initialize(temporaryProject());
+  const root = fs.realpathSync(initialize(temporaryProject()));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const operations = path.join(root, ".head", ".operations");
   const before = projectBytes(root);
@@ -151,6 +151,7 @@ test("mutation release preserves the shared parent during a following writer's m
   const rmdir = fs.rmdirSync;
   let parentRemoved = false;
   let parentRemovalAttempts = 0;
+  let parentMkdirAttempts = 0;
   let callbacks = 0;
   fs.rmdirSync = (directory, ...args) => {
     if (directory === operations) { parentRemoved = true; parentRemovalAttempts += 1; }
@@ -159,7 +160,10 @@ test("mutation release preserves the shared parent during a following writer's m
   fs.mkdirSync = (directory, ...args) => {
     // Reproduce the observed Windows outcome when one release removes the
     // shared parent while the following acquisition is creating it.
-    if (directory === operations && parentRemoved) throw Object.assign(new Error("Shared namespace disappeared during mkdir"), { code: "ENOENT", syscall: "mkdir", path: directory });
+    if (directory === operations) {
+      parentMkdirAttempts += 1;
+      if (parentRemoved) throw Object.assign(new Error("Shared namespace disappeared during mkdir"), { code: "ENOENT", syscall: "mkdir", path: directory });
+    }
     return mkdir(directory, ...args);
   };
   try {
@@ -169,6 +173,7 @@ test("mutation release preserves the shared parent during a following writer's m
     assert.throws(() => withProjectMutation({ root, scope: "session-recovery" }, () => { callbacks += 1; throw callbackError; }), (error) => error === callbackError);
   } finally { fs.mkdirSync = mkdir; fs.rmdirSync = rmdir; }
   assert.equal(callbacks, 3);
+  assert.ok(parentMkdirAttempts >= 3, "Each acquisition must reach the canonical parent mkdir hook.");
   assert.equal(parentRemovalAttempts, 0);
   assert.deepEqual(fs.readdirSync(operations), []);
   assert.deepEqual(projectBytes(root), before);
@@ -176,7 +181,7 @@ test("mutation release preserves the shared parent during a following writer's m
 
 test("mutation acquisition preserves genuine missing, unsafe and denied filesystem failures", async (t) => {
   for (const mode of ["missing-head", "unsafe-head", "denied-parent", "missing-parent"]) {
-    const root = initialize(temporaryProject());
+    const root = fs.realpathSync(initialize(temporaryProject()));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const head = path.join(root, ".head");
     const parked = path.join(root, ".head-diagnostic-original");
