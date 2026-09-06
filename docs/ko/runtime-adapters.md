@@ -93,6 +93,13 @@ protocol-evidence 구성은 동일한 direct-child, no-shell, ignored-stdin, min
 
 `RuntimeRunResultApplication` 프로토콜 `0.1.0`은 검증된 실제 공급자 Run draft에서 canonical Execution Lineage로 이어지는 좁은 공급자 중립 bridge입니다. structured result, exact input, project fence 및 native descendant-tree ownership 검사를 모두 통과한 완료된 exit-zero 실제 공급자 Run만 허용합니다. 이 bridge는 제한된 공급자 result를 canonical `ResultPacket` 하나에 mapping하고, 정확한 Run을 `awaiting_review`로 전환하며, 결정론적 Fresh HEAD context를 구축하고, invocation record 옆에 콘텐츠에서 파생된 application receipt를 기록합니다. 멱등성을 가지며 receipt write가 중단된 뒤에도 동일한 ResultPacket만 복구할 수 있습니다. 서로 다른 result 또는 Session 범위 result는 fail-closed합니다. receipt에는 transcript, 공급자 session ID, PID, path, instruction authority, promotion authority 또는 Product Canon mutation이 없습니다.
 
+Application 검증과 Run 완료는 같은 session-recovery 변경 잠금 안에서 수행합니다.
+누락된 receipt를 복구하며 쓰기 전에 현재 Project·Session·Run·plan·contract·Capsule이
+authorization과 정확히 일치해야 합니다. 같은 contract를 재사용하더라도 오래된
+결과가 새 Run을 완료할 수 없습니다. 이미 완료된 과거 application receipt는
+해당 Run을 다시 열지 않고 조회할 수 있습니다. 이 bridge는 결과를 승인하거나
+checkpoint를 만들지 않으며, Fresh HEAD 검토와 명시적 통합은 별도입니다.
+
 ## 제한된 공급자 일회성 구성
 
 `runtime-invocation-execute`는 persisted Claude Code, Codex 또는 OpenCode `ExecutionAuthorization`을 받아 공급자별 launch/event codec만 공유 authorization, lease, native supervisor, invocation-record 및 result-application core 위에서 dispatch합니다. 각 어댑터는 lease consumption 전에 capability 또는 project-binding drift를 거부하고 shell 없이 absolute native executable을 직접 호출합니다. Claude Code는 non-interactive `--print`, stream-json event, JSON Schema output, `--no-session-persistence`, 로드되는 setting source 또는 slash-command skill 없음, strict empty MCP configuration, workspace mode에서 파생된 exact tool allowlist를 사용합니다. Read-only는 `Read`, `Glob`, `Grep`만 허용합니다. workspace-write는 `Edit`와 `Write`를 추가하면서 Bash, web, notebook, task, plugin 및 external effect를 계속 거부합니다. `--dangerously-skip-permissions`는 절대 사용하지 않습니다. Codex는 JSONL output, ephemeral provider storage, authorization의 정확한 read-only 또는 workspace-write sandbox, Git-repository independence, project-directory binding, deterministic color control, host-local JSON Schema, optional authorized model selection 및 stdin을 통한 정확한 authorized execution input과 함께 `codex exec`를 사용합니다. OpenCode는 `opencode run --format json --pure`, 정확한 project-directory binding, optional authorized model selection, workspace mode에서 파생된 permission projection 및 동일한 bounded stdin/result contract를 사용합니다. 공급자 authentication과 endpoint selection은 계속 공급자가 소유합니다. 일회성 실행에서는 project-local setting, external plugin 및 skill이 비활성화되므로 repository content가 execution policy를 대체할 수 없습니다. 공급자별 configuration은 Product Canon 또는 graph identity에 들어가지 않습니다.

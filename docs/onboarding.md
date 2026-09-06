@@ -286,7 +286,13 @@ of backoff, under its existing management mutex. It never repeats the World
 operation or user decision. Occupied or modified paths are not overwritten;
 exhaustion reports the operational failure while preserving any durable approval.
 
-Later source changes do not erase the historical onboarding decision. Read-only status reports `ready_world_changed` when the current World Model is stale or has advanced beyond the snapshot that completed onboarding; normal World Model refresh and HEAD drift handling must then decide how execution context advances.
+Later source changes do not erase the historical onboarding decision. Read-only
+status reports `ready_world_changed` while current World evidence is unavailable
+or stale. After an explicit refresh verifies the current Canon and onboarding
+decision projection, readiness returns to ready without replacing historical
+approval snapshot IDs or asking for another approval. An unchanged refresh stays
+ready. A missing World base is rebuilt with explicit `world-index`; an existing
+stale base uses `world-refresh`. Status never runs either operation implicitly.
 
 The read-only MCP tool `head_onboarding_status` verifies the state pointer, Session record, storage selection, current candidate set, successor-producing ReviewDecision, latest phase-appropriate ReviewDecision, Product Model revisions, Product Canon identity, and World Model freshness. For a review-pending successor the producer is also the latest decision; for `ready` or `rejected`, the latest decision must directly review the current successor and carry the matching acceptance or rejection disposition. The separate `head_onboarding_review` transaction accepts only an explicit user-authored disposition against the exact current candidate-set identity and delegates every promotion check to Core.
 

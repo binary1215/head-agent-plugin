@@ -1066,9 +1066,8 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
       let world = null;
       let reasonCode = null;
       try {
-        world = readWorldModelSnapshot({ root: projectRoot, worldModelId: state.worldModelId });
-        const current = inspectWorldModel({ root: projectRoot });
-        if (current.status !== "current" || current.snapshot.worldModelId !== state.worldModelId) reasonCode = "WORLD_MODEL_STALE";
+        world = inspectWorldModel({ root: projectRoot });
+        if (world.status !== "current") reasonCode = "WORLD_MODEL_STALE";
       } catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; reasonCode = error.code; }
       return { ...promotionResult({ state, review, productModel: normalizeProductModelDocument(verified.resulting.document), world, reasonCode }), productCanonChanged: false };
     }
@@ -1652,8 +1651,11 @@ export function inspectOnboarding({ root = "." } = {}) {
         ordinaryWorkBlocked: false, nextAction: "refresh_product_world" };
     }
   }
+  // The state keeps the historical approval reference. inspectWorldModel checks
+  // today's Canon and complete decision projection independently; a legitimate
+  // refreshed child is usable without changing that history or approving again.
   const status = state.phase === "ready"
-    ? world?.status === "current" && world.matchesOnboardingSnapshot ? "ready" : "ready_world_changed"
+    ? world?.status === "current" ? "ready" : "ready_world_changed"
     : state.phase.replaceAll("-", "_");
   return {
     status,

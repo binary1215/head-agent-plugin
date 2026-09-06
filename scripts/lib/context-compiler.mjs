@@ -6,8 +6,8 @@ import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 import { loadObservationProjection } from "./observation-projection.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.18.0";
-export const CONTEXT_COVERAGE_VERSION = "1.2.0";
+export const CONTEXT_COMPILER_VERSION = "0.19.0";
+export const CONTEXT_COVERAGE_VERSION = "1.3.0";
 export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
 export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
 export const DEFAULT_CONTEXT_BUDGET = CONTEXT_BUDGET_TIERS[0];
@@ -31,6 +31,7 @@ const MAX_CONTEXT_DEPENDENCIES_PER_FILE = 12;
 const MAX_CONTEXT_RELATIONSHIPS_PER_FILE = 4;
 const MAX_PRODUCT_CONTEXT_ENTITIES = 24;
 const MAX_PRODUCT_CONTEXT_RELATIONSHIPS = 48;
+const PRODUCT_ENTITY_KINDS = new Set(["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"]);
 
 const STOP_WORDS = new Set([
   "the", "is", "are", "was", "were", "a", "an", "and", "or", "for", "from", "with", "into", "this", "that",
@@ -501,8 +502,17 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
   const graph = worldModel.snapshot.temporalProvenanceGraph;
   const productModel = worldModel.snapshot.productModel;
   const taskTerms = terms(task);
+  const currentRevisionIds = new Map(graph.edges.filter((edge) => edge.type === "CURRENT_REVISION").map((edge) => [edge.from, edge.to]));
+  const exactNodeIds = selectedEntityKey == null ? [] : graph.nodes
+    .filter((node) => PRODUCT_ENTITY_KINDS.has(node.kind) && node.key === selectedEntityKey
+      && node.authorityClass === "canon-projected" && node.freshness === "current")
+    .flatMap((node) => [node.nodeId, currentRevisionIds.get(node.nodeId)].filter(Boolean)).sort();
+  if (selectedEntityKey != null && !exactNodeIds.length) return [];
   const traversal = queryTemporalProjection(worldModel, graphProjectionAdapter, {
-    query: anchorTerm,
+    ...(selectedEntityKey == null ? { query: anchorTerm } : {
+      anchorIds: exactNodeIds,
+      expectedGraphSnapshotId: graph.graphSnapshotId,
+    }),
     kinds: [
       "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
       "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision",
@@ -521,15 +531,20 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
   const body = traversal.nodes.map((node) => canonicalJson(node.semantic || { kind: node.kind, key: node.key })).join(" ");
   const matches = matchedTerms(taskTerms, terms(body));
   const relevance = matches.length;
-  const compactEntities = rankBounded(traversal.nodes, taskTerms, (node) => canonicalJson(node.semantic || {
+  const exactNodeIdSet = new Set(exactNodeIds);
+  const requiredNodes = traversal.nodes.filter((node) => exactNodeIdSet.has(node.nodeId));
+  const compactNodes = [...requiredNodes, ...rankBounded(traversal.nodes.filter((node) => !exactNodeIdSet.has(node.nodeId)), taskTerms, (node) => canonicalJson(node.semantic || {
     kind: node.kind,
     key: node.key,
     path: node.path,
     name: node.name,
-  }), MAX_PRODUCT_CONTEXT_ENTITIES).map((node) => ({
+  }), Math.max(0, MAX_PRODUCT_CONTEXT_ENTITIES - requiredNodes.length))];
+  const compactEntities = compactNodes.map((node) => ({
     nodeId: node.nodeId,
     kind: node.kind,
-    logicalEntityId: node.logicalEntityId || null,
+    logicalEntityId: node.logicalEntityId || (PRODUCT_ENTITY_KINDS.has(node.kind) ? node.nodeId : null),
+    currentRevisionId: PRODUCT_ENTITY_KINDS.has(node.kind) ? currentRevisionIds.get(node.nodeId) || null
+      : PRODUCT_ENTITY_KINDS.has(node.kind.replace(/Revision$/, "")) ? node.nodeId : null,
     key: node.key || null,
     path: node.path || null,
     name: node.name || null,
@@ -557,6 +572,7 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
   }));
   const record = {
     kind: "ProductContext",
+    projectId: worldModel.snapshot.projectId,
     productModelId: productModel.productModelId,
     productModelHash: productModel.productModelHash,
     source: worldModel.snapshot.productModelSource,
@@ -918,6 +934,7 @@ function evidenceItem(candidate, { id = candidate.id, kind, path = null, relatio
   return {
     id,
     carrierCandidateId: candidate.id,
+    carrierProvenance: [{ candidateId: candidate.id, recordDigest: digest(canonicalJson(candidate.record)) }],
     kind,
     path,
     relationType,
@@ -955,11 +972,26 @@ function candidateEvidenceMatches(candidate, need) {
     unknown: "Unknown",
   };
   if (simpleKinds[need.kind]) {
-    if (need.kind === "product-context" && matchedEntityKeys.length) {
-      return matchedEntityKeys.map((entityKey) => evidenceItem(candidate, {
-        id: `${candidate.id}:product-entity:${entityKey}`,
-        kind: need.kind,
-        value: { carrierCandidateId: candidate.id, entityKey },
+    if (need.kind === "product-context") {
+      if (candidate.kind !== "ProductContext") return [];
+      const identities = record.entities.filter((entity) => (!need.entityKeys.length || matchedEntityKeys.includes(entity.key))
+        && entity.logicalEntityId && entity.currentRevisionId
+        && entity.authorityClass === "canon-projected" && entity.freshness === "current")
+        .map((entity) => ({
+          projectId: record.projectId,
+          productModelId: record.productModelId,
+          productModelHash: record.productModelHash,
+          logicalEntityId: entity.logicalEntityId,
+          revisionId: entity.currentRevisionId,
+          entityKey: entity.key,
+        }));
+      return [...new Map(identities.map((identity) => [canonicalJson(identity), identity])).values()].map((identity) => ({
+        ...evidenceItem(candidate, {
+          id: `product-entity:${digest(canonicalJson(identity))}`,
+          kind: need.kind,
+          value: identity,
+        }),
+        productEntity: identity,
       }));
     }
     return candidate.kind === simpleKinds[need.kind]
@@ -998,7 +1030,14 @@ function bindEvidenceNeeds(candidates, needs) {
 
 function uniqueEvidence(items) {
   const byId = new Map();
-  for (const item of items) if (!byId.has(item.id)) byId.set(item.id, item);
+  for (const item of items) {
+    const existing = byId.get(item.id);
+    if (!existing) byId.set(item.id, { ...item, carrierProvenance: [...item.carrierProvenance] });
+    else for (const carrier of item.carrierProvenance) {
+      if (!existing.carrierProvenance.some((value) => value.candidateId === carrier.candidateId)) existing.carrierProvenance.push(carrier);
+    }
+  }
+  for (const item of byId.values()) item.carrierProvenance.sort((left, right) => left.candidateId.localeCompare(right.candidateId));
   return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 

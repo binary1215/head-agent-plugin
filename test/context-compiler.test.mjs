@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -331,6 +332,10 @@ test("Context coverage packs only new relation IDs while retaining independently
   assert.equal(independent.repositoryContext.length, 3);
   assert.ok(independent.repositoryContext.some((item) => item.path === "src/alpha-entry.mjs"));
   assert.ok(independent.repositoryContext.some((item) => item.path === "src/alpha-store.mjs"));
+  const duplicateProof = independent.coverageAssessment.proofs.find((item) => item.evidenceNeedId === "two-imports")
+    .includedEvidence.find((item) => item.carrierProvenance.length === 2);
+  assert.ok(duplicateProof, "One evidence identity retains both independently required carrier records.");
+  for (const provenance of duplicateProof.carrierProvenance) assert.match(provenance.recordDigest, /^[a-f0-9]{64}$/u);
   const throughMcp = await dispatchMcp({ jsonrpc: "2.0", id: 92, method: "tools/call", params: {
     name: "head_context_preview", arguments: { project_root: root, task, evidence_needs: needs },
   } });
@@ -373,6 +378,123 @@ test("Context coverage packs only new relation IDs while retaining independently
   const alphaDuplicate = partial.selection.excluded.find((item) => item.id.startsWith("repository-file:src/alpha-"));
   assert.equal(alphaDuplicate.reason, "evidence-coverage-satisfied", "An already covered edge is not a budget gap even while another edge is missing.");
   assert.deepEqual(managedTreeSnapshot(root), partialBefore);
+});
+
+test("Product coverage counts logical revisions across overlapping carriers and preserves provenance", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const productFile = path.join(root, ".head", "context", "product-model.json");
+  const product = {
+    schemaVersion: 1, featureGroups: [], requirements: [], constraints: [], decisions: [],
+    capabilities: [{ key: "capability:opaque", name: "Opaque service" }],
+    features: [{ key: "feature:linked", name: "Linked service", featureGroupKeys: [], capabilityKeys: ["capability:opaque"], governedBy: [] }],
+  };
+  fs.writeFileSync(productFile, JSON.stringify(product));
+  await buildWorldModel({ root });
+  const before = managedTreeSnapshot(root);
+  const task = "Inspect linked service";
+  const needs = [{ id: "three-product-keys", kind: "product-context", entityKeys: ["capability:opaque", "feature:linked", "feature:missing"], minimumItems: 3 }];
+  const compile = (evidenceNeeds = needs) => compileContext({ root, task, evidenceNeeds }).capsule;
+  const first = compile();
+  assert.equal(first.capsuleId, compile().capsuleId);
+  assert.equal(first.coverageAssessment.status, "coverage-incomplete");
+  const proof = first.coverageAssessment.proofs[0];
+  assert.equal(proof.includedMatchCount, 2);
+  assert.equal(proof.availableMatchCount, 2);
+  assert.equal(proof.availableCandidateIds.length, 2, "Both overlapping exact-key carriers remain discoverable.");
+  assert.equal(first.productContext.length, 1, "A second carrier cannot contribute a nonexistent third entity.");
+  assert.equal(first.coverageAssessment.recommendedMinimumApproxTokens, null);
+  for (const evidence of proof.includedEvidence) {
+    assert.match(evidence.productEntity.logicalEntityId, /^(?:feature|capability)-/u);
+    assert.match(evidence.productEntity.revisionId, /revision/u);
+    assert.ok(evidence.productEntity.productModelHash);
+    assert.equal(evidence.carrierProvenance.length, 1);
+    const carrier = first.productContext.find((item) => `product-context:${item.temporalTraversal.resultId}` === evidence.carrierCandidateId);
+    const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object"
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
+    assert.equal(evidence.carrierProvenance[0].recordDigest, crypto.createHash("sha256").update(JSON.stringify(canonical(carrier))).digest("hex"));
+  }
+  const unkeyed = compile([...needs, { id: "unkeyed-products", kind: "product-context", facets: ["service"], minimumItems: 3 }]);
+  const unkeyedProof = unkeyed.coverageAssessment.proofs.find((item) => item.evidenceNeedId === "unkeyed-products");
+  assert.equal(unkeyedProof.availableMatchCount, 2);
+  assert.equal(unkeyedProof.includedMatchCount, 2, "Facet-only needs count entities rather than duplicate ProductContext bundles.");
+  const guided = previewContextWorkflow({ root, task, evidenceNeeds: needs });
+  assert.deepEqual(guided.workflow.budget.attemptedTiers, [32_768]);
+  assert.equal(guided.workflow.budget.autoEscalationPerformed, false);
+  const throughMcp = await dispatchMcp({ jsonrpc: "2.0", id: 93, method: "tools/call", params: {
+    name: "head_context_preview", arguments: { project_root: root, task, evidence_needs: needs },
+  } });
+  assert.equal(throughMcp.result.structuredContent.capsule.capsuleId, first.capsuleId);
+  assert.deepEqual(managedTreeSnapshot(root), before);
+
+  product.capabilities[0].name = "Revised opaque service";
+  fs.writeFileSync(productFile, JSON.stringify(product));
+  await buildWorldModel({ root });
+  const revisedBefore = managedTreeSnapshot(root);
+  const revised = compile().coverageAssessment.proofs[0].includedEvidence;
+  const oldCapability = proof.includedEvidence.find((item) => item.productEntity.entityKey === "capability:opaque");
+  const newCapability = revised.find((item) => item.productEntity.entityKey === "capability:opaque");
+  assert.equal(oldCapability.productEntity.logicalEntityId, newCapability.productEntity.logicalEntityId);
+  assert.notEqual(oldCapability.productEntity.revisionId, newCapability.productEntity.revisionId);
+  assert.notEqual(oldCapability.id, newCapability.id, "Different verified revisions must remain distinct evidence.");
+  assert.deepEqual(managedTreeSnapshot(root), revisedBefore);
+});
+
+test("exact Product keys survive bounded neighbors and same-key kinds remain distinct", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const productFile = path.join(root, ".head", "context", "product-model.json");
+  const key = "capability:opaque";
+  const features = Array.from({ length: 32 }, (_, index) => ({
+    key: `feature:hotfix-${index}`, name: "Hotfix feature", description: "Hotfix behavior",
+    featureGroupKeys: [], capabilityKeys: [key], governedBy: [],
+  }));
+  const product = { schemaVersion: 1, featureGroups: [], requirements: [], constraints: [], decisions: [], capabilities: [{ key, name: "Opaque service" }], features };
+  fs.writeFileSync(productFile, JSON.stringify(product));
+  const indexed = await buildWorldModel({ root });
+  const before = managedTreeSnapshot(root);
+  const evidenceNeeds = [{ id: "opaque-capability", kind: "product-context", entityKeys: [key] }];
+  for (const budget of [32_768, 524_288]) {
+    const capsule = compileContext({ root, task: "hotfix", budget, evidenceNeeds }).capsule;
+    assert.equal(capsule.coverageAssessment.status, "coverage-complete");
+    assert.equal(capsule.coverageAssessment.proofs[0].includedMatchCount, 1);
+    const carrier = capsule.productContext[0];
+    assert.equal(carrier.entities.filter((item) => item.key === key).length, 2, "Exact logical and current revision nodes survive optional top-24 ranking.");
+    assert.ok(carrier.entities.length <= 24);
+    assert.ok(carrier.projectionOmissions.entities > 0);
+    assert.equal(carrier.temporalTraversal.traversalQuerySummary.anchorMode, "exact-head-proposed");
+    assert.equal(carrier.temporalTraversal.traversalQuerySummary.expectedGraphSnapshotId, indexed.snapshot.temporalProvenanceGraph.graphSnapshotId);
+    assert.equal(carrier.temporalTraversal.traversalQuerySummary.maxNodes, 100);
+    assert.equal(carrier.instructionAuthority, false);
+    assert.equal(carrier.promotionAuthority, false);
+  }
+  const many = compileContext({ root, task: "hotfix", evidenceNeeds: [{ id: "many-exact-features", kind: "product-context", entityKeys: features.map((item) => item.key), minimumItems: 20 }] }).capsule;
+  assert.equal(many.coverageAssessment.status, "coverage-complete");
+  assert.equal(many.coverageAssessment.proofs[0].availableMatchCount, 32, "The per-carrier sample cannot hide any of 32 exact requested keys from available evidence.");
+  for (const task of ["hotfix", "qzxvplmn"]) {
+    const exact = compileContext({ root, task, evidenceNeeds }).capsule;
+    assert.equal(exact.coverageAssessment.status, "coverage-complete");
+  }
+  const missing = compileContext({ root, task: "hotfix", evidenceNeeds: [{ id: "missing-product", kind: "product-context", entityKeys: ["capability:absent"] }] }).capsule;
+  assert.equal(missing.coverageAssessment.status, "coverage-incomplete");
+  assert.equal(missing.coverageAssessment.proofs[0].availableMatchCount, 0);
+  assert.equal(missing.coverageAssessment.recommendedMinimumApproxTokens, null);
+  assert.deepEqual(managedTreeSnapshot(root), before);
+
+  const sharedKey = "shared-key";
+  product.capabilities = [{ key: sharedKey, name: "Shared capability" }];
+  product.features = [{ key: sharedKey, name: "Shared feature", featureGroupKeys: [], capabilityKeys: [sharedKey], governedBy: [] }];
+  fs.writeFileSync(productFile, JSON.stringify(product));
+  await buildWorldModel({ root });
+  const sharedBefore = managedTreeSnapshot(root);
+  const shared = compileContext({ root, task: "qzxvplmn", evidenceNeeds: [{ id: "both-kinds", kind: "product-context", entityKeys: [sharedKey], minimumItems: 2 }] }).capsule;
+  assert.equal(shared.coverageAssessment.status, "coverage-complete");
+  assert.equal(shared.coverageAssessment.proofs[0].includedMatchCount, 2);
+  assert.equal(new Set(shared.coverageAssessment.proofs[0].includedEvidence.map((item) => item.productEntity.logicalEntityId)).size, 2);
+  assert.equal(new Set(shared.coverageAssessment.proofs[0].includedEvidence.map((item) => item.id)).size, 2);
+  assert.deepEqual(managedTreeSnapshot(root), sharedBefore);
 });
 
 test("Context workflow guides World freshness without mutation or authority", async (t) => {

@@ -6,6 +6,7 @@ test/*
 !test/context-compiler.test.mjs
 !test/context-diagnostics.test.mjs
 !test/onboarding-recovery.test.mjs
+!test/onboarding-world-workflow.test.mjs
 !test/cli-presentation.test.mjs
 !test/conformance-reconciliation.test.mjs
 !test/observation-contract.test.mjs
@@ -17,6 +18,7 @@ test/*
 !test/session-recovery-integration.test.mjs
 !test/compaction-lifecycle.test.mjs
 !test/run-transition-recovery.test.mjs
+!test/runtime-result-application.test.mjs
 !test/native-smoke-cleanup.test.mjs
 .test-tmp-*/
 .qa-*/

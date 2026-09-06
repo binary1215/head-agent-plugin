@@ -29,9 +29,9 @@ Sources and promoted canon
   -> ContextCapsule + digest
 ```
 
-Context Compiler protocol `0.18.0` keeps deterministic packaging separate from semantic judgment. The provider HEAD performs task analysis and may name exact normalized repository `paths`, exact Product Canon `entityKeys`, a current-bound `graphAnchor`, or immutable `observationIds` in `EvidenceNeed[]`; Core verifies those selectors against the current Project, World Model, GraphSnapshot, and common Observation projection and proves actual inclusion. Lexical normalization and overlap remain bounded discovery/ranking signals for unanchored evidence only. Zero lexical overlap never makes a current candidate ineligible, and lexical score never means semantic acceptance. Repository retrieval may expand bounded structural adjacency, but it no longer chooses a temporal anchor from the first token-matching file.
+Context Compiler protocol `0.19.0` keeps deterministic packaging separate from semantic judgment. The provider HEAD performs task analysis and may name exact normalized repository `paths`, exact Product Canon `entityKeys`, a current-bound `graphAnchor`, or immutable `observationIds` in `EvidenceNeed[]`; Core verifies those selectors against the current Project, World Model, GraphSnapshot, and common Observation projection and proves actual inclusion. Lexical normalization and overlap remain bounded discovery/ranking signals for unanchored evidence only. Zero lexical overlap never makes a current candidate ineligible, and lexical score never means semantic acceptance. Repository retrieval may expand bounded structural adjacency, but it no longer chooses a temporal anchor from the first token-matching file.
 
-Coverage protocol `1.2.0` matches relation paths against normalized source, target,
+Coverage protocol `1.3.0` matches relation paths against normalized source, target,
 and evidence endpoints. A `semantic-relation` need reserves its requested minimum
 before fallback adjacency limits; zero lexical overlap cannot hide an exact
 requested relationship. Capsule packing still uses the declared budget and
@@ -46,6 +46,15 @@ each unmet need. A duplicate relation carrier cannot inflate either count, but
 it remains eligible when it fulfills an independent repository/source need.
 Alternative carriers remain visible in the proof; this is set accounting, not
 a semantic relevance judgment or a new execution gate.
+
+Product coverage counts verified Project, Product Model, logical entity (kind and
+key), and revision identities, not the number of ProductContext carriers. Both
+exact-key and facet-only needs use that identity for selection gain, coverage,
+and budget estimates; repeated carriers retain separate provenance but cannot
+inflate the count. Exact HEAD-requested Product keys are resolved before optional
+neighbor ranking and retained ahead of its discovery limit. A missing key stays
+missing, and requested evidence still must fit the Capsule budget. None of this
+decides semantic sufficiency or approves a candidate.
 
 The explicit budget is a hard upper bound, not a claim of sufficiency. HEAD may provide a task-local `EvidenceNeed[]` contract naming exact project-relative paths, exact Product Canon entity keys, evidence kinds, optional lexical facets, relation types, and minimum item counts needed for the current task. A `temporal-relation` need may instead carry `graphAnchor: { projectId, worldModelId, graphSnapshotId, nodeIds, depth, maxNodes, maxEdges }`. Such anchors must name current eligible nodes, a non-empty relation allowlist, and exact traversal bounds; facets are forbidden on this exact mode. Each matching relation or Product entity key contributes one distinct mechanical evidence item. The Compiler never invents those needs from candidate availability and never imposes a universal source, test, ProductContext, or graph-neighborhood requirement. It only reserves budget for the supplied needs and proves whether matching evidence is actually present in the selected Capsule.
 

@@ -14,6 +14,7 @@ import {
   verifyFeatureMappingReviewDecision,
 } from "./feature-mapping-projection.mjs";
 import { buildWorldModel, inspectWorldModel } from "./world-model.mjs";
+import { refreshWorldModel } from "./incremental-refresh.mjs";
 
 const MAX_CANDIDATES = 500;
 const MAX_EVIDENCE = 750;
@@ -398,7 +399,24 @@ export async function startFeatureMapping({ root = ".", semanticProposal = null 
   if (previousState?.phase === "awaiting-review") {
     fail("The current Feature mapping candidate set requires review before a new proposal can start.", "FEATURE_MAPPING_REVIEW_REQUIRED");
   }
-  const indexed = await buildWorldModel({ root: projectRoot, persist: true });
+  let indexed;
+  try { indexed = inspectWorldModel({ root: projectRoot }); }
+  catch (error) {
+    if (semanticProposal != null || !["WORLD_MODEL_NOT_BUILT", "WORLD_MODEL_SNAPSHOT_MISSING"].includes(error.code)) throw error;
+    // The explicit no-proposal setup may create its first derived view. An exact
+    // proposal, however, must be checked against the World HEAD actually read.
+    await buildWorldModel({ root: projectRoot, persist: true });
+    indexed = inspectWorldModel({ root: projectRoot });
+  }
+  if (indexed.status !== "current" && semanticProposal == null) {
+    // Setup without pinned evidence can refresh in the same explicit operation.
+    // The refresh pipeline preserves source/revision ancestry for real changes.
+    await refreshWorldModel({ root: projectRoot });
+    indexed = inspectWorldModel({ root: projectRoot });
+  }
+  if (indexed.status !== "current") {
+    fail("Repository evidence or Product Canon changed; explicitly refresh the World before proposing mappings.", "FEATURE_MAPPING_SOURCE_DRIFT");
+  }
   const proposed = candidatesFromSemanticProposal(semanticProposal, indexed.snapshot);
   const candidateSet = candidateSetArtifact({
     project: inspected.project,

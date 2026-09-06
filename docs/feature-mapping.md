@@ -21,6 +21,17 @@ An explicit user-authored mapping `ReviewDecision` may accept all candidates, ac
 
 Product Canon is not modified by mapping review. Review is rejected if repository evidence, Product Canon, the current candidate set, or any content digest drifted after proposal verification, or while a Run is active or awaiting review.
 
+Starting a proposal reuses the verified current World rather than rebuilding it
+with empty ancestry. Derived mapping publication preserves the current source
+and revision lineage. This prevents publication itself from making a current
+proposal stale; actual source, Canon, or endpoint drift still requires fresh
+evidence. Historical approval and the submitted proposal are not rewritten.
+
+An explicit setup without a semantic proposal may build an absent World or
+refresh a verified stale one within that same operation. It creates only the
+existing evidence/Unknown batch, not inferred mappings or a user decision.
+Read-only status never performs this setup.
+
 ## Commands
 
 ```text

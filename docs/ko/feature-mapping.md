@@ -22,6 +22,16 @@ provider HEAD는 현재 프로젝트 증거를 읽은 뒤 매핑을 제안할 �
 
 매핑 검토는 Product Canon을 수정하지 않습니다. 제안 검증 이후 저장소 evidence, Product Canon, 현재 candidate set 또는 콘텐츠 digest 중 하나라도 변경되었거나, Run이 활성 상태이거나 검토를 기다리는 동안에는 검토가 거부됩니다.
 
+제안을 시작할 때 검증된 현재 World를 재사용하며, 계보를 비워 재구축하지 않습니다.
+매핑 파생 투영을 게시할 때도 현재 source와 revision 계보를 보존합니다. 따라서 게시
+자체가 유효한 제안을 stale로 만들지 않습니다. 실제 source·Canon·endpoint drift에는
+여전히 새로운 증거가 필요하며, 과거 승인이나 제출된 제안을 고쳐 맞추지 않습니다.
+
+의미 제안 없이 명시적으로 설정을 시작하면 같은 작업 안에서 없는 World를 구축하거나
+검증된 stale World를 새로 고칠 수 있습니다. 기존 evidence/Unknown 묶음만 만들며,
+매핑을 추론하거나 사용자 결정을 생성하지 않습니다. 읽기 전용 status는 이 설정을
+실행하지 않습니다.
+
 ## 명령
 
 ```text

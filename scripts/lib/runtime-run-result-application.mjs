@@ -1,8 +1,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { inspectProject } from "./head-core.mjs";
+import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { finishRun, getPendingReviewContext } from "./run-lineage.mjs";
+import { withProjectMutation } from "./project-mutation-lock.mjs";
 import {
   readRuntimeInvocationRecord,
   runtimeInvocationRecordDirectory,
@@ -216,8 +219,51 @@ export function readRuntimeInvocationResult({ root = ".", authorizationId } = {}
 }
 
 export function applyRuntimeRunResult({ root = ".", authorizationId } = {}) {
+  // Reading the target before taking finishRun's lock leaves a scope race.
+  // Keep record validation, exact target validation, Run/Session completion and
+  // the application receipt in the same existing reentrant mutation scope.
+  return withProjectMutation({ root, scope: "session-recovery" }, () => applyRuntimeRunResultLocked({ root, authorizationId }));
+}
+
+function verifyApplicationProjectSession(record) {
+  const inspected = inspectProject(record.projectRoot);
+  const { authorization } = record;
+  if (inspected.status !== "ready" || inspected.project.projectId !== authorization.projectId
+    || inspected.state.sessionId !== authorization.headSessionId
+    || digest(fs.realpathSync(inspected.project.projectRoot)) !== authorization.projectRootDigest) {
+    fail("Runtime result application requires its exact current Project and HEAD Session.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+  }
+  return inspected;
+}
+
+function verifyApplicationRun(record, inspected) {
+  const { authorization, projectRoot } = record;
+  const { state } = inspected;
+  const scope = authorization.scope;
+  const targetRunId = state.activeRunId || state.pendingReview?.runId;
+  if (targetRunId !== scope.runId || state.currentWholePlanId !== scope.wholePlanId
+    || state.activeRunId && (state.activeExecutionContractId !== scope.executionContractId || state.pendingReview)) {
+    fail("Runtime result belongs to a different Run or ExecutionContract; current work was not changed.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+  }
+  const run = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "sessions", "runs", scope.runId, "run.json"), "utf8"));
+  const contract = readLineageArtifact({ root: projectRoot, artifactId: scope.executionContractId }).artifact;
+  const plan = readLineageArtifact({ root: projectRoot, artifactId: scope.wholePlanId }).artifact;
+  const capsule = readContextCapsule({ root: projectRoot, capsuleId: scope.contextCapsuleId }).capsule;
+  if (run.runId !== scope.runId || !["active", "awaiting_review"].includes(run.status)
+    || run.executionContractId !== scope.executionContractId || run.wholePlanId !== scope.wholePlanId
+    || run.capsuleId !== scope.contextCapsuleId || contract.kind !== "ExecutionContract"
+    || contract.wholePlanId !== scope.wholePlanId || contract.capsuleId !== capsule.capsuleId
+    || plan.kind !== "WholePlanSnapshot"
+    || !state.activeRunId && (run.status !== "awaiting_review"
+      || state.pendingReview.wholePlanId !== run.wholePlanId || state.pendingReview.resultPacketId !== run.resultPacketId)) {
+    fail("Runtime result target does not match its exact canonical execution lineage.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
+  }
+}
+
+function applyRuntimeRunResultLocked({ root, authorizationId }) {
   const record = readRuntimeInvocationRecord({ root, authorizationId });
   const { projectRoot, authorization } = record;
+  const inspected = verifyApplicationProjectSession(record);
   if (authorization.scope.kind !== "run"
     || authorization.scope.runId !== record.draft.runId
     || authorization.scope.executionContractId !== record.draft.executionContractId) {
@@ -237,19 +283,9 @@ export function applyRuntimeRunResult({ root = ".", authorizationId } = {}) {
     };
   }
 
-  let resultPacket;
-  let freshHead;
-  try {
-    resultPacket = finishRun({ root: projectRoot, ...fields }).resultPacket;
-    freshHead = getPendingReviewContext({ root: projectRoot });
-  } catch (error) {
-    if (error.code !== "NO_ACTIVE_RUN") throw error;
-    freshHead = getPendingReviewContext({ root: projectRoot });
-    if (freshHead.pendingReview.runId !== authorization.scope.runId) {
-      fail("Pending Fresh HEAD review belongs to another Run.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
-    }
-    resultPacket = readLineageArtifact({ root: projectRoot, artifactId: freshHead.pendingReview.resultPacketId }).artifact;
-  }
+  verifyApplicationRun(record, inspected);
+  const resultPacket = finishRun({ root: projectRoot, ...fields }).resultPacket;
+  const freshHead = getPendingReviewContext({ root: projectRoot });
   verifyCanonicalRunResultPacket(resultPacket, fields, authorization);
   if (freshHead.pendingReview.runId !== authorization.scope.runId
     || freshHead.pendingReview.resultPacketId !== resultPacket.resultPacketId

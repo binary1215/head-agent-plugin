@@ -143,16 +143,16 @@ function contextReadiness({ coreState, productState, onboardingInspection = null
     worldModelId: null,
     entrypoint,
   };
-  if (productState === "refresh_required" || (onboardingInspection?.worldModel && onboardingInspection.worldModel.status !== "current")) return {
-    state: "world-refresh-required",
-    repositoryEvidence: onboardingInspection?.worldModel?.status === "unavailable" ? "missing-excluded" : "stale-excluded",
-    worldModelId: onboardingInspection?.state?.worldModelId || null,
-    entrypoint,
-  };
-  if (onboardingInspection?.state?.worldModelId) return {
+  if (onboardingInspection?.worldModel?.status === "current") return {
     state: "repository-ready",
     repositoryEvidence: "available-current-world",
-    worldModelId: onboardingInspection.state.worldModelId,
+    worldModelId: onboardingInspection.worldModel.worldModelId,
+    entrypoint,
+  };
+  if (productState === "refresh_required" || onboardingInspection?.worldModel) return {
+    state: "world-refresh-required",
+    repositoryEvidence: onboardingInspection?.worldModel?.status === "unavailable" ? "missing-excluded" : "stale-excluded",
+    worldModelId: onboardingInspection?.worldModel?.status === "unavailable" ? null : onboardingInspection?.worldModel?.worldModelId || null,
     entrypoint,
   };
   return {
@@ -260,7 +260,8 @@ export function recoveryReadiness(projectInspection, { includeRestore = false } 
   }
 }
 
-function entrypoint(action) {
+function entrypoint(action, onboardingInspection = null) {
+  const worldAbsent = onboardingInspection?.worldModel?.status === "unavailable";
   const entries = {
     initialize_core: {
       cli: "head-agent init <project> --runtime <runtimes>",
@@ -292,9 +293,11 @@ function entrypoint(action) {
       mcpArguments: { profile: "product" },
     },
     refresh_product_world: {
-      cli: "head-agent world-refresh <project>",
+      cli: worldAbsent ? "head-agent world-index <project>" : "head-agent world-refresh <project>",
+      worldOperation: worldAbsent ? "rebuild" : "incremental-refresh",
       mcpTool: null,
-      note: "The current typed MCP surface is read-only for refresh state; use the explicit CLI mutation entrypoint.",
+      note: worldAbsent ? "The derived World is absent. Explicitly rebuild from retained Canon and evidence; no Product reapproval is needed."
+        : "The current typed MCP surface is read-only for refresh state; use the explicit CLI mutation entrypoint.",
     },
     work_with_product_context: {
       cli: "head-agent context-prepare <project> --task <exact-task>",
@@ -412,7 +415,7 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
     nextAction: {
       id: action,
       summary: coreState === "ready" ? product.summary : "Review managed-file drift before any mutating HEAD operation. No automatic repair is attempted.",
-      entrypoint: entrypoint(action),
+      entrypoint: entrypoint(action, onboardingInspection),
     },
     capabilities: capabilityGuide({ coreState, productState: product.state, contextState: context, runtimes: projectInspection.project.runtimes }),
     runtime: runtimeProjection(projectInspection),

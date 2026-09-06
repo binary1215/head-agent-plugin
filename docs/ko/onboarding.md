@@ -334,10 +334,13 @@ P5 lease는 기존 관리 mutex 안에서 검증된 같은 staging 디렉터리�
 점유되거나 변경된 경로를 덮어쓰지 않습니다. 재시도를 소진하면 저장된 승인은
 보존하고 운영 실패를 알립니다.
 
-이후 source 변경은 과거 온보딩 결정을 지우지 않습니다. current World Model이 stale이거나
-온보딩을 완료한 snapshot보다 앞서 나간 경우, 읽기 전용 status는 `ready_world_changed`를
-보고합니다. 그러면 정상 World Model refresh 및 HEAD drift handling이 execution context가
-어떻게 전진할지 결정해야 합니다.
+이후 source 변경은 과거 온보딩 결정을 지우지 않습니다. 현재 World evidence를 사용할
+수 없거나 stale이면 읽기 전용 status는 `ready_world_changed`를 보고합니다.
+명시적 refresh가 현재 Canon과 온보딩 decision projection을 검증하면 과거 승인
+snapshot ID를 바꾸거나 다시 승인받지 않고 준비 상태로 돌아옵니다. 변경 없는
+refresh도 준비 상태를 유지합니다. World base가 없으면 명시적 `world-index`로
+재구축하고, 기존 base가 stale이면 `world-refresh`를 사용합니다.
+Status는 어느 작업도 암묵적으로 실행하지 않습니다.
 
 읽기 전용 MCP tool `head_onboarding_status`는 state pointer, Session record, storage
 selection, current candidate set, successor-producing ReviewDecision, 최신 phase-appropriate
