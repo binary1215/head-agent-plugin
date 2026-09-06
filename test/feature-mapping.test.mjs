@@ -183,6 +183,9 @@ test("accepts a typed MCP semantic proposal but requires explicit confirmation f
   assert.equal(response.result.structuredContent.candidateSet.candidates.length, 2);
   assert.equal(response.result.structuredContent.candidateSet.candidates.every((candidate) => candidate.promotionAuthority === false), true);
   assert.equal(inspectFeatureMapping({ root }).status, "awaiting_review");
+  const freshStatus = await dispatchMcp({ jsonrpc: "2.0", id: "fresh-mapping-status", method: "tools/call",
+    params: { name: "head_feature_mapping_status", arguments: { project_root: root } } });
+  assert.match(freshStatus.result.content[0].text, /Options: accept all, accept a selection, or reject/u);
 
   const reviewArguments = {
     project_root: root,
@@ -441,6 +444,9 @@ test("mapping readiness discloses the existing active Run restriction consistent
   const mcp = await dispatchMcp({ jsonrpc: "2.0", id: "active-run-mapping-status", method: "tools/call",
     params: { name: "head_feature_mapping_status", arguments: { project_root: root } } });
   assert.deepEqual(mcp.result.structuredContent, status);
+  assert.match(mcp.result.content[0].text, /waiting for the current Run boundary/u);
+  assert.match(mcp.result.content[0].text, /User decision: none/u);
+  assert.doesNotMatch(mcp.result.content[0].text, /Options: accept/u);
   await assert.rejects(() => reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId,
     disposition: "reject", rationale: "The existing Run restriction still applies." }), { code: "FEATURE_MAPPING_RUN_CONFLICT" });
   assert.deepEqual(treeBytes(root), before);
@@ -479,7 +485,7 @@ test("the same explicit stale rejection retries after projection, decision or st
     assert.deepEqual(fs.readFileSync(stateFile), stateBytes, `${boundary}: interrupted state must remain awaiting-review`);
     const reviewDirectory = path.join(root, ".head/feature-mappings/review-decisions");
     const decisionsBefore = fs.existsSync(reviewDirectory) ? fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")) : [];
-    assert.equal(decisionsBefore.length, boundary === "state" ? 1 : 0, "an orphan projection is not a durable decision");
+    assert.equal(decisionsBefore.length, boundary === "decision" ? 0 : 1, "P1 is durable before its rebuildable P4 projection");
     const retried = await reviewFeatureMapping(request);
     assert.equal(retried.status, "feature_mappings_rejected");
     assert.equal(retried.reviewDecision.rationale, request.rationale);
@@ -488,6 +494,83 @@ test("the same explicit stale rejection retries after projection, decision or st
     assert.equal(inspectWorldModel({ root }).snapshot.temporalProvenanceGraph.summary.reviewedRelationshipCount, 0);
     for (const [name, value] of Object.entries(protectedBytes)) assert.equal(treeBytes(root)[name], value);
   }
+});
+
+test("acceptance retries safely across decision, projection, and mapping-pointer write failures", async (t) => {
+  for (const boundary of ["decision", "projection", "state"]) {
+    const root = initializedProject();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const started = await startWithSemanticProposal(root);
+    const request = { root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all",
+      rationale: "Approve one exact immutable mapping request across writer recovery." };
+    const mappingPointer = path.join(root, ".head/feature-mappings/current.json");
+    const worldPointer = path.join(root, ".head/world-model/current.json");
+    const mappingPointerBytes = fs.readFileSync(mappingPointer);
+    const worldPointerBytes = fs.readFileSync(worldPointer);
+    const rename = fs.renameSync;
+    let injected = false;
+    try {
+      fs.renameSync = function(from, to) {
+        const relative = path.relative(root, String(to)).replaceAll("\\", "/");
+        const matches = boundary === "decision" ? relative.startsWith(".head/feature-mappings/review-decisions/")
+          : boundary === "projection" ? relative === ".head/world-model/current.json"
+            : relative === ".head/feature-mappings/current.json";
+        if (!injected && matches) {
+          injected = true;
+          throw Object.assign(new Error(`Injected ${boundary} acceptance write interruption`), { code: "TEST_MAPPING_ACCEPT_WRITE_INTERRUPTION" });
+        }
+        return rename.apply(this, arguments);
+      };
+      await assert.rejects(() => reviewFeatureMapping(request), { code: "TEST_MAPPING_ACCEPT_WRITE_INTERRUPTION" });
+    } finally { fs.renameSync = rename; }
+    assert.equal(injected, true, boundary);
+    assert.deepEqual(fs.readFileSync(mappingPointer), mappingPointerBytes, `${boundary}: mapping pointer remains pending`);
+    const reviewDirectory = path.join(root, ".head/feature-mappings/review-decisions");
+    const decisions = fs.existsSync(reviewDirectory) ? fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")) : [];
+    assert.equal(decisions.length, boundary === "decision" ? 0 : 1, `${boundary}: only a completed P1 write is durable`);
+    if (boundary === "decision") {
+      assert.deepEqual(fs.readFileSync(worldPointer), worldPointerBytes, "a failed P1 write cannot publish a P4 decision projection");
+      assert.equal(inspectWorldModel({ root }).status, "current");
+    } else {
+      const beforeConflict = treeBytes(root);
+      await assert.rejects(() => reviewFeatureMapping({ ...request, disposition: "reject", rationale: "A different decision." }),
+        { code: "FEATURE_MAPPING_REVIEW_CONFLICT" });
+      assert.deepEqual(treeBytes(root), beforeConflict, `${boundary}: a different request cannot replace the durable decision`);
+    }
+    const recovered = await reviewFeatureMapping(request);
+    assert.equal(recovered.status, "feature_mappings_reviewed");
+    assert.equal(inspectWorldModel({ root }).status, "current");
+    assert.equal(inspectFeatureMapping({ root }).reviewRecovery, null);
+    assert.equal(fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")).length, 1);
+  }
+});
+
+test("an exact current request repairs a legacy orphan projection without treating Graph as decision authority", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const started = await startWithSemanticProposal(root);
+  const mappingPointer = path.join(root, ".head/feature-mappings/current.json");
+  const pendingPointerBytes = fs.readFileSync(mappingPointer);
+  const request = { root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all",
+    rationale: "Approve the exact legacy recovery fixture request." };
+  const completed = await reviewFeatureMapping(request);
+  const decisionFile = path.join(root, ".head/feature-mappings/review-decisions", `${completed.reviewDecision.reviewDecisionId}.json`);
+  fs.unlinkSync(decisionFile);
+  fs.writeFileSync(mappingPointer, pendingPointerBytes);
+  const orphan = inspectWorldModel({ root });
+  assert.equal(orphan.status, "stale");
+  assert.equal(orphan.changes.featureMappingProjectionChanged, true);
+  assert.equal(orphan.changes.temporalProvenanceChanged, true);
+  const beforeChangedRequest = treeBytes(root);
+  await assert.rejects(() => reviewFeatureMapping({ ...request, rationale: "A different request cannot inherit Graph authority." }),
+    { code: "FEATURE_MAPPING_SOURCE_DRIFT" });
+  assert.deepEqual(treeBytes(root), beforeChangedRequest);
+  assert.equal(fs.existsSync(decisionFile), false, "Graph alone cannot manufacture a P1 ReviewDecision");
+  const recovered = await reviewFeatureMapping(request);
+  assert.equal(recovered.status, "feature_mappings_reviewed");
+  assert.equal(recovered.reviewDecision.reviewDecisionId, completed.reviewDecision.reviewDecisionId);
+  assert.equal(fs.existsSync(decisionFile), true);
+  assert.equal(inspectWorldModel({ root }).status, "current");
 });
 
 test("a durable partial mapping decision rejects conflicting retry before writes and completes only its missing pointer", async (t) => {
@@ -557,6 +640,9 @@ test("partial accept-all, selection and reject bind normalized input across CLI/
     const mcpStatus = await dispatchMcp({ jsonrpc: "2.0", id: "mapping-pending-status", method: "tools/call",
       params: { name: "head_feature_mapping_status", arguments: { project_root: root } } });
     assert.deepEqual(mcpStatus.result.structuredContent, status);
+    assert.match(mcpStatus.result.content[0].text, /decision is already saved/u);
+    assert.match(mcpStatus.result.content[0].text, /User decision: none/u);
+    assert.doesNotMatch(mcpStatus.result.content[0].text, /Options: accept/u);
     assert.deepEqual(treeBytes(root), beforeRead, "pending-decision status is read-only");
     const divergent = [{ ...request, rationale: "A different rationale is a different decision." },
       { ...request, disposition: disposition === "reject" ? "accept-all" : "reject" }];
@@ -595,12 +681,10 @@ test("partial accept-all, selection and reject bind normalized input across CLI/
 });
 
 test("pending mapping replay refuses missing/tampered projections and conflicting durable history without writing", async (t) => {
-  for (const damage of ["missing-snapshot", "tampered-snapshot", "missing-projected-decision", "conflicting-history", "decision-alias", "decision-tamper"]) {
+  for (const damage of ["missing-snapshot", "tampered-snapshot", "conflicting-history", "decision-alias", "decision-tamper"]) {
     const root = initializedProject();
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const started = await startWithSemanticProposal(root);
-    const worldPointer = path.join(root, ".head/world-model/current.json");
-    const beforeWorldPointer = fs.readFileSync(worldPointer);
     const request = { root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all", rationale: "Approve the exact fixture mapping." };
     const durable = await interruptMappingPointer(root, request);
     const snapshot = inspectWorldModel({ root }).snapshot;
@@ -610,10 +694,7 @@ test("pending mapping replay refuses missing/tampered projections and conflictin
     let expectedCode;
     if (damage === "missing-snapshot") fs.unlinkSync(snapshotFile);
     else if (damage === "tampered-snapshot") fs.writeFileSync(snapshotFile, JSON.stringify({ ...snapshot, worldModelHash: "0".repeat(64) }));
-    else if (damage === "missing-projected-decision") {
-      fs.writeFileSync(worldPointer, beforeWorldPointer);
-      expectedCode = "FEATURE_MAPPING_REVIEW_PROJECTION_PENDING";
-    } else if (damage === "decision-tamper") {
+    else if (damage === "decision-tamper") {
       fs.writeFileSync(decisionFile, JSON.stringify({ ...durable, reviewDecisionHash: "0".repeat(64) }));
       expectedCode = "FEATURE_MAPPING_DIGEST_MISMATCH";
     } else if (damage === "decision-alias") {

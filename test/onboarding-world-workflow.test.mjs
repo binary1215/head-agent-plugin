@@ -243,6 +243,9 @@ test("explicit stale mapping rejection unblocks a fresh reviewed proposal and Co
     const staleMcp = await dispatch({ jsonrpc: "2.0", id: "stale-mapping-status", method: "tools/call",
       params: { name: "head_feature_mapping_status", arguments: { project_root: root } } });
     assert.deepEqual(staleMcp.result.structuredContent, staleStatus);
+    assert.match(staleMcp.result.content[0].text, /Acceptance is unavailable/u);
+    assert.match(staleMcp.result.content[0].text, /reject this exact outdated set/u);
+    assert.doesNotMatch(staleMcp.result.content[0].text, /Options: accept/u);
     await assert.rejects(() => startFeatureMapping({ root, semanticProposal: nextInput }), { code: "FEATURE_MAPPING_REVIEW_REQUIRED" });
     for (const disposition of ["accept-all", "accept-selection"]) {
       await assert.rejects(() => reviewFeatureMapping({ root, candidateSetId: pending.candidateSet.candidateSetId,

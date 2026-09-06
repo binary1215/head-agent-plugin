@@ -538,6 +538,38 @@ function completeMappingReview({ projectRoot, state, review, snapshot, worldStat
   };
 }
 
+function reviewProjectionState(snapshot, review) {
+  const reviewDecisionIds = snapshot.featureMappingProjection?.reviewDecisionIds || [];
+  const projectedReview = snapshot.temporalProvenanceGraph?.nodes?.find((node) => node.nodeId === review.reviewDecisionId) || null;
+  const idPresent = reviewDecisionIds.includes(review.reviewDecisionId);
+  const exact = idPresent && projectedReview?.kind === "FeatureMappingReviewDecision"
+    && projectedReview.reviewDecisionHash === review.reviewDecisionHash;
+  return {
+    exact,
+    absent: !idPresent && projectedReview == null,
+  };
+}
+
+function exactRequestCanRepairOrphanProjection({ projectRoot, projectId, candidateSet, world, review }) {
+  const expectedProjection = loadFeatureMappingProjection({
+    projectRoot,
+    projectId,
+    currentProductModelId: candidateSet.productModelId,
+    additionalReviewDecisions: [review],
+  });
+  if (world.status !== "stale"
+    || world.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId
+    || world.snapshot.productModel.productModelId !== candidateSet.productModelId
+    || world.snapshot.productModel.productModelHash !== candidateSet.productModelHash
+    || world.snapshot.featureMappingProjection?.projectionInputHash !== expectedProjection.projectionInputHash
+    || !reviewProjectionState(world.snapshot, review).exact
+    || world.changes?.featureMappingProjectionChanged !== true
+    || world.changes?.temporalProvenanceChanged !== true) return false;
+  const allowedDerivedDrift = new Set(["featureMappingProjectionChanged", "temporalProvenanceChanged"]);
+  return Object.entries(world.changes || {}).every(([key, value]) => allowedDerivedDrift.has(key)
+    || (Array.isArray(value) ? value.length === 0 : value !== true));
+}
+
 export async function reviewFeatureMapping(options = {}) {
   return withProjectMutationAsync({ root: options.root ?? ".", scope: "session-recovery" }, () => reviewFeatureMappingLocked(options));
 }
@@ -593,17 +625,32 @@ async function reviewFeatureMappingLocked({ root = ".", candidateSetId, disposit
   }
   let currentWorld = inspectWorldModel({ root: projectRoot });
   if (recordedReview) {
-    const projectedReview = currentWorld.snapshot.temporalProvenanceGraph.nodes.find((node) => node.nodeId === recordedReview.reviewDecisionId);
-    if (!currentWorld.snapshot.featureMappingProjection.reviewDecisionIds.includes(recordedReview.reviewDecisionId)
-      || projectedReview?.kind !== "FeatureMappingReviewDecision" || projectedReview.reviewDecisionHash !== recordedReview.reviewDecisionHash) {
-      fail("The saved Feature mapping decision needs an explicit World rebuild before its pending pointer can be completed; do not request a new review.", "FEATURE_MAPPING_REVIEW_PROJECTION_PENDING");
+    const projectionState = reviewProjectionState(currentWorld.snapshot, recordedReview);
+    if (!projectionState.exact && !projectionState.absent) {
+      fail("The World projection does not match the exact saved Feature mapping decision.", "FEATURE_MAPPING_REVIEW_PROJECTION_MISMATCH");
+    }
+    if (projectionState.absent) {
+      await rebuildWithProjection({
+        projectRoot,
+        projectId: inspected.project.projectId,
+        currentProductModelId: currentWorld.snapshot.productModel.productModelId,
+        sourceWorld: currentWorld.snapshot,
+      });
+      currentWorld = inspectWorldModel({ root: projectRoot });
+      if (!reviewProjectionState(currentWorld.snapshot, recordedReview).exact) {
+        fail("The saved Feature mapping decision could not be verified in the rebuilt World projection.", "FEATURE_MAPPING_REVIEW_PROJECTION_MISMATCH");
+      }
     }
     // The durable exact P1 decision already owns the disposition. Source drift
     // is disclosed, not reinterpreted as a need to approve that decision again.
     return completeMappingReview({ projectRoot, state, review: recordedReview, snapshot: currentWorld.snapshot,
       worldStatus: currentWorld.status, reusedReviewDecision: true, updatePointer: pointerPending });
   }
-  if (normalizedDisposition !== "reject" && !candidateEvidenceIsCurrent(candidateSet, currentWorld)) {
+  const currentCandidateEvidence = candidateEvidenceIsCurrent(candidateSet, currentWorld);
+  const repairableOrphanProjection = normalizedDisposition !== "reject" && !currentCandidateEvidence && exactRequestCanRepairOrphanProjection({
+    projectRoot, projectId: inspected.project.projectId, candidateSet, world: currentWorld, review,
+  });
+  if (normalizedDisposition !== "reject" && !currentCandidateEvidence && !repairableOrphanProjection) {
     fail(`Repository evidence or Product Canon changed after mapping proposal. Explicitly reject the outdated candidate set ${candidateSetId}, then have HEAD propose fresh evidence; stale candidates cannot be accepted.`, "FEATURE_MAPPING_SOURCE_DRIFT");
   }
   if (normalizedDisposition === "reject" && currentWorld.status !== "current") {
@@ -616,14 +663,17 @@ async function reviewFeatureMappingLocked({ root = ".", candidateSetId, disposit
       fail("World evidence changed during rejection refresh; retry the same explicit rejection after concurrent changes settle.", "FEATURE_MAPPING_SOURCE_DRIFT");
     }
   }
+  // P1 authority is durable before the rebuildable P4 projection. A failed
+  // projection write therefore recovers from this exact decision without a
+  // second user choice. A legacy orphan projection is only accepted when the
+  // current explicit request matches it and all non-derived evidence is exact.
+  persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Feature mapping ReviewDecision");
   const projected = await rebuildWithProjection({
     projectRoot,
     projectId: inspected.project.projectId,
     currentProductModelId: currentWorld.snapshot.productModel.productModelId,
     sourceWorld: currentWorld.snapshot,
-    additionalReviewDecisions: [review],
   });
-  persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Feature mapping ReviewDecision");
   return completeMappingReview({ projectRoot, state, review, snapshot: projected.snapshot });
 }
 

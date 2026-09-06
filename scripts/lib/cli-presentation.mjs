@@ -251,22 +251,51 @@ export function formatFeatureMappingStatus(value) {
   const candidates = value?.candidateSet?.candidates || [];
   const lines = [];
   if (value?.status === "awaiting_review") {
-    lines.push(
-      "Feature-to-code relationships need your review.",
-      "",
-      `Subject: ${candidates.length} evidence-linked mapping candidates`,
-      "Why now: proposed relationships remain evidence until an explicit review.",
-    );
-    for (const candidate of candidates.slice(0, 5)) {
-      lines.push(`  - ${compactText(candidate.explanation || candidate.description || "evidence-linked mapping proposal", 160)}`);
+    const recovery = value?.reviewRecovery || null;
+    const readiness = value?.reviewReadiness || null;
+    if (recovery?.requiresNewUserDecision === false) {
+      lines.push(
+        "The Feature mapping decision is already saved.",
+        "User decision: none — do not ask the user to approve or reject it again.",
+        `HEAD action: ${compactText(readiness?.nextAction || "retry the unchanged saved decision to finish its pending derived state update.", 240)}`,
+      );
+    } else if (readiness?.runConflict) {
+      lines.push(
+        "Feature mapping review is waiting for the current Run boundary.",
+        "User decision: none for this mapping now.",
+        `Next: ${compactText(readiness.nextAction || "finish the current Run or its pending review, then inspect mapping readiness again.", 240)}`,
+      );
+    } else if (readiness && !readiness.acceptanceAvailable) {
+      lines.push(
+        "Feature mapping evidence changed after the proposal.",
+        "Acceptance is unavailable for this outdated candidate set.",
+      );
+      if (readiness.explicitRejectionAvailable) {
+        lines.push(
+          "Available action: explicitly reject this exact outdated set, then have HEAD propose fresh evidence.",
+          "Earlier approved mappings remain unchanged.",
+        );
+      } else {
+        lines.push(`Next: ${compactText(readiness.nextAction || "inspect the structured readiness state before taking action.", 240)}`);
+      }
+    } else {
+      lines.push(
+        "Feature-to-code relationships need your review.",
+        "",
+        `Subject: ${candidates.length} evidence-linked mapping candidates`,
+        "Why now: proposed relationships remain evidence until an explicit review.",
+      );
+      for (const candidate of candidates.slice(0, 5)) {
+        lines.push(`  - ${compactText(candidate.explanation || candidate.description || "evidence-linked mapping proposal", 160)}`);
+      }
+      if (candidates.length > 5) lines.push(`  - ${candidates.length - 5} more candidates`);
+      lines.push(
+        "Options: accept all, accept a selection, or reject.",
+        "Recommendation: none is generated mechanically; HEAD assesses the exact evidence.",
+        "",
+        "Reply in natural language. HEAD will verify the unchanged candidate set before applying the decision.",
+      );
     }
-    if (candidates.length > 5) lines.push(`  - ${candidates.length - 5} more candidates`);
-    lines.push(
-      "Options: accept all, accept a selection, or reject.",
-      "Recommendation: none is generated mechanically; HEAD assesses the exact evidence.",
-      "",
-      "Reply in natural language. HEAD will verify the unchanged candidate set before applying the decision.",
-    );
   } else if (value?.status === "reviewed") {
     lines.push("Feature mappings have an explicit review.", "Next: use reviewed relationships as task evidence when relevant.");
   } else {

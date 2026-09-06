@@ -34,18 +34,29 @@ current evidence and propose a replacement without source rollback or manual
 state deletion. Drift or a request to start another proposal never invents a
 user rejection, and prior reviewed relationship records remain intact.
 
-If a decision was saved but its final workflow pointer was not, the same
-normalized review request completes only that pointer after verifying the saved
-decision and its World projection. This is recovery of an existing decision,
-not another approval: later source drift is disclosed rather than grounds to
-rewrite the decision or ask for reapproval. A different disposition, selection,
-or rationale for that same candidate set fails before refresh or publication.
-Multiple conflicting saved decisions also fail without selecting or deleting
-one. Proposal and review writes share the existing Session mutation coordinator;
-read-only status remains non-mutating and exposes a pending pointer completion.
-Once completed, the unchanged request for the same current candidate returns the
-verified existing result without changing stored project records. This does not reopen a reviewed batch
-or allow replay against a newer candidate pointer.
+The immutable P1 ReviewDecision is written before its rebuildable P4 World
+projection. If the decision was saved but projection or final workflow-pointer
+publication was interrupted, the same normalized review request rebuilds only
+the missing derived view and completes the pointer after verifying the saved
+decision. This is recovery of an existing decision, not another approval: later
+source drift is disclosed rather than grounds to rewrite the decision or ask for
+reapproval. A failure before the P1 write cannot publish a decision projection.
+A different disposition, selection, or rationale for that same candidate set
+fails before refresh or publication. Multiple conflicting saved decisions also
+fail without selecting or deleting one.
+
+For compatibility with an interrupted older publication order, a P4 projection
+without a durable decision may be repaired only from the current explicit review
+request, and only when its exact decision identity is already projected while
+repository evidence, Product identity, and every non-derived freshness signal
+still match the candidate set. The graph copy is comparison evidence, never the
+source of the P1 decision. A changed request, real source or Product drift, or a
+partial/mismatched projection fails closed. Proposal and review writes share the
+existing Session mutation coordinator; read-only status remains non-mutating and
+exposes pending recovery without requesting a new user decision. Once completed,
+the unchanged request for the same current candidate returns the verified
+existing result without changing stored project records. This does not reopen a
+reviewed batch or allow replay against a newer candidate pointer.
 
 Starting a proposal reuses the verified current World rather than rebuilding it
 with empty ancestry. Derived mapping publication preserves the current source

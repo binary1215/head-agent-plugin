@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { tools, dispatch } from "../scripts/mcp-server.mjs";
 import {
+  formatCliResult,
   formatConformanceFinding,
   formatConformanceQueue,
   formatFeatureMappingStatus,
+  formatMcpToolContent,
   formatOnboardingGuide,
   formatPendingReview,
   formatProjectBootstrap,
@@ -142,6 +144,64 @@ test("decision cards present bounded choices without mechanically choosing or ex
   assert.match(mapping, /evidence-linked mapping proposal/u);
   assert.match(mapping, /Recommendation: none is generated mechanically/u);
   assert.doesNotMatch(mapping, /mapping-secret-id/u);
+});
+
+test("Feature mapping presentation follows typed fresh, stale, recovery, and Run readiness", () => {
+  const candidateSet = { candidates: [{ candidateId: "mapping-secret-id", explanation: "Exact implementation evidence." }] };
+  const fresh = formatFeatureMappingStatus({
+    status: "awaiting_review",
+    candidateSet,
+    reviewRecovery: null,
+    reviewReadiness: { evidenceStatus: "current", acceptanceAvailable: true, explicitRejectionAvailable: true, runConflict: false },
+  });
+  assert.match(fresh, /Options: accept all, accept a selection, or reject/u);
+
+  const stale = formatFeatureMappingStatus({
+    status: "awaiting_review",
+    candidateSet,
+    reviewRecovery: null,
+    reviewReadiness: { evidenceStatus: "stale", acceptanceAvailable: false, explicitRejectionAvailable: true, runConflict: false },
+  });
+  assert.match(stale, /Acceptance is unavailable/u);
+  assert.match(stale, /reject this exact outdated set/u);
+  assert.doesNotMatch(stale, /Options: accept/u);
+
+  const recovery = formatFeatureMappingStatus({
+    status: "awaiting_review",
+    candidateSet,
+    reviewRecovery: { status: "pointer-update-pending", reviewDecisionId: "review-secret-id", requiresNewUserDecision: false },
+    reviewReadiness: { acceptanceAvailable: false, explicitRejectionAvailable: false, runConflict: false,
+      nextAction: "Retry the unchanged saved ReviewDecision to finish its pending state update; no new user decision is needed." },
+  });
+  assert.match(recovery, /decision is already saved/u);
+  assert.match(recovery, /User decision: none/u);
+  assert.doesNotMatch(recovery, /Options: accept/u);
+  assert.doesNotMatch(recovery, /review-secret-id/u);
+
+  const runConflict = formatFeatureMappingStatus({
+    status: "awaiting_review",
+    candidateSet,
+    reviewRecovery: null,
+    reviewReadiness: { acceptanceAvailable: false, explicitRejectionAvailable: false, runConflict: true,
+      nextAction: "Finish the existing Run or its pending review before changing the mapping review state." },
+  });
+  assert.match(runConflict, /waiting for the current Run boundary/u);
+  assert.match(runConflict, /User decision: none/u);
+  assert.doesNotMatch(runConflict, /Options: accept/u);
+
+  for (const value of [
+    { status: "awaiting_review", candidateSet, reviewRecovery: null,
+      reviewReadiness: { evidenceStatus: "current", acceptanceAvailable: true, explicitRejectionAvailable: true, runConflict: false } },
+    { status: "awaiting_review", candidateSet, reviewRecovery: null,
+      reviewReadiness: { evidenceStatus: "stale", acceptanceAvailable: false, explicitRejectionAvailable: true, runConflict: false } },
+    { status: "awaiting_review", candidateSet,
+      reviewRecovery: { status: "pointer-update-pending", requiresNewUserDecision: false },
+      reviewReadiness: { acceptanceAvailable: false, explicitRejectionAvailable: false, runConflict: false } },
+    { status: "awaiting_review", candidateSet, reviewRecovery: null,
+      reviewReadiness: { acceptanceAvailable: false, explicitRejectionAvailable: false, runConflict: true } },
+  ]) {
+    assert.equal(formatCliResult("feature-mapping-status", value), formatMcpToolContent("head_feature_mapping_status", value));
+  }
 });
 
 test("Run and conformance projections never promote evidence into approval or a global gate", () => {
