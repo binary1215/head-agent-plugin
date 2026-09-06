@@ -21,6 +21,16 @@ function launch(args, options = {}) {
   child.once("close", (code, signal) => log({ event: "child-end", pid: child.pid, code, signal }));
   return child;
 }
+async function finishOwnedFixture(cleanups, primaryError) {
+  const errors = [];
+  for (const cleanup of cleanups) {
+    try { await cleanup(); }
+    catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError(primaryError ? [primaryError, ...errors] : errors,
+    "Owned fixture cleanup failed.", primaryError ? { cause: primaryError } : undefined);
+  if (primaryError) throw primaryError;
+}
 
 if (mode === "--fixture-leaf") {
   // This process deliberately survives TERM after its original parent exits.
@@ -81,6 +91,80 @@ if (mode === "--fixture-leaf") {
     process.removeListener("SIGINT", stop);
   }
 } else {
+  test("fixture cleanup reaches independent owners after probe or signal errors and retains the primary failure", async () => {
+    for (const operation of ["group probe", "group signal"]) {
+      const primary = new Error("Original fixture assertion.");
+      const denied = Object.assign(new Error(`${operation} EPERM`), { code: "EPERM" });
+      const visited = [];
+      await assert.rejects(finishOwnedFixture([
+        () => { visited.push("driver TERM"); },
+        () => { visited.push(operation); throw denied; },
+        () => { visited.push("driver close"); },
+        () => { visited.push("sentinel stop"); },
+      ], primary), (error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.cause, primary);
+        assert.deepEqual(error.errors, [primary, denied]);
+        return true;
+      });
+      assert.deepEqual(visited, ["driver TERM", operation, "driver close", "sentinel stop"]);
+    }
+    const denied = Object.assign(new Error("signal EPERM"), { code: "EPERM" });
+    await assert.rejects(finishOwnedFixture([() => { throw denied; }]), (error) => {
+      assert.deepEqual(error.errors, [denied]);
+      return true;
+    });
+    const primary = new Error("Original failure without cleanup errors.");
+    await assert.rejects(finishOwnedFixture([() => {}], primary), (error) => error === primary);
+  });
+
+  test("native smoke preserves uncertainty until a Darwin group is reaped and never masks denied signals", async () => {
+    // Inject OS primitives only: no real process or signal targets are created.
+    const pid = 12345;
+    const denied = () => Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+    const missing = () => Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+    const child = { pid, exitCode: null, signalCode: null };
+    const signals = [];
+    let termSent = false;
+    let inconclusiveProbes = 0;
+    const reaped = createNativeSmokeCleanup(child, { cwd, platform: "darwin", graceMs: 100, kill(target, signal) {
+      assert.equal(target, -pid);
+      if (signal === 0) {
+        if (!termSent) return;
+        if (inconclusiveProbes++ === 0) throw denied();
+        throw missing();
+      }
+      signals.push(signal);
+      termSent = true;
+    } });
+    await reaped.stop();
+    assert.deepEqual(signals, ["SIGTERM"]);
+    assert.equal(reaped.isAlive(), false, "Only ESRCH may establish that the group is gone.");
+
+    for (const deniedSignal of ["SIGTERM", "SIGKILL"]) {
+      const observed = [];
+      const forbidden = createNativeSmokeCleanup(child, { cwd, platform: "darwin", graceMs: 0, killWaitMs: 0, kill(target, signal) {
+        assert.equal(target, -pid);
+        if (signal === 0) throw denied();
+        observed.push(signal);
+        if (signal === deniedSignal) throw denied();
+      } });
+      await assert.rejects(forbidden.stop(), { code: "EPERM" });
+      assert.deepEqual(observed, deniedSignal === "SIGTERM" ? ["SIGTERM"] : ["SIGTERM", "SIGKILL"]);
+      assert.equal(forbidden.isAlive(), true, "Denied or inconclusive cleanup must not claim success.");
+    }
+
+    const stuckSignals = [];
+    const stuck = createNativeSmokeCleanup(child, { cwd, platform: "darwin", graceMs: 0, killWaitMs: 0, kill(target, signal) {
+      assert.equal(target, -pid);
+      if (signal === 0) throw denied();
+      stuckSignals.push(signal);
+    } });
+    await assert.rejects(stuck.stop(), /Owned process group remains/u);
+    assert.deepEqual(stuckSignals, ["SIGTERM", "SIGKILL"]);
+    assert.equal(stuck.isAlive(), true, "Persistent EPERM must end in bounded failure, not success.");
+  });
+
   test("native smoke cleanup is idempotent for an already completed child", async () => {
     log({ event: "test-owner", pid: process.pid, parent: process.ppid, command: process.argv });
     const child = launch(["-e", ""], { detached: process.platform !== "win32", stdio: "ignore" });
@@ -123,7 +207,7 @@ if (mode === "--fixture-leaf") {
       const sentinelCleanup = createNativeSmokeCleanup(sentinel, { cwd, graceMs: 80 });
       const driver = launch([file, "--fixture-driver", scenario], { stdio: ["ignore", "pipe", "inherit"] });
       let owned;
-      let ownedGroupPid;
+      let groupCleanup;
       let buffer = "";
       let cleaned = false;
       let ready;
@@ -134,13 +218,14 @@ if (mode === "--fixture-leaf") {
         while ((boundary = buffer.indexOf("\n")) >= 0) {
           const line = JSON.parse(buffer.slice(0, boundary));
           buffer = buffer.slice(boundary + 1);
-          if (line.event === "owned") ownedGroupPid = line.rootPid;
+          if (line.event === "owned") groupCleanup = createNativeSmokeCleanup({ pid: line.rootPid }, { cwd, graceMs: 80 });
           if (line.event === "ready") { owned = line; ready(); }
           if (line.event === "cleaned") cleaned = line.groupGone;
         }
       });
       const exited = new Promise((resolve, reject) => { driver.once("error", reject); driver.once("close", (code, signal) => resolve({ code, signal })); });
       let safety;
+      let primaryError;
       try {
         await Promise.race([readiness, exited.then(() => { throw new Error("Driver exited before fixture readiness."); }), new Promise((_, reject) => { safety = setTimeout(() => reject(new Error("Fixture readiness timeout.")), 5_000); })]);
         clearTimeout(safety);
@@ -153,25 +238,33 @@ if (mode === "--fixture-leaf") {
         assert.equal(exists(owned.leafPid), false);
         assert.equal(exists(-owned.rootPid), false);
         assert.equal(sentinelCleanup.isAlive(), true, "An unrelated same-name process must remain alive.");
+      } catch (error) {
+        primaryError = error;
       } finally {
         clearTimeout(safety);
-        if (driver.exitCode === null && driver.signalCode === null) driver.kill("SIGTERM");
-        await Promise.race([exited, delay(1_000)]);
-        // Emergency cleanup uses only a group recorded by this owned driver,
-        // never a process name or an inferred group from a replaced parent.
-        if (ownedGroupPid && exists(-ownedGroupPid)) {
-          process.kill(-ownedGroupPid, "SIGTERM");
-          await delay(80);
-          if (exists(-ownedGroupPid)) process.kill(-ownedGroupPid, "SIGKILL");
-        }
-        if (driver.exitCode === null && driver.signalCode === null) driver.kill("SIGKILL");
-        await exited;
-        await sentinelCleanup.stop();
-        assert.equal(sentinelCleanup.isAlive(), false);
-        if (ownedGroupPid) {
-          for (let attempt = 0; attempt < 200 && exists(-ownedGroupPid); attempt += 1) await delay(25);
-          assert.equal(exists(-ownedGroupPid), false, "Fixture process group must be gone after failure too.");
-        }
+        await finishOwnedFixture([
+          async () => {
+            if (driver.exitCode === null && driver.signalCode === null) driver.kill("SIGTERM");
+            await Promise.race([exited, delay(1_000)]);
+          },
+          async () => {
+            // This group was captured from the owned driver before failure.
+            // Reuse the production conservative probe; an EPERM must not
+            // prevent cleaning the independent driver and sentinel below.
+            if (groupCleanup) {
+              if (!cleaned) await groupCleanup.stop();
+              assert.equal(groupCleanup.isAlive(), false, "Fixture process group must be gone after failure too.");
+            }
+          },
+          async () => {
+            if (driver.exitCode === null && driver.signalCode === null) driver.kill("SIGKILL");
+            await Promise.race([exited, delay(1_000).then(() => { throw new Error("Owned fixture driver did not close."); })]);
+          },
+          async () => {
+            await sentinelCleanup.stop();
+            assert.equal(sentinelCleanup.isAlive(), false);
+          },
+        ], primaryError);
       }
     });
   }

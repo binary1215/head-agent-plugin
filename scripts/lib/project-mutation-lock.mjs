@@ -49,7 +49,8 @@ function release(owner) {
     // never turn a committed operation into failure for this empty-shell cleanup.
     if (!new Set(["ENOENT", "ENOTEMPTY", "EEXIST", "EPERM", "EACCES"]).has(error.code)) throw error;
   }
-  try { fs.rmdirSync(path.dirname(owner.directory)); } catch {}
+  // The parent is a shared namespace, not this owner's lease. Keep its single
+  // empty directory: another process may already be creating a sibling lock.
 }
 
 function attempt(directory) {

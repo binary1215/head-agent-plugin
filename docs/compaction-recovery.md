@@ -80,6 +80,8 @@ not a guarantee of power-loss durability. A dead local owner can be reclaimed;
 an unknown or foreign-host owner is not guessed dead. A reused PID can require
 Host-side ownership inspection and operational lock cleanup; Core does not steal
 a possibly live lock based on age. This does not block read-only or ordinary work.
+Release removes its own lease, not the shared `.head/.operations` parent. That
+single empty directory is a stable P5 container, not a new artifact per operation.
 
 If the continuation consumption is durable but committing the terminal epoch
 fails, status reports an uncertain outcome without repairing anything. The next

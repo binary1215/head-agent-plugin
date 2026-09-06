@@ -80,7 +80,7 @@ function recoveryChild(t, action, input, { holdLock = false, crashAfter = null, 
       } return result; };
       await withRefreshWriterLease({projectRoot:input.root, projectId: inspectProject(input.root).project.projectId}, () => {});` : ""}
     ${holdLock ? "withProjectMutation({root: input.root, scope: 'session-recovery'}, () => process.exit(29));" : `try { const result = ${action === "prepare" ? "prepareCompaction" : "continueCompaction"}(input); console.log(JSON.stringify({status: result.status, checkpointId: result.checkpoint.checkpointId, nextExpectedResult: result.checkpoint.nextExpectedResult})); }
-    catch(error) { console.log(JSON.stringify({code: error.code, message: error.message})); }`}
+    catch(error) { console.log(JSON.stringify({code: error.code, message: error.message, errno: error.errno, syscall: error.syscall, path: error.path, dest: error.dest, stack: error.stack})); }`}
   `;
   console.error(JSON.stringify({parentPid: process.pid, command: [process.execPath, "--input-type=module", "--eval", "recovery-test-worker"], cwd: pluginRoot, ports: []}));
   const child = spawn(process.execPath, ["--input-type=module", "--eval", script, JSON.stringify(input)], { cwd: pluginRoot, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
@@ -133,13 +133,83 @@ test("independent concurrent prepares publish exactly one checkpoint and one epo
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const outcomes = await Promise.all(Array.from({ length: 4 }, (_, index) => recoveryChild(t, "prepare", { root, ...recoveryInput({ nextExpectedResult: `Direction ${index}` }) }).done));
   const winners = outcomes.filter((item) => item.status === "compaction_prepared");
-  assert.equal(winners.length, 1);
-  assert.equal(outcomes.filter((item) => item.code === "COMPACTION_EPOCH_ALREADY_OPEN").length, 3);
+  assert.equal(winners.length, 1, JSON.stringify(outcomes));
+  assert.equal(outcomes.filter((item) => item.code === "COMPACTION_EPOCH_ALREADY_OPEN").length, 3, JSON.stringify(outcomes));
   const current = inspectCompaction({ root });
   assert.equal(current.checkpoint.checkpointId, winners[0].checkpointId);
   assert.equal(inspectProject(root).state.latestCheckpoint, winners[0].checkpointId);
   assert.equal(fs.readdirSync(path.join(root, ".head", "sessions", "ledger")).filter((name) => name.endsWith(".json")).length, 1);
   assert.equal(fs.readdirSync(path.join(root, ".head", "sessions", "compaction", "epochs")).length, 1);
+});
+
+test("mutation release preserves the shared parent during a following writer's mkdir", async (t) => {
+  const root = initialize(temporaryProject());
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const operations = path.join(root, ".head", ".operations");
+  const before = projectBytes(root);
+  const mkdir = fs.mkdirSync;
+  const rmdir = fs.rmdirSync;
+  let parentRemoved = false;
+  let parentRemovalAttempts = 0;
+  let callbacks = 0;
+  fs.rmdirSync = (directory, ...args) => {
+    if (directory === operations) { parentRemoved = true; parentRemovalAttempts += 1; }
+    return rmdir(directory, ...args);
+  };
+  fs.mkdirSync = (directory, ...args) => {
+    // Reproduce the observed Windows outcome when one release removes the
+    // shared parent while the following acquisition is creating it.
+    if (directory === operations && parentRemoved) throw Object.assign(new Error("Shared namespace disappeared during mkdir"), { code: "ENOENT", syscall: "mkdir", path: directory });
+    return mkdir(directory, ...args);
+  };
+  try {
+    assert.equal(withProjectMutation({ root, scope: "session-recovery" }, () => ++callbacks), 1);
+    assert.equal(await withProjectMutationAsync({ root, scope: "session-recovery" }, async () => ++callbacks), 2);
+    const callbackError = Object.assign(new Error("Do not replay a failed writer"), { code: "ENOENT" });
+    assert.throws(() => withProjectMutation({ root, scope: "session-recovery" }, () => { callbacks += 1; throw callbackError; }), (error) => error === callbackError);
+  } finally { fs.mkdirSync = mkdir; fs.rmdirSync = rmdir; }
+  assert.equal(callbacks, 3);
+  assert.equal(parentRemovalAttempts, 0);
+  assert.deepEqual(fs.readdirSync(operations), []);
+  assert.deepEqual(projectBytes(root), before);
+});
+
+test("mutation acquisition preserves genuine missing, unsafe and denied filesystem failures", async (t) => {
+  for (const mode of ["missing-head", "unsafe-head", "denied-parent", "missing-parent"]) {
+    const root = initialize(temporaryProject());
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const head = path.join(root, ".head");
+    const parked = path.join(root, ".head-diagnostic-original");
+    const operations = path.join(head, ".operations");
+    const before = projectBytes(root);
+    const mkdir = fs.mkdirSync;
+    const injected = Object.assign(new Error("Filesystem acquisition is unavailable"), { code: mode === "denied-parent" ? "EACCES" : "ENOENT" });
+    let callbacks = 0;
+    let mkdirAttempts = 0;
+    if (mode.endsWith("head")) {
+      fs.renameSync(head, parked);
+      if (mode === "unsafe-head") fs.writeFileSync(head, "unsafe head path must remain unchanged");
+    }
+    fs.mkdirSync = (directory, ...args) => {
+      if (directory === operations) { mkdirAttempts += 1; throw injected; }
+      return mkdir(directory, ...args);
+    };
+    try {
+      const expected = mode === "missing-head" ? { code: "NOT_INITIALIZED" }
+        : mode === "unsafe-head" ? { code: "INVALID_PROJECT_MUTATION_LOCK" } : (error) => error === injected;
+      assert.throws(() => withProjectMutation({ root, scope: "session-recovery" }, () => { callbacks += 1; }), expected);
+      await assert.rejects(withProjectMutationAsync({ root, scope: "session-recovery" }, async () => { callbacks += 1; }), expected);
+      assert.equal(callbacks, 0);
+      assert.equal(mkdirAttempts, mode.endsWith("head") ? 0 : 2);
+      if (mode === "missing-head") assert.equal(fs.existsSync(head), false);
+      if (mode === "unsafe-head") assert.equal(fs.readFileSync(head, "utf8"), "unsafe head path must remain unchanged");
+    } finally {
+      fs.mkdirSync = mkdir;
+      if (mode === "unsafe-head") fs.unlinkSync(head);
+      if (mode.endsWith("head")) fs.renameSync(parked, head);
+    }
+    assert.deepEqual(projectBytes(root), before);
+  }
 });
 
 test("independent continuation waits for a checkpoint writer and verifies the committed direction", async (t) => {
@@ -208,7 +278,7 @@ test("concurrent continuation consumes once and an interrupted consumption never
       assert.equal(outcomes.filter((item) => item.code === "COMPACTION_TOKEN_CONSUMED").length, 7, JSON.stringify(outcomes));
     }
     assert.equal(fs.readdirSync(path.join(root, ".head", "sessions", "compaction", "consumptions")).length, 1);
-    assert.equal(fs.existsSync(path.join(root, ".head", ".operations")), false);
+    assert.deepEqual(fs.readdirSync(path.join(root, ".head", ".operations")), []);
   }
 });
 
@@ -238,7 +308,7 @@ test("refresh lease recovers an empty legacy lock and a crash before owner publi
   }
   assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId }).status, "idle");
   assert.equal(fs.readdirSync(path.join(root, ".head", "refresh")).some((name) => name.includes("writer.lock")), false);
-  assert.equal(fs.existsSync(path.join(root, ".head", ".operations")), false);
+  assert.deepEqual(fs.readdirSync(path.join(root, ".head", ".operations")), []);
 });
 
 function refreshPublication(source, target) {

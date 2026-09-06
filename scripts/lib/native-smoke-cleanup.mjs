@@ -3,23 +3,30 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
-function exists(target) {
-  try { process.kill(target, 0); return true; }
-  catch (error) { if (error.code === "ESRCH") return false; throw error; }
+function exists(target, kill) {
+  try { kill(target, 0); return true; }
+  catch (error) {
+    if (error.code === "ESRCH") return false;
+    // Darwin killpg1 filters zombie members and can return EPERM while the
+    // group is being reaped. It is still present/unverified, never "gone".
+    // Real TERM/KILL permission errors below remain fatal.
+    if (target < 0 && error.code === "EPERM") return true;
+    throw error;
+  }
 }
 
 // POSIX callers must spawn this child with detached:true. Capture its group ID
 // immediately, while it is owned; a group outlives its original root process.
-export function createNativeSmokeCleanup(child, { cwd, graceMs = 1_000, killWaitMs = 5_000 } = {}) {
+export function createNativeSmokeCleanup(child, { cwd, graceMs = 1_000, killWaitMs = 5_000, platform = process.platform, kill = process.kill.bind(process) } = {}) {
   const pid = child.pid;
-  const target = process.platform === "win32" ? pid : -pid;
+  const target = platform === "win32" ? pid : -pid;
   let stopping;
   let gone = !pid;
   const isAlive = () => {
     if (gone) return false;
     // Unlike a retained POSIX group, a Windows root PID no longer identifies
     // our child after its exit event and may already have been reused.
-    if ((process.platform === "win32" && (child.exitCode !== null || child.signalCode !== null)) || !exists(target)) gone = true;
+    if ((platform === "win32" && (child.exitCode !== null || child.signalCode !== null)) || !exists(target, kill)) gone = true;
     return !gone;
   };
   const waitUntilGone = async (timeoutMs) => {
@@ -28,8 +35,8 @@ export function createNativeSmokeCleanup(child, { cwd, graceMs = 1_000, killWait
     return !isAlive();
   };
   const signal = async (force) => {
-    if (process.platform !== "win32") {
-      try { process.kill(target, force ? "SIGKILL" : "SIGTERM"); }
+    if (platform !== "win32") {
+      try { kill(target, force ? "SIGKILL" : "SIGTERM"); }
       catch (error) { if (error.code !== "ESRCH") throw error; }
       return;
     }
@@ -50,7 +57,7 @@ export function createNativeSmokeCleanup(child, { cwd, graceMs = 1_000, killWait
     await signal(false);
     if (await waitUntilGone(graceMs)) return;
     await signal(true);
-    assert.equal(await waitUntilGone(killWaitMs), true, `Owned ${process.platform === "win32" ? "process" : "process group"} remains: ${pid}`);
+    assert.equal(await waitUntilGone(killWaitMs), true, `Owned ${platform === "win32" ? "process" : "process group"} remains: ${pid}`);
   })();
   return { pid, target, isAlive, stop };
 }
