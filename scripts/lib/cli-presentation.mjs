@@ -305,6 +305,51 @@ export function formatFeatureMappingStatus(value) {
   return `${lines.join("\n")}\n`;
 }
 
+export function formatChangeSetStatus(value) {
+  const candidates = value?.candidateSet?.candidates || [];
+  const recovery = value?.reviewRecovery || null;
+  const readiness = value?.reviewReadiness || null;
+  const lines = [];
+  if (value?.status === "awaiting_review" && recovery?.requiresNewUserDecision === false) {
+    lines.push(
+      "The Change impact decision is already saved.",
+      "User decision: none — do not ask the user to approve or reject it again.",
+      `HEAD action: ${compactText(readiness?.nextAction || "retry the unchanged saved decision to finish its pending derived state update.", 240)}`,
+    );
+  } else if (value?.status === "awaiting_review" && readiness?.runConflict) {
+    lines.push(
+      "Change impact review is waiting for the current Run boundary.",
+      "User decision: none for this impact set now.",
+      `Next: ${compactText(readiness.nextAction || "finish the current Run or its pending review, then inspect impact readiness again.", 240)}`,
+    );
+  } else if (value?.status === "awaiting_review" && readiness && !readiness.acceptanceAvailable) {
+    lines.push("Change impact evidence changed after the proposal.", "Acceptance is unavailable for this outdated candidate set.");
+    if (readiness.explicitRejectionAvailable) {
+      lines.push("Available action: explicitly reject this exact outdated set, then record fresh change evidence.");
+    } else {
+      lines.push(`Next: ${compactText(readiness.nextAction || "inspect the structured readiness state before taking action.", 240)}`);
+    }
+  } else if (value?.status === "awaiting_review") {
+    lines.push(
+      "Change impacts need your review.",
+      `Subject: ${candidates.length} evidence-linked impact candidates`,
+      "Options: accept all, accept a selection, or reject.",
+      "Recommendation: none is generated mechanically; HEAD assesses the exact evidence.",
+      "Reply in natural language. HEAD will verify the unchanged candidate set before applying the decision.",
+    );
+  } else if (value?.status === "awaiting_evidence") {
+    lines.push("No reviewed Product mapping supports an impact candidate yet.", "User decision: none now. HEAD may gather exact evidence when the task needs it.");
+  } else if (value?.status === "reviewed") {
+    lines.push("Change impacts have an explicit review.", "Next: use the reviewed impact facts when relevant.");
+  } else if (value?.status === "rejected") {
+    lines.push("The exact Change impact candidate set was rejected.", "Next: record fresh change evidence only if later work requires it.");
+  } else {
+    lines.push(`ChangeSet: ${value?.status || "not started"}.`, `Next: ${compactText(value?.nextAction || "record one only after an accepted execution change needs reviewed lineage.")}`);
+  }
+  lines.push("", "Product Canon and recovery direction are unchanged; technical IDs remain in the structured result.");
+  return `${lines.join("\n")}\n`;
+}
+
 export function formatPendingReview(value) {
   const review = value?.review || {};
   const plan = review.wholePlan || {};
@@ -440,6 +485,7 @@ export function formatMcpToolContent(name, value) {
   if (["head_conversation_enter", "head_compaction_lifecycle_step"].includes(name)) return formatConversationRecovery(value);
   if (name === "head_onboarding_guide") return formatOnboardingGuide(value);
   if (name === "head_feature_mapping_status") return formatFeatureMappingStatus(value);
+  if (name === "head_change_set_status") return formatChangeSetStatus(value);
   if (name === "head_pending_review") return formatPendingReview(value);
   if (name === "head_conformance_queue") return formatConformanceQueue(value);
   if (name === "head_conformance_read") return formatConformanceFinding(value);
@@ -467,10 +513,11 @@ export function formatCliResult(command, value) {
   if (command === "session-restore") return formatSessionRestore(value);
   if (["conversation-enter", "compaction-lifecycle-step"].includes(command)) return formatConversationRecovery(value);
   if (command === "feature-mapping-status") return formatFeatureMappingStatus(value);
+  if (command === "change-set-status") return formatChangeSetStatus(value);
   if (command === "run-review-context") return formatPendingReview(value);
   if (command === "conformance-queue") return formatConformanceQueue(value);
   if (command === "conformance-read") return formatConformanceFinding(value);
-  if (["onboarding-review", "feature-mapping-review", "run-review", "conformance-disposition", "product-initiative-review"].includes(command)) return formatReviewOutcome(value);
+  if (["onboarding-review", "feature-mapping-review", "change-impact-review", "run-review", "conformance-disposition", "product-initiative-review"].includes(command)) return formatReviewOutcome(value);
   if (command === "context-prepare") return formatContextPreparation(value);
   if (command === "context-preview") return formatContextPreview(value);
   return `${JSON.stringify(value, null, 2)}\n`;

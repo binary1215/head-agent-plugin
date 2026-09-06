@@ -151,10 +151,23 @@ function json(value) {
 function atomicWrite(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
-  try { fs.renameSync(temporary, file); }
-  catch (error) {
-    try { fs.unlinkSync(temporary); } catch { /* best effort */ }
+  let descriptor = null;
+  let ownsTemporary = false;
+  try {
+    descriptor = fs.openSync(temporary, "wx");
+    ownsTemporary = true;
+    fs.writeFileSync(descriptor, content, { encoding: "utf8" });
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporary, file);
+    ownsTemporary = false;
+  } catch (error) {
+    if (descriptor != null) {
+      try { fs.closeSync(descriptor); } catch { /* best effort */ }
+    }
+    if (ownsTemporary) {
+      try { fs.unlinkSync(temporary); } catch { /* best effort */ }
+    }
     throw error;
   }
 }

@@ -153,6 +153,8 @@ Claim은 active, stale, superseded, uncertain 같은 상태 전이를 지원합�
 
 Capsule ID는 내용에서 파생됩니다. 동일한 task, input digest, compiler version과 budget은 동일한 identifier를 생성합니다.
 
+공통 Capsule reader는 먼저 content digest를 검증한 뒤 `snapshot.projectId`를 현재의 논리적 HEAD Project에 결속합니다. 따라서 다른 Project에서 복사한 온전한 Capsule은 ExecutionContract나 Run이 사용하기 전에 `CONTEXT_CAPSULE_PROJECT_MISMATCH`로 실패합니다. 이 검사는 의도적으로 filesystem root 문자열, HEAD Session ID, 현재 World identity 또는 freshness를 비교하지 않습니다. 이후 execution contract가 허용하면 같은 논리적 Project의 historical Capsule을 계속 재사용할 수 있으며, folder 또는 provider 변경이 권한이 되지 않습니다.
+
 ## Repository World Model 통합
 
 index가 없으면 compilation은 선별된 `.head/` source로 제한됩니다. World Model이 최신이면 모든 현재 repository file, 제한된 `ProductContext`, symbol, dependency, structural adjacency, HEAD가 exact anchor로 지정한 `GraphTraversalEvidence`, Git evidence와 runtime observation이 동일한 Capsule budget 안에서 경쟁합니다. `ProductContext`는 계속 사용자가 소유한 Product Canon의 파생 뷰입니다. exact temporal expansion은 `GraphProjectionAdapter`를 사용하며 Project·World Model·GraphSnapshot·node·relation allowlist·depth·node/edge limit에 결속됩니다. stale, tampered, cross-project, candidate-hidden 또는 확대된 요청은 fail closed됩니다. provider 문구와 adapter diagnostic은 권한이나 복구 방향이 되지 않습니다. index가 오래됐는데 exact graph anchor가 있으면 compilation은 fail closed됩니다.

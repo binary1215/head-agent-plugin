@@ -10,6 +10,8 @@ import {
   inspectWorldModel,
   readWorldModelSnapshot,
 } from "./world-model.mjs";
+import { refreshWorldModel } from "./incremental-refresh.mjs";
+import { withProjectMutationAsync } from "./project-mutation-lock.mjs";
 import {
   CHANGE_IMPACT_CANDIDATE_DIRECTORY,
   CHANGE_IMPACT_REVIEW_DIRECTORY,
@@ -299,7 +301,9 @@ export function readChangeImpactReviewDecision({ root = ".", reviewDecisionId } 
   if (!fs.existsSync(file)) fail(`Change impact ReviewDecision not found: ${reviewDecisionId}`, "CHANGE_IMPACT_REVIEW_NOT_FOUND");
   const review = readJson(file, "Change impact ReviewDecision");
   const candidateSet = readChangeImpactCandidateSet({ root: inspected.project.projectRoot, candidateSetId: review.candidateSetId }).candidateSet;
-  return { status: "verified", file, reviewDecision: verifyChangeImpactReviewDecision(review, candidateSet, inspected.project.projectId) };
+  const reviewDecision = verifyChangeImpactReviewDecision(review, candidateSet, inspected.project.projectId);
+  if (reviewDecision.reviewDecisionId !== reviewDecisionId) fail("Change impact ReviewDecision filename does not match its exact identity.", "CHANGE_IMPACT_REVIEW_IDENTITY_MISMATCH");
+  return { status: "verified", file, reviewDecision };
 }
 
 export function readVcsEvidence({ root = ".", vcsEvidenceId } = {}) {
@@ -514,38 +518,138 @@ function buildImpactReview(candidateSet, disposition, acceptedCandidateIds, rati
   return verifyChangeImpactReviewDecision({ ...payload, reviewDecisionId: `change-impact-review-decision-${hash.slice(0, 24)}`, reviewDecisionHash: hash }, candidateSet, candidateSet.projectId);
 }
 
-export async function reviewChangeImpact({ root = ".", candidateSetId, disposition, acceptedCandidateIds = [], rationale } = {}) {
+function recordedImpactReview({ projectRoot, projectId, candidateSet }) {
+  // Only the immutable P1 artifact directory may establish a saved review.
+  // A rebuildable Graph node is useful for equality checks, never authority.
+  const projection = loadChangeSetProjection({ projectRoot, projectId });
+  const directory = path.join(projectRoot, ...CHANGE_IMPACT_REVIEW_DIRECTORY.split("/"));
+  const files = fs.existsSync(directory)
+    ? fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map((entry) => entry.name)
+    : [];
+  const expectedFiles = new Set(projection.reviewDecisions.map((review) => `${review.reviewDecisionId}.json`));
+  if (files.length !== expectedFiles.size || files.some((file) => !expectedFiles.has(file))) {
+    fail("Change impact ReviewDecision filenames do not match their exact identities.", "CHANGE_IMPACT_REVIEW_IDENTITY_MISMATCH");
+  }
+  const matches = projection.reviewDecisions.filter((review) => review.candidateSetId === candidateSet.candidateSetId);
+  if (matches.length > 1) {
+    fail("The exact Change impact candidate set has conflicting durable decisions; preserve the records and reconcile their authority before proceeding.", "CHANGE_IMPACT_REVIEW_CONFLICT");
+  }
+  if (!matches.length) return null;
+  const review = readChangeImpactReviewDecision({ root: projectRoot, reviewDecisionId: matches[0].reviewDecisionId }).reviewDecision;
+  if (review.sessionId !== candidateSet.sessionId || review.changeSetId !== candidateSet.changeSetId) {
+    fail("Change impact ReviewDecision belongs to different ChangeSet lineage.", "CHANGE_IMPACT_REVIEW_IDENTITY_MISMATCH");
+  }
+  return review;
+}
+
+function impactReviewProjectionState(snapshot, review) {
+  const reviewDecisionIds = snapshot.changeSetProjection?.reviewDecisionIds || [];
+  const projectedReview = snapshot.temporalProvenanceGraph?.nodes?.find((node) => node.nodeId === review.reviewDecisionId) || null;
+  const idPresent = reviewDecisionIds.includes(review.reviewDecisionId);
+  const exact = idPresent && projectedReview?.kind === "ChangeImpactReviewDecision"
+    && projectedReview.reviewDecisionHash === review.reviewDecisionHash;
+  return { exact, absent: !idPresent && projectedReview == null };
+}
+
+function currentCandidateEvidence(candidateSet, state, world) {
+  return world.status === "current"
+    && world.snapshot.worldModelId === state.worldModelId
+    && world.snapshot.temporalProvenanceGraph.graphSnapshotId === state.graphSnapshotId
+    && world.snapshot.temporalProvenanceGraph.sourceSnapshotId === candidateSet.afterSourceSnapshotId;
+}
+
+function exactRequestCanRepairOrphanProjection({ projectRoot, projectId, candidateSet, world, review }) {
+  const expectedProjection = loadChangeSetProjection({ projectRoot, projectId, additionalReviewDecisions: [review] });
+  if (world.status !== "stale"
+    || world.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.afterSourceSnapshotId
+    || world.snapshot.changeSetProjection?.projectionInputHash !== expectedProjection.projectionInputHash
+    || !impactReviewProjectionState(world.snapshot, review).exact
+    || world.changes?.changeSetProjectionChanged !== true
+    || world.changes?.temporalProvenanceChanged !== true) return false;
+  const allowedDerivedDrift = new Set(["changeSetProjectionChanged", "temporalProvenanceChanged"]);
+  return Object.entries(world.changes || {}).every(([key, value]) => allowedDerivedDrift.has(key)
+    || (Array.isArray(value) ? value.length === 0 : value !== true));
+}
+
+function completeImpactReview({ projectRoot, inspected, state, review, snapshot, worldStatus = "current", reusedReviewDecision = false, updatePointer = true }) {
+  const nextPhase = review.disposition === "reject" ? "rejected" : "reviewed";
+  const projection = loadChangeSetProjection({ projectRoot, projectId: inspected.project.projectId });
+  const nextState = updatePointer ? writeState(projectRoot, inspected.project, {
+    sessionId: inspected.state.sessionId,
+    phase: nextPhase,
+    changeSetId: state.changeSetId,
+    candidateSetId: state.candidateSetId,
+    reviewDecisionId: review.reviewDecisionId,
+    worldModelId: snapshot.worldModelId,
+    graphSnapshotId: snapshot.temporalProvenanceGraph.graphSnapshotId,
+    sourceSnapshotId: snapshot.temporalProvenanceGraph.sourceSnapshotId,
+    vcsEvidenceIds: projection.vcsEvidence.filter((item) => item.changeSetId === state.changeSetId).map((item) => item.vcsEvidenceId).sort(),
+  }) : state;
+  return {
+    status: nextPhase === "reviewed" ? "change_impacts_reviewed" : "change_impacts_rejected",
+    state: nextState,
+    reviewDecision: review,
+    reusedReviewDecision,
+    reviewedImpactCount: review.acceptedCandidateIds.length,
+    worldModel: { status: worldStatus, worldModelId: snapshot.worldModelId, ...snapshotReference(snapshot) },
+  };
+}
+
+export async function reviewChangeImpact(options = {}) {
+  return withProjectMutationAsync({ root: options.root ?? ".", scope: "session-recovery" }, () => reviewChangeImpactLocked(options));
+}
+
+async function reviewChangeImpactLocked({ root = ".", candidateSetId, disposition, acceptedCandidateIds = [], rationale } = {}) {
   const inspected = readyProject(root, "Change impact review");
   if (inspected.state.activeRunId || inspected.state.pendingReview) fail("Change impact review cannot advance while a Run is active or awaiting review.", "CHANGE_SET_RUN_CONFLICT");
   const projectRoot = inspected.project.projectRoot;
   if (!fs.existsSync(stateFile(projectRoot))) fail("No ChangeSet is awaiting impact review.", "CHANGE_SET_NOT_STARTED");
   const state = verifyState(readJson(stateFile(projectRoot), "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId });
-  if (state.phase !== "awaiting-review" || state.candidateSetId !== candidateSetId) fail("Change impact review references a stale or non-reviewable candidate set.", "STALE_CHANGE_IMPACT_CANDIDATE_SET");
+  if (!["awaiting-review", "reviewed", "rejected"].includes(state.phase) || state.candidateSetId !== candidateSetId) fail("Change impact review references a stale or non-reviewable candidate set.", "STALE_CHANGE_IMPACT_CANDIDATE_SET");
   const candidateSet = readChangeImpactCandidateSet({ root: projectRoot, candidateSetId }).candidateSet;
-  const current = inspectWorldModel({ root: projectRoot });
-  if (current.status !== "current" || current.snapshot.worldModelId !== state.worldModelId
-    || current.snapshot.temporalProvenanceGraph.graphSnapshotId !== state.graphSnapshotId
-    || current.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.afterSourceSnapshotId) {
-    fail("Repository evidence changed after impact inference; record a new ChangeSet or candidate set.", "CHANGE_IMPACT_SOURCE_DRIFT");
-  }
+  if (candidateSet.sessionId !== state.sessionId || candidateSet.changeSetId !== state.changeSetId) fail("Change impact candidate set belongs to different ChangeSet lineage.", "CHANGE_IMPACT_CANDIDATE_SET_IDENTITY_MISMATCH");
   const normalizedDisposition = requiredText(disposition, "Review disposition").toLocaleLowerCase();
   if (!["accept-all", "accept-selection", "reject"].includes(normalizedDisposition)) fail("Change impact disposition must be accept-all, accept-selection, or reject.", "INVALID_CHANGE_IMPACT_REVIEW_DISPOSITION");
   const review = buildImpactReview(candidateSet, normalizedDisposition, acceptedCandidateIds, rationale);
-  const projected = await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: current.snapshot, additionalReviewDecisions: [review] });
-  persistImmutable(safeFile(projectRoot, CHANGE_IMPACT_REVIEW_DIRECTORY, review.reviewDecisionId, "change-impact-review-decision"), review, "Change impact ReviewDecision");
-  const nextPhase = normalizedDisposition === "reject" ? "rejected" : "reviewed";
-  const nextState = writeState(projectRoot, inspected.project, {
-    sessionId: inspected.state.sessionId,
-    phase: nextPhase,
-    changeSetId: state.changeSetId,
-    candidateSetId,
-    reviewDecisionId: review.reviewDecisionId,
-    worldModelId: projected.snapshot.worldModelId,
-    graphSnapshotId: projected.snapshot.temporalProvenanceGraph.graphSnapshotId,
-    sourceSnapshotId: projected.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-    vcsEvidenceIds: projected.changeSetProjectionInput.vcsEvidence.filter((item) => item.changeSetId === state.changeSetId).map((item) => item.vcsEvidenceId).sort(),
+  const recordedReview = recordedImpactReview({ projectRoot, projectId: inspected.project.projectId, candidateSet });
+  const pointerPending = state.phase === "awaiting-review";
+  if (!pointerPending && (!recordedReview || state.reviewDecisionId !== recordedReview.reviewDecisionId
+    || state.phase !== (recordedReview.disposition === "reject" ? "rejected" : "reviewed"))) {
+    fail("Completed Change impact state does not match its exact durable decision.", "CHANGE_IMPACT_REVIEW_CONFLICT");
+  }
+  if (recordedReview && changeSetCanonicalJson(recordedReview) !== changeSetCanonicalJson(review)) {
+    if (!pointerPending) fail("Change impact review references an already reviewed candidate set.", "STALE_CHANGE_IMPACT_CANDIDATE_SET");
+    fail(`A different Change impact ReviewDecision is already durable for this exact candidate set. Retry the unchanged saved decision ${recordedReview.reviewDecisionId} to finish its pending state update.`, "CHANGE_IMPACT_REVIEW_CONFLICT");
+  }
+  let current = inspectWorldModel({ root: projectRoot });
+  if (recordedReview) {
+    const projectionState = impactReviewProjectionState(current.snapshot, recordedReview);
+    if (!projectionState.exact && !projectionState.absent) fail("The World projection does not match the exact saved Change impact decision.", "CHANGE_IMPACT_REVIEW_PROJECTION_MISMATCH");
+    if (projectionState.absent) {
+      await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: current.snapshot });
+      current = inspectWorldModel({ root: projectRoot });
+      if (!impactReviewProjectionState(current.snapshot, recordedReview).exact) fail("The saved Change impact decision could not be verified in the rebuilt World projection.", "CHANGE_IMPACT_REVIEW_PROJECTION_MISMATCH");
+    }
+    return completeImpactReview({ projectRoot, inspected, state, review: recordedReview, snapshot: current.snapshot,
+      worldStatus: current.status, reusedReviewDecision: true, updatePointer: pointerPending });
+  }
+  const evidenceCurrent = currentCandidateEvidence(candidateSet, state, current);
+  const repairableOrphanProjection = normalizedDisposition !== "reject" && !evidenceCurrent && exactRequestCanRepairOrphanProjection({
+    projectRoot, projectId: inspected.project.projectId, candidateSet, world: current, review,
   });
-  return { status: nextPhase === "reviewed" ? "change_impacts_reviewed" : "change_impacts_rejected", state: nextState, reviewDecision: review, reviewedImpactCount: review.acceptedCandidateIds.length, worldModel: { worldModelId: projected.snapshot.worldModelId, ...snapshotReference(projected.snapshot) } };
+  if (normalizedDisposition !== "reject" && !evidenceCurrent && !repairableOrphanProjection) {
+    fail(`Repository evidence changed after impact inference. Explicitly reject the outdated candidate set ${candidateSetId}, then record a fresh ChangeSet from current evidence; stale candidates cannot be accepted.`, "CHANGE_IMPACT_SOURCE_DRIFT");
+  }
+  if (normalizedDisposition === "reject" && current.status !== "current") {
+    await refreshWorldModel({ root: projectRoot });
+    current = inspectWorldModel({ root: projectRoot });
+    if (current.status !== "current") fail("World evidence changed during rejection refresh; retry the same explicit rejection after concurrent changes settle.", "CHANGE_IMPACT_SOURCE_DRIFT");
+  }
+  // P1 authority is durable before its rebuildable P4 projection. Exact retry
+  // repairs projection/pointer boundaries without asking the user again.
+  persistImmutable(safeFile(projectRoot, CHANGE_IMPACT_REVIEW_DIRECTORY, review.reviewDecisionId, "change-impact-review-decision"), review, "Change impact ReviewDecision");
+  const projected = await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: current.snapshot });
+  return completeImpactReview({ projectRoot, inspected, state, review, snapshot: projected.snapshot });
 }
 
 export function inspectChangeSets({ root = "." } = {}) {
@@ -555,12 +659,31 @@ export function inspectChangeSets({ root = "." } = {}) {
   const state = verifyState(readJson(file, "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId });
   const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId: state.changeSetId }).changeSet;
   const candidateSet = readChangeImpactCandidateSet({ root: inspected.project.projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
-  const reviewDecision = state.reviewDecisionId ? readChangeImpactReviewDecision({ root: inspected.project.projectRoot, reviewDecisionId: state.reviewDecisionId }).reviewDecision : null;
+  const savedReview = recordedImpactReview({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, candidateSet });
+  const reviewDecision = state.reviewDecisionId ? readChangeImpactReviewDecision({ root: inspected.project.projectRoot, reviewDecisionId: state.reviewDecisionId }).reviewDecision : savedReview;
   const projection = loadChangeSetProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
   const vcsEvidence = projection.vcsEvidence.filter((item) => item.changeSetId === changeSet.changeSetId);
   const world = inspectWorldModel({ root: inspected.project.projectRoot });
+  const awaitingReview = state.phase === "awaiting-review";
+  const evidenceCurrent = currentCandidateEvidence(candidateSet, state, world);
+  const runConflict = Boolean(inspected.state.activeRunId || inspected.state.pendingReview);
   return {
     status: state.phase.replaceAll("-", "_"), state, changeSet, candidateSet, reviewDecision, vcsEvidence,
+    reviewRecovery: awaitingReview && savedReview ? { status: "pointer-update-pending", reviewDecisionId: savedReview.reviewDecisionId, requiresNewUserDecision: false } : null,
+    reviewReadiness: awaitingReview ? {
+      candidateSetId: candidateSet.candidateSetId,
+      evidenceStatus: evidenceCurrent ? "current" : "stale",
+      acceptanceAvailable: evidenceCurrent && !runConflict && !savedReview,
+      explicitRejectionAvailable: !runConflict && !savedReview,
+      runConflict,
+      nextAction: runConflict
+        ? "Finish the existing Run or its pending review before changing the impact review state."
+        : savedReview
+        ? "Retry the unchanged saved ReviewDecision to finish its pending state update; no new user decision is needed."
+        : evidenceCurrent
+        ? "Ask the user to review this exact candidate set; only explicit acceptance promotes impacts."
+        : "Ask whether the user wants to reject this exact outdated candidate set, then record a fresh ChangeSet from current evidence.",
+    } : null,
     worldModel: { status: world.status, worldModelId: world.snapshot.worldModelId, graphSnapshotId: world.snapshot.temporalProvenanceGraph.graphSnapshotId, sourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId, matchesState: world.snapshot.worldModelId === state.worldModelId },
     authority: { changeSet: "reviewed-execution-change-lineage", impactCandidates: "non-authoritative-until-explicit-review", reviewedImpacts: "explicit-user-reviewed-impact-facts", vcsEvidence: "optional-derived-evidence-not-instruction", graph: "rebuildable-derived-projection", git: "optional-vcs-evidence-not-required" },
   };

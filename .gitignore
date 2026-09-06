@@ -17,6 +17,7 @@ test/*
 !test/release-observation.test.mjs
 !test/session-recovery-integration.test.mjs
 !test/compaction-lifecycle.test.mjs
+!test/change-set-recovery.test.mjs
 !test/run-transition-recovery.test.mjs
 !test/runtime-result-application.test.mjs
 !test/native-smoke-cleanup.test.mjs

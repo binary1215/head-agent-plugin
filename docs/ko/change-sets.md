@@ -34,6 +34,8 @@ plugin은 정확한 before/after revision을 비교하고, 기존에 검토된 `
 
 acceptance는 별도의 불변 `ReviewedImpact` receipt와 검토된 `ChangeSet -[:IMPACTS]-> Feature|Capability` edge를 생성합니다. rejection은 canonical impact edge를 생성하지 않습니다. candidate node는 일반 traversal과 모든 Context Capsule에서 계속 제외됩니다. 명시적 read-only traversal은 이를 포함하도록 선택할 수 있습니다.
 
+acceptance에는 정확한 candidate evidence가 현재 상태여야 한다는 조건이 계속 적용됩니다. 명시적 `reject`는 freshness를 주장하지 않으므로 오래된 정확한 candidate set을 닫을 수 있습니다. Core는 파생 World view만 먼저 갱신한 뒤 rejection을 기록합니다. 불변 P1 `ReviewDecision`은 재구축 가능한 P4 World/Graph projection과 변경 가능한 state pointer보다 먼저 기록됩니다. 뒤의 쓰기가 실패하면 변경되지 않은 재시도는 그 정확한 영속 결정을 재사용하고, 사용자에게 결정을 다시 요구하지 않은 채 누락된 projection 또는 pointer만 복구합니다. 충돌하는 재시도는 fail closed됩니다. 레거시 orphan P4 projection은 현재의 명시적 요청, 전체 projection digest, review digest, source identity 및 모든 비파생 drift 검사가 일치할 때만 복구할 수 있습니다. Graph는 누락된 권한을 제공하지 않습니다.
+
 변경된 code 또는 test를 Product Canon에 연결하는 검토된 mapping이 없으면 candidate set은 열린 Unknown을 기록하고 `awaiting-evidence` 상태로 유지됩니다.
 
 ## 선택적 VCS 증거
@@ -94,7 +96,7 @@ VCS evidence attachment input:
 }
 ```
 
-읽기 전용 MCP tool `head_change_set_status`와 `head_vcs_evidence`는 어떤 것도 기록, 검토 또는 promote하지 않고 검증된 state와 attachment를 노출합니다.
+읽기 전용 MCP tool `head_change_set_status`와 `head_vcs_evidence`는 어떤 것도 기록, 검토 또는 promote하지 않고 검증된 state와 attachment를 노출합니다. 정확한 영속 impact decision이 있지만 state pointer 반영이 남았다면 status는 `requiresNewUserDecision: false`인 복구 상태를 표시하고 변경되지 않은 결정을 재시도하도록 안내합니다.
 
 ## 프로젝트 아티팩트
 

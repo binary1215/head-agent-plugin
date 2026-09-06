@@ -1413,6 +1413,9 @@ export function readContextCapsule({ root = ".", capsuleId } = {}) {
   delete payload.capsuleHash;
   const actualHash = digest(canonicalJson(payload));
   if (recordedHash !== actualHash || capsuleId !== `capsule-${actualHash.slice(0, 24)}`) fail("Context Capsule digest verification failed.", "CAPSULE_DIGEST_MISMATCH");
+  if (capsule.snapshot?.projectId !== inspected.project.projectId) {
+    fail("Context Capsule belongs to another HEAD Project.", "CONTEXT_CAPSULE_PROJECT_MISMATCH");
+  }
   return { status: "verified", file, capsule };
 }
 

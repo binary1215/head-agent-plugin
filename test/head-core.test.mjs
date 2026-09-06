@@ -2739,6 +2739,50 @@ test("promotes document edits only through explicit structured Product Canon rev
   });
   assert.equal(mcpReview.result.structuredContent.reviewDecision.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
 
+  const canonFile = path.join(root, ".head", "context", "product-model.json");
+  const canonBeforeFaults = fs.readFileSync(canonFile, "utf8");
+  const canonTemporary = `${canonFile}.tmp-${process.pid}`;
+  const preexistingTemporary = "preexisting temporary owned by another operation\n";
+  fs.writeFileSync(canonTemporary, preexistingTemporary, { flag: "wx" });
+  await assert.rejects(
+    () => applyDocumentChangeReview({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }),
+    (error) => error.code === "EEXIST",
+  );
+  assert.equal(fs.readFileSync(canonTemporary, "utf8"), preexistingTemporary);
+  assert.equal(fs.readFileSync(canonFile, "utf8"), canonBeforeFaults);
+  fs.unlinkSync(canonTemporary);
+
+  const realOpen = fs.openSync;
+  const realWrite = fs.writeFileSync;
+  let ownedDescriptor = null;
+  let partialWriteInjected = false;
+  try {
+    fs.openSync = function (file, flags) {
+      const descriptor = realOpen.apply(this, arguments);
+      if (path.resolve(String(file)) === path.resolve(canonTemporary) && flags === "wx") ownedDescriptor = descriptor;
+      return descriptor;
+    };
+    fs.writeFileSync = function (file, data, options) {
+      if (!partialWriteInjected && ownedDescriptor != null && file === ownedDescriptor) {
+        partialWriteInjected = true;
+        realWrite.call(fs, file, String(data).slice(0, 9), options);
+        throw Object.assign(new Error("Injected partial Canon temporary-file write"), { code: "EIO" });
+      }
+      return realWrite.apply(this, arguments);
+    };
+    await assert.rejects(
+      () => applyDocumentChangeReview({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }),
+      (error) => error.code === "EIO",
+    );
+  } finally {
+    fs.openSync = realOpen;
+    fs.writeFileSync = realWrite;
+  }
+  assert.equal(partialWriteInjected, true);
+  assert.equal(fs.existsSync(canonTemporary), false);
+  assert.equal(fs.readFileSync(canonFile, "utf8"), canonBeforeFaults);
+  assert.equal(inspectDocumentChangeReviewStatus({ root, candidateSetId: captured.candidateSet.candidateSetId }).status, "reviewed-awaiting-application");
+
   const applied = await applyDocumentChangeReview({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId });
   assert.equal(applied.status, "applied");
   assert.equal(applied.applicationReceipt.canonChanged, true);

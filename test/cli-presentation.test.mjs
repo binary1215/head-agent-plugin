@@ -3,6 +3,7 @@ import test from "node:test";
 import { tools, dispatch } from "../scripts/mcp-server.mjs";
 import {
   formatCliResult,
+  formatChangeSetStatus,
   formatConformanceFinding,
   formatConformanceQueue,
   formatFeatureMappingStatus,
@@ -202,6 +203,34 @@ test("Feature mapping presentation follows typed fresh, stale, recovery, and Run
   ]) {
     assert.equal(formatCliResult("feature-mapping-status", value), formatMcpToolContent("head_feature_mapping_status", value));
   }
+});
+
+test("Change impact presentation avoids repeat approval and keeps stale rejection optional", () => {
+  const candidateSet = { candidates: [{ candidateId: "impact-secret-id" }] };
+  const recovery = {
+    status: "awaiting_review",
+    candidateSet,
+    reviewRecovery: { status: "pointer-update-pending", reviewDecisionId: "review-secret-id", requiresNewUserDecision: false },
+    reviewReadiness: { acceptanceAvailable: false, explicitRejectionAvailable: false, runConflict: false,
+      nextAction: "Retry the unchanged saved ReviewDecision to finish its pending state update; no new user decision is needed." },
+  };
+  const recoveryOutput = formatChangeSetStatus(recovery);
+  assert.match(recoveryOutput, /decision is already saved/u);
+  assert.match(recoveryOutput, /User decision: none/u);
+  assert.doesNotMatch(recoveryOutput, /Options: accept/u);
+  assert.doesNotMatch(recoveryOutput, /review-secret-id|impact-secret-id/u);
+
+  const stale = {
+    status: "awaiting_review",
+    candidateSet,
+    reviewRecovery: null,
+    reviewReadiness: { evidenceStatus: "stale", acceptanceAvailable: false, explicitRejectionAvailable: true, runConflict: false },
+  };
+  const staleOutput = formatChangeSetStatus(stale);
+  assert.match(staleOutput, /Acceptance is unavailable/u);
+  assert.match(staleOutput, /Available action: explicitly reject/u);
+  assert.doesNotMatch(staleOutput, /Options: accept/u);
+  assert.equal(formatCliResult("change-set-status", recovery), formatMcpToolContent("head_change_set_status", recovery));
 });
 
 test("Run and conformance projections never promote evidence into approval or a global gate", () => {

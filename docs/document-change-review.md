@@ -98,7 +98,7 @@ An accepted application writes only the reviewed Product Model, derives revision
 
 The receipt deliberately names the pre-audit application outcome. It cannot name the same GraphSnapshot that contains it because that would create a content-hash cycle. The later audit graph is derived evidence only; the immutable ReviewDecision and application receipt remain the authoritative transition records.
 
-If Canon, World Model, graph projection, or Markdown reconciliation fails, current pointers, Canon bytes, and published documents are restored. Immutable review evidence remains available for diagnosis and retry. New immutable snapshots written before a rollback may remain as unreachable derived evidence but cannot become current authority.
+If Canon, World Model, graph projection, or Markdown reconciliation fails, current pointers, Canon bytes, and published documents are restored. Immutable review evidence remains available for diagnosis and retry. New immutable snapshots written before a rollback may remain as unreachable derived evidence but cannot become current authority. Canon replacement acquires its fixed temporary path exclusively and records ownership only after successful creation. A partial write failure closes and removes only that call's owned temporary; a pre-existing `EEXIST` temporary is preserved. The same process can therefore retry after its own failed partial write without deleting another operation's evidence.
 
 ## Artifacts
 

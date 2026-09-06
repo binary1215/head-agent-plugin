@@ -33,6 +33,8 @@ An explicit change-impact ReviewDecision may:
 
 Acceptance creates a separate immutable `ReviewedImpact` receipt and a reviewed `ChangeSet -[:IMPACTS]-> Feature|Capability` edge. Rejection creates no canonical impact edge. Candidate nodes remain excluded from normal traversal and every Context Capsule; explicit read-only traversal may opt in.
 
+Acceptance still requires the exact candidate evidence to be current. An explicit `reject` may close the exact stale candidate set because rejection makes no freshness claim; Core first refreshes only the derived World view, then records the rejection. The immutable P1 `ReviewDecision` is written before its rebuildable P4 World/Graph projection and mutable state pointer. If a later write fails, an unchanged retry reuses that exact durable decision and repairs only the missing projection or pointer without asking for another user decision. A conflicting retry fails closed. A legacy orphan P4 projection can be recovered only when the current explicit request, full projection digest, review digest, source identity, and all non-derived drift checks match; Graph never supplies the missing authority.
+
 If no reviewed mapping connects changed code or tests to Product Canon, the candidate set records an open Unknown and remains `awaiting-evidence`.
 
 ## Optional VCS evidence
@@ -93,7 +95,7 @@ VCS evidence attachment input:
 }
 ```
 
-The read-only MCP tools `head_change_set_status` and `head_vcs_evidence` expose verified state and attachments without recording, reviewing, or promoting anything.
+The read-only MCP tools `head_change_set_status` and `head_vcs_evidence` expose verified state and attachments without recording, reviewing, or promoting anything. When an exact durable impact decision exists but its state pointer is pending, status reports recovery with `requiresNewUserDecision: false` and directs the caller to retry the unchanged decision.
 
 ## Project artifacts
 

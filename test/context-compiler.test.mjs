@@ -6,11 +6,13 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, compileContext, requireSufficientContextCapsule } from "../scripts/lib/context-compiler.mjs";
+import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, compileContext, readContextCapsule, requireSufficientContextCapsule } from "../scripts/lib/context-compiler.mjs";
 import { prepareContextWorkflow, previewContextWorkflow } from "../scripts/lib/context-workflow.mjs";
+import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { GIT_HISTORY_ADAPTER_VERSION } from "../scripts/lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "../scripts/lib/runtime-state.mjs";
+import { startRun } from "../scripts/lib/run-lineage.mjs";
 import { buildWorldModel, readWorldModel } from "../scripts/lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
@@ -1101,4 +1103,48 @@ test("HEAD exact graph evidence improves annotated recall and lowers lexical fil
   assert.equal(exact.capsule.coverageAssessment.status, "coverage-complete");
   assert.equal(exact.capsule.selection.excluded.some((item) => item.reason === "outside-head-evidence-contract"), true);
   assert.equal(exact.capsule.budget.usedApproxTokens < baseline.capsule.budget.usedApproxTokens, true);
+});
+
+test("Context Capsule readers reject an intact Capsule from another logical Project", async (t) => {
+  const parent = temporaryProject();
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const projectA = path.join(parent, "project-a");
+  const projectB = path.join(parent, "project-b");
+  fs.mkdirSync(projectA);
+  fs.mkdirSync(projectB);
+  initializeProject({ root: projectA, pluginRoot, runtimes: ["codex"] });
+  initializeProject({ root: projectB, pluginRoot, runtimes: ["codex"] });
+  const task = "Inspect the current project context";
+  const capsuleA = compileContext({ root: projectA, task, persist: true });
+  const capsuleB = compileContext({ root: projectB, task, persist: true });
+  assert.notEqual(capsuleA.capsule.snapshot.projectId, capsuleB.capsule.snapshot.projectId);
+
+  const foreignFile = path.join(projectB, ".head", "context", "capsules", `${capsuleA.capsule.capsuleId}.json`);
+  fs.copyFileSync(capsuleA.file, foreignFile, fs.constants.COPYFILE_EXCL);
+  assert.throws(
+    () => readContextCapsule({ root: projectB, capsuleId: capsuleA.capsule.capsuleId }),
+    (error) => error.code === "CONTEXT_CAPSULE_PROJECT_MISMATCH",
+  );
+
+  const plan = createWholePlanSnapshot({
+    root: projectB,
+    objective: task,
+    plan: [{ id: "inspect", outcome: "Inspect current Project B" }],
+  });
+  assert.throws(() => createExecutionContract({
+    root: projectB,
+    wholePlanId: plan.artifact.wholePlanId,
+    capsuleId: capsuleA.capsule.capsuleId,
+    scope: task,
+    acceptanceCriteria: ["Use the current Project context"],
+  }), (error) => error.code === "CONTEXT_CAPSULE_PROJECT_MISMATCH");
+
+  const ownContract = createExecutionContract({
+    root: projectB,
+    wholePlanId: plan.artifact.wholePlanId,
+    capsuleId: capsuleB.capsule.capsuleId,
+    scope: task,
+    acceptanceCriteria: ["Use the current Project context"],
+  });
+  assert.equal(startRun({ root: projectB, executionContractId: ownContract.artifact.executionContractId }).status, "run_started");
 });
