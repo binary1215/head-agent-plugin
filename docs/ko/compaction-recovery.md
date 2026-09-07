@@ -29,6 +29,14 @@ project 진입, compaction 후, provider 교체 후에 이를 자동 호출합�
 continuation token을 입력하지 않습니다. 명시적인 `session-restore`와
 `compact-*` command는 고급 진단 surface로 남습니다.
 
+복구 상태에 설명이 필요하면 프로젝트 준비도와 대화 진입은 동일한
+`head_checkpoint_diagnose` 계약을 재사용합니다. 이 계약은 `basis B0`를 읽고 artifact
+restore를 검증한 다음 `basis B1`을 읽으며, 관찰이 바뀌면 새로 읽도록 요구합니다. lock이나
+cache를 쓰지 않고 model을 호출하지 않으며 원자적 filesystem snapshot이나 ABA 감지를
+주장하지 않습니다. pointer 부재, pointer가 가리키는 ledger artifact 누락, integrity 실패,
+필수 lineage drift와 선택적 P3 ResultPacket 누락은 서로 구별됩니다. sync 가능 여부 필드는
+기계적 상태일 뿐 checkpoint 문장이 현재 사용자 의도를 여전히 반영한다는 주장이 아닙니다.
+
 이미 open 상태인 compaction epoch 바깥의 자연스러운 durable-work 또는 context-loss
 boundary에서 provider HEAD는 `head_checkpoint_basis` 다음에 `head_checkpoint_sync`를
 사용할 수 있습니다. 첫 호출은 비지속 읽기 전용 비교이고, 두 번째 호출은 기존 mutation

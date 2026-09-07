@@ -25,7 +25,7 @@ become an additional source of product meaning or recovery direction.
 | P1 Normative Authority | approved product meaning, policy, and explicit decisions | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision | existence in a graph, message, result, or host cannot create approval |
 | P2 Canonical Recovery/Lineage Record | provider-independent recovery of Project, Session, Run, plan, context, contract, and next direction | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | evidence deletion or provider summary cannot rewrite checkpoint fields |
 | P3 Evidence Record | reviewable results, observations, candidates, claims, ownership records, and audit receipts | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, ObservationTypeDescriptor/ObservationRecord/DerivedObservationRecord/ObservationCollectionReceipt, ConformanceFindingCandidate/DispositionReceipt/ResolutionCandidate, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
-| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
+| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, RecoveryCheckpointDiagnosisProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
 | P5 Operational Effect | host-local process, continuation, wait, and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, ObservationSourceBinding, ConformanceTriggerBinding, provider-session reference | successful continuation, waiting, delivery, or process control cannot authorize execution, review, promotion, or recovery |
 
 `scripts/lib/authority-plane-contract.mjs` emits one content-derived
@@ -146,6 +146,15 @@ checkpoint first, then a P5 WorkspaceHost adapter may fresh-verify one already-
 running endpoint. The non-persisted `ContinuationOutcome` reports `attached` or a
 disclosed fresh logical HEAD fallback; it cannot change the SessionRestoreProjection,
 persist provider identity, or claim recovery authority.
+
+`RecoveryCheckpointDiagnosisProjection` is also P4. It verifies a bounded
+`basis B0 -> restore -> basis B1` sequence and reports facts about the current
+pointer, artifact recovery, and mechanical sync availability. It cannot cache a
+basis, acquire the mutation lock, repair evidence, invoke a provider HEAD, judge
+semantic freshness, or supply any checkpoint field. Sequential agreement is not
+an atomic filesystem snapshot and cannot detect ABA. A changed sequence requires
+a fresh read; integrity failure and required-artifact loss remain failures rather
+than being relabeled as optional evidence loss.
 
 Independently ownable worker execution records one P3 `BoundedWorkerDispatch` over
 the exact Run `ExecutionAuthorization`. P5 lease/process/wait state enforces

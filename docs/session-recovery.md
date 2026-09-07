@@ -77,6 +77,45 @@ returns the exact P2 direction and marks the evidence `missing-evidence`; it doe
 not manufacture a Fresh HEAD review context. The caller must recover or reproduce
 the required evidence before review.
 
+## Read-only checkpoint diagnosis
+
+`head_checkpoint_diagnose` is the common read-only P4 diagnosis used by project
+readiness and conversation entry when a current pointer exists, and exposed by
+typed MCP and the advanced CLI. It reports the
+current checkpoint pointer or its absence, artifact-only restore verification,
+mechanical checkpoint-sync availability, and one bounded next HEAD action. It
+does not write a lock, cache, checkpoint, Session pointer, approval, or Canon.
+Reading it does not invoke another provider HEAD or model assessment.
+
+For a current pointer, diagnosis performs the bounded sequence
+`basis B0 -> artifact restore -> basis B1`. A normal result requires equal basis
+identity and Session hash plus an exact Project, Session, checkpoint ID, and
+checkpoint digest match in the restore tuple. If the observations change, the
+result is `observation-changed-retry`; it never merges both reads into a normal
+state. These are sequential filesystem observations, not an atomic snapshot.
+They cannot detect a change-and-revert ABA between reads, and the projection says
+so explicitly.
+
+The projection keeps these cases distinct:
+
+- no current pointer;
+- a pointer whose checkpoint ledger file is missing;
+- checkpoint or required-lineage structural/digest failure;
+- a missing required Session, Run, lineage, or Capsule artifact;
+- a verified checkpoint whose Session or required lineage has drifted;
+- verified P2 recovery with missing optional P3 ResultPacket evidence; and
+- state changing during the read sequence.
+
+Optional ResultPacket loss does not invalidate self-contained P2 direction, but
+review-dependent work still needs that evidence. Required artifact loss or
+integrity failure is never downgraded to optional loss, staleness, or absence.
+Artifact recovery and sync availability are separate axes: a stable pointer drift
+may make the old checkpoint unrestorable while a fresh, HEAD-authored direction
+is mechanically publishable. Neither fact proves semantic freshness. Equality of
+IDs, hashes, or basis bytes cannot establish that the natural-language direction
+still represents the latest user intent; only the current provider HEAD assesses
+that when checkpoint work is materially relevant.
+
 ## Freshness-gated checkpoint synchronization
 
 Normal provider HEAD operation uses a read-derive-sync sequence rather than
@@ -215,6 +254,7 @@ does not change the checkpoint or restore projection's next direction.
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
 head checkpoint-basis <project>
+head checkpoint-diagnose <project>
 head checkpoint-sync <project> --input <head-direction.json>
 head session-restore <project> [--checkpoint <checkpoint-id>]
 head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
@@ -231,9 +271,10 @@ head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```
 
-Typed MCP exposes `head_checkpoint_basis`, `head_checkpoint_sync`, continuation,
+Typed MCP exposes `head_checkpoint_basis`, `head_checkpoint_diagnose`,
+`head_checkpoint_sync`, continuation,
 dispatch/status/wait/apply, restore, and explicit integration. Basis, restore,
-status, and wait are read-only. Checkpoint sync is idempotent and revalidates its
+diagnosis, status, and wait are read-only. Checkpoint sync is idempotent and revalidates its
 exact basis under the common mutation lock. Continuation may refresh
 only the injected host-local P5 attachment; dispatch and application are
 idempotent project-state writes. None grants review, Canon, publication, or

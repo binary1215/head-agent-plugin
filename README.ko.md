@@ -589,6 +589,14 @@ Host hook이 없어도 설정 gate가 생기지 않으며 일반 작업을 막�
 `created`, `reused`, `deferred`, `conflict` 중 하나를 반환하며 영향을 받은 복구 경로만
 멈춥니다. 어느 결과도 사용자에게 checkpoint JSON을 요구하지 않습니다.
 
+복구 상태를 설명해야 할 때 `head_checkpoint_diagnose`는 현재 pointer, artifact 복원
+결과, 기계적인 갱신 가능 여부, 다음 HEAD 동작을 하나의 제한된 읽기 전용 응답으로
+보여 줍니다. lock이나 cache를 쓰지 않으며 상태를 읽기 위해 다른 model을 호출하지도
+않습니다. ID와 hash 일치는 artifact 정합성을 증명할 뿐 checkpoint 문장이 최신 사용자
+의도를 반영한다는 의미는 아닙니다. 순차 읽기 중 상태가 바뀌면 다시 읽어야 하며, 결과는
+원자적 filesystem snapshot이나 ABA 감지를 보장한다고 주장하지 않습니다. 실제 복구
+결함이 있어도 checkpoint 의존 작업만 멈추고 일반 독립 작업은 계속할 수 있습니다.
+
 더 새로운 실제 사용자 턴은 대기 중인 연속성보다 우선합니다. 자세한 내용은
 [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)와
 [Session 복구](docs/ko/session-recovery.md)를 참고하세요.

@@ -33,6 +33,7 @@ import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, inspectCompaction, inspectRecoveryCheckpointBasis, prepareCompaction, syncRecoveryCheckpoint, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
+import { inspectRecoveryCheckpointDiagnosis } from "./lib/recovery-checkpoint-diagnosis.mjs";
 import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
 import {
@@ -685,6 +686,17 @@ export const tools = [
   {
     name: "head_checkpoint_basis",
     description: "Read one non-persisted exact Project/Session/Run/plan/contract/Capsule/review and transition basis before HEAD derives recovery direction. This is P4 comparison evidence and writes no P2 direction.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_checkpoint_diagnose",
+    description: "Read a bounded P4 checkpoint diagnosis: current pointer, artifact-restore verification, mechanical sync availability, and the next HEAD action. It performs no write, repair, approval, or semantic-freshness judgment.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
@@ -1870,6 +1882,8 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                 ? getPendingReviewContext({ root: args.project_root })
                 : name === "head_checkpoint_basis"
                   ? inspectRecoveryCheckpointBasis({ root: args.project_root })
+                : name === "head_checkpoint_diagnose"
+                  ? inspectRecoveryCheckpointDiagnosis({ root: args.project_root })
                 : name === "head_checkpoint_sync"
                   ? syncRecoveryCheckpoint({
                       root: args.project_root,

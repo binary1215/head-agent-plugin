@@ -201,6 +201,17 @@ direction, open compaction is not replaced, and accepted-result binding remains
 exclusive to the existing reviewed-Run integration transaction. See
 [`session-recovery.md`](session-recovery.md#freshness-gated-checkpoint-synchronization).
 
+Checkpoint diagnosis is a separate non-persisted P4 projection over two verified
+basis reads with artifact restore between them. It exposes pointer presence,
+restore verification, mechanical sync availability, and the next HEAD action,
+without caching, locking, repairing, or invoking a model. Stable identity does
+not prove semantic freshness; sequential reads are not an atomic snapshot and
+cannot detect ABA. Integrity failure, required-reference drift, pointed-artifact
+loss, and optional P3 ResultPacket loss remain distinct. Project readiness and
+conversation entry reuse this contract when recovery has a current pointer; the
+no-pointer fast path stays a cheap ordinary-work fact. CLI and typed MCP expose
+the full diagnosis on demand.
+
 Version 0.3 alpha binds Runs to verified contracts, converts completion into a ResultPacket, builds a deterministic minimum Fresh HEAD review projection, and requires that exact projection for the manual HEAD ReviewDecision. `revise` and `expand` require a ReviewDecision-linked next WholePlanSnapshot before another Run. Candidate knowledge and HEAD recommendations remain authority-free. Exact optional WorkspaceHost attachment is active only after P2 restore; general provider resume/stream, broader runtime controls, and authorized knowledge-promotion surfaces remain deferred.
 
 ## Repository World Model plane

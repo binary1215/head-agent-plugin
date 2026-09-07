@@ -614,6 +614,15 @@ For a durable direction update, the Skill internally uses the read-only
 returns `created`, `reused`, `deferred`, or `conflict`; only the affected recovery
 path pauses, and none of these outcomes asks the user for checkpoint JSON.
 
+When recovery needs explanation, `head_checkpoint_diagnose` gives one bounded,
+read-only answer: the current pointer, artifact-restore result, mechanical update
+availability, and the next HEAD action. It writes no lock or cache and never calls
+another model merely to read status. Matching IDs and hashes prove artifact
+consistency, not that checkpoint prose still matches the latest user intent.
+Changed sequential reads require a retry; the result explicitly does not claim an
+atomic filesystem snapshot or ABA detection. Ordinary independent work remains
+available while only checkpoint-dependent work pauses on a real recovery fault.
+
 A newer real user turn wins over a pending continuation. See
 [Compaction recovery](docs/compaction-recovery.md) and
 [Session recovery](docs/session-recovery.md).

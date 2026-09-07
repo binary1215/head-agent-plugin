@@ -21,7 +21,7 @@ const RECOVERY_LABELS = {
   "unavailable-until-core-ready": "available after Core initialization",
   "blocked-by-core-drift": "attention required because Core projections drifted",
   "no-current-checkpoint": "no current checkpoint; ordinary Session work is available",
-  "verified-current-checkpoint": "current checkpoint verified and restorable",
+  "verified-current-checkpoint": "checkpoint artifacts verified and restorable; semantic freshness remains a HEAD judgment",
   "attention-required": "current checkpoint needs attention before recovery",
 };
 
@@ -101,6 +101,11 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
     lines.push(`Managed projection drift: ${value.drift?.length || 0}`);
     for (const item of value.drift || []) lines.push(`  - ${item.path || item.kind || "managed artifact"}`);
     if (recovery?.reasonCode) lines.push(`Recovery diagnostic: ${recovery.reasonCode}`);
+    if (recovery?.checkpointDiagnosis) lines.push(`Checkpoint diagnosis: ${recovery.checkpointDiagnosis}`);
+    if (recovery?.checkpointUpdate?.status) lines.push(`Checkpoint update: ${recovery.checkpointUpdate.status}`);
+    if (recovery?.semanticFreshness) lines.push("Semantic freshness: not mechanically determined");
+    if (recovery?.observationConsistency?.state) lines.push(`Recovery observation: ${recovery.observationConsistency.state}`);
+    if (recovery?.recoveryNextHeadAction?.summary) lines.push(`Recovery next: ${compactText(recovery.recoveryNextHeadAction.summary, 240)}`);
   }
   if (value.nextAction) {
     lines.push("", `Next: ${next}`);
@@ -493,6 +498,39 @@ export function formatCheckpointBasis(value) {
   return `${lines.join("\n")}\n`;
 }
 
+export function formatCheckpointDiagnosis(value) {
+  const diagnosis = value?.diagnosis || {};
+  const checkpoint = value?.currentCheckpoint || {};
+  const recovery = value?.artifactRecovery || {};
+  const update = value?.checkpointUpdate || {};
+  const consistency = value?.observationConsistency || {};
+  const titles = {
+    "no-current-checkpoint": "HEAD checkpoint diagnosis: no current checkpoint.",
+    "verified-checkpoint": "HEAD checkpoint diagnosis: artifact recovery verified.",
+    "verified-checkpoint-with-missing-result-evidence": "HEAD checkpoint diagnosis: recovery verified; optional result evidence is missing.",
+    "current-checkpoint-artifact-missing": "HEAD checkpoint diagnosis: the pointed checkpoint artifact is missing.",
+    "required-recovery-artifact-missing": "HEAD checkpoint diagnosis: a required recovery artifact is missing.",
+    "checkpoint-integrity-failure": "HEAD checkpoint diagnosis: recovery artifact integrity failed.",
+    "checkpoint-reference-drift": "HEAD checkpoint diagnosis: checkpoint references do not match current lineage.",
+    "observation-changed-retry": "HEAD checkpoint diagnosis: state changed during this read.",
+    "core-drift": "HEAD checkpoint diagnosis: Core readiness needs attention.",
+    "verification-failed": "HEAD checkpoint diagnosis: verification did not complete.",
+  };
+  const lines = [titles[diagnosis.state] || `HEAD checkpoint diagnosis: ${diagnosis.state || "unknown"}.`];
+  lines.push(`Checkpoint pointer: ${checkpoint.checkpointId || "none"}`);
+  lines.push(`Artifact recovery: ${recovery.status || "unknown"}`);
+  lines.push(`Checkpoint update: ${update.status || "unknown"}`);
+  if (diagnosis.reasonCode && !new Set(["NO_CURRENT_CHECKPOINT", "CHECKPOINT_ARTIFACT_RECOVERY_VERIFIED"]).has(diagnosis.reasonCode)) {
+    lines.push(`Reason: ${diagnosis.reasonCode}`);
+  }
+  if (consistency.retryRequired) lines.push("Observed state was not a stable atomic snapshot; HEAD must retry this read before checkpoint-dependent action.");
+  lines.push("Semantic freshness: not mechanically determined. This read did not invoke another HEAD assessment.");
+  if (value?.nextHeadAction?.summary) lines.push(`Next: ${value.nextHeadAction.summary}`);
+  lines.push("User action: none. Ordinary independent work remains available.");
+  lines.push("This diagnosis wrote no checkpoint, lock, cache, approval, or authority.", "", "Technical details: rerun with --json");
+  return `${lines.join("\n")}\n`;
+}
+
 export function formatCheckpointSync(value) {
   const outcome = value?.outcome || "unknown";
   const checkpointId = value?.checkpoint?.checkpointId || null;
@@ -527,6 +565,7 @@ export function formatMcpToolContent(name, value) {
   if (name === "head_context_prepare") return formatContextPreparation(value);
   if (name === "head_context_preview") return formatContextPreview(value);
   if (name === "head_checkpoint_basis") return formatCheckpointBasis(value);
+  if (name === "head_checkpoint_diagnose") return formatCheckpointDiagnosis(value);
   if (name === "head_checkpoint_sync") return formatCheckpointSync(value);
   return JSON.stringify(value);
 }
@@ -557,6 +596,7 @@ export function formatCliResult(command, value) {
   if (command === "context-prepare") return formatContextPreparation(value);
   if (command === "context-preview") return formatContextPreview(value);
   if (command === "checkpoint-basis") return formatCheckpointBasis(value);
+  if (command === "checkpoint-diagnose") return formatCheckpointDiagnosis(value);
   if (command === "checkpoint-sync") return formatCheckpointSync(value);
   return `${JSON.stringify(value, null, 2)}\n`;
 }

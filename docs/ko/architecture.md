@@ -139,6 +139,15 @@ defer 또는 conflict로 처리할 뿐입니다. 동일 retry는 ledger나 point
 accepted-result binding은 기존 reviewed-Run integration transaction만 소유합니다.
 [`session-recovery.md`](session-recovery.md#최신성-gate를-적용한-checkpoint-동기화)를 참조하세요.
 
+checkpoint 진단은 그와 분리된 비지속 P4 projection이며, 검증된 두 basis 읽기 사이에서
+artifact restore를 수행합니다. pointer 존재, restore 검증, 기계적인 sync 가능 여부와 다음
+HEAD 동작을 cache, lock, repair 또는 model 호출 없이 보여 줍니다. 안정적인 identity는 의미적
+최신성을 증명하지 않습니다. 순차 읽기는 원자적 snapshot이 아니며 ABA를 감지할 수 없습니다.
+integrity 실패, 필수 reference drift, pointer가 가리키는 artifact 누락과 선택적 P3
+ResultPacket 누락은 구별됩니다. 프로젝트 준비도와 대화 진입은 현재 pointer가 있을 때 이
+계약을 재사용하고, pointer가 없는 fast path는 저비용 일반 작업 사실로 남습니다. CLI와
+typed MCP는 요청 시 전체 진단을 노출합니다.
+
 버전 0.3 alpha는 Runs를 검증된 계약에 바인딩하고, 완료를 ResultPacket으로 변환하며, 결정론적인 최소 Fresh HEAD 검토 프로젝션을 구성하고, 수동 HEAD ReviewDecision에 그 정확한 프로젝션을 요구합니다. `revise`와 `expand`는 다른 Run에 앞서 ReviewDecision에 연결된 다음 WholePlanSnapshot을 요구합니다. 후보 지식과 HEAD 권고에는 계속 권한이 없습니다. 정확한 선택적 WorkspaceHost 연결은 P2 복원 후에만 활성화됩니다. 일반 공급자 resume/stream, 더 광범위한 런타임 제어 및 권한이 부여된 지식 승격 표면은 계속 연기됩니다.
 
 ## Repository World Model plane

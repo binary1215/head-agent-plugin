@@ -36,6 +36,15 @@ The user does not provide checkpoint identities, lifecycle events, trusted turn
 counters, or continuation tokens. Explicit `session-restore` and `compact-*`
 commands remain advanced diagnostic surfaces.
 
+When recovery needs explanation, project readiness and conversation entry reuse
+the same `head_checkpoint_diagnose` contract. It reads `basis B0`, verifies
+artifact restore, then reads `basis B1`; changed observations require a fresh
+read. It writes no lock or cache, triggers no model call, and does not claim an
+atomic filesystem snapshot or ABA detection. Missing pointer, missing pointed
+ledger artifact, integrity failure, required-lineage drift, and optional P3
+ResultPacket loss remain separate. Its sync-availability field is mechanical and
+does not claim that checkpoint prose still reflects current user intent.
+
 At a natural durable-work or context-loss boundary outside an already open
 compaction epoch, provider HEAD may use `head_checkpoint_basis` followed by
 `head_checkpoint_sync`. The first call is a non-persisted read-only comparison;

@@ -19,7 +19,7 @@ HEAD Agent Core는 한 표현이 다른 표현의 권한을 물려받게 하지 
 | P1 Normative Authority | 승인된 제품 의미, 정책, 명시적 결정 | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision | 그래프, 메시지, 결과 또는 host에 존재한다는 사실만으로 승인을 만들 수 없음 |
 | P2 Canonical Recovery/Lineage Record | Project, Session, Run, 계획, context, contract와 다음 방향의 provider 독립적 복구 | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | 증거 삭제나 provider 요약이 checkpoint 필드를 다시 쓸 수 없음 |
 | P3 Evidence Record | 검토 가능한 결과, 관찰, 후보, claim, 소유권 레코드와 감사 receipt | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate, Evidence, ObservationTypeDescriptor/ObservationRecord/DerivedObservationRecord/ObservationCollectionReceipt, ConformanceFindingCandidate/DispositionReceipt/ResolutionCandidate, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | 증거가 스스로 승격되거나 복구 Canon이 될 수 없음 |
-| P4 Derived Relation/View | 재현 가능한 검색과 사람 대상 view | GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | projection이 Canon을 변경하거나 지시 권한을 부여하거나 유일한 복구 출처가 될 수 없음 |
+| P4 Derived Relation/View | 재현 가능한 검색과 사람 대상 view | GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, RecoveryCheckpointDiagnosisProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | projection이 Canon을 변경하거나 지시 권한을 부여하거나 유일한 복구 출처가 될 수 없음 |
 | P5 Operational Effect | host 로컬 process, continuation, wait와 delivery 효과 | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, ObservationSourceBinding, ConformanceTriggerBinding, provider-session reference | continuation, wait, delivery 또는 process 제어의 성공이 실행, 검토, 승격 또는 복구를 승인할 수 없음 |
 
 `scripts/lib/authority-plane-contract.mjs`는 내용에서 파생된 하나의 `AuthorityPlaneContract`를 내보내고, 위에서 구현된 artifact를 정확한 평면에 할당하며, 내장된 artifact 경계를 검증합니다. 이 평면들은 지속성 계층이 아니라 의미 클래스입니다. P2는 복구에 대한 권한을 갖지만 P1의 제품 의미를 소유하지 않으며, P1 검토는 P2 checkpoint 상태를 대체하지 않습니다.
@@ -82,6 +82,14 @@ checkpoint 하나를 만들거나, 정확한 현재 byte를 재사용하거나, 
 오래된 상태를 거부할 수 있을 뿐입니다.
 
 선택적 live continuation도 같은 경계를 따릅니다. Core가 먼저 정확한 P2 checkpoint를 복원한 뒤, P5 WorkspaceHost adapter가 이미 실행 중인 endpoint 하나를 fresh-verify할 수 있습니다. 지속되지 않는 `ContinuationOutcome`은 `attached` 또는 공개된 새 논리 HEAD fallback을 보고합니다. 이는 SessionRestoreProjection을 변경하거나, provider identity를 지속하거나, 복구 권한을 주장할 수 없습니다.
+
+`RecoveryCheckpointDiagnosisProjection`도 P4입니다. 제한된
+`basis B0 -> restore -> basis B1` 순서를 검증하고 현재 pointer, artifact 복구와 기계적인
+sync 가능 여부에 관한 사실을 보고합니다. basis를 cache하거나 mutation lock을 획득하거나,
+증거를 repair하거나, provider HEAD를 호출하거나, 의미적 최신성을 판단하거나, checkpoint
+field를 제공할 수 없습니다. 순차 관찰의 일치는 원자적 filesystem snapshot이 아니며 ABA를
+감지할 수 없습니다. 관찰이 바뀌면 새로 읽어야 하고 integrity 실패와 필수 artifact 누락은
+선택적 증거 누락으로 다시 표시되지 않습니다.
 
 독립적으로 소유 가능한 worker 실행은 정확한 Run `ExecutionAuthorization` 위에 하나의 P3 `BoundedWorkerDispatch`를 기록합니다. P5 lease/process/wait 상태는 at-most-once 사용을 강제하고 진행 상황을 보고하지만, dispatch도 wait도 WholePlan을 변경하거나 ReviewDecision을 만들 수 없습니다. 그 결과인 P3 ResultPacket만 Fresh HEAD에 도달합니다. 새 P2 checkpoint를 쓰기 전에 명시적 P1 검토와 기존의 reviewed-result integration이 여전히 필요합니다.
 

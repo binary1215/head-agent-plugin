@@ -74,6 +74,40 @@ checkpoint 생성 후 P3 ResultPacket 증거가 삭제되었더라도 restore는
 반환하고 증거를 `missing-evidence`로 표시합니다. Fresh HEAD review context를 만들어내지
 않습니다. caller는 review 전에 필요한 증거를 복구하거나 재현해야 합니다.
 
+## 읽기 전용 checkpoint 진단
+
+`head_checkpoint_diagnose`는 현재 pointer가 있을 때 프로젝트 준비도와 대화 진입이
+공통으로 사용하고 typed MCP와 고급 CLI가 노출하는 읽기 전용 P4 진단입니다. 현재
+checkpoint pointer 또는 그 부재,
+artifact-only restore 검증, 기계적인 checkpoint-sync 가능 여부와 범위가 한정된 다음
+HEAD 동작 하나를 보고합니다. lock, cache, checkpoint, Session pointer, 승인 또는 Canon을
+쓰지 않습니다. 이를 읽는 것만으로 다른 provider HEAD나 model 평가를 호출하지 않습니다.
+
+현재 pointer가 있으면 진단은 `basis B0 -> artifact restore -> basis B1` 순서를 수행합니다.
+정상 결과에는 동일한 basis identity와 Session hash, 그리고 restore tuple의 정확한 Project,
+Session, checkpoint ID와 checkpoint digest 일치가 필요합니다. 관찰이 바뀌면 결과는
+`observation-changed-retry`이며 두 읽기를 정상 상태로 합치지 않습니다. 이는 순차적인
+filesystem 관찰이지 원자적 snapshot이 아닙니다. 읽기 사이의 변경 후 복원 ABA를 감지할
+수 없다는 사실도 projection에 명시합니다.
+
+projection은 다음 사례를 구별합니다.
+
+- 현재 pointer 없음
+- pointer가 가리키는 checkpoint ledger 파일 누락
+- checkpoint 또는 필수 lineage의 구조/digest 실패
+- 필수 Session, Run, lineage 또는 Capsule artifact 누락
+- Session이나 필수 lineage가 drift한 검증된 checkpoint
+- 선택적 P3 ResultPacket 증거가 누락됐지만 P2 복구는 검증된 상태
+- 읽기 순서 중 state 변경
+
+선택적 ResultPacket 누락은 자체 완결적인 P2 방향을 무효화하지 않지만, review 의존 작업에는
+그 증거가 필요합니다. 필수 artifact 누락이나 integrity 실패를 선택적 누락, staleness 또는
+부재로 낮추지 않습니다. artifact 복구와 sync 가능 여부는 별도 축입니다. 안정적으로 관찰된
+pointer drift 때문에 기존 checkpoint를 복원할 수 없어도 새 HEAD-authored 방향은 기계적으로
+게시 가능할 수 있습니다. 어느 사실도 의미적 최신성을 증명하지 않습니다. ID, hash 또는
+basis byte가 같아도 자연어 방향이 최신 사용자 의도를 여전히 나타내는지는 알 수 없으며,
+checkpoint 작업이 실질적으로 필요할 때만 현재 provider HEAD가 이를 평가합니다.
+
 ## 최신성 gate를 적용한 checkpoint 동기화
 
 일반 provider HEAD 작업은 Session checkpoint를 무조건 다시 쓰지 않고 다음
@@ -201,6 +235,7 @@ receipt는 통합이 ReviewDecision을 생성하지 않았고 ResultPacket은 �
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
 head checkpoint-basis <project>
+head checkpoint-diagnose <project>
 head checkpoint-sync <project> --input <head-direction.json>
 head session-restore <project> [--checkpoint <checkpoint-id>]
 head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
@@ -217,9 +252,10 @@ head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```
 
-Typed MCP는 `head_checkpoint_basis`, `head_checkpoint_sync`, continuation,
+Typed MCP는 `head_checkpoint_basis`, `head_checkpoint_diagnose`,
+`head_checkpoint_sync`, continuation,
 dispatch/status/wait/apply, restore 및 명시적 integration을 노출합니다. basis, restore,
-status 및 wait는 read-only입니다. checkpoint sync는 멱등적이며 공통 mutation lock 안에서
+diagnosis, status 및 wait는 read-only입니다. checkpoint sync는 멱등적이며 공통 mutation lock 안에서
 정확한 basis를 다시 검증합니다. continuation은 주입된 host-local
 P5 attachment만 새로 고칠 수 있습니다. dispatch와 application은 멱등적인 project-state
 write입니다. 어느 것도 review, Canon, publication 또는 external-action authority를

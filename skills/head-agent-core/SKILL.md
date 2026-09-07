@@ -274,6 +274,16 @@ attention, fail only the affected recovery operation and assign inspection to
 HEAD; never invent missing direction or ask the user to operate the recovery
 protocol.
 
+When that recovery state needs a precise explanation, use read-only
+`head_checkpoint_diagnose`. It reuses the common project/conversation diagnosis
+and reports pointer presence, artifact-restore verification, mechanical sync
+availability, and the next HEAD action. Do not call another model merely because
+this projection was read, do not treat it as an atomic filesystem snapshot, and
+do not infer semantic freshness from matching IDs or hashes. A changed observed
+sequence requires another read; integrity failure, a missing pointed artifact,
+required-reference drift, and optional ResultPacket loss remain different cases.
+This is an exception/diagnostic surface, not a per-turn ritual or a new gate.
+
 When durable recovery direction may have materially changed, HEAD first decides
 whether a checkpoint is useful. Relevant boundaries are: a user changes the
 current objective or constraint while a checkpoint already exists; a verified
@@ -292,6 +302,9 @@ first checkpoint for short Observe work, every turn, or conversation entry, and
 do not call sync when the existing direction is already sufficient.
 General sync must not carry reviewed-Run integration fields; only the existing
 accepted-result integration operation owns that binding.
+`head_checkpoint_diagnose` is not a substitute for this fresh basis: even when it
+reports that publication is mechanically possible, read a new exact basis before
+deriving direction and calling sync.
 
 Compaction is an intentional lossy provider operation. When the Host exposes a
 trusted lifecycle event, call `head_compaction_lifecycle_step`: provider HEAD

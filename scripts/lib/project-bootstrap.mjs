@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
 import { inspectOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
-import { restoreSessionFromArtifacts } from "./session-recovery.mjs";
+import { inspectRecoveryCheckpointDiagnosis } from "./recovery-checkpoint-diagnosis.mjs";
 import { actionability, withExperienceProjections } from "./experience-projection.mjs";
 
 export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.6.0";
@@ -232,32 +232,51 @@ export function recoveryReadiness(projectInspection, { includeRestore = false } 
       authority,
     };
   }
-  try {
-    const restored = restoreSessionFromArtifacts({ root: projectInspection.project.projectRoot });
+  const diagnosis = inspectRecoveryCheckpointDiagnosis({ root: projectInspection.project.projectRoot, includeRestore });
+  if (diagnosis.diagnosis.state === "no-current-checkpoint") {
+    return {
+      state: "no-current-checkpoint",
+      currentCheckpoint: false,
+      restorable: false,
+      ...actionability(),
+      authority,
+    };
+  }
+  if (new Set(["verified-checkpoint", "verified-checkpoint-with-missing-result-evidence"]).has(diagnosis.diagnosis.state)) {
     return {
       state: "verified-current-checkpoint",
       currentCheckpoint: true,
       restorable: true,
       ...actionability(),
-      checkpointId: restored.checkpoint.checkpointId,
-      sessionRestoreId: restored.sessionRestoreId,
-      ...(includeRestore ? { restore: restored } : {}),
-      authority,
-    };
-  } catch (error) {
-    return {
-      state: "attention-required",
-      currentCheckpoint: true,
-      restorable: false,
-      ...actionability({
-        headActionRequired: true,
-        recoveryDependentWorkBlocked: true,
-        blockedOperations: ["checkpoint-dependent-work"],
-      }),
-      reasonCode: error?.code || "SESSION_RESTORE_VERIFICATION_FAILED",
+      checkpointId: diagnosis.currentCheckpoint.checkpointId,
+      sessionRestoreId: diagnosis.artifactRecovery.sessionRestoreId,
+      optionalResultEvidence: diagnosis.artifactRecovery.optionalResultEvidence,
+      reviewDependentWorkBlocked: diagnosis.reviewDependentWorkBlocked,
+      checkpointUpdate: diagnosis.checkpointUpdate,
+      semanticFreshness: diagnosis.semanticFreshness,
+      observationConsistency: diagnosis.observationConsistency,
+      recoveryNextHeadAction: diagnosis.nextHeadAction,
+      ...(includeRestore ? { restore: diagnosis.restore } : {}),
       authority,
     };
   }
+  return {
+    state: "attention-required",
+    currentCheckpoint: Boolean(diagnosis.currentCheckpoint.checkpointId),
+    restorable: false,
+    ...actionability({
+      headActionRequired: true,
+      recoveryDependentWorkBlocked: diagnosis.recoveryDependentWorkBlocked,
+      blockedOperations: diagnosis.recoveryDependentWorkBlocked ? ["checkpoint-dependent-work"] : [],
+    }),
+    reasonCode: diagnosis.diagnosis.reasonCode,
+    checkpointDiagnosis: diagnosis.diagnosis.state,
+    checkpointUpdate: diagnosis.checkpointUpdate,
+    semanticFreshness: diagnosis.semanticFreshness,
+    observationConsistency: diagnosis.observationConsistency,
+    recoveryNextHeadAction: diagnosis.nextHeadAction,
+    authority,
+  };
 }
 
 function entrypoint(action, onboardingInspection = null) {
