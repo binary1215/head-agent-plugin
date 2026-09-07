@@ -135,6 +135,8 @@ product decision. See [Feature mapping](docs/feature-mapping.md).
 | Git and deployment history must be typed by hand | Provider-neutral observations turn current product refs and host-reported deployment results into immutable P3 evidence, while only an approved successful exact-commit/ref match becomes a non-authoritative ReleaseObservation. |
 | Every product exposes different operational data | A Project-bound Host registry lets HEAD collect a configured source by opaque ID, while product-specific adapters normalize it into one evidence-only contract and Core proves coverage and replay. |
 | Code and reviewed policy drift apart between releases | Provider HEAD proposes evidence-linked Conformance Findings into a non-blocking queue; Core verifies exact anchors and replay while only the user can disposition or accept a fresh resolution. Missing Graph or connector data remains a disclosure, not a gate on ordinary work. |
+| A product rule silently spreads through a hierarchy | Policy applies only to the exact Feature or FeatureGroup named in an immutable proposal and may cite exact Requirement, Constraint, or Decision keys. The user reviews one compact decision; group membership never creates hidden inheritance. Later evidence drift is shown without silently invalidating the decision. |
+| Before/after metrics look comparable when collection changed | HEAD keeps the numeric comparison available but shows adapter revision, source scope, form, duration, sample size, and coverage as same, different, or unknown. It never silently normalizes or claims causality. |
 
 > A conventional coding agent optimizes the current task. HEAD Agent Core
 > optimizes for many tasks to accumulate into the same reviewed product
@@ -686,6 +688,13 @@ promotion of measured data into product truth. If Observation storage is
 damaged, only that graph layer is reported unavailable; unrelated product work
 continues.
 
+Policy genealogy stays equally explicit. A proposed create, revision, or
+retirement is P3 evidence until the user accepts that exact candidate. The
+accepted decision points to the resulting Product Model revision and to the
+matching current Policy revision, even after an unrelated Policy is added.
+Unreviewed Policy candidates remain hidden from normal graph discovery unless
+HEAD explicitly opts into candidate inspection.
+
 Source relations are structural evidence, not product meaning. The default
 heuristic import/call graph remains available, while an optional provider-neutral
 language-AST adapter may add separately labeled, exact-file-bound evidence. One
@@ -837,6 +846,8 @@ Status labels are evidence claims, not roadmap promises:
 | Runtime evidence | Claude Code live model-call conformance | **Experimental** |
 | Release evidence | provider-neutral Git ref, deployment-result, and release observations | **Available** |
 | Common observations | reuse-first exact evidence preparation plus paged Host source discovery and opaque-ID collection | **Available** |
+| Product policy | schema-v2 Policy proposal, exact application and semantic references, user review, evidence-currentness diagnostics, revision and retirement lineage | **Available** |
+| Measurement | versioned metric definitions, exact observations, condition-aware comparison, non-causal assessment and bounded lineage | **Available** |
 | Workers | bounded dispatch, wait, result, review, integration | **Available** |
 | Coordination | durable role messaging and exact-endpoint host delivery | **Available** |
 | Projection | local graph and Markdown | **Available** |

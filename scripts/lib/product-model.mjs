@@ -2,9 +2,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const PRODUCT_MODEL_VERSION = "0.1.0";
+export const PRODUCT_MODEL_V1_VERSION = "0.1.0";
+export const PRODUCT_MODEL_V2_VERSION = "0.2.0";
+export const PRODUCT_MODEL_VERSION = PRODUCT_MODEL_V2_VERSION;
 export const PRODUCT_MODEL_RELATIVE_PATH = ".head/context/product-model.json";
-export const PRODUCT_ENTITY_KINDS = Object.freeze([
+export const PRODUCT_ENTITY_KINDS_V1 = Object.freeze([
   "FeatureGroup",
   "Capability",
   "Feature",
@@ -12,6 +14,7 @@ export const PRODUCT_ENTITY_KINDS = Object.freeze([
   "Constraint",
   "Decision",
 ]);
+export const PRODUCT_ENTITY_KINDS = Object.freeze([...PRODUCT_ENTITY_KINDS_V1, "Policy"]);
 
 const fail = (message, code = "PRODUCT_MODEL_ERROR") => {
   const error = new Error(message);
@@ -132,6 +135,49 @@ function governedBy(value, label) {
   return records.sort((left, right) => left.kind.localeCompare(right.kind) || left.key.localeCompare(right.key));
 }
 
+function policyApplications(value, label) {
+  const source = value == null ? [] : value;
+  if (!Array.isArray(source)) fail(`${label} must be an array.`, "INVALID_PRODUCT_MODEL");
+  const allowedKinds = new Set(["Feature", "FeatureGroup"]);
+  const seen = new Set();
+  const records = source.map((record, index) => {
+    const itemLabel = `${label}[${index}]`;
+    assertFields(record, ["kind", "key"], itemLabel);
+    const kind = requiredText(record.kind, `${itemLabel}.kind`);
+    if (!allowedKinds.has(kind)) fail(`${itemLabel}.kind is invalid.`, "INVALID_POLICY_APPLICATION");
+    const stableKey = key(record.key, `${itemLabel}.key`);
+    const identity = `${kind}:${stableKey}`;
+    if (seen.has(identity)) fail(`${label} contains duplicate reference: ${identity}`, "DUPLICATE_PRODUCT_REFERENCE");
+    seen.add(identity);
+    return { kind, key: stableKey };
+  });
+  return records.sort((left, right) => left.kind.localeCompare(right.kind) || left.key.localeCompare(right.key));
+}
+
+function policyEntities(value, label) {
+  const source = value == null ? [] : value;
+  if (!Array.isArray(source)) fail(`${label} must be an array.`, "INVALID_PRODUCT_MODEL");
+  const seen = new Set();
+  return source.map((record, index) => {
+    const itemLabel = `${label}[${index}]`;
+    assertFields(record, ["key", "name", "description", "statement", "status", "appliesTo", "governedBy"], itemLabel);
+    const stableKey = key(record.key, `${itemLabel}.key`);
+    if (seen.has(stableKey)) fail(`${label} contains duplicate key: ${stableKey}`, "DUPLICATE_PRODUCT_KEY");
+    seen.add(stableKey);
+    const status = optionalText(record.status, `${itemLabel}.status`).toLowerCase() || "active";
+    if (!new Set(["active", "retired"]).has(status)) fail(`${itemLabel}.status is invalid.`, "INVALID_PRODUCT_STATUS");
+    return {
+      key: stableKey,
+      name: requiredText(record.name, `${itemLabel}.name`),
+      description: optionalText(record.description, `${itemLabel}.description`),
+      statement: requiredText(record.statement, `${itemLabel}.statement`),
+      status,
+      appliesTo: policyApplications(record.appliesTo, `${itemLabel}.appliesTo`),
+      governedBy: governedBy(record.governedBy, `${itemLabel}.governedBy`),
+    };
+  }).sort((left, right) => left.key.localeCompare(right.key));
+}
+
 function referenceSet(records) {
   return new Set(records.map((record) => record.key));
 }
@@ -140,9 +186,10 @@ function requireReferences(values, available, label) {
   for (const value of values) if (!available.has(value)) fail(`${label} references unknown key: ${value}`, "UNKNOWN_PRODUCT_REFERENCE");
 }
 
-export function emptyProductModelDocument() {
-  return {
-    schemaVersion: 1,
+export function emptyProductModelDocument({ schemaVersion = 1 } = {}) {
+  if (![1, 2].includes(schemaVersion)) fail("Product model schemaVersion must be 1 or 2.", "UNSUPPORTED_PRODUCT_MODEL_VERSION");
+  const document = {
+    schemaVersion,
     featureGroups: [],
     capabilities: [],
     features: [],
@@ -150,11 +197,16 @@ export function emptyProductModelDocument() {
     constraints: [],
     decisions: [],
   };
+  if (schemaVersion === 2) document.policies = [];
+  return document;
 }
 
 export function normalizeProductModelDocument(document = emptyProductModelDocument()) {
-  assertFields(document, ["schemaVersion", "featureGroups", "capabilities", "features", "requirements", "constraints", "decisions"], "Product model");
-  if (document.schemaVersion !== 1) fail("Product model schemaVersion must be 1.", "UNSUPPORTED_PRODUCT_MODEL_VERSION");
+  const schemaVersion = document?.schemaVersion;
+  if (![1, 2].includes(schemaVersion)) fail("Product model schemaVersion must be 1 or 2.", "UNSUPPORTED_PRODUCT_MODEL_VERSION");
+  const fields = ["schemaVersion", "featureGroups", "capabilities", "features", "requirements", "constraints", "decisions"];
+  if (schemaVersion === 2) fields.push("policies");
+  assertFields(document, fields, "Product model");
   const featureGroups = namedEntities(document.featureGroups, "featureGroups", ["parentFeatureGroupKeys"], (record, label) => ({
     parentFeatureGroupKeys: stringKeys(record.parentFeatureGroupKeys, `${label}.parentFeatureGroupKeys`),
   }));
@@ -162,6 +214,7 @@ export function normalizeProductModelDocument(document = emptyProductModelDocume
   const requirements = statementEntities(document.requirements, "requirements");
   const constraints = statementEntities(document.constraints, "constraints");
   const decisions = statementEntities(document.decisions, "decisions", { decision: true });
+  const policies = schemaVersion === 2 ? policyEntities(document.policies, "policies") : [];
   const features = namedEntities(
     document.features,
     "features",
@@ -175,6 +228,7 @@ export function normalizeProductModelDocument(document = emptyProductModelDocume
 
   const featureGroupKeys = referenceSet(featureGroups);
   const capabilityKeys = referenceSet(capabilities);
+  const featureKeys = referenceSet(features);
   const governedKeys = {
     Requirement: referenceSet(requirements),
     Constraint: referenceSet(constraints),
@@ -204,9 +258,18 @@ export function normalizeProductModelDocument(document = emptyProductModelDocume
     }
   }
 
+  if (schemaVersion === 2) for (const policy of policies) {
+    for (const application of policy.appliesTo) {
+      requireReferences([application.key], application.kind === "Feature" ? featureKeys : featureGroupKeys, `Policy ${policy.key}`);
+    }
+    for (const reference of policy.governedBy) {
+      requireReferences([reference.key], governedKeys[reference.kind], `Policy ${policy.key}`);
+    }
+  }
+
   const model = {
-    schemaVersion: 1,
-    protocol: { name: "head-agent-core-product-model", version: PRODUCT_MODEL_VERSION },
+    schemaVersion,
+    protocol: { name: "head-agent-core-product-model", version: schemaVersion === 1 ? PRODUCT_MODEL_V1_VERSION : PRODUCT_MODEL_V2_VERSION },
     featureGroups,
     capabilities,
     features,
@@ -214,6 +277,7 @@ export function normalizeProductModelDocument(document = emptyProductModelDocume
     constraints,
     decisions,
   };
+  if (schemaVersion === 2) model.policies = policies;
   const productModelHash = digest(canonicalJson(model));
   return {
     ...model,
@@ -221,6 +285,31 @@ export function normalizeProductModelDocument(document = emptyProductModelDocume
     productModelHash,
     authority: "user-owned-project-canon",
   };
+}
+
+export function productModelDocument(model) {
+  if (!model || typeof model !== "object" || Array.isArray(model)) fail("Product model is required.", "INVALID_PRODUCT_MODEL");
+  const candidate = {
+    schemaVersion: model.schemaVersion,
+    featureGroups: model.featureGroups,
+    capabilities: model.capabilities,
+    features: model.features,
+    requirements: model.requirements,
+    constraints: model.constraints,
+    decisions: model.decisions,
+  };
+  if (model.schemaVersion === 2) candidate.policies = model.policies;
+  const normalized = normalizeProductModelDocument(candidate);
+  const document = { ...candidate,
+    featureGroups: normalized.featureGroups, capabilities: normalized.capabilities, features: normalized.features,
+    requirements: normalized.requirements, constraints: normalized.constraints, decisions: normalized.decisions };
+  if (normalized.schemaVersion === 2) document.policies = normalized.policies;
+  return document;
+}
+
+export function upgradeProductModelDocument(model) {
+  const document = productModelDocument(model);
+  return document.schemaVersion === 2 ? document : { ...document, schemaVersion: 2, policies: [] };
 }
 
 export function readProductModelCanon({ projectRoot } = {}) {

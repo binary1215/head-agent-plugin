@@ -4,8 +4,10 @@ import { readLineageArtifact } from "./execution-lineage.mjs";
 import { queryTemporalProvenanceGraph } from "./temporal-provenance.mjs";
 import { createWorldModelStoreAdapter } from "./world-model-store.mjs";
 import { inspectWorldModel, readWorldModel, readWorldModelSnapshot } from "./world-model.mjs";
+import { inspectProductPolicyEvidenceCurrentness } from "./product-policy-evidence.mjs";
+import { readProductPolicyCandidate } from "./product-policy.mjs";
 
-export const GRAPH_LINEAGE_VIEW_VERSION = "0.1.0";
+export const GRAPH_LINEAGE_VIEW_VERSION = "0.2.0";
 const PAGE_LIMIT_MAX = 100;
 const TRACE_ARTIFACT_LIMIT = 128;
 
@@ -161,6 +163,13 @@ export function traceGraphLineage({
     maxNodes,
     maxEdges,
   });
+  const policyEvidenceCurrentness = result.nodes
+    .filter((node) => node.kind === "ProductPolicyCandidate")
+    .sort((left, right) => left.nodeId.localeCompare(right.nodeId))
+    .map((node) => inspectProductPolicyEvidenceCurrentness({
+      projectRoot: inspected.project.projectRoot,
+      candidate: readProductPolicyCandidate({ root: inspected.project.projectRoot, candidateId: node.nodeId }).candidate,
+    }));
   return {
     kind: "GraphLineageTraceProjection",
     protocol: { name: "head-agent-core-graph-lineage-view", version: GRAPH_LINEAGE_VIEW_VERSION },
@@ -169,6 +178,7 @@ export function traceGraphLineage({
     graphSnapshotId: graph.graphSnapshotId,
     anchorMode: anchorId ? "exact" : "discovery",
     graph: result,
+    policyEvidenceCurrentness,
     executionLineage: includeExecution ? projectExecutionLineageOverlay(inspected.project.projectRoot, result) : null,
     semantics: {
       discoverySelectsAuthority: false,

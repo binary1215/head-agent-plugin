@@ -21,9 +21,9 @@ Evidence로만 사용되는 Git commit, branch, tag, GraphDB record ID, provider
 
 ## Logical entity와 불변 revision
 
-Temporal provenance protocol `0.11.0`은 [`AuthorityPlaneContract`](authority-plane-contract.md) 아래에 P4 재구축 가능 relation 및 retrieval index를 구체화합니다. digest가 유효한 `0.10.0` graph는 계속 읽을 수 있습니다. 새 graph는 기존 identity를 변경하지 않고 provider-neutral release-observation node와 relation을 추가합니다.
+Temporal provenance protocol `0.14.0`은 [`AuthorityPlaneContract`](authority-plane-contract.md) 아래에 P4 재구축 가능 relation 및 retrieval index를 구체화합니다. digest가 유효한 `0.2.0`부터 `0.13.0`까지의 protocol은 계속 읽을 수 있습니다. 새 graph는 기존 identity를 보존하면서 정확한 Policy proposal/review genealogy와 common Observation derivation을 추가합니다.
 
-- 안정적인 product logical entity: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, `Decision`
+- 안정적인 product logical entity: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, `Decision`, schema-v2 `Policy`
 - 불변 product state: 이에 대응하는 `*Revision` kind
 - 안정적인 implementation logical entity: `Repository`, `File`, `Symbol`, `Test`
 - 불변 implementation state: `FileRevision`, `SymbolRevision`, `TestRevision`
@@ -35,6 +35,8 @@ Temporal provenance protocol `0.11.0`은 [`AuthorityPlaneContract`](authority-pl
 - document review lineage: 숨겨진 `DocumentChangeCandidateSet` 및 `DocumentChangeCandidate` node와 일반적으로 표시되는 `DocumentChangeReviewDecision`, `DocumentProductModelRevision`, `DocumentChangeApplication` 및 과거 `DocumentProjectionReference` evidence
 - product operating evidence: `ProductSignal`, `ProductHypothesis`, 숨겨진 `ProductInitiativeCandidate` 및 `ProductFeatureCandidate`, 과거의 `ProductFeatureReference`, 명시적인 `ProductInitiativeReviewDecision`, 별도의 `ReviewedProductInitiative` 및 execution-bound `OutcomeObservation` node
 - release evidence: `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObservation` 및 내장된 불변 `GitCommit` observation
+- Policy review history: 숨겨진 `ProductPolicyCandidate`와 `ProductPolicyEvidence`, 명시적 `ProductPolicyReviewDecision`, historical `ProductModelRevisionReference`, 그리고 semantic content가 승인된 proposal과 일치하는 정확한 현재 `PolicyRevision`
+- common measurement evidence: `ObservationTypeDescriptor`, `ObservationCollectionReceipt`, `ObservationRecord`, `DerivedObservationRecord`. Interpretation은 graph authority 밖에 남습니다.
 
 비영속적 `ProductLearningNote` 값은 절대 GraphSnapshot에 들어가지 않습니다. v0.2 Initiative candidate는 inline reasoning을 포함하면서 Feature resolution은 없을 수 있습니다. review 전까지는 `PROPOSES_TO` edge가 없고, 영속화된 hypothesis reference가 없으면 `PROPOSES_FROM` edge도 없습니다. 명시적 accept review는 별도의 reviewed Initiative에서 기존 Feature, Feature candidate 또는 정직하게 기록된 gap 중 정확히 하나를 해석합니다. candidate byte는 변경되지 않습니다.
 
@@ -64,16 +66,24 @@ projection된 모든 node는 `nodeId`, `kind`, `authorityClass`, `origin`, 정�
 - 선택적 `ChangeSet -[:MATERIALIZED_AS]-> VcsEvidence -[:REFERENCES]-> GitCommit` evidence link
 - `SUPPORTED_BY`, `PROPOSES_FROM`, `PROPOSES_TO`, review/promotion relation 및 `OutcomeObservation -[:OBSERVES]-> ChangeSet|ReviewedProductInitiative`를 통한 product learning 및 observation
 - `AT_REVISION`, `OBSERVED_ON`, `EVIDENCED_BY` 및 선택적 `ReleaseObservation -[:DEPLOYS]-> ChangeSet`을 통한 release evidence
+- `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, `REFERENCES`를 통한 Policy proposal 및 approval과, 선택적 semantic reference가 명시된 경우 정확한 Policy-to-Requirement/Constraint/Decision `GOVERNED_BY` edge. 이후 무관한 Product Model 변경이 생겨도 변경되지 않은 현재 `PolicyRevision`으로 이어지는 accepted ReviewDecision path는 사라지지 않습니다.
+- `CONFORMS_TO`, `EVIDENCED_BY`, `DERIVED_FROM`을 통한 common Observation shape 및 derivation
 
 verifier는 digest mismatch, 지원되지 않는 node 또는 relation type, 중복 ID, 비결정적 순서, dangling 또는 invalid endpoint kind, 누락된 provenance, invalid authority flag, invalid confidence, scope mismatch 및 직접적인 self-parent cycle을 거부합니다.
 
+비지속 graph-lineage trace는 결과에 포함된 Policy evidence를 위한 bounded currentness diagnostic을
+추가할 수 있습니다. 안전한 local source만 64 MiB까지 다시 hash하고 `unchanged`, `changed`,
+`missing`, `not-assessed`를 보고합니다. External evidence와 실패한 bounded read는
+`not-assessed`로 남습니다. 이 read-time P4 diagnostic은 historical graph를 다시 쓰거나 의미를
+재평가하거나 accepted ReviewDecision을 무효화하거나 review gate를 만들지 않습니다.
+
 ## 결정론적 제한 순회
 
-`queryTemporalProvenanceGraph`는 먼저 전체 GraphSnapshot을 검증한 다음 temporal traversal protocol `0.2.0`을 구성합니다. anchor mode는 명시적 검색용 `lexical-discovery`와 HEAD가 의미 분석 후 제공하는 `exact-head-proposed` 중 하나입니다. exact mode는 1~32개의 고유 node ID와 현재 `expectedGraphSnapshotId`를 요구하며, 모든 anchor가 요청한 kind·authority·freshness·confidence·candidate policy를 충족해야 합니다.
+`queryTemporalProvenanceGraph`는 먼저 전체 GraphSnapshot을 검증한 다음 temporal traversal protocol `0.3.0`을 구성합니다. anchor mode는 명시적 검색용 `lexical-discovery`와 HEAD가 의미 분석 후 제공하는 `exact-head-proposed` 중 하나입니다. exact mode는 1~32개의 고유 node ID와 현재 `expectedGraphSnapshotId`를 요구하며, 모든 anchor가 요청한 kind·authority·freshness·confidence·candidate policy를 충족해야 합니다.
 
 - node-kind, relation, authority-class 및 freshness allowlist
 - minimum confidence
-- CandidateSet, candidate, Evidence, Unknown, ProductConceptReference, ProductInitiativeCandidate 및 ProductFeatureCandidate node를 기본적으로 제외하고 명시적 `includeUnreviewedCandidates` opt-in 제공
+- CandidateSet, candidate, Evidence, Unknown, ProductConceptReference, ProductInitiativeCandidate, ProductFeatureCandidate, ProductPolicyCandidate 및 ProductPolicyEvidence node를 기본적으로 제외하고 명시적 `includeUnreviewedCandidates` opt-in 제공
 - maximum depth, node count 및 edge count
 - anchor ID 및 결정론적 순서
 
@@ -96,6 +106,8 @@ node scripts/head.mjs world-temporal <project> --query <change-set-id> --relatio
 `--revision-parents`는 key가 현재 logical entity ID이고 value가 parent Revision ID array인 JSON object를 읽습니다. read-only MCP tool `head_temporal_graph`는 `include_unreviewed_candidates`를 통해 동일한 제한 순회를 노출합니다. 둘 다 stale World Model을 거부합니다. ReviewDecision 및 ProductModelRevision receipt는 일반적인 reviewed traversal에서 계속 표시됩니다. unreviewed candidate surface에는 명시적 opt-in이 필요하며, opt-in하더라도 권한에는 영향을 주지 않습니다.
 
 Context Compiler는 task-token overlap으로 temporal anchor를 추론하지 않습니다. HEAD가 `temporal-relation` EvidenceNeed에 현재 exact `graphAnchor`를 붙이면 Core는 Project·World Model·GraphSnapshot·node eligibility·relation allowlist·traversal bound를 검증한 뒤 별도 `GraphTraversalEvidence` carrier를 만듭니다. Local JSON, in-memory 및 활성 ArcadeDB adapter는 정확한 reference result를 반환해야 하며 adapter identity는 Capsule identity 바깥에 유지됩니다. [`graph-projection-adapter.md`](graph-projection-adapter.md)를 참조하세요.
+
+review된 execution change는 `ChangeSet` record를 정확한 before/after source revision에 결속합니다. review를 거친 current product impact는 정확한 Feature 또는 Capability revision에도 `AT_REVISION`으로 결속되며, 이후 drift가 생기면 historical receipt는 유지하되 current-impact claim은 제거합니다. Git ref만으로는 `DeploymentResultObservation` 또는 `ReleaseObservation`을 만들지 않습니다. Delivery lineage는 Host가 별도로 승인되고 성공했으며 exact commit이 일치하는 deployment evidence를 제출한 뒤에만 나타납니다.
 
 active deterministic Markdown renderer는 indexing 후 `DocumentProjectionAdapter`를 통해 검증된 이 graph를 사용합니다. canonical edge direction을 보존하고, relation endpoint를 node page에 연결하며, 정확한 GraphSnapshot 및 SourceSnapshot ID를 기록합니다. 생성된 page는 human view일 뿐이며, 절대 Context Compiler input으로 다시 순회되지 않습니다. 편집된 page는 비권위적 `DocumentChangeCandidateSet` evidence가 됩니다. 명시적 review는 이후 child graph로 projection되며, application receipt가 실제 application outcome을 결합한 다음 그다음 audit child graph가 해당 receipt를 projection합니다. 이 two-stage boundary는 동일한 GraphSnapshot의 이름을 가진 receipt에 GraphSnapshot hash가 종속되는 문제를 방지합니다. Context Compiler는 document candidate surface를 opt-in하지 않습니다. [`document-projection-adapter.md`](document-projection-adapter.md) 및 [`document-change-review.md`](document-change-review.md)를 참조하세요.
 

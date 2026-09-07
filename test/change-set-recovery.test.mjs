@@ -232,3 +232,22 @@ test("legacy orphan P4 cannot authorize a divergent review but exact user intent
   assert.equal(reviewFiles(fixture.root).length, 1);
   assert.equal(inspectWorldModel({ root: fixture.root }).status, "current");
 });
+
+test("reviewed execution changes link exact source and Product revisions without claiming delivery", async (t) => {
+  const fixture = await changeSetFixture(t, "exact-revision-lineage");
+  await reviewChangeImpact(fixture.reviewRequest);
+  const graph = inspectWorldModel({ root: fixture.root }).snapshot.temporalProvenanceGraph;
+  const nodes = new Map(graph.nodes.map((node) => [node.nodeId, node]));
+  const retainedChangeReferences = graph.nodes.filter((node) => node.kind === "ChangeRevisionReference" && nodes.has(node.referencedRevisionId));
+  assert.ok(retainedChangeReferences.length > 0);
+  for (const reference of retainedChangeReferences) {
+    assert.ok(graph.edges.some((edge) => edge.type === "REFERENCES" && edge.from === reference.nodeId && edge.to === reference.referencedRevisionId));
+  }
+  const currentImpacts = graph.nodes.filter((node) => node.kind === "ReviewedImpact" && node.projectionStatus === "current");
+  assert.ok(currentImpacts.length > 0);
+  for (const impact of currentImpacts) {
+    assert.ok(graph.edges.some((edge) => edge.type === "AT_REVISION" && edge.from === impact.nodeId && edge.to === impact.targetRevisionId));
+  }
+  assert.equal(graph.nodes.some((node) => node.kind === "ReleaseObservation"), false);
+  assert.equal(graph.nodes.some((node) => node.kind === "DeploymentResultObservation"), false);
+});

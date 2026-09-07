@@ -73,7 +73,7 @@ function readDirectory(projectRoot, relativeDirectory, label) {
 
 function productEntities(model) {
   const groups = [
-    ["FeatureGroup", model.featureGroups], ["Capability", model.capabilities], ["Feature", model.features],
+    ["FeatureGroup", model.featureGroups], ["Capability", model.capabilities], ["Feature", model.features], ["Policy", model.policies || []],
     ["Requirement", model.requirements], ["Constraint", model.constraints], ["Decision", model.decisions],
   ];
   return groups.flatMap(([kind, values]) => values.map((value) => ({ kind, key: value.key, text: value.name || value.statement, status: value.status || "active" })))
@@ -81,7 +81,7 @@ function productEntities(model) {
 }
 
 function findProductEntity(model, anchor) {
-  const map = { FeatureGroup: model.featureGroups, Capability: model.capabilities, Feature: model.features, Requirement: model.requirements, Constraint: model.constraints, Decision: model.decisions };
+  const map = { FeatureGroup: model.featureGroups, Capability: model.capabilities, Feature: model.features, Requirement: model.requirements, Constraint: model.constraints, Decision: model.decisions, Policy: model.policies || [] };
   return map[anchor.entityKind]?.find((item) => item.key === anchor.entityKey) || null;
 }
 

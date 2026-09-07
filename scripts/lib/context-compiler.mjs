@@ -31,7 +31,7 @@ const MAX_CONTEXT_DEPENDENCIES_PER_FILE = 12;
 const MAX_CONTEXT_RELATIONSHIPS_PER_FILE = 4;
 const MAX_PRODUCT_CONTEXT_ENTITIES = 24;
 const MAX_PRODUCT_CONTEXT_RELATIONSHIPS = 48;
-const PRODUCT_ENTITY_KINDS = new Set(["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"]);
+const PRODUCT_ENTITY_KINDS = new Set(["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision", "Policy"]);
 
 const STOP_WORDS = new Set([
   "the", "is", "are", "was", "were", "a", "an", "and", "or", "for", "from", "with", "into", "this", "that",
@@ -521,7 +521,7 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
     }),
     kinds: [
       "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
-      "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision",
+      "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision", "Policy", "PolicyRevision",
       "File", "Symbol", "Test", "ReviewedRelationship", "FeatureMappingReviewDecision",
       "ChangeSet", "ReviewedImpact", "ChangeImpactReviewDecision", "VcsEvidence", "GitCommit",
     ],

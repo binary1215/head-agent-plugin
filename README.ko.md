@@ -129,6 +129,8 @@ HEAD는 검토된 Feature와 Capability가 어떤 파일, 심볼, 테스트와 �
 | Git 및 배포 이력을 사람이 직접 입력해야 함 | 공급자 중립 관측이 현재 product ref와 호스트가 보고한 배포 결과를 불변 P3 evidence로 만들며, 승인·성공·정확한 commit/ref 일치가 모두 확인될 때만 권한 없는 ReleaseObservation을 만듭니다. |
 | 제품마다 운영 데이터 형태가 다름 | Project-bound Host registry를 통해 HEAD가 configured source를 opaque ID로 collect하고, 제품별 adapter는 하나의 evidence-only 계약으로 normalize하며 Core는 coverage와 replay를 증명합니다. |
 | 릴리스 사이에 코드와 검토된 정책이 어긋남 | 공급자 HEAD가 증거가 연결된 Conformance Finding을 비차단 queue에 제안하고, Core는 exact anchor와 replay를 검증하며, disposition 또는 fresh resolution 수락은 사용자만 수행합니다. Graph나 connector data가 없어도 disclosure일 뿐 일반 작업의 gate가 되지 않습니다. |
+| 제품 규칙이 계층 전체에 조용히 퍼짐 | Policy는 변경 불가능한 proposal에서 정확히 지정한 Feature 또는 FeatureGroup에만 적용되고 정확한 Requirement, Constraint 또는 Decision key를 인용할 수 있습니다. 사용자는 작은 decision 하나만 검토하며 group membership은 숨은 inheritance를 만들지 않습니다. 이후 evidence drift는 결정을 조용히 무효화하지 않고 별도로 보여 줍니다. |
+| 수집 조건이 바뀐 전후 metric이 같은 조건처럼 보임 | HEAD는 numeric comparison을 계속 제공하되 adapter revision, source scope, form, duration, sample size와 coverage를 same, different, unknown으로 보여 줍니다. 조용히 normalize하거나 causality를 주장하지 않습니다. |
 
 > 일반적인 코딩 에이전트가 현재 작업을 최적화한다면, HEAD Agent Core는
 > 여러 작업이 검토된 하나의 제품 방향으로 축적되도록 최적화합니다.
@@ -658,6 +660,13 @@ graph에 들어갑니다. ProductHypothesis는 정확한 Observation을 가리�
 남습니다. Observation 저장소가 손상되면 그 graph layer만 unavailable로
 표시되고 관련 없는 product 작업은 계속할 수 있습니다.
 
+Policy 계보도 같은 방식으로 명확히 남습니다. create, revision 또는 retirement
+proposal은 사용자가 정확한 candidate를 승인하기 전까지 P3 evidence입니다. 승인된
+decision은 resulting Product Model revision과 일치하는 current Policy revision을
+가리키며, 이후 무관한 Policy가 추가되어도 그 연결은 유지됩니다. 검토되지 않은
+Policy candidate는 HEAD가 candidate inspection을 명시적으로 선택하지 않는 한 일반
+graph discovery에서 숨겨집니다.
+
 source relation은 제품 의미가 아니라 structural evidence입니다. 기본 heuristic
 import/call graph는 유지되고, 선택적인 provider-neutral 언어 AST adapter가 현재
 file manifest에 결속된 별도 label의 evidence를 추가할 수 있습니다. 어느 source도
@@ -812,6 +821,8 @@ HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정�
 | 런타임 증거 | Claude Code 실제 모델 호출 적합성 | **실험적** |
 | 릴리스 증거 | 공급자 중립 Git ref, deployment-result 및 release observation | **사용 가능** |
 | 공통 관측 | 기존 exact evidence 우선 준비, Host source 페이지 탐색, opaque ID 수집 | **사용 가능** |
+| 제품 정책 | schema-v2 Policy proposal, 정확한 적용 대상과 semantic reference, user review, evidence-currentness 진단, revision 및 retirement lineage | **사용 가능** |
+| 측정 | versioned metric definition, exact observation, condition-aware comparison, non-causal assessment 및 bounded lineage | **사용 가능** |
 | 워커 | 범위가 제한된 전달, 대기, 결과, 검토, 통합 | **사용 가능** |
 | 역할 통신 | 지속 가능한 역할 메시징과 정확한 엔드포인트 전달 | **사용 가능** |
 | 프로젝션 | 로컬 그래프와 Markdown | **사용 가능** |

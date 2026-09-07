@@ -32,6 +32,8 @@ Reviewer evaluates a consequential decision before implementation. Reviewer test
 - Capability never implies authorization.
 - ResultPacket and Worker Report are P3 evidence; SessionRunCheckpoint is the P2 recovery record; ReviewDecision is a P1 normative record.
 - ProductCanonFeature and ReviewedFeature are P1; FeatureCandidate and ProductFeatureCandidate are P3. A graph label never promotes a candidate.
+- An accepted ProductPolicyReviewDecision is P1 and changes only its exact candidate-bound Product Model revision. ProductPolicyCandidate and its evidence are P3; evidence-currentness and graph lineage are P4. Evidence drift never silently revokes or revises Canon.
+- Metric definitions, collected observations, derived comparisons, and assessment hypotheses are P3 evidence; status and trace are P4 views. Adapter or collection-condition equality is evidence, never product success, causality, approval, or recovery direction.
 - P3 evidence, P4 views, and P5 effects cannot be promoted into P2 recovery authority; checkpoint fields come only from explicit HEAD/user direction and verified P2 lineage.
 - Artifact-only Session restore is a non-persisted P4 projection; it reproduces a P2 checkpoint direction but cannot replace or rewrite that checkpoint.
 - An accepted ResultPacket may be checkpoint-integrated only after its exact P1 ReviewDecision, and the P3 integration receipt cannot author recovery fields.

@@ -22,6 +22,8 @@ test/*
 !test/run-transition-recovery.test.mjs
 !test/runtime-result-application.test.mjs
 !test/native-smoke-cleanup.test.mjs
+!test/product-policy.test.mjs
+!test/measurement-workflow.test.mjs
 .test-tmp-*/
 .qa-*/
 *.log

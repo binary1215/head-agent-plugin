@@ -98,6 +98,14 @@ trusted Host configuration
 
 The preparation projection does not judge semantic sufficiency, infer relevance from lexical overlap, select a source, or persist anything. Provider HEAD performs that judgment in the conversation. The model and user provide no file path, credential reference, binding, descriptor, digest, coverage claim, provider identity, or source alias on this path. Core verifies Project readiness before the adapter may access its source. Missing Host composition is disclosed as optional adapter unavailability; it does not fall back to user-authored provenance or weaken the common contract. An embedding Host may use the same injected registry with the advanced CLI composition, but the ordinary standalone CLI does not load adapter code or configuration dynamically.
 
+## Metric evidence workflow
+
+The metric workflow is a thin provider-neutral use of the common contract, not a second analytics store. `head_metric_define` registers a versioned metric shape containing its unit and desired direction. An exact replay is idempotent; a conflicting shape under the same metric key and version fails with a request to use a new version instead of making later lookup ambiguous.
+
+`head_metric_observe` records an exact subject, value, time scope, source scope, sample size when known, coverage, and collection-adapter identity. If a Host retries the same event without resupplying an observation time, Core reuses the durable event time; changed content under the same source event still fails closed. `head_metric_compare` permits a numeric difference only for the exact same descriptor, subject, unit, and direction. Different adapter key, adapter version, adapter descriptor digest, source scope, snapshot/aggregate form, period duration, sample size, or coverage state does not add an approval gate: the numeric comparison remains available, but the result marks the condition as same, different, or unknown, states that no normalization was applied, and downgrades derived coverage rather than presenting a like-for-like result. Even when every recorded collection condition matches, Core reports only `recordedCollectionConditionsEquivalent: true`; semantic equivalence remains `not-assessed` and is never mechanically inferred.
+
+`head_metric_assess` records only a P3 ProductHypothesis and always states that causality is not established. `head_metric_follow_up` creates only a Product Initiative candidate, which still needs the existing explicit user review before approval. `head_metric_status` and `head_metric_trace` are bounded read-only P4 views. None of these operations writes Product Canon, a ReviewDecision, Conformance disposition, or P2 recovery direction.
+
 ## Context and use
 
 Context compilation excludes common observations by default. HEAD performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core then proves actual inclusion without lexical eligibility, semantic promotion, or sufficiency judgment.
@@ -131,3 +139,6 @@ Ordinary inspection remains ephemeral. Persist an Observation only when cross-Ru
 - the conversational source flow accepts only an opaque configured source ID and never asks the user for provenance structure;
 - the reference event-file adapter accepts unrelated product schemas without persisting Host paths, raw event keys, source aliases, or credential references;
 - the reference file path stays outside MCP, and malformed, oversized, relative-path, or divergent events fail closed.
+- the same metric key and version cannot acquire two definitions, while a new explicit version remains available;
+- numeric before/after comparison remains usable across disclosed adapter-revision and collection-condition differences without claiming semantic equivalence, normalization, or causality;
+- metric assessment and follow-up stay P3 evidence/candidates and do not mutate Conformance, Product Canon, or P2 recovery.

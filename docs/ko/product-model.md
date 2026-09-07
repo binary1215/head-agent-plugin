@@ -10,10 +10,12 @@ Git history, validation fixture 또는 model output에서 권한을 추론하지
 ## 권한과 lifecycle
 
 `.head/context/product-model.json`은 `FeatureGroup`, `Capability`, `Feature`,
-`Requirement`, `Constraint`, `Decision`을 위한 변경 가능한 프로젝트 Canon입니다.
-새 프로젝트 초기화는 명시적으로 빈 document를 생성합니다. 이 파일 없이 초기화된 이전
-프로젝트는 authorized process가 파일을 생성할 때까지 같은 빈 semantic model로 해석되므로,
-migration이 제품 의미를 만들어내지 않습니다.
+`Requirement`, `Constraint`, `Decision` 및 선택적 schema-v2 `Policy`를 위한 변경 가능한
+프로젝트 Canon입니다. 새 프로젝트 초기화는 명시적으로 빈 schema-v1 document를 생성합니다.
+기존 schema-v1 byte, protocol, hash, read 및 replay 동작은 정확히 유지되며, schema v2는
+명시적으로 승인된 Policy candidate 또는 이미 권한이 있는 완전한 Product Model 쓰기를 통해서만
+진입합니다. 이 파일 없이 초기화된 이전 프로젝트는 authorized process가 파일을 생성할 때까지
+같은 빈 semantic model로 해석되므로 migration이 제품 의미를 만들어내지 않습니다.
 
 빈 Product Model은 “HEAD에 아직 승인된 product concept가 없다”는 뜻입니다. 기존 source
 file, test, README heading, issue 또는 directory name은 Evidence로 남으며 자동으로
@@ -31,7 +33,7 @@ key를 사용하며 model을 index하기 전에 검증됩니다.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "featureGroups": [
     {
       "key": "communication",
@@ -67,7 +69,22 @@ key를 사용하며 model을 index하기 전에 검증됩니다.
     }
   ],
   "constraints": [],
-  "decisions": []
+  "decisions": [],
+  "policies": [
+    {
+      "key": "human-review",
+      "name": "Human review",
+      "description": "Require review for the selected product surface.",
+      "statement": "Changes to communication require explicit user review.",
+      "status": "active",
+      "appliesTo": [
+        { "kind": "FeatureGroup", "key": "communication" }
+      ],
+      "governedBy": [
+        { "kind": "Requirement", "key": "delivery-confirmation" }
+      ]
+    }
+  ]
 }
 ```
 
@@ -75,6 +92,36 @@ Key에는 letter, digit, dot, underscore, colon 또는 hyphen을 사용합니다
 kind 안에서 고유해야 합니다. FeatureGroup parent relation은 acyclic이어야 합니다.
 group, capability, requirement, constraint 및 decision을 가리키는 Feature reference는
 해석되어야 합니다. Decision에는 `status: "active"` 또는 `"superseded"`가 있습니다.
+Policy에는 `status: "active"` 또는 `"retired"`가 있으며 명시적으로 지정한 Feature 또는
+FeatureGroup key에만 적용됩니다. 선택적 `governedBy` reference로 정확한 Requirement,
+Constraint 또는 Decision key를 인용할 수 있고 빈 reference도 유효합니다. 적용 대상이나
+semantic reference는 group membership에서 추론되지 않습니다.
+
+## Policy 제안과 검토
+
+대화에서 HEAD는 `head_product_policy_propose`를 사용해 정확한 현재 Product Model을 기준으로
+create, revise 또는 retire 불변 candidate 하나를 기록할 수 있습니다. Proposal은 bounded local
+source evidence와 정확한 semantic reference를 인용할 수 있지만 선택적 evidence 또는 reference가
+없다는 사실은 gate가 아니라 disclosure입니다. Canon을 변경하거나 일반 작업을 막지 않습니다.
+HEAD는 의미, 정확한 적용 대상, reference, evidence 상태 및
+영향을 작은 decision card 하나로 제시하며, 현재 사용자의 명확한 결정 뒤에만
+`head_product_policy_review`를 호출할 수 있습니다. `head_product_policy_status`는 읽기 전용
+inspection surface입니다.
+
+Acceptance만 보호된 전이입니다. 현재 Session, Product Model base, active Run conflict, candidate
+identity 및 결속된 local evidence를 다시 검사한 다음, 공통 mutation lock 아래에서 ReviewDecision을
+기록하고 정확한 schema-v2 결과를 씁니다. Exact replay는 같은 불변 결정에서 누락된 출력만
+완성하고 결정을 다시 묻지 않습니다. 승인된 Canon이 이미 게시됐다면 누락된 derived projection만
+복구합니다. Rejection은 Canon을 변경하지 않고 disposition만 기록합니다.
+Candidate와 ReviewDecision artifact는 감사를 위해 graph에 projection되며 두 번째 Policy store는
+만들지 않습니다.
+
+Review 이후 source evidence가 바뀌어도 승인된 Policy를 조용히 개정하거나 무효화하지 않습니다.
+Status와 lineage trace는 하나의 공통 bounded P4 currentness projection을 보여 줍니다. 각 source는
+`unchanged`, `changed`, `missing`, `not-assessed` 중 하나이며 external evidence는
+`not-assessed`로 남습니다. Byte freshness는 semantic reassessment가 아니고 자동으로 두 번째
+review를 요구하거나 일반 작업을 막지 않습니다. 현재 task에 필요하면 HEAD가 이 disclosure를
+새 proposal의 evidence로 사용할 수 있습니다.
 
 ## Temporal projection
 
@@ -90,6 +137,8 @@ Product relation은 다음과 같은 하나의 canonical direction을 사용합�
 - `FeatureGroup -CONTAINS-> Feature`
 - `Feature -REALIZES-> Capability`
 - `Feature -GOVERNED_BY-> Requirement|Constraint|Decision`
+- `Policy -GOVERNED_BY-> Requirement|Constraint|Decision`, 명시적인 semantic reference에 한함
+- `Feature|FeatureGroup -GOVERNED_BY-> Policy`, 명시적인 Policy application에 한함
 - logical entity `-HAS_REVISION->` 및 `-CURRENT_REVISION->` immutable Revision
 
 이 node와 relation은 Canon의 파생 view이므로 `authorityClass: "canon-projected"`를

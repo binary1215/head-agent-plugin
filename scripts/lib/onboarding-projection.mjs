@@ -8,7 +8,7 @@ import {
   onboardingCanonicalJson,
   onboardingDigest,
 } from "./onboarding-contract.mjs";
-import { emptyProductModelDocument, normalizeProductModelDocument, PRODUCT_ENTITY_KINDS } from "./product-model.mjs";
+import { emptyProductModelDocument, normalizeProductModelDocument, PRODUCT_ENTITY_KINDS_V1 as PRODUCT_ENTITY_KINDS } from "./product-model.mjs";
 
 export const ONBOARDING_GRAPH_PROJECTION_VERSION = "0.1.0";
 

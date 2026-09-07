@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,11 +9,21 @@ import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createResultPacket, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { diffGraphLineage, inspectGraphLineage, projectExecutionLineageOverlay, traceGraphLineage } from "../scripts/lib/graph-lineage.mjs";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { buildTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
+
+const graphDigest = (value) => crypto.createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-graph-lineage-"));
@@ -93,4 +104,28 @@ test("execution overlay reads exact lineage but cannot promote or recover", (t) 
   assert.equal(overlay.authority.instructionAuthority, false);
   assert.equal(overlay.authority.promotionAuthority, false);
   assert.equal(overlay.authority.recoveryAuthority, false);
+});
+
+test("the current reader preserves digest-valid temporal 0.12 vocabulary compatibility", () => {
+  const current = buildTemporalProvenanceGraph({
+    projectId: "head-0123456789abcdef0123",
+    files: [],
+    productModel: normalizeProductModelDocument({ schemaVersion: 1, featureGroups: [], capabilities: [], features: [], requirements: [], constraints: [], decisions: [] }),
+  });
+  const legacy = structuredClone(current);
+  legacy.protocol.version = "0.12.0";
+  delete legacy.productModelSchemaVersion;
+  delete legacy.logicalLineageState;
+  legacy.nodeKinds = legacy.nodeKinds.filter((kind) => !["Policy", "PolicyRevision", "ProductModelRevisionReference", "ProductPolicyCandidate", "ProductPolicyEvidence", "ProductPolicyReviewDecision"].includes(kind));
+  delete legacy.productPolicyProjection;
+  delete legacy.summary.policyCount;
+  delete legacy.summary.productPolicyCandidateCount;
+  delete legacy.summary.productPolicyEvidenceCount;
+  delete legacy.summary.productPolicyReviewDecisionCount;
+  delete legacy.summary.appliedProductPolicyDecisionCount;
+  delete legacy.graphSnapshotId;
+  delete legacy.graphSnapshotHash;
+  legacy.graphSnapshotHash = graphDigest(legacy);
+  legacy.graphSnapshotId = `graph-snapshot-${legacy.graphSnapshotHash.slice(0, 24)}`;
+  assert.equal(verifyTemporalProvenanceGraph(legacy).graphSnapshotId, legacy.graphSnapshotId);
 });

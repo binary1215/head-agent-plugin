@@ -84,6 +84,12 @@ Core regex, keyword matcher, or default disposition. A short reply such as
 decision. Provider summaries, model recommendations, confirmation booleans, and
 earlier decisions are not substitutes for the current user's reply.
 
+For a Policy decision, show its plain-language statement, exact application
+targets, optional semantic references, evidence state, and whether the action
+creates, revises, or retires it. Do not turn missing optional evidence into an
+extra gate. Later byte-currentness diagnostics are notices owned by HEAD, not a
+new decision card unless HEAD proposes a separate exact revision.
+
 ## Outcome presentation
 
 Lead with the work outcome and use only the sections that add information:
@@ -99,6 +105,10 @@ is not acceptance; a commit is not a push; and a deployment observation is not
 product success. For a durable Run, completion follows Fresh HEAD review and the
 existing explicit review/integration boundaries. Keep technical IDs and JSON
 available for diagnosis rather than making them prerequisites for ordinary use.
+For metric comparisons, lead with the numeric result, then disclose only the
+collection conditions that differ or remain unknown. State that no normalization
+or causality was established; do not demand user approval merely to view a
+conditional comparison.
 
 Successful entry and status are quiet by default: one line is enough unless the
 user asks for detail or a real exception exists. An exception names its owner,

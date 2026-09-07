@@ -100,6 +100,14 @@ trusted Host configuration
 
 preparation projection은 semantic sufficiency를 판단하거나 lexical overlap으로 relevance를 추론하거나 source를 선택하거나 어떤 것도 persist하지 않습니다. provider HEAD가 conversation 안에서 그 판단을 수행합니다. 이 경로에서 model과 user는 file path, credential reference, binding, descriptor, digest, coverage claim, provider identity 또는 source alias를 제공하지 않습니다. Core는 adapter가 source에 접근하기 전에 Project readiness를 검증합니다. Host composition이 없으면 optional adapter unavailable 상태를 명시하며 user-authored provenance로 fallback하거나 공통 계약을 약화하지 않습니다. embedding Host는 고급 CLI composition에서도 같은 injected registry를 사용할 수 있지만 일반 standalone CLI는 adapter code나 configuration을 dynamically load하지 않습니다.
 
+## Metric evidence workflow
+
+Metric workflow는 공통 계약을 얇게 사용하는 provider-neutral 경로이며 두 번째 analytics store가 아닙니다. `head_metric_define`은 unit과 desired direction을 포함한 versioned metric shape를 등록합니다. 정확한 replay는 idempotent하며, 동일 metric key와 version 아래에서 shape가 충돌하면 이후 lookup을 모호하게 만들지 않고 새 version을 사용하도록 요청하며 실패합니다.
+
+`head_metric_observe`는 정확한 subject, value, time scope, source scope, 알려진 경우 sample size, coverage 및 collection-adapter identity를 기록합니다. Host가 observation time을 다시 제공하지 않고 같은 event를 retry하면 Core는 durable event time을 재사용하며, 같은 source event 아래에서 content가 달라지면 계속 fail closed됩니다. `head_metric_compare`는 정확히 같은 descriptor, subject, unit 및 direction에 대해서만 numeric difference를 허용합니다. Adapter key, adapter version, adapter descriptor digest, source scope, snapshot/aggregate form, period duration, sample size 또는 coverage state가 달라도 approval gate를 추가하지 않습니다. Numeric comparison은 계속 사용할 수 있지만 결과는 조건을 same, different, unknown으로 표시하고 normalization이 적용되지 않았음을 밝히며, like-for-like result로 보이지 않도록 derived coverage를 낮춥니다.
+
+`head_metric_assess`는 P3 ProductHypothesis만 기록하고 causality가 성립하지 않았음을 항상 명시합니다. `head_metric_follow_up`은 Product Initiative candidate만 만들며 승인에는 기존의 명시적 user review가 그대로 필요합니다. `head_metric_status`와 `head_metric_trace`는 bounded read-only P4 view입니다. 어떤 operation도 Product Canon, ReviewDecision, Conformance disposition 또는 P2 recovery direction을 쓰지 않습니다.
+
 ## Context와 사용법
 
 Context compilation은 기본적으로 공통 observation을 제외합니다. HEAD가 semantic analysis를 수행하고 kind가 `observation`이며 `observationIds`에 불변 현재 ID가 들어 있는 EvidenceNeed로 정확한 identity를 요청합니다. Core는 lexical eligibility, semantic promotion 또는 sufficiency judgment 없이 실제 포함만 증명합니다.
@@ -133,3 +141,6 @@ Context compilation은 기본적으로 공통 observation을 제외합니다. HE
 - conversational source flow는 opaque configured source ID만 받고 user에게 provenance structure를 요구하지 않습니다.
 - reference event-file adapter는 Host path, raw event key, source alias 또는 credential reference를 persist하지 않으면서 서로 무관한 product schema를 받아들입니다.
 - reference file path는 MCP 밖에 남고 malformed, oversized, relative-path 또는 divergent event는 fail closed합니다.
+- 같은 metric key와 version은 두 개의 definition을 가질 수 없고, 새 explicit version은 계속 사용할 수 있습니다.
+- adapter-revision 및 collection-condition difference를 공개하면서 numeric before/after comparison을 계속 사용할 수 있지만 semantic equivalence, normalization 또는 causality를 주장하지 않습니다. 기록된 모든 수집 조건이 같아도 Core는 `recordedCollectionConditionsEquivalent: true`만 보고하며 semantic equivalence는 `not-assessed`로 남습니다.
+- metric assessment와 follow-up은 P3 evidence/candidate로 남고 Conformance, Product Canon 또는 P2 recovery를 변경하지 않습니다.

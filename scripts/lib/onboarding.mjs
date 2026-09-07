@@ -29,7 +29,8 @@ import {
 import {
   emptyProductModelDocument,
   normalizeProductModelDocument,
-  PRODUCT_ENTITY_KINDS,
+  productModelDocument,
+  PRODUCT_ENTITY_KINDS_V1 as PRODUCT_ENTITY_KINDS,
   PRODUCT_MODEL_RELATIVE_PATH,
   readProductModelCanon,
 } from "./product-model.mjs";
@@ -171,18 +172,6 @@ function persistImmutable(file, document, label) {
   }
   atomicWrite(file, json(document));
   return { status: "recorded", file, document };
-}
-
-function productModelDocument(model) {
-  return {
-    schemaVersion: 1,
-    featureGroups: structuredClone(model.featureGroups),
-    capabilities: structuredClone(model.capabilities),
-    features: structuredClone(model.features),
-    requirements: structuredClone(model.requirements),
-    constraints: structuredClone(model.constraints),
-    decisions: structuredClone(model.decisions),
-  };
 }
 
 function productModelHasEntities(model) {

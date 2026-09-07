@@ -235,7 +235,7 @@ function runBinding(inspected, nextSourceSnapshotId) {
 }
 
 function revisionTransition(previousGraph, nextGraph) {
-  const kinds = new Set(["FileRevision", "SymbolRevision", "TestRevision", "FeatureGroupRevision", "CapabilityRevision", "FeatureRevision", "RequirementRevision", "ConstraintRevision", "DecisionRevision"]);
+  const kinds = new Set(["FileRevision", "SymbolRevision", "TestRevision", "FeatureGroupRevision", "CapabilityRevision", "FeatureRevision", "RequirementRevision", "ConstraintRevision", "DecisionRevision", "PolicyRevision"]);
   const previousIds = new Set(previousGraph.nodes.filter((node) => kinds.has(node.kind)).map((node) => node.nodeId));
   const revisions = nextGraph.nodes.filter((node) => kinds.has(node.kind));
   return {

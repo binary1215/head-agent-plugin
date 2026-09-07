@@ -12,9 +12,10 @@ import {
 } from "./git-history.mjs";
 import { buildSemanticGraph, querySemanticGraph, SEMANTIC_GRAPH_VERSION, verifySemanticGraph } from "./semantic-graph.mjs";
 import { collectSourceRelationEvidence, SOURCE_RELATION_EVIDENCE_VERSION } from "./source-relation-evidence.mjs";
-import { normalizeProductModelDocument, PRODUCT_MODEL_RELATIVE_PATH, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
+import { normalizeProductModelDocument, productModelDocument, PRODUCT_MODEL_RELATIVE_PATH, PRODUCT_MODEL_VERSION, readProductModelCanon } from "./product-model.mjs";
 import { assertProjectionDidNotMutateCanon } from "./authority-plane-contract.mjs";
 import { loadOnboardingGraphProjection, ONBOARDING_GRAPH_PROJECTION_VERSION } from "./onboarding-projection.mjs";
+import { loadProductPolicyGraphProjection, PRODUCT_POLICY_GRAPH_PROJECTION_VERSION } from "./product-policy-projection.mjs";
 import { FEATURE_MAPPING_VERSION, loadFeatureMappingProjection } from "./feature-mapping-projection.mjs";
 import {
   CHANGE_SET_PROJECTION_VERSION,
@@ -78,7 +79,7 @@ import {
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 
-export const WORLD_MODEL_VERSION = "0.17.0";
+export const WORLD_MODEL_VERSION = "0.18.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 export const WORLD_MODEL_STATUS_PROJECTION_VERSION = "0.1.0";
 export const WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES = 512 * 1024;
@@ -120,8 +121,9 @@ function readRecoverableTemporalGraphProjection({ projectRoot, projectId, adapte
   return graph;
 }
 
-function projectionProvesEarlierWorld({ featureMappingProjection, changeSetProjection, documentChangeProjection } = {}) {
-  return (featureMappingProjection?.candidateSets?.length || 0) > 0
+function projectionProvesEarlierWorld({ productPolicyProjection, featureMappingProjection, changeSetProjection, documentChangeProjection } = {}) {
+  return (productPolicyProjection?.candidates?.length || 0) > 0
+    || (featureMappingProjection?.candidateSets?.length || 0) > 0
     || (changeSetProjection?.changeSets?.length || 0) > 0
     || (changeSetProjection?.candidateSets?.length || 0) > 0
     || (documentChangeProjection?.candidateSets?.length || 0) > 0;
@@ -372,22 +374,14 @@ function verifiedSnapshot(snapshot, expectedId = "") {
   });
   if (snapshot.semanticGraph) verifySemanticGraph(snapshot.semanticGraph);
   if (snapshot.productModel) {
-    const normalizedProductModel = normalizeProductModelDocument({
-      schemaVersion: snapshot.productModel.schemaVersion,
-      featureGroups: snapshot.productModel.featureGroups,
-      capabilities: snapshot.productModel.capabilities,
-      features: snapshot.productModel.features,
-      requirements: snapshot.productModel.requirements,
-      constraints: snapshot.productModel.constraints,
-      decisions: snapshot.productModel.decisions,
-    });
+    const normalizedProductModel = normalizeProductModelDocument(productModelDocument(snapshot.productModel));
     if (normalizedProductModel.productModelId !== snapshot.productModel.productModelId
       || normalizedProductModel.productModelHash !== snapshot.productModel.productModelHash) {
       fail("World Model product canon projection is invalid.", "PRODUCT_MODEL_IDENTITY_MISMATCH");
     }
   }
   if (snapshot.temporalProvenanceGraph) verifyTemporalProvenanceGraph(snapshot.temporalProvenanceGraph);
-  if (new Set(["0.11.0", "0.12.0", "0.13.0", "0.14.0", "0.15.0", "0.16.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
+  if (new Set(["0.11.0", "0.12.0", "0.13.0", "0.14.0", "0.15.0", "0.16.0", "0.17.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
     const projection = snapshot.onboardingProjection;
     const graphProjection = snapshot.temporalProvenanceGraph?.onboardingProjection;
     if (!projection || projection.authority !== "derived-projection-manifest-not-project-canon"
@@ -398,6 +392,18 @@ function verifiedSnapshot(snapshot, expectedId = "") {
       || canonicalJson(projection.reviewDecisionIds) !== canonicalJson(graphProjection?.reviewDecisionIds)
       || canonicalJson(projection.productModelRevisionIds) !== canonicalJson(graphProjection?.productModelRevisionIds)) {
       fail("World Model onboarding projection and temporal graph disagree.", "ONBOARDING_TEMPORAL_IDENTITY_MISMATCH");
+    }
+    if (snapshot.protocol?.version === WORLD_MODEL_VERSION) {
+      const policyProjection = snapshot.productPolicyProjection;
+      const graphPolicyProjection = snapshot.temporalProvenanceGraph?.productPolicyProjection;
+      if (!policyProjection || policyProjection.authority !== "derived-projection-manifest-not-project-canon"
+        || policyProjection.instructionAuthority !== false || policyProjection.promotionAuthority !== false || policyProjection.recoveryAuthority !== false
+        || policyProjection.projectionInputId !== graphPolicyProjection?.projectionInputId
+        || policyProjection.projectionInputHash !== graphPolicyProjection?.projectionInputHash
+        || canonicalJson(policyProjection.candidateIds) !== canonicalJson(graphPolicyProjection?.candidateIds)
+        || canonicalJson(policyProjection.reviewDecisionIds) !== canonicalJson(graphPolicyProjection?.reviewDecisionIds)) {
+        fail("World Model Product Policy projection and temporal graph disagree.", "PRODUCT_POLICY_TEMPORAL_IDENTITY_MISMATCH");
+      }
     }
     const mappingProjection = snapshot.featureMappingProjection;
     const graphMappingProjection = snapshot.temporalProvenanceGraph?.featureMappingProjection;
@@ -448,7 +454,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
       || canonicalJson(operatingProjection.outcomeObservationIds) !== canonicalJson(graphOperatingProjection?.outcomeObservationIds)) {
       fail("World Model product-operating projection and temporal graph disagree.", "PRODUCT_OPERATING_TEMPORAL_IDENTITY_MISMATCH");
     }
-    if (new Set(["0.15.0", "0.16.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
+    if (new Set(["0.15.0", "0.16.0", "0.17.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
       const releaseProjection = snapshot.releaseObservationProjection;
       const graphReleaseProjection = snapshot.temporalProvenanceGraph?.releaseObservationProjection;
       if (!releaseProjection || releaseProjection.authority !== "derived-projection-manifest-not-release-authority"
@@ -461,7 +467,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
         fail("World Model release-observation projection and temporal graph disagree.", "RELEASE_OBSERVATION_TEMPORAL_IDENTITY_MISMATCH");
       }
     }
-    if (new Set(["0.16.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
+    if (new Set(["0.16.0", "0.17.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
       const observationProjection = snapshot.observationProjection;
       const graphObservationProjection = snapshot.temporalProvenanceGraph?.observationProjection;
       if (!observationProjection || observationProjection.authority !== "derived-projection-manifest-not-observation-or-product-authority"
@@ -504,6 +510,7 @@ function changesBetween(previous, current) {
 const REVISION_KINDS = new Set([
   "FileRevision", "SymbolRevision", "TestRevision", "FeatureGroupRevision",
   "CapabilityRevision", "FeatureRevision", "RequirementRevision", "ConstraintRevision", "DecisionRevision",
+  "PolicyRevision",
 ]);
 
 function revisionSemantic(node, nodes) {
@@ -563,6 +570,7 @@ function indexerState() {
     semanticGraphVersion: SEMANTIC_GRAPH_VERSION,
     productModelVersion: PRODUCT_MODEL_VERSION,
     onboardingGraphProjectionVersion: ONBOARDING_GRAPH_PROJECTION_VERSION,
+    productPolicyGraphProjectionVersion: PRODUCT_POLICY_GRAPH_PROJECTION_VERSION,
     featureMappingVersion: FEATURE_MAPPING_VERSION,
     changeSetVersion: CHANGE_SET_VERSION,
     changeSetProjectionVersion: CHANGE_SET_PROJECTION_VERSION,
@@ -581,7 +589,7 @@ function indexerState() {
   };
 }
 
-function sourceDigestFor(files, sourceScope, productModel, onboardingProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, observationIntegration, productOperatingProjection, releaseObservationProjection, git, runtimeState, externalRuntimeState, indexer, sourceRelationEvidenceHash = null, parentSourceSnapshotIds = [], revisionParentIds = {}, logicalLineageState = {}) {
+function sourceDigestFor(files, sourceScope, productModel, onboardingProjection, productPolicyProjection, featureMappingProjection, changeSetProjection, documentChangeProjection, observationIntegration, productOperatingProjection, releaseObservationProjection, git, runtimeState, externalRuntimeState, indexer, sourceRelationEvidenceHash = null, parentSourceSnapshotIds = [], revisionParentIds = {}, logicalLineageState = {}) {
   const observationProjection = observationIntegration.projection;
   return digest(canonicalJson({
     files,
@@ -590,6 +598,10 @@ function sourceDigestFor(files, sourceScope, productModel, onboardingProjection,
     onboardingProjection: {
       projectionInputId: onboardingProjection.projectionInputId,
       projectionInputHash: onboardingProjection.projectionInputHash,
+    },
+    productPolicyProjection: {
+      projectionInputId: productPolicyProjection.projectionInputId,
+      projectionInputHash: productPolicyProjection.projectionInputHash,
     },
     featureMappingProjection: {
       projectionInputId: featureMappingProjection.projectionInputId,
@@ -713,6 +725,11 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     projectId: inspected.project.projectId,
     currentProductModelId: productCanon.model.productModelId,
   });
+  const productPolicyProjection = loadProductPolicyGraphProjection({
+    projectRoot: inspected.project.projectRoot,
+    projectId: inspected.project.projectId,
+    currentProductModelId: productCanon.model.productModelId,
+  });
   const featureMappingProjection = loadFeatureMappingProjection({
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
@@ -749,6 +766,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     sourceScope,
     productCanon.model,
     onboardingProjection,
+    productPolicyProjection,
     featureMappingProjection,
     changeSetProjection,
     documentChangeProjection,
@@ -780,6 +798,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   const fileChanges = changesBetween(stored.snapshot, current);
   const productModelChanged = productCanon.model.productModelHash !== stored.snapshot.productModel?.productModelHash;
   const onboardingProjectionChanged = onboardingProjection.projectionInputHash !== stored.snapshot.onboardingProjection?.projectionInputHash;
+  const productPolicyProjectionChanged = productPolicyProjection.projectionInputHash !== stored.snapshot.productPolicyProjection?.projectionInputHash;
   const featureMappingProjectionChanged = featureMappingProjection.projectionInputHash !== stored.snapshot.featureMappingProjection?.projectionInputHash;
   const changeSetProjectionChanged = changeSetProjection.projectionInputHash !== stored.snapshot.changeSetProjection?.projectionInputHash;
   const documentChangeProjectionChanged = documentChangeProjection.projectionInputHash !== stored.snapshot.documentChangeProjection?.projectionInputHash;
@@ -801,6 +820,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
       externalRuntimeStateChanged: externalRuntimeState.runtimeStateHash !== stored.snapshot.externalRuntimeState?.runtimeStateHash,
       productModelChanged,
       onboardingProjectionChanged,
+      productPolicyProjectionChanged,
       featureMappingProjectionChanged,
       changeSetProjectionChanged,
       documentChangeProjectionChanged,
@@ -808,7 +828,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
       productOperatingProjectionChanged,
       releaseObservationProjectionChanged,
       temporalProvenanceChanged: sourceScopeChanged || fileChanges.added.length > 0 || fileChanges.changed.length > 0 || fileChanges.removed.length > 0
-        || productModelChanged || onboardingProjectionChanged || featureMappingProjectionChanged || changeSetProjectionChanged || documentChangeProjectionChanged || observationProjectionChanged || productOperatingProjectionChanged || releaseObservationProjectionChanged,
+        || productModelChanged || onboardingProjectionChanged || productPolicyProjectionChanged || featureMappingProjectionChanged || changeSetProjectionChanged || documentChangeProjectionChanged || observationProjectionChanged || productOperatingProjectionChanged || releaseObservationProjectionChanged,
     },
     fileFreshness,
     sourceAdapters: { runtimeState: externalRuntimeResult.adapter },
@@ -963,6 +983,7 @@ async function buildWorldModelLocked({
   sourceRelationEvidenceAdapter = null,
   computeAdapter = null,
   onboardingProjectionInput = null,
+  productPolicyProjectionInput = null,
   featureMappingProjectionInput = null,
   changeSetProjectionInput = null,
   documentChangeProjectionInput = null,
@@ -1027,6 +1048,11 @@ async function buildWorldModelLocked({
     projectId: project.projectId,
     currentProductModelId: productCanon.model.productModelId,
   });
+  const productPolicyProjection = productPolicyProjectionInput || loadProductPolicyGraphProjection({
+    projectRoot: project.projectRoot,
+    projectId: project.projectId,
+    currentProductModelId: productCanon.model.productModelId,
+  });
   const featureMappingProjection = featureMappingProjectionInput || loadFeatureMappingProjection({
     projectRoot: project.projectRoot,
     projectId: project.projectId,
@@ -1042,6 +1068,7 @@ async function buildWorldModelLocked({
   });
   if (logicalLineageState == null && previousWorldReadCode === "WORLD_MODEL_NOT_BUILT" && !previousTemporalGraph
     && (worldStoreAdapter.listSnapshotIds().length > 0 || projectionProvesEarlierWorld({
+      productPolicyProjection,
       featureMappingProjection,
       changeSetProjection,
       documentChangeProjection,
@@ -1098,6 +1125,7 @@ async function buildWorldModelLocked({
     productModel: productCanon.model,
     productEvidenceId: productCanon.evidenceId,
     onboardingProjection,
+    productPolicyProjection,
     featureMappingProjection,
     changeSetProjection,
     documentChangeProjection,
@@ -1113,6 +1141,7 @@ async function buildWorldModelLocked({
     sourceScope,
     productCanon.model,
     onboardingProjection,
+    productPolicyProjection,
     featureMappingProjection,
     changeSetProjection,
     documentChangeProjection,
@@ -1162,8 +1191,9 @@ async function buildWorldModelLocked({
         ? "heuristic-fallback-plus-source-separated-language-ast-import-call-evidence"
         : "heuristic-file-symbol-import-call-graph-with-evidence-locations",
       temporalProvenanceGraph: "content-addressed-file-symbol-test-revisions-with-multiple-parent-dag",
-      productModel: "user-owned-feature-capability-requirement-constraint-decision-canon-projected-into-temporal-graph",
+      productModel: "user-owned-feature-capability-requirement-constraint-decision-policy-canon-projected-into-temporal-graph",
       onboardingProjection: "immutable-candidates-evidence-unknowns-reviews-and-product-model-revision-receipts-projected-without-authority-escalation",
+      productPolicyProjection: "immutable-policy-candidates-explicit-review-decisions-exact-product-model-revisions-and-evidence-traces-projected-without-authority-escalation",
       featureMappingProjection: "immutable-feature-mapping-candidates-and-explicit-review-decisions-with-separate-reviewed-relationship-promotion",
       changeSetProjection: "reviewed-provider-neutral-changesets-with-review-gated-feature-impact-and-optional-vcs-evidence-relations",
       documentChangeProjection: "immutable-document-edit-candidates-reviews-product-revisions-and-application-receipts-projected-as-non-authoritative-audit-lineage",
@@ -1189,6 +1219,16 @@ async function buildWorldModelLocked({
       authority: "derived-projection-manifest-not-project-canon",
       instructionAuthority: false,
       promotionAuthority: false,
+    },
+    productPolicyProjection: {
+      projectionInputId: productPolicyProjection.projectionInputId,
+      projectionInputHash: productPolicyProjection.projectionInputHash,
+      candidateIds: productPolicyProjection.candidates.map((entry) => entry.candidate.candidateId),
+      reviewDecisionIds: productPolicyProjection.reviewDecisions.map((review) => review.reviewDecisionId),
+      authority: "derived-projection-manifest-not-project-canon",
+      instructionAuthority: false,
+      promotionAuthority: false,
+      recoveryAuthority: false,
     },
     featureMappingProjection: {
       projectionInputId: featureMappingProjection.projectionInputId,
@@ -1373,6 +1413,7 @@ async function buildWorldModelLocked({
     externalRuntimeStateChanged: changed && previous?.externalRuntimeState?.runtimeStateHash !== snapshot.externalRuntimeState.runtimeStateHash,
     productModelChanged: changed && previous?.productModel?.productModelHash !== snapshot.productModel.productModelHash,
     onboardingProjectionChanged: changed && previous?.onboardingProjection?.projectionInputHash !== snapshot.onboardingProjection.projectionInputHash,
+    productPolicyProjectionChanged: changed && previous?.productPolicyProjection?.projectionInputHash !== snapshot.productPolicyProjection.projectionInputHash,
     featureMappingProjectionChanged: changed && previous?.featureMappingProjection?.projectionInputHash !== snapshot.featureMappingProjection.projectionInputHash,
     changeSetProjectionChanged: changed && previous?.changeSetProjection?.projectionInputHash !== snapshot.changeSetProjection.projectionInputHash,
     observationProjectionChanged: changed && previous?.observationProjection?.projectionHash !== snapshot.observationProjection.projectionHash,

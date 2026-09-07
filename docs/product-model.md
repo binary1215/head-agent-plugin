@@ -8,7 +8,7 @@ validation fixtures, or model output.
 
 ## Authority and lifecycle
 
-`.head/context/product-model.json` is mutable project canon for `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, and `Decision`. New project initialization creates an explicit empty document. An older initialized project without the file is interpreted as the same empty semantic model until an authorized process creates the file, so migration does not invent product meaning.
+`.head/context/product-model.json` is mutable project canon for `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, `Decision`, and optional schema-v2 `Policy`. New project initialization creates an explicit empty schema-v1 document. Existing schema-v1 bytes, protocol, hash, read, and replay behavior remain exact; schema v2 is entered only by an explicitly accepted Policy candidate or another already-authorized complete Product Model write. An older initialized project without the file is interpreted as the same empty semantic model until an authorized process creates the file, so migration does not invent product meaning.
 
 An empty Product Model means “HEAD has no approved product concepts yet.” Existing source files, tests, README headings, issues, or directory names remain Evidence and do not automatically become Features. The active onboarding flow can normalize immutable candidates from a provider HEAD semantic proposal grounded in bounded current repository evidence, or from a structured new-project brief, but requires an explicit batch ReviewDecision before promotion into this canon. Directory structure is never converted into authoritative FeatureGroup taxonomy.
 
@@ -18,7 +18,7 @@ Stable `key` values identify logical product entities across renames and descrip
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "featureGroups": [
     {
       "key": "communication",
@@ -54,11 +54,34 @@ Stable `key` values identify logical product entities across renames and descrip
     }
   ],
   "constraints": [],
-  "decisions": []
+  "decisions": [],
+  "policies": [
+    {
+      "key": "human-review",
+      "name": "Human review",
+      "description": "Require review for the selected product surface.",
+      "statement": "Changes to communication require explicit user review.",
+      "status": "active",
+      "appliesTo": [
+        { "kind": "FeatureGroup", "key": "communication" }
+      ],
+      "governedBy": [
+        { "kind": "Requirement", "key": "delivery-confirmation" }
+      ]
+    }
+  ]
 }
 ```
 
-Keys use letters, digits, dot, underscore, colon, or hyphen. Keys must be unique within each entity kind. FeatureGroup parent relations must be acyclic. Feature references to groups, capabilities, requirements, constraints, and decisions must resolve. A Decision has `status: "active"` or `"superseded"`.
+Keys use letters, digits, dot, underscore, colon, or hyphen. Keys must be unique within each entity kind. FeatureGroup parent relations must be acyclic. Feature references to groups, capabilities, requirements, constraints, and decisions must resolve. A Decision has `status: "active"` or `"superseded"`. A Policy has `status: "active"` or `"retired"`, applies only to explicitly named Feature or FeatureGroup keys, and may cite exact Requirement, Constraint, or Decision keys through optional `governedBy` references. Empty references are valid. Neither application nor semantic references are inferred from group membership.
+
+## Policy proposal and review
+
+In conversation, HEAD may use `head_product_policy_propose` to record one immutable create, revise, or retire candidate against the exact current Product Model. The proposal can cite bounded local source evidence and exact semantic references, but missing optional evidence or references are disclosed rather than made a gate. It does not change Canon or block ordinary work. HEAD presents the meaning, exact applications, references, evidence state, and impact as one compact decision card; only after an unambiguous current user decision may it call `head_product_policy_review`. `head_product_policy_status` is a read-only inspection surface.
+
+Acceptance is the one protected transition: it rechecks the current Session, Product Model base, active Run conflict, candidate identity, and any bound local evidence, then records the ReviewDecision and writes the exact schema-v2 result under the common mutation lock. Exact replay completes only missing outputs of that same immutable decision and does not ask for another decision; when the approved Canon is already published, replay repairs only missing derived projection output. Rejection records the disposition without changing Canon. Candidate and ReviewDecision artifacts are projected into the graph for audit; there is no second Policy store.
+
+After review, source evidence can change without silently revising or invalidating the accepted Policy. Status and lineage trace expose one shared bounded P4 currentness projection: each source is `unchanged`, `changed`, `missing`, or `not-assessed`, while external evidence remains `not-assessed`. Byte freshness is not semantic reassessment, does not require an automatic second review, and never blocks ordinary work. HEAD may use the disclosed change as evidence for a new proposal when the task warrants it.
 
 ## Temporal projection
 
@@ -70,6 +93,8 @@ Product relations use one canonical direction:
 - `FeatureGroup -CONTAINS-> Feature`;
 - `Feature -REALIZES-> Capability`;
 - `Feature -GOVERNED_BY-> Requirement|Constraint|Decision`;
+- `Policy -GOVERNED_BY-> Requirement|Constraint|Decision`, only for explicit semantic references;
+- `Feature|FeatureGroup -GOVERNED_BY-> Policy`, only for explicit Policy applications;
 - logical entity `-HAS_REVISION->` and `-CURRENT_REVISION->` immutable Revision.
 
 These nodes and relations carry `authorityClass: "canon-projected"` because they are derived views of canon. They still have `instructionAuthority: false` and `promotionAuthority: false`: a GraphSnapshot never becomes canon or an authority mechanism merely because it contains a projection of canon.

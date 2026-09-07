@@ -210,6 +210,30 @@ reference, provider identity, or source alias. If no configured source is
 available, disclose the optional adapter gap and continue without Observation
 persistence unless that exact evidence is required.
 
+When the user wants to add, revise, or retire a product Policy, reason about its
+meaning in the provider HEAD and call `head_product_policy_propose` with exact
+Feature or FeatureGroup applications plus optional exact Requirement,
+Constraint, or Decision references. Do not infer those references from group
+membership, source names, or graph proximity, and do not ask the user to write
+proposal JSON. The candidate is non-blocking P3 evidence. Present one compact
+decision card and call `head_product_policy_review` only after the current user
+unambiguously accepts or rejects that exact candidate. A missing optional
+reference or evidence anchor is a disclosure, not a reason to manufacture one
+or block ordinary work. On later inspection, summarize the shared read-only
+evidence-currentness result; `changed` or `missing` can motivate a new proposal
+but does not automatically invalidate Canon or require another review.
+
+For before/after measurement, reuse existing exact observations or a configured
+Host source before asking for any new input. The provider HEAD may call the
+typed metric operations, but the user should speak in ordinary task language
+rather than supplying digests, coverage structures, adapter identities, or
+metric JSON. A numeric comparison remains available when collection conditions
+differ, while adapter key/version/descriptor, source scope, form, duration,
+sample size, and coverage remain visibly `same`, `different`, or `unknown`.
+Never convert that comparison into semantic equivalence or causality. Assessment
+is only a P3 ProductHypothesis; a follow-up remains an initiative candidate and
+uses the existing explicit Product review only if the user chooses to promote it.
+
 When approved Product Canon may have drifted from code or external evidence,
 keep Conformance reconciliation non-blocking. Call `head_conformance_prepare`
 without asking the user for Canon keys, graph IDs, digests, or JSON. Provider

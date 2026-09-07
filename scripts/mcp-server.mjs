@@ -21,6 +21,8 @@ import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from
 import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
+import { inspectProductPolicyStatus, proposeProductPolicy, readProductPolicyCandidate, readProductPolicyReviewDecision, reviewProductPolicy } from "./lib/product-policy.mjs";
+import { assessMetricComparison, compareMetricObservations, defineMetric, inspectMeasurements, proposeMetricFollowUp, recordMetricObservation, traceMeasurementLineage } from "./lib/measurement-workflow.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { collectRegisteredObservation, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
@@ -134,7 +136,7 @@ const conformanceEvidenceAnchorSchema = {
 const conformanceFindingInputSchema = {
   type: "object",
   properties: {
-    canon_anchor: { type: "object", properties: { entity_kind: { type: "string", enum: ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"] }, entity_key: { type: "string", minLength: 1 } }, required: ["entity_kind", "entity_key"], additionalProperties: false },
+    canon_anchor: { type: "object", properties: { entity_kind: { type: "string", enum: ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision", "Policy"] }, entity_key: { type: "string", minLength: 1 } }, required: ["entity_kind", "entity_key"], additionalProperties: false },
     evidence_anchors: { type: "array", minItems: 1, maxItems: 64, items: conformanceEvidenceAnchorSchema },
     claim: { type: "object", properties: { kind: { type: "string", enum: ["potential-conflict", "possible-conformance-gap"] }, summary: { type: "string", minLength: 1 }, rationale: { type: "string", minLength: 1 }, risk_hint: { type: "string", enum: ["unknown", "low", "medium", "high"] } }, required: ["kind", "summary", "rationale", "risk_hint"], additionalProperties: false },
   },
@@ -149,6 +151,11 @@ const supplementalReadOnlyHints = {
   head_runtime_invocation_lease_status: true,
   head_runtime_invocation_result: true,
   head_onboarding_status: true,
+  head_product_policy_status: true,
+  head_product_policy_candidate: true,
+  head_product_policy_review_decision: true,
+  head_metric_status: true,
+  head_metric_trace: true,
   head_feature_mapping_status: true,
   head_change_set_status: true,
   head_vcs_evidence: true,
@@ -191,6 +198,13 @@ const supplementalReadOnlyHints = {
   head_compact_continue: false,
   head_compact_abort: false,
   head_product_signal_record: false,
+  head_product_policy_propose: false,
+  head_product_policy_review: false,
+  head_metric_define: false,
+  head_metric_observe: false,
+  head_metric_compare: false,
+  head_metric_assess: false,
+  head_metric_follow_up: false,
   head_product_hypothesis_record: false,
   head_product_initiative_propose: false,
   head_product_initiative_review: false,
@@ -374,6 +388,117 @@ export const tools = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "head_product_policy_propose",
+    description: "Record one immutable P3 Policy create, revise, or retire candidate against the exact current Product Canon. The provider HEAD or user supplies meaning, explicit Feature or FeatureGroup applications, and optional exact Requirement, Constraint, or Decision references; Core never infers inheritance or promotes the candidate.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        operation: { type: "string", enum: ["create", "revise", "retire"] },
+        key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        name: { type: "string", minLength: 1, maxLength: 256 },
+        description: { type: "string", maxLength: 4000 },
+        statement: { type: "string", minLength: 1, maxLength: 8000 },
+        applies_to: {
+          type: "array", maxItems: 256, uniqueItems: true,
+          items: { type: "object", properties: { kind: { type: "string", enum: ["Feature", "FeatureGroup"] }, key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }, required: ["kind", "key"], additionalProperties: false },
+        },
+        governed_by: {
+          type: "array", maxItems: 256, uniqueItems: true,
+          items: { type: "object", properties: { kind: { type: "string", enum: ["Requirement", "Constraint", "Decision"] }, key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }, required: ["kind", "key"], additionalProperties: false },
+        },
+        evidence_anchors: {
+          type: "array", maxItems: 32,
+          items: { type: "object", properties: { kind: { type: "string", enum: ["user-request", "source", "observation", "decision", "other"] }, reference: { type: "string", minLength: 1, maxLength: 1024 }, digest: { anyOf: [{ type: "string", pattern: "^[a-f0-9]{64}$" }, { type: "null" }] }, summary: { type: "string", maxLength: 1000 } }, required: ["kind", "reference"], additionalProperties: false },
+        },
+        explanation: { type: "string", maxLength: 4000 },
+      },
+      required: ["project_root", "operation", "key"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_product_policy_review",
+    description: "Record one explicit user ReviewDecision for an exact Policy candidate. Accept changes Product Canon only when the candidate base is still current and no Run authority is active; reject is nonblocking. Exact retries repair missing derived projections without a second decision.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, candidate_id: { type: "string", pattern: "^policy-candidate-[a-f0-9]{24}$" }, disposition: { type: "string", enum: ["accept", "reject"] }, rationale: { type: "string", minLength: 1, maxLength: 4000 },
+    }, required: ["project_root", "candidate_id", "disposition", "rationale"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_product_policy_status",
+    description: "Read the exact Policy candidate, its optional ReviewDecision, and whether Canon is still at the candidate base or accepted result. This creates no state and never blocks ordinary work.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, candidate_id: { type: "string", pattern: "^policy-candidate-[a-f0-9]{24}$" } }, required: ["project_root", "candidate_id"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_product_policy_candidate",
+    description: "Read and digest-verify one immutable P3 Product Policy candidate.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, candidate_id: { type: "string", pattern: "^policy-candidate-[a-f0-9]{24}$" } }, required: ["project_root", "candidate_id"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_product_policy_review_decision",
+    description: "Read and digest-verify one exact Product Policy ReviewDecision and its candidate binding.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, review_decision_id: { type: "string", pattern: "^review-decision-[a-f0-9]{24}$" } }, required: ["project_root", "review_decision_id"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_metric_define",
+    description: "Register a provider-neutral P3 metric data shape. This does not change Product Canon, execution authority, or recovery direction.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, metric_key: { type: "string", minLength: 1, maxLength: 128 }, unit: { type: "string", minLength: 1, maxLength: 64 }, direction: { type: "string", enum: ["increase", "decrease", "maintain"] }, type_version: { type: "string", minLength: 1, maxLength: 64, default: "1" },
+    }, required: ["project_root", "metric_key", "unit", "direction"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_metric_observe",
+    description: "Record one exact P3 metric observation through the common Observation contract. Partial coverage is disclosed and remains usable evidence; it is never upgraded to complete.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, metric_key: { type: "string", minLength: 1, maxLength: 128 }, type_version: { type: "string", minLength: 1, maxLength: 64 },
+      subject_type: { type: "string", minLength: 1, maxLength: 192 }, subject_key: { type: "string", minLength: 1, maxLength: 192 }, value: { type: "number" }, sample_size: { type: "integer", minimum: 0 },
+      form: { type: "string", enum: ["snapshot", "aggregate"], default: "snapshot" }, observed_at: { type: "string", minLength: 1 }, start: { type: ["string", "null"] }, end: { type: ["string", "null"] },
+      coverage: { type: "object", properties: {
+        state: { type: "string", enum: ["complete", "sampled", "partial", "unknown"] }, basis: { type: "string", minLength: 1, maxLength: 128 }, query_digest: { type: ["string", "null"], pattern: "^[a-f0-9]{64}$" }, examined_count: { type: "integer", minimum: 0 }, source_reported_total: { type: ["integer", "null"], minimum: 0 }, omitted_count: { type: ["integer", "null"], minimum: 0 }, cursor_start_digest: { type: ["string", "null"] }, cursor_end_digest: { type: ["string", "null"] },
+      }, additionalProperties: false },
+      adapter_key: { type: "string", minLength: 1, maxLength: 192 }, adapter_version: { type: "string", minLength: 1, maxLength: 64 }, source_scope_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, source_event_key_digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, source_evidence_digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    }, required: ["project_root", "metric_key", "subject_type", "subject_key", "value", "source_scope_digest", "source_event_key_digest", "source_evidence_digest"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_metric_compare",
+    description: "Create an exact P3 derived comparison between two compatible metric observations. The result preserves coverage disclosures and never claims causality.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, baseline_observation_id: { type: "string", minLength: 1 }, current_observation_id: { type: "string", minLength: 1 } }, required: ["project_root", "baseline_observation_id", "current_observation_id"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_metric_assess",
+    description: "Record a bounded P3 ProductHypothesis interpreting one exact metric comparison. Supports/contradicts/inconclusive are hypotheses, not causal findings or Canon changes.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, comparison_observation_id: { type: "string", minLength: 1 }, assessment: { type: "string", enum: ["supports", "contradicts", "inconclusive"] }, statement: { type: "string", minLength: 1, maxLength: 4000 }, rationale: { type: "string", maxLength: 4000 } }, required: ["project_root", "comparison_observation_id", "assessment", "statement"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_metric_follow_up",
+    description: "Propose a P3 Product Initiative from an exact metric hypothesis. The existing explicit initiative ReviewDecision is still required before approval.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, hypothesis_id: { type: "string", minLength: 1 }, title: { type: "string", minLength: 1, maxLength: 1000 }, description: { type: "string" }, reasoning: { type: "string", maxLength: 4000 }, feature_resolution: { type: ["object", "null"] } }, required: ["project_root", "hypothesis_id", "title"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_metric_status",
+    description: "Read the nonblocking metric definitions, observation count, and comparison count. This creates no authority or state.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_metric_trace",
+    description: "Read one bounded P4 measurement lineage from an exact graph anchor or metric key through the verified prepared-traversal path. This writes no Canon, decision, or recovery state.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, anchor_id: { type: "string", minLength: 1 }, metric_key: { type: "string", minLength: 1, maxLength: 128 }, type_version: { type: "string", minLength: 1, maxLength: 64 }, depth: { type: "integer", minimum: 0, maximum: 3, default: 3 }, max_nodes: { type: "integer", minimum: 1, maximum: 500, default: 128 }, max_edges: { type: "integer", minimum: 0, maximum: 1000, default: 256 },
+    }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_markdown_projection_build",
@@ -1826,6 +1951,68 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           addedEntities: args.added_entities || [],
           rationale: args.rationale,
         }))
+      : name === "head_product_policy_propose"
+        ? proposeProductPolicy({
+          root: args.project_root,
+          operation: args.operation,
+          key: args.key,
+          name: args.name,
+          description: args.description,
+          statement: args.statement,
+          appliesTo: args.applies_to,
+          governedBy: args.governed_by,
+          evidenceAnchors: args.evidence_anchors || [],
+          explanation: args.explanation || "",
+        })
+      : name === "head_product_policy_review"
+        ? reviewProductPolicy({ root: args.project_root, candidateId: args.candidate_id, disposition: args.disposition, rationale: args.rationale })
+      : name === "head_product_policy_status"
+        ? inspectProductPolicyStatus({ root: args.project_root, candidateId: args.candidate_id })
+      : name === "head_product_policy_candidate"
+        ? readProductPolicyCandidate({ root: args.project_root, candidateId: args.candidate_id })
+      : name === "head_product_policy_review_decision"
+        ? readProductPolicyReviewDecision({ root: args.project_root, reviewDecisionId: args.review_decision_id })
+      : name === "head_metric_define"
+        ? defineMetric({ root: args.project_root, metricKey: args.metric_key, unit: args.unit, direction: args.direction, typeVersion: args.type_version || "1" })
+      : name === "head_metric_observe"
+        ? recordMetricObservation({
+          root: args.project_root,
+          metricKey: args.metric_key,
+          typeVersion: args.type_version || "",
+          subjectType: args.subject_type,
+          subjectKey: args.subject_key,
+          value: args.value,
+          sampleSize: args.sample_size ?? null,
+          form: args.form || "snapshot",
+          observedAt: args.observed_at ?? null,
+          start: args.start ?? null,
+          end: args.end ?? null,
+          coverage: args.coverage ? {
+            state: args.coverage.state,
+            basis: args.coverage.basis,
+            queryDigest: args.coverage.query_digest,
+            examinedCount: args.coverage.examined_count,
+            sourceReportedTotal: args.coverage.source_reported_total,
+            omittedCount: args.coverage.omitted_count,
+            cursorStartDigest: args.coverage.cursor_start_digest,
+            cursorEndDigest: args.coverage.cursor_end_digest,
+          } : {},
+          adapterKey: args.adapter_key,
+          adapterVersion: args.adapter_version,
+          sourceScopeDigest: args.source_scope_digest,
+          sourceEventKeyDigest: args.source_event_key_digest,
+          sourceEvidenceDigest: args.source_evidence_digest,
+        })
+      : name === "head_metric_compare"
+        ? compareMetricObservations({ root: args.project_root, baselineObservationId: args.baseline_observation_id, currentObservationId: args.current_observation_id })
+      : name === "head_metric_assess"
+        ? assessMetricComparison({ root: args.project_root, comparisonObservationId: args.comparison_observation_id, assessment: args.assessment, statement: args.statement, rationale: args.rationale || "" })
+      : name === "head_metric_follow_up"
+        ? proposeMetricFollowUp({ root: args.project_root, hypothesisId: args.hypothesis_id, title: args.title, description: args.description || "", reasoning: args.reasoning || "", featureResolution: args.feature_resolution ?? null })
+      : name === "head_metric_status"
+        ? inspectMeasurements({ root: args.project_root })
+      : name === "head_metric_trace"
+        ? traceMeasurementLineage({ root: args.project_root, anchorId: args.anchor_id || "", metricKey: args.metric_key || "", typeVersion: args.type_version || "", depth: args.depth ?? 3, maxNodes: args.max_nodes ?? 128, maxEdges: args.max_edges ?? 256 })
       : name === "head_feature_mapping_propose"
         ? startFeatureMapping({ root: args.project_root, semanticProposal: featureMappingProposalFromMcp(args.semantic_proposal) })
       : name === "head_feature_mapping_review"

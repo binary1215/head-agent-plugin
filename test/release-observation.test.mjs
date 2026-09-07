@@ -69,6 +69,9 @@ test("records Git refs and an approved successful deployment as P3 release evide
   const canonBefore = fs.readFileSync(productCanonFile, "utf8");
   const sessionBefore = fs.readFileSync(sessionPointerFile, "utf8");
 
+  const gitOnly = await buildWorldModel({ root, persist: true });
+  assert.equal(gitOnly.snapshot.temporalProvenanceGraph.nodes.some((node) => node.kind === "DeploymentResultObservation" || node.kind === "ReleaseObservation"), false);
+
   const observed = await observeReleaseState({ root, input: deployment(commit, "success") });
   assert.equal(observed.status, "release_observed");
   assert.equal(observed.release.commit, commit);

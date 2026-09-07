@@ -13,6 +13,7 @@ import {
 import { createGraphProjectionAdapter } from "./graph-projection-adapter.mjs";
 import {
   normalizeProductModelDocument,
+  productModelDocument,
   PRODUCT_MODEL_RELATIVE_PATH,
   readProductModelCanon,
 } from "./product-model.mjs";
@@ -85,17 +86,7 @@ function sortedUnique(values, label) {
   return normalized;
 }
 
-function modelDocument(model) {
-  return {
-    schemaVersion: 1,
-    featureGroups: model.featureGroups,
-    capabilities: model.capabilities,
-    features: model.features,
-    requirements: model.requirements,
-    constraints: model.constraints,
-    decisions: model.decisions,
-  };
-}
+const modelDocument = productModelDocument;
 
 function readyProject(root, action) {
   const inspected = inspectProject(root);

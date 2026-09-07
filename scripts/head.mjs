@@ -29,6 +29,8 @@ import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtim
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
+import { inspectProductPolicyStatus, proposeProductPolicy, readProductPolicyCandidate, readProductPolicyReviewDecision, reviewProductPolicy } from "./lib/product-policy.mjs";
+import { assessMetricComparison, compareMetricObservations, defineMetric, inspectMeasurements, proposeMetricFollowUp, recordMetricObservation, traceMeasurementLineage } from "./lib/measurement-workflow.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { collectRegisteredObservation, ingestJsonObservationEventFile, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
@@ -136,6 +138,18 @@ export function usage({ all = false } = {}) {
       "head conformance-resolution-propose <project> --input <provider-head-resolution.json>",
       "head operating-lane-recommend <project> --input <risk.json>",
       "head product-note <project> --input <note.json>",
+      "head product-policy-propose <project> --input <policy-candidate.json>",
+      "head product-policy-review <project> --input <review.json>",
+      "head product-policy-status <project> --candidate <policy-candidate-id>",
+      "head product-policy-candidate-read <project> --candidate <policy-candidate-id>",
+      "head product-policy-review-read <project> --review <review-decision-id>",
+      "head metric-define <project> --input <metric-definition.json>",
+      "head metric-observe <project> --input <metric-observation.json>",
+      "head metric-compare <project> --input <metric-comparison.json>",
+      "head metric-assess <project> --input <metric-assessment.json>",
+      "head metric-follow-up <project> --input <follow-up.json>",
+      "head metric-status <project>",
+      "head metric-trace <project> (--anchor <node-id> | --metric <metric-key>) [--type-version <version>] [--depth <0..3>]",
       "head product-signal-record <project> --input <signal.json>",
       "head release-observe <project> --input <deployment-result.json>",
       "head release-status <project>",
@@ -400,6 +414,18 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (command === "conformance-resolution-propose") return proposeConformanceResolution({ ...inputJson(options, "Conformance provider-HEAD resolution"), root });
   if (command === "operating-lane-recommend") return recommendOperatingLane({ ...inputJson(options, "Operating lane risk input"), root });
   if (command === "product-note") return prepareProductLearningNote({ ...inputJson(options, "Product learning note"), root });
+  if (command === "product-policy-propose") return proposeProductPolicy({ ...inputJson(options, "Product Policy proposal"), root });
+  if (command === "product-policy-review") return reviewProductPolicy({ ...inputJson(options, "Product Policy ReviewDecision"), root });
+  if (command === "product-policy-status") return inspectProductPolicyStatus({ root, candidateId: options.candidate });
+  if (command === "product-policy-candidate-read") return readProductPolicyCandidate({ root, candidateId: options.candidate });
+  if (command === "product-policy-review-read") return readProductPolicyReviewDecision({ root, reviewDecisionId: options.review });
+  if (command === "metric-define") return defineMetric({ ...inputJson(options, "Metric definition"), root });
+  if (command === "metric-observe") return recordMetricObservation({ ...inputJson(options, "Metric observation"), root });
+  if (command === "metric-compare") return compareMetricObservations({ ...inputJson(options, "Metric comparison"), root });
+  if (command === "metric-assess") return assessMetricComparison({ ...inputJson(options, "Metric assessment"), root });
+  if (command === "metric-follow-up") return proposeMetricFollowUp({ ...inputJson(options, "Metric follow-up"), root });
+  if (command === "metric-status") return inspectMeasurements({ root });
+  if (command === "metric-trace") return traceMeasurementLineage({ root, anchorId: options.anchor || "", metricKey: options.metric || "", typeVersion: options["type-version"] || "", depth: options.depth == null ? 3 : Number(options.depth) });
   if (command === "product-signal-record") return recordProductSignal({ ...inputJson(options, "ProductSignal"), root });
   if (command === "product-hypothesis-record") return recordProductHypothesis({ ...inputJson(options, "ProductHypothesis"), root });
   if (command === "product-initiative-propose") return proposeProductInitiative({ ...inputJson(options, "ProductInitiativeCandidate"), root });
