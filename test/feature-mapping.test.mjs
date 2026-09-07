@@ -19,7 +19,7 @@ import {
   verifyFeatureMappingCandidateSet,
 } from "../scripts/lib/feature-mapping-projection.mjs";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
-import { inspectWorldModel, queryWorldTemporalGraph } from "../scripts/lib/world-model.mjs";
+import { buildWorldModel, inspectWorldModel, queryWorldTemporalGraph } from "../scripts/lib/world-model.mjs";
 import { refreshWorldModel } from "../scripts/lib/incremental-refresh.mjs";
 import { startRun } from "../scripts/lib/run-lineage.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
@@ -277,6 +277,185 @@ test("keeps HEAD-proposed Feature mappings non-authoritative until explicit revi
   const relationshipTypes = capsule.capsule.productContext[0].relationships.map((edge) => edge.type);
   assert.equal(relationshipTypes.includes("IMPLEMENTS") || relationshipTypes.includes("VERIFIED_BY"), true);
   assert.equal(capsule.capsule.productContext[0].entities.some((node) => node.kind === "FeatureMappingCandidate"), false);
+});
+
+test("a deleted and restored endpoint stays reintroduced until fresh review", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const started = await startWithSemanticProposal(root);
+  await reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all",
+    rationale: "Synthetic fixture review of the exact initial mappings." });
+  const sourcePath = path.join(root, "src", "message-delivery.mjs");
+  const sourceBytes = fs.readFileSync(sourcePath);
+  const originalGraph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  const sourceNodeId = originalGraph.nodes.find((node) => node.kind === "File" && node.path === "src/message-delivery.mjs").nodeId;
+  const implementation = (graph) => graph.nodes.find((node) => node.kind === "ReviewedRelationship"
+    && node.relationshipType === "IMPLEMENTS" && node.fromNodeId === sourceNodeId);
+
+  fs.unlinkSync(sourcePath);
+  await refreshWorldModel({ root });
+  assert.equal(implementation(inspectWorldModel({ root }).snapshot.temporalProvenanceGraph).projectionStatus, "stale-endpoint");
+
+  fs.writeFileSync(sourcePath, sourceBytes);
+  await refreshWorldModel({ root });
+  let graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.equal(implementation(graph).projectionStatus, "reintroduced-endpoint");
+  assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.from === sourceNodeId), false);
+  assert.ok(graph.logicalLineageState.discontinuousLogicalEntityIds.includes(sourceNodeId));
+
+  fs.writeFileSync(path.join(root, "src", "unrelated.mjs"), "export const unrelated = true;\n");
+  await refreshWorldModel({ root });
+  graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.equal(implementation(graph).projectionStatus, "reintroduced-endpoint");
+  assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.from === sourceNodeId), false);
+
+  const replacement = await startFeatureMapping({ root, semanticProposal: semanticMappingProposal(root) });
+  await reviewFeatureMapping({ root, candidateSetId: replacement.candidateSet.candidateSetId, disposition: "accept-all",
+    rationale: "Synthetic fixture review re-assesses the restored current endpoint." });
+  graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  const receipts = graph.nodes.filter((node) => node.kind === "ReviewedRelationship"
+    && node.relationshipType === "IMPLEMENTS" && node.fromNodeId === sourceNodeId);
+  assert.deepEqual(receipts.map((node) => node.projectionStatus).sort(), ["current", "reintroduced-endpoint"]);
+  assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.from === sourceNodeId), true);
+
+  fs.writeFileSync(path.join(root, "src", "unrelated.mjs"), "export const unrelated = 2;\n");
+  await refreshWorldModel({ root });
+  graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  const refreshedReceipts = graph.nodes.filter((node) => node.kind === "ReviewedRelationship"
+    && node.relationshipType === "IMPLEMENTS" && node.fromNodeId === sourceNodeId);
+  assert.deepEqual(refreshedReceipts.map((node) => node.projectionStatus).sort(), ["current", "reintroduced-endpoint"]);
+  assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.from === sourceNodeId), true);
+
+  const expectedByCandidate = Object.fromEntries(refreshedReceipts.map((node) => [node.candidateId, node.projectionStatus]));
+  const pointer = JSON.parse(fs.readFileSync(path.join(root, ".head", "world-model", "current.json"), "utf8"));
+  const currentSnapshotFile = path.join(root, ".head", "world-model", "snapshots", `${pointer.worldModelId}.json`);
+  fs.renameSync(currentSnapshotFile, `${currentSnapshotFile}.missing-fixture`);
+  await buildWorldModel({ root, persist: true });
+  graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  const rebuiltByCandidate = Object.fromEntries(graph.nodes.filter((node) => node.kind === "ReviewedRelationship"
+    && node.relationshipType === "IMPLEMENTS" && node.fromNodeId === sourceNodeId)
+    .map((node) => [node.candidateId, node.projectionStatus]));
+  assert.deepEqual(rebuiltByCandidate, expectedByCandidate);
+  assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.from === sourceNodeId), true);
+});
+
+test("full rebuild cannot erase a deleted and restored endpoint continuity break", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const started = await startWithSemanticProposal(root);
+  await reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all",
+    rationale: "Synthetic fixture review of the exact initial mappings." });
+  const sourcePath = path.join(root, "src", "message-delivery.mjs");
+  const sourceBytes = fs.readFileSync(sourcePath);
+  const sourceNodeId = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph.nodes
+    .find((node) => node.kind === "File" && node.path === "src/message-delivery.mjs").nodeId;
+
+  fs.unlinkSync(sourcePath);
+  await buildWorldModel({ root, persist: true });
+  fs.writeFileSync(sourcePath, sourceBytes);
+  await buildWorldModel({ root, persist: true });
+
+  const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  const receipt = graph.nodes.find((node) => node.kind === "ReviewedRelationship"
+    && node.relationshipType === "IMPLEMENTS" && node.fromNodeId === sourceNodeId);
+  assert.equal(receipt.projectionStatus, "reintroduced-endpoint");
+  assert.equal(receipt.approvedFromContinuityGeneration, 0);
+  assert.equal(receipt.currentFromContinuityGeneration, 1);
+  assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.from === sourceNodeId), false);
+});
+
+test("P4 loss recovers only exact projected lineage and otherwise preserves unknown continuity across restore", async (t) => {
+  for (const lossMode of ["missing-deletion-world", "missing-world-and-graph", "missing-all-pointers-and-snapshots"]) {
+    const root = initializedProject();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const started = await startWithSemanticProposal(root);
+    await reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all",
+      rationale: "Synthetic fixture review of the exact initial mapping before P4 loss." });
+    const sourcePath = path.join(root, "src", "message-delivery.mjs");
+    const sourceBytes = fs.readFileSync(sourcePath);
+    const sourceNodeId = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph.nodes
+      .find((node) => node.kind === "File" && node.path === "src/message-delivery.mjs").nodeId;
+
+    if (lossMode !== "missing-all-pointers-and-snapshots") {
+      fs.unlinkSync(sourcePath);
+      await refreshWorldModel({ root });
+      const deletedWorld = inspectWorldModel({ root }).snapshot;
+      const deletedWorldFile = path.join(root, ".head", "world-model", "snapshots", `${deletedWorld.worldModelId}.json`);
+      fs.renameSync(deletedWorldFile, `${deletedWorldFile}.missing-fixture`);
+      if (lossMode === "missing-world-and-graph") {
+        const graph = deletedWorld.temporalProvenanceGraph;
+        const graphFile = path.join(root, ".head", "graph-projection", "snapshots", `${graph.graphSnapshotId}.json`);
+        fs.renameSync(graphFile, `${graphFile}.missing-fixture`);
+      }
+      fs.writeFileSync(sourcePath, sourceBytes);
+    } else {
+      const worldDirectory = path.join(root, ".head", "world-model");
+      const graphDirectory = path.join(root, ".head", "graph-projection");
+      fs.renameSync(worldDirectory, `${worldDirectory}.missing-fixture`);
+      fs.renameSync(graphDirectory, `${graphDirectory}.missing-fixture`);
+    }
+
+    await buildWorldModel({ root, persist: true });
+    let graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+    const receipt = () => graph.nodes.find((node) => node.kind === "ReviewedRelationship"
+      && node.relationshipType === "IMPLEMENTS" && node.fromNodeId === sourceNodeId);
+    assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.from === sourceNodeId), false,
+      `${lossMode} cannot revive an old reviewed relation`);
+    if (lossMode === "missing-deletion-world") {
+      assert.equal(receipt().projectionStatus, "reintroduced-endpoint",
+        "the exact verified Graph projection retains the observed deletion generation");
+      assert.equal(graph.logicalLineageState.continuityUnknownLogicalEntityIds.includes(sourceNodeId), false);
+      continue;
+    }
+
+    assert.equal(receipt().evidenceStatus, "unavailable");
+    assert.ok(graph.logicalLineageState.continuityUnknownLogicalEntityIds.includes(sourceNodeId));
+    fs.unlinkSync(sourcePath);
+    await refreshWorldModel({ root });
+    graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+    assert.ok(graph.logicalLineageState.continuityUnknownLogicalEntityIds.includes(sourceNodeId));
+    assert.ok(graph.logicalLineageState.retiredLogicalEntityIds.includes(sourceNodeId));
+    fs.writeFileSync(sourcePath, sourceBytes);
+    await refreshWorldModel({ root });
+    graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+    assert.ok(graph.logicalLineageState.continuityUnknownLogicalEntityIds.includes(sourceNodeId));
+    assert.equal(graph.logicalLineageState.continuityGenerationByLogicalEntityId[sourceNodeId], undefined,
+      "unknown continuity cannot silently become a numbered generation after restore");
+    assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.from === sourceNodeId), false);
+  }
+});
+
+test("ordinary endpoint edits remain changed and fresh review can coexist with stale receipts", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const started = await startWithSemanticProposal(root);
+  await reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all",
+    rationale: "Synthetic fixture review of the exact initial mappings." });
+  const sourcePath = path.join(root, "src", "message-delivery.mjs");
+  const sourceNodeId = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph.nodes
+    .find((node) => node.kind === "File" && node.path === "src/message-delivery.mjs").nodeId;
+  const implementationReceipts = () => inspectWorldModel({ root }).snapshot.temporalProvenanceGraph.nodes
+    .filter((node) => node.kind === "ReviewedRelationship" && node.relationshipType === "IMPLEMENTS" && node.fromNodeId === sourceNodeId);
+
+  fs.writeFileSync(sourcePath, "export function deliverMessage(message) { return String(message); }\n");
+  await refreshWorldModel({ root });
+  fs.writeFileSync(sourcePath, "export function deliverMessage(message) { return String(message).trim(); }\n");
+  await refreshWorldModel({ root });
+  const stale = implementationReceipts()[0];
+  assert.equal(stale.endpointStatus, "present");
+  assert.equal(stale.evidenceStatus, "changed");
+  assert.equal(stale.semanticAssessmentStatus, "needs-recheck");
+  assert.equal(stale.projectionStatus, "stale-evidence");
+  const beforeReviewDiagnostics = inspectFeatureMapping({ root }).relationshipDiagnostics;
+  assert.equal(beforeReviewDiagnostics.needsHeadRecheckCount, 1);
+  assert.equal(beforeReviewDiagnostics.userActionRequired, false);
+  assert.equal(beforeReviewDiagnostics.productCoverage.featureGroupCoverage[0].featureGroupKey, "messaging");
+  assert.equal(beforeReviewDiagnostics.productCoverage.pathBoundary.complete, true);
+
+  const replacement = await startFeatureMapping({ root, semanticProposal: semanticMappingProposal(root) });
+  await reviewFeatureMapping({ root, candidateSetId: replacement.candidateSet.candidateSetId, disposition: "accept-all",
+    rationale: "Synthetic fixture review re-assesses the changed current endpoint." });
+  assert.deepEqual(implementationReceipts().map((node) => node.projectionStatus).sort(), ["current", "stale-evidence"]);
 });
 
 test("records rejection without creating reviewed implementation relations", async (t) => {

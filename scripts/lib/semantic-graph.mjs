@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import path from "node:path";
-import { extractSemanticSourceFacts } from "./source-analysis.mjs";
+import { extractSemanticSourceFacts, SOURCE_ANALYSIS_VERSION } from "./source-analysis.mjs";
 import { verifySourceRelationEvidenceSet } from "./source-relation-evidence.mjs";
 
-export const SEMANTIC_GRAPH_VERSION = "0.3.0";
+export const SEMANTIC_GRAPH_VERSION = "0.4.0";
 
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
@@ -38,15 +38,6 @@ function repositoryModule(filesByPath, fromPath, specifier, language) {
   return candidates.find((candidate) => filesByPath.has(candidate)) || null;
 }
 
-function nearestCaller(symbols, line) {
-  let caller = null;
-  for (const symbol of symbols) {
-    if (symbol.line > line) break;
-    if (["function", "binding"].includes(symbol.symbolKind)) caller = symbol;
-  }
-  return caller;
-}
-
 function nodeId(kind, key) {
   return identity("semantic-node", { kind, key });
 }
@@ -79,21 +70,51 @@ export function buildSemanticGraph({ files, sources, sourceRelationEvidence = nu
     };
     nodes.push(fileNode);
     nodeByFile.set(file.path, fileNode);
-    const symbols = file.symbols.map((symbol) => ({
-      id: nodeId("Symbol", `${file.path}:${symbol.kind}:${symbol.name}:${symbol.line}`),
-      kind: "Symbol",
-      path: file.path,
-      fileDigest: file.digest,
-      name: symbol.name,
-      symbolKind: symbol.kind,
-      line: symbol.line,
-      freshness: "active",
-      trustBoundary: "evidence-not-instruction",
-    }));
+    const qualifiedCounts = new Map();
+    const declarationCounts = new Map();
+    for (const symbol of file.symbols) {
+      const qualifiedKey = `${symbol.kind}:${symbol.qualifiedName}`;
+      const declarationKey = `${qualifiedKey}:${symbol.signature}`;
+      qualifiedCounts.set(qualifiedKey, (qualifiedCounts.get(qualifiedKey) || 0) + 1);
+      declarationCounts.set(declarationKey, (declarationCounts.get(declarationKey) || 0) + 1);
+    }
+    const occurrences = new Map();
+    const symbols = file.symbols.map((symbol) => {
+      const qualifiedKey = `${symbol.kind}:${symbol.qualifiedName}`;
+      const declarationKey = `${qualifiedKey}:${symbol.signature}`;
+      const occurrence = (occurrences.get(declarationKey) || 0) + 1;
+      occurrences.set(declarationKey, occurrence);
+      const overloaded = qualifiedCounts.get(qualifiedKey) > 1;
+      const identityAmbiguous = symbol.identityAmbiguous || declarationCounts.get(declarationKey) > 1;
+      const identitySignature = overloaded ? symbol.signature : "";
+      const identityOccurrence = identityAmbiguous ? occurrence : 1;
+      return {
+        id: nodeId("Symbol", JSON.stringify({ path: file.path, symbolKind: symbol.kind, qualifiedName: symbol.qualifiedName,
+          signature: identitySignature, occurrence: identityOccurrence })),
+        kind: "Symbol",
+        path: file.path,
+        fileDigest: file.digest,
+        name: symbol.name,
+        symbolKind: symbol.kind,
+        line: symbol.line,
+        endLine: symbol.endLine,
+        scopePath: symbol.scopePath,
+        qualifiedName: symbol.qualifiedName,
+        signature: symbol.signature,
+        identityAmbiguous,
+        identitySignature,
+        identityOccurrence,
+        freshness: "active",
+        trustBoundary: "evidence-not-instruction",
+      };
+    });
     symbolNodesByFile.set(file.path, symbols);
     for (const symbol of symbols) {
       nodes.push(symbol);
-      edges.push(edgeRecord("DECLARES", fileNode.id, symbol.id, { path: file.path, line: symbol.line, digest: file.digest }, { confidence: "heuristic" }));
+      edges.push(edgeRecord("DECLARES", fileNode.id, symbol.id, { path: file.path, line: symbol.line, digest: file.digest }, {
+        confidence: "heuristic",
+        evidenceSource: { kind: "heuristic-qualified-declaration-scan", sourceAnalysisVersion: SOURCE_ANALYSIS_VERSION },
+      }));
     }
   }
 
@@ -137,8 +158,12 @@ export function buildSemanticGraph({ files, sources, sourceRelationEvidence = nu
       const parts = call.callee.split(".");
       const base = parts[0];
       const member = parts[1] || null;
-      const caller = nearestCaller(localSymbols, call.line) || fromNode;
-      let target = !member ? localSymbols.find((symbol) => symbol.name === base) : null;
+      const callerMatches = call.callerQualifiedName
+        ? localSymbols.filter((symbol) => symbol.qualifiedName === call.callerQualifiedName && ["function", "binding"].includes(symbol.symbolKind))
+        : [];
+      const caller = callerMatches.length === 1 && !call.callerIdentityAmbiguous ? callerMatches[0] : fromNode;
+      const localTargets = !member ? localSymbols.filter((symbol) => symbol.name === base && !symbol.identityAmbiguous) : [];
+      let target = localTargets.length === 1 ? localTargets[0] : null;
       const binding = bindingByLocal.get(base);
       if (!target && binding) {
         const resolved = dependencyTargets.get(binding.specifier) || {
@@ -147,13 +172,23 @@ export function buildSemanticGraph({ files, sources, sourceRelationEvidence = nu
         };
         if (resolved.targetPath) {
           const targetName = member || (binding.imported === "default" || binding.imported === "*" ? null : binding.imported);
-          if (targetName) target = (symbolNodesByFile.get(resolved.targetPath) || []).find((symbol) => symbol.name === targetName);
+          if (targetName) {
+            const importedTargets = (symbolNodesByFile.get(resolved.targetPath) || [])
+              .filter((symbol) => symbol.name === targetName && !symbol.identityAmbiguous);
+            if (importedTargets.length === 1) target = importedTargets[0];
+          }
         }
       }
       if (!target) { unresolvedCallCount += 1; continue; }
       edges.push(edgeRecord("CALLS", caller.id, target.id, { path: file.path, line: call.line, digest: file.digest }, {
         callee: call.callee,
         confidence: "heuristic",
+        evidenceSource: {
+          kind: "heuristic-syntax-scan",
+          sourceAnalysisVersion: SOURCE_ANALYSIS_VERSION,
+          callerQualifiedName: call.callerQualifiedName,
+          callerIdentityAmbiguous: call.callerIdentityAmbiguous,
+        },
       }));
     }
   }
@@ -165,8 +200,9 @@ export function buildSemanticGraph({ files, sources, sourceRelationEvidence = nu
   const endpointNode = (endpoint) => {
     if (endpoint.kind === "file") return nodeByFile.get(endpoint.path) || null;
     if (endpoint.kind === "external") return externalNode(endpoint.specifier);
-    return (symbolNodesByFile.get(endpoint.path) || []).find((symbol) => symbol.name === endpoint.name
-      && symbol.symbolKind === endpoint.symbolKind && symbol.line === endpoint.line) || null;
+    const matches = (symbolNodesByFile.get(endpoint.path) || []).filter((symbol) => symbol.name === endpoint.name
+      && symbol.symbolKind === endpoint.symbolKind && symbol.line === endpoint.line);
+    return matches.length === 1 ? matches[0] : null;
   };
   if (verifiedRelationEvidence) for (const relation of verifiedRelationEvidence.relations) {
     const from = endpointNode(relation.from);

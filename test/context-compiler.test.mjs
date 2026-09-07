@@ -471,6 +471,15 @@ test("exact Product keys survive bounded neighbors and same-key kinds remain dis
     assert.equal(carrier.temporalTraversal.traversalQuerySummary.anchorMode, "exact-head-proposed");
     assert.equal(carrier.temporalTraversal.traversalQuerySummary.expectedGraphSnapshotId, indexed.snapshot.temporalProvenanceGraph.graphSnapshotId);
     assert.equal(carrier.temporalTraversal.traversalQuerySummary.maxNodes, 100);
+    const includedNodeIds = new Set(carrier.entities.map((entity) => entity.nodeId));
+    assert.equal(carrier.relationships.every((relationship) => includedNodeIds.has(relationship.from) && includedNodeIds.has(relationship.to)), true,
+      "ProductContext must not emit dangling relationship endpoints.");
+    if (carrier.projectionOmissions.entities > 0) {
+      assert.equal(carrier.relationshipBoundary.complete, false);
+      assert.equal(carrier.relationshipBoundary.items.length > 0, true);
+      assert.equal(carrier.relationshipBoundary.items.every((item) => includedNodeIds.has(item.includedEndpointId)
+        && !includedNodeIds.has(item.omittedEndpointId) && item.nextAnchorId === item.omittedEndpointId), true);
+    }
     assert.equal(carrier.instructionAuthority, false);
     assert.equal(carrier.promotionAuthority, false);
   }

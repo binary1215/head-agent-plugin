@@ -10,8 +10,8 @@ import { emptyProductModelDocument, normalizeProductModelDocument } from "./prod
 
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
-export const TEMPORAL_PROVENANCE_VERSION = "0.12.0";
-export const TEMPORAL_TRAVERSAL_VERSION = "0.2.0";
+export const TEMPORAL_PROVENANCE_VERSION = "0.13.0";
+export const TEMPORAL_TRAVERSAL_VERSION = "0.3.0";
 const TEMPORAL_RELATION_TYPES_V02 = Object.freeze([
   "CONTAINS",
   "REALIZES",
@@ -168,6 +168,10 @@ const fail = (message, code = "TEMPORAL_PROVENANCE_ERROR") => {
 
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === "object") {
@@ -223,8 +227,33 @@ export function normalizeRevisionParentIds(value = {}) {
   const normalized = {};
   for (const logicalEntityId of Object.keys(value).sort()) {
     const parents = sortedUniqueStrings(value[logicalEntityId], `revisionParentIds.${logicalEntityId}`);
-    if (parents.length) normalized[logicalEntityId] = parents;
+    normalized[logicalEntityId] = parents;
   }
+  return normalized;
+}
+
+export function normalizeLogicalLineageState(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail("logicalLineageState must be an object.", "INVALID_LOGICAL_LINEAGE_STATE");
+  }
+  const rawGenerations = value.continuityGenerationByLogicalEntityId || {};
+  if (!rawGenerations || typeof rawGenerations !== "object" || Array.isArray(rawGenerations)) {
+    fail("logicalLineageState.continuityGenerationByLogicalEntityId must be an object.", "INVALID_LOGICAL_LINEAGE_STATE");
+  }
+  const continuityGenerationByLogicalEntityId = {};
+  for (const logicalEntityId of Object.keys(rawGenerations).sort()) {
+    const generation = rawGenerations[logicalEntityId];
+    if (!logicalEntityId || !Number.isSafeInteger(generation) || generation < 1) {
+      fail("Logical continuity generations must use non-empty identities and positive safe integers.", "INVALID_LOGICAL_LINEAGE_STATE");
+    }
+    continuityGenerationByLogicalEntityId[logicalEntityId] = generation;
+  }
+  const normalized = {
+    discontinuousLogicalEntityIds: sortedUniqueStrings(value.discontinuousLogicalEntityIds || [], "logicalLineageState.discontinuousLogicalEntityIds"),
+    retiredLogicalEntityIds: sortedUniqueStrings(value.retiredLogicalEntityIds || [], "logicalLineageState.retiredLogicalEntityIds"),
+    continuityUnknownLogicalEntityIds: sortedUniqueStrings(value.continuityUnknownLogicalEntityIds || [], "logicalLineageState.continuityUnknownLogicalEntityIds"),
+    continuityGenerationByLogicalEntityId,
+  };
   return normalized;
 }
 
@@ -296,18 +325,36 @@ function temporalLogicalEntityDescriptors({ projectId, files, productModel }) {
     }
     const fileId = identity("file", { projectId, path: file.path });
     logicalEntityIds.add(fileId);
-    const occurrences = new Map();
     const symbols = [...(file.symbols || [])].sort((left, right) => Number(left.line || 0) - Number(right.line || 0)
       || String(left.kind).localeCompare(String(right.kind)) || String(left.name).localeCompare(String(right.name)));
+    const qualifiedCounts = new Map();
+    const declarationCounts = new Map();
+    for (const symbol of symbols) {
+      const qualifiedName = symbol.qualifiedName || symbol.name || "";
+      const qualifiedKey = `${symbol.kind || "symbol"}:${qualifiedName}`;
+      const declarationKey = `${qualifiedKey}:${symbol.signature || ""}`;
+      qualifiedCounts.set(qualifiedKey, (qualifiedCounts.get(qualifiedKey) || 0) + 1);
+      declarationCounts.set(declarationKey, (declarationCounts.get(declarationKey) || 0) + 1);
+    }
+    const occurrences = new Map();
     const symbolDescriptors = symbols.map((symbol) => {
-      const occurrenceKey = `${symbol.kind || "symbol"}:${symbol.name || ""}`;
-      const occurrence = (occurrences.get(occurrenceKey) || 0) + 1;
-      occurrences.set(occurrenceKey, occurrence);
+      const qualifiedName = symbol.qualifiedName || symbol.name || "";
+      const scopePath = symbol.scopePath || "";
+      const signature = symbol.signature || `${symbol.kind || "symbol"} ${symbol.name || ""}`;
+      const qualifiedKey = `${symbol.kind || "symbol"}:${qualifiedName}`;
+      const declarationKey = `${qualifiedKey}:${signature}`;
+      const occurrence = (occurrences.get(declarationKey) || 0) + 1;
+      occurrences.set(declarationKey, occurrence);
+      const overloaded = qualifiedCounts.get(qualifiedKey) > 1;
+      const identityAmbiguous = Boolean(symbol.identityAmbiguous) || declarationCounts.get(declarationKey) > 1;
+      const identitySignature = overloaded ? signature : "";
+      const identityOccurrence = identityAmbiguous ? occurrence : 1;
       const symbolId = identity("symbol", {
         fileId,
         symbolKind: symbol.kind || "symbol",
-        name: symbol.name || "",
-        occurrence,
+        qualifiedName,
+        signature: identitySignature,
+        occurrence: identityOccurrence,
       });
       logicalEntityIds.add(symbolId);
       return {
@@ -316,6 +363,13 @@ function temporalLogicalEntityDescriptors({ projectId, files, productModel }) {
         symbolKind: symbol.kind || "symbol",
         occurrence,
         line: Number(symbol.line || 1),
+        endLine: Number(symbol.endLine || symbol.line || 1),
+        scopePath,
+        qualifiedName,
+        signature,
+        identityAmbiguous,
+        identitySignature,
+        identityOccurrence,
       };
     });
     const testId = file.classification === "test" ? identity("test", { projectId, path: file.path }) : null;
@@ -351,6 +405,55 @@ export function currentTemporalLogicalEntityIds({ projectId, files, productModel
   if (!Array.isArray(files)) fail("files must be an array.", "TEMPORAL_FILES_REQUIRED");
   const selectedProductModel = productModel || normalizeProductModelDocument(emptyProductModelDocument());
   return temporalLogicalEntityDescriptors({ projectId, files, productModel: selectedProductModel }).logicalEntityIds;
+}
+
+const CURRENT_LOGICAL_NODE_KINDS = new Set(["File", "Symbol", "Test", ...Object.keys(PRODUCT_DEFINITIONS)]);
+
+export function deriveIncrementalLogicalLineageState({ previousGraph = null, currentLogicalEntityIds = [], previousStateUnavailable = false } = {}) {
+  const current = new Set(sortedUniqueStrings(currentLogicalEntityIds, "currentLogicalEntityIds"));
+  if (!previousGraph) return normalizeLogicalLineageState({
+    continuityUnknownLogicalEntityIds: previousStateUnavailable ? [...current] : [],
+  });
+  const previous = normalizeLogicalLineageState(previousGraph.logicalLineageState || {});
+  const previousUnknown = new Set(previous.continuityUnknownLogicalEntityIds);
+  const previousCurrent = new Set((previousGraph.nodes || [])
+    .filter((node) => CURRENT_LOGICAL_NODE_KINDS.has(node.kind))
+    .map((node) => node.nodeId));
+  const retired = new Set(previous.retiredLogicalEntityIds);
+  for (const logicalEntityId of previousCurrent) if (!current.has(logicalEntityId)) retired.add(logicalEntityId);
+  const generations = new Map(Object.entries(previous.continuityGenerationByLogicalEntityId));
+  // Graphs written before continuity generations already recorded restored
+  // entities in the discontinuity set. Preserve that evidence as generation 1.
+  for (const logicalEntityId of previous.discontinuousLogicalEntityIds) {
+    if (!generations.has(logicalEntityId)) generations.set(logicalEntityId, 1);
+  }
+  for (const logicalEntityId of current) {
+    if (retired.has(logicalEntityId) && !previousCurrent.has(logicalEntityId) && !previousUnknown.has(logicalEntityId)) {
+      generations.set(logicalEntityId, (generations.get(logicalEntityId) || 0) + 1);
+    }
+  }
+  const discontinuous = new Set([...current].filter((logicalEntityId) => (generations.get(logicalEntityId) || 0) > 0));
+  const continuityUnknown = new Set(previousUnknown);
+  if (previousStateUnavailable) for (const logicalEntityId of current) continuityUnknown.add(logicalEntityId);
+  return normalizeLogicalLineageState({
+    discontinuousLogicalEntityIds: [...discontinuous],
+    retiredLogicalEntityIds: [...retired],
+    continuityUnknownLogicalEntityIds: [...continuityUnknown],
+    continuityGenerationByLogicalEntityId: Object.fromEntries([...generations.entries()].filter(([, generation]) => generation > 0)),
+  });
+}
+
+export function filterLogicalLineageStateForCurrentTemporalEntities({ projectId, files, productModel = null, logicalLineageState = {} } = {}) {
+  const current = new Set(currentTemporalLogicalEntityIds({ projectId, files, productModel }));
+  const normalized = normalizeLogicalLineageState(logicalLineageState);
+  return normalizeLogicalLineageState({
+    discontinuousLogicalEntityIds: normalized.discontinuousLogicalEntityIds.filter((logicalEntityId) => current.has(logicalEntityId)),
+    retiredLogicalEntityIds: normalized.retiredLogicalEntityIds,
+    continuityUnknownLogicalEntityIds: normalized.continuityUnknownLogicalEntityIds
+      .filter((logicalEntityId) => current.has(logicalEntityId) || normalized.retiredLogicalEntityIds.includes(logicalEntityId)),
+    continuityGenerationByLogicalEntityId: Object.fromEntries(Object.entries(normalized.continuityGenerationByLogicalEntityId)
+      .filter(([logicalEntityId]) => current.has(logicalEntityId) || normalized.retiredLogicalEntityIds.includes(logicalEntityId))),
+  });
 }
 
 // Incremental preview helper only: the normal graph builder intentionally keeps
@@ -763,7 +866,10 @@ function reviewedRelationshipIdentityPayload({ review, candidate }) {
   };
 }
 
-function appendFeatureMappingProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+function appendFeatureMappingProjection({
+  projectId, sourceSnapshotId, projection, nodes, edges,
+  continuityGenerationByLogicalEntityId = {}, continuityUnknownLogicalEntityIds = new Set(),
+}) {
   const emptySummary = {
     featureMappingCandidateSetCount: 0,
     featureMappingCandidateCount: 0,
@@ -785,9 +891,31 @@ function appendFeatureMappingProjection({ projectId, sourceSnapshotId, projectio
     nodes.push(node);
     return node;
   };
+  const currentRevisionByLogical = new Map(edges
+    .filter((edge) => edge.type === "CURRENT_REVISION")
+    .map((edge) => [edge.from, edge.to]));
   const ensureEndpoint = (endpoint, evidenceIds) => {
     const existing = nodeById.get(endpoint.nodeId);
-    if (existing) return { node: existing, active: existing.kind === endpoint.kind };
+    if (existing && existing.kind === endpoint.kind) {
+      const currentRevisionId = currentRevisionByLogical.get(endpoint.nodeId) || null;
+      const approvedContinuityGeneration = endpoint.continuityGeneration ?? 0;
+      const currentContinuityGeneration = continuityGenerationByLogicalEntityId[endpoint.nodeId] || 0;
+      const continuityUnknown = continuityUnknownLogicalEntityIds.has(endpoint.nodeId);
+      const reintroduced = approvedContinuityGeneration !== currentContinuityGeneration;
+      const evidenceStatus = !currentRevisionId || continuityUnknown ? "unavailable"
+        : currentRevisionId === endpoint.revisionId
+          ? reintroduced ? "reintroduced" : "unchanged"
+          : reintroduced ? "reintroduced" : "changed";
+      return {
+        node: existing,
+        present: true,
+        endpointStatus: evidenceStatus === "reintroduced" ? "reintroduced" : "present",
+        evidenceStatus,
+        currentRevisionId,
+        approvedContinuityGeneration,
+        currentContinuityGeneration: continuityUnknown ? null : currentContinuityGeneration,
+      };
+    }
     const reference = pushNode({
       nodeId: endpoint.nodeId,
       kind: "MappingEndpointReference",
@@ -799,7 +927,15 @@ function appendFeatureMappingProjection({ projectId, sourceSnapshotId, projectio
       key: endpoint.key || "",
       ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "historical-feature-mapping-endpoint", freshness: "historical" }),
     });
-    return { node: reference, active: false };
+    return {
+      node: reference,
+      present: false,
+      endpointStatus: "missing",
+      evidenceStatus: "unavailable",
+      currentRevisionId: null,
+      approvedContinuityGeneration: endpoint.continuityGeneration ?? 0,
+      currentContinuityGeneration: null,
+    };
   };
   const candidateById = new Map();
 
@@ -918,14 +1054,36 @@ function appendFeatureMappingProjection({ projectId, sourceSnapshotId, projectio
       const to = ensureEndpoint(candidate.to, candidate.evidenceIds);
       const receiptPayload = reviewedRelationshipIdentityPayload({ review, candidate });
       const relationshipNodeId = identity("reviewed-relationship", receiptPayload);
-      const active = from.active && to.active;
+      const active = from.evidenceStatus === "unchanged" && to.evidenceStatus === "unchanged";
+      const endpointStatus = !from.present || !to.present ? "missing"
+        : from.endpointStatus === "reintroduced" || to.endpointStatus === "reintroduced" ? "reintroduced" : "present";
+      const evidenceStatus = from.evidenceStatus === "unavailable" || to.evidenceStatus === "unavailable" ? "unavailable"
+        : from.evidenceStatus === "reintroduced" || to.evidenceStatus === "reintroduced" ? "reintroduced"
+          : from.evidenceStatus === "changed" || to.evidenceStatus === "changed" ? "changed" : "unchanged";
+      const semanticAssessmentStatus = evidenceStatus === "unchanged" ? "assessed"
+        : evidenceStatus === "changed" ? "needs-recheck" : "not-assessed";
+      const projectionStatus = active ? "current"
+        : endpointStatus === "missing" ? "stale-endpoint"
+          : endpointStatus === "reintroduced" ? "reintroduced-endpoint" : "stale-evidence";
       pushNode({
         nodeId: relationshipNodeId,
         kind: "ReviewedRelationship",
         ...receiptPayload,
         candidateHash: candidate.candidateHash,
         reviewDecisionHash: review.reviewDecisionHash,
-        projectionStatus: active ? "current" : "stale-endpoint",
+        approvalStatus: "approved",
+        endpointStatus,
+        evidenceStatus,
+        semanticAssessmentStatus,
+        projectionStatus,
+        projectionCurrent: active,
+        currentFromRevisionId: from.currentRevisionId,
+        currentToRevisionId: to.currentRevisionId,
+        approvedFromContinuityGeneration: from.approvedContinuityGeneration,
+        approvedToContinuityGeneration: to.approvedContinuityGeneration,
+        currentFromContinuityGeneration: from.currentContinuityGeneration,
+        currentToContinuityGeneration: to.currentContinuityGeneration,
+        userActionRequired: false,
         ...nodeMetadata({
           evidenceIds: [reviewEvidenceId, ...candidate.evidenceIds],
           sourceSnapshotId,
@@ -1179,6 +1337,7 @@ function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, no
       afterGraphSnapshotId: candidateSet.afterGraphSnapshotId,
       candidateIds: candidateSet.candidates.map((item) => item.candidateId),
       unknownIds: candidateSet.unknowns.map((item) => item.unknownId),
+      coverage: candidateSet.coverage || null,
       ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "change-impact-candidate-set", freshness: projectedFreshness }),
     });
     for (const candidate of candidateSet.candidates) {
@@ -1211,6 +1370,8 @@ function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, no
         nodeId: unknown.unknownId,
         kind: "ChangeImpactUnknown",
         changeSetId: candidateSet.changeSetId,
+        unknownKind: unknown.kind || "unmapped-change-coverage",
+        changeIds: unknown.changeIds || [],
         statement: unknown.statement,
         unknownStatus: unknown.status,
         ...nodeMetadata({ evidenceIds, sourceSnapshotId, origin: "change-impact-explicit-unknown", freshness: projectedFreshness }),
@@ -1732,6 +1893,7 @@ export function buildTemporalProvenanceGraph({
   releaseObservationProjection = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
+  logicalLineageState = {},
 } = {}) {
   if (typeof projectId !== "string" || !projectId.trim()) fail("projectId is required.", "TEMPORAL_PROJECT_ID_REQUIRED");
   if (!Array.isArray(files)) fail("files must be an array.", "TEMPORAL_FILES_REQUIRED");
@@ -1774,6 +1936,20 @@ export function buildTemporalProvenanceGraph({
   const revisionParents = normalizeRevisionParentIds(revisionParentIds);
   const repositoryId = identity("repository", { projectId });
   const descriptors = temporalLogicalEntityDescriptors({ projectId, files, productModel: selectedProductModel });
+  const lineageState = normalizeLogicalLineageState(logicalLineageState);
+  const knownLogicalIdsForLineage = new Set(descriptors.logicalEntityIds);
+  for (const logicalEntityId of lineageState.discontinuousLogicalEntityIds) if (!knownLogicalIdsForLineage.has(logicalEntityId)) {
+    fail(`Discontinuous lineage references a non-current logical entity: ${logicalEntityId}`, "INVALID_LOGICAL_LINEAGE_STATE");
+  }
+  for (const logicalEntityId of lineageState.continuityUnknownLogicalEntityIds) if (!knownLogicalIdsForLineage.has(logicalEntityId)
+    && !lineageState.retiredLogicalEntityIds.includes(logicalEntityId)) {
+    fail(`Unknown continuity references neither a current nor retired logical entity: ${logicalEntityId}`, "INVALID_LOGICAL_LINEAGE_STATE");
+  }
+  for (const logicalEntityId of Object.keys(lineageState.continuityGenerationByLogicalEntityId)) {
+    if (!knownLogicalIdsForLineage.has(logicalEntityId) && !lineageState.retiredLogicalEntityIds.includes(logicalEntityId)) {
+      fail(`Continuity generation references neither a current nor retired logical entity: ${logicalEntityId}`, "INVALID_LOGICAL_LINEAGE_STATE");
+    }
+  }
   const knownLogicalIds = new Set(descriptors.logicalEntityIds);
   const records = descriptors.fileDescriptors.map(({ file, fileId, symbolDescriptors, testId }) => {
     const fileParentRevisionIds = parentIdsFor(revisionParents, fileId, "file-revision");
@@ -1784,7 +1960,7 @@ export function buildTemporalProvenanceGraph({
       classification: file.classification || "source",
       parentRevisionIds: fileParentRevisionIds,
     });
-    const symbolRecords = symbolDescriptors.map(({ symbolId, name, symbolKind, occurrence, line }) => {
+    const symbolRecords = symbolDescriptors.map(({ symbolId, name, symbolKind, occurrence, line, endLine, scopePath, qualifiedName, signature, identityAmbiguous, identitySignature, identityOccurrence }) => {
       const symbolParentRevisionIds = parentIdsFor(revisionParents, symbolId, "symbol-revision");
       const symbolRevisionId = identity("symbol-revision", {
         logicalEntityId: symbolId,
@@ -1800,6 +1976,13 @@ export function buildTemporalProvenanceGraph({
         symbolKind,
         occurrence,
         line,
+        endLine,
+        scopePath,
+        qualifiedName,
+        signature,
+        identityAmbiguous,
+        identitySignature,
+        identityOccurrence,
       };
     });
     const testRecord = testId ? (() => {
@@ -1933,6 +2116,13 @@ export function buildTemporalProvenanceGraph({
         name: symbol.name,
         symbolKind: symbol.symbolKind,
         occurrence: symbol.occurrence,
+        scopePath: symbol.scopePath,
+        qualifiedName: symbol.qualifiedName,
+        signature: symbol.signature,
+        identityAmbiguous: symbol.identityAmbiguous,
+        identitySignature: symbol.identitySignature,
+        identityOccurrence: symbol.identityOccurrence,
+        identityBasis: "qualified-declaration",
         ...nodeMetadata({ evidenceIds, sourceSnapshotId, authorityClass: "heuristic", origin: "heuristic-symbol-scan", confidence: 0.6 }),
       });
       nodes.push({
@@ -1945,6 +2135,14 @@ export function buildTemporalProvenanceGraph({
         symbolKind: symbol.symbolKind,
         occurrence: symbol.occurrence,
         line: symbol.line,
+        endLine: symbol.endLine,
+        scopePath: symbol.scopePath,
+        qualifiedName: symbol.qualifiedName,
+        signature: symbol.signature,
+        identityAmbiguous: symbol.identityAmbiguous,
+        identitySignature: symbol.identitySignature,
+        identityOccurrence: symbol.identityOccurrence,
+        identityBasis: "qualified-declaration",
         parentRevisionIds: symbol.symbolParentRevisionIds,
         ...nodeMetadata({ evidenceIds, sourceSnapshotId, authorityClass: "heuristic", origin: "heuristic-symbol-scan", confidence: 0.6 }),
       });
@@ -2065,6 +2263,8 @@ export function buildTemporalProvenanceGraph({
     projection: selectedFeatureMappingProjection,
     nodes,
     edges,
+    continuityGenerationByLogicalEntityId: lineageState.continuityGenerationByLogicalEntityId,
+    continuityUnknownLogicalEntityIds: new Set(lineageState.continuityUnknownLogicalEntityIds),
   });
   const changeSetSummary = appendChangeSetProjection({
     projectId,
@@ -2153,6 +2353,7 @@ export function buildTemporalProvenanceGraph({
     sourceSnapshotId,
     parentSourceSnapshotIds: parents,
     revisionParentIds: revisionParents,
+    logicalLineageState: lineageState,
     relationTypes: [...TEMPORAL_RELATION_TYPES],
     nodeKinds: [...TEMPORAL_NODE_KINDS],
     nodes,
@@ -2199,12 +2400,15 @@ function expectedNodeId(node) {
     classification: node.classification,
     parentRevisionIds: node.parentRevisionIds,
   });
-  if (node.kind === "Symbol") return identity("symbol", {
-    fileId: node.fileId,
-    symbolKind: node.symbolKind,
-    name: node.name,
-    occurrence: node.occurrence,
-  });
+  if (node.kind === "Symbol") return node.identityBasis === "qualified-declaration"
+    ? identity("symbol", {
+      fileId: node.fileId,
+      symbolKind: node.symbolKind,
+      qualifiedName: node.qualifiedName,
+      signature: node.identitySignature,
+      occurrence: node.identityOccurrence,
+    })
+    : identity("symbol", { fileId: node.fileId, symbolKind: node.symbolKind, name: node.name, occurrence: node.occurrence });
   if (node.kind === "SymbolRevision") return identity("symbol-revision", {
     logicalEntityId: node.logicalEntityId,
     fileRevisionId: node.fileRevisionId,
@@ -2409,14 +2613,15 @@ export function verifyTemporalProvenanceGraph(graph) {
   const legacyV09 = graphVersion === "0.9.0";
   const legacyV10 = graphVersion === "0.10.0";
   const legacyV11 = graphVersion === "0.11.0";
+  const legacyV12 = graphVersion === "0.12.0";
   if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
-    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0", "0.10.0", "0.11.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
+    || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0", "0.10.0", "0.11.0", "0.12.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
   if (graph.authority !== "derived-evidence-only" || graph.rebuildable !== true || graph.uniqueAuthority !== false) {
     fail("Temporal provenance graph cannot claim canonical or unique authority.", "INVALID_TEMPORAL_GRAPH_AUTHORITY");
   }
-  if (legacyV09 || legacyV10 || legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) verifyArtifactAuthorityBoundary("GraphSnapshot", graph.authorityBoundary);
+  if (legacyV09 || legacyV10 || legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) verifyArtifactAuthorityBoundary("GraphSnapshot", graph.authorityBoundary);
   if (!/^product-model-[a-f0-9]{24}$/.test(graph.productModelId || "") || !/^[a-f0-9]{64}$/.test(graph.productModelHash || "")) {
     fail("Temporal graph product model identity is invalid.", "INVALID_TEMPORAL_PRODUCT_MODEL");
   }
@@ -2432,6 +2637,10 @@ export function verifyTemporalProvenanceGraph(graph) {
   }
   if (canonicalJson(graph.revisionParentIds) !== canonicalJson(normalizeRevisionParentIds(graph.revisionParentIds))) {
     fail("Revision parents must be normalized.", "INVALID_REVISION_PARENT_SET");
+  }
+  if (graphVersion === TEMPORAL_PROVENANCE_VERSION
+    && canonicalJson(graph.logicalLineageState) !== canonicalJson(normalizeLogicalLineageState(graph.logicalLineageState))) {
+    fail("Logical lineage state must be normalized.", "INVALID_LOGICAL_LINEAGE_STATE");
   }
   const expectedRelationTypes = legacyV02 ? TEMPORAL_RELATION_TYPES_V02 : legacyV03 ? TEMPORAL_RELATION_TYPES_V03 : legacyV04 ? TEMPORAL_RELATION_TYPES_V04 : legacyV05 ? TEMPORAL_RELATION_TYPES_V05 : legacyV06 ? TEMPORAL_RELATION_TYPES_V06 : legacyV07 ? TEMPORAL_RELATION_TYPES_V07 : (legacyV08 || legacyV09 || legacyV10) ? TEMPORAL_RELATION_TYPES_V10 : legacyV11 ? TEMPORAL_RELATION_TYPES_V11 : TEMPORAL_RELATION_TYPES;
   const expectedNodeKinds = legacyV02 ? TEMPORAL_NODE_KINDS_V02 : legacyV03 ? TEMPORAL_NODE_KINDS_V03 : legacyV04 ? TEMPORAL_NODE_KINDS_V04 : legacyV05 ? TEMPORAL_NODE_KINDS_V05 : legacyV06 ? TEMPORAL_NODE_KINDS_V06 : legacyV07 ? TEMPORAL_NODE_KINDS_V07 : (legacyV08 || legacyV09 || legacyV10) ? TEMPORAL_NODE_KINDS_V10 : legacyV11 ? TEMPORAL_NODE_KINDS_V11 : TEMPORAL_NODE_KINDS;
@@ -2459,6 +2668,26 @@ export function verifyTemporalProvenanceGraph(graph) {
       fail(`Product node ${node.nodeId} has invalid projection authority.`, "INVALID_PRODUCT_PROJECTION_AUTHORITY");
     }
     nodes.set(node.nodeId, node);
+  }
+  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) {
+    const lineageState = normalizeLogicalLineageState(graph.logicalLineageState);
+    const retired = new Set(lineageState.retiredLogicalEntityIds);
+    for (const logicalEntityId of lineageState.discontinuousLogicalEntityIds) {
+      if (!retired.has(logicalEntityId) || !CURRENT_LOGICAL_NODE_KINDS.has(nodes.get(logicalEntityId)?.kind)) {
+        fail(`Discontinuous lineage is not a retired current logical entity: ${logicalEntityId}`, "INVALID_LOGICAL_LINEAGE_STATE");
+      }
+    }
+    for (const [logicalEntityId, generation] of Object.entries(lineageState.continuityGenerationByLogicalEntityId)) {
+      if ((!retired.has(logicalEntityId) && !CURRENT_LOGICAL_NODE_KINDS.has(nodes.get(logicalEntityId)?.kind))
+        || !Number.isSafeInteger(generation) || generation < 1) {
+        fail(`Continuity generation has no current or retired logical entity: ${logicalEntityId}`, "INVALID_LOGICAL_LINEAGE_STATE");
+      }
+    }
+    for (const logicalEntityId of lineageState.continuityUnknownLogicalEntityIds) {
+      if (!CURRENT_LOGICAL_NODE_KINDS.has(nodes.get(logicalEntityId)?.kind) && !retired.has(logicalEntityId)) {
+        fail(`Unknown continuity references neither a current nor retired logical entity: ${logicalEntityId}`, "INVALID_LOGICAL_LINEAGE_STATE");
+      }
+    }
   }
   const sourceSnapshot = nodes.get(graph.sourceSnapshotId);
   if (!sourceSnapshot || sourceSnapshot.kind !== "SourceSnapshot") fail("Current SourceSnapshot node is missing.", "SOURCE_SNAPSHOT_MISSING");
@@ -2509,11 +2738,18 @@ export function verifyTemporalProvenanceGraph(graph) {
     const logical = nodes.get(node.logicalEntityId);
     const expectedLogicalKind = node.kind.replace("Revision", "");
     if (!logical || logical.kind !== expectedLogicalKind) fail(`Revision ${node.nodeId} has no matching logical entity.`, "REVISION_LOGICAL_ENTITY_MISMATCH");
-    if (node.parentRevisionIds.length) actualRevisionParentIds[node.logicalEntityId] = node.parentRevisionIds;
+    if (node.parentRevisionIds.length || Object.hasOwn(graph.revisionParentIds, node.logicalEntityId)) {
+      actualRevisionParentIds[node.logicalEntityId] = node.parentRevisionIds;
+    }
     if (node.kind === "FileRevision" && logical.path !== node.path) fail(`FileRevision ${node.nodeId} path does not match its File.`, "REVISION_LOGICAL_ENTITY_MISMATCH");
     if (node.kind === "SymbolRevision") {
+      const qualifiedIdentityMismatch = graphVersion === TEMPORAL_PROVENANCE_VERSION
+        && (logical.scopePath !== node.scopePath || logical.qualifiedName !== node.qualifiedName || logical.signature !== node.signature
+          || logical.identityAmbiguous !== node.identityAmbiguous || logical.identitySignature !== node.identitySignature
+          || logical.identityOccurrence !== node.identityOccurrence || logical.identityBasis !== "qualified-declaration"
+          || node.identityBasis !== "qualified-declaration" || !Number.isInteger(node.endLine) || node.endLine < node.line);
       if (logical.fileId !== nodes.get(node.fileRevisionId)?.logicalEntityId || logical.path !== node.path || logical.name !== node.name
-        || logical.symbolKind !== node.symbolKind || logical.occurrence !== node.occurrence) {
+        || logical.symbolKind !== node.symbolKind || logical.occurrence !== node.occurrence || qualifiedIdentityMismatch) {
         fail(`SymbolRevision ${node.nodeId} does not match its Symbol.`, "REVISION_LOGICAL_ENTITY_MISMATCH");
       }
     }
@@ -2604,7 +2840,7 @@ export function verifyTemporalProvenanceGraph(graph) {
   const productModelRevisionIds = new Set(idsOf(productModelRevisions));
   const containingSetsByCandidate = new Map();
   for (const candidateSet of onboardingCandidateSets) {
-    const producerReviewDecisionId = legacyV10 || legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION
+    const producerReviewDecisionId = legacyV10 || legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION
       ? candidateSet.producerReviewDecisionId
       : candidateSet.successorReviewDecisionId;
     if (!/^[a-f0-9]{64}$/.test(candidateSet.candidateSetHash || "")
@@ -2614,7 +2850,7 @@ export function verifyTemporalProvenanceGraph(graph) {
       || (producerReviewDecisionId != null && !/^onboarding-review-decision-[a-f0-9]{24}$/.test(producerReviewDecisionId))) {
       fail(`Onboarding candidate-set node is invalid: ${candidateSet.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
     }
-    if ((legacyV10 || legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) && Object.hasOwn(candidateSet, "successorReviewDecisionId")) {
+    if ((legacyV10 || legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) && Object.hasOwn(candidateSet, "successorReviewDecisionId")) {
       fail(`Onboarding candidate-set node uses a legacy producer field: ${candidateSet.nodeId}`, "INVALID_ONBOARDING_TEMPORAL_NODE");
     }
     for (const [field, known] of [["candidateIds", onboardingCandidateIds], ["onboardingEvidenceIds", onboardingEvidenceIds], ["unknownIds", onboardingUnknownIds]]) {
@@ -2636,7 +2872,7 @@ export function verifyTemporalProvenanceGraph(graph) {
       const producerReview = onboardingReviewsById.get(producerReviewDecisionId);
       if (!producerReview || producerReview.disposition !== "revise"
         || !(candidateSet.parentCandidateSetIds || []).includes(producerReview.candidateSetId)
-        || ((legacyV10 || legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) && !hasEdge("PRODUCES", producerReviewDecisionId, candidateSet.nodeId))) {
+        || ((legacyV10 || legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) && !hasEdge("PRODUCES", producerReviewDecisionId, candidateSet.nodeId))) {
         fail(`Onboarding successor producer lineage is invalid: ${candidateSet.nodeId}`, "ONBOARDING_TEMPORAL_RELATION_MISSING");
       }
     }
@@ -2826,10 +3062,27 @@ export function verifyTemporalProvenanceGraph(graph) {
     }
   }
   for (const relationship of reviewedRelationships) {
+    const currentMappingStatusInvalid = graphVersion === TEMPORAL_PROVENANCE_VERSION
+      && (relationship.approvalStatus !== "approved"
+        || !["present", "missing", "reintroduced"].includes(relationship.endpointStatus)
+        || !["unchanged", "changed", "reintroduced", "unavailable"].includes(relationship.evidenceStatus)
+        || !["assessed", "needs-recheck", "not-assessed"].includes(relationship.semanticAssessmentStatus)
+        || !["current", "stale-endpoint", "reintroduced-endpoint", "stale-evidence"].includes(relationship.projectionStatus)
+        || relationship.projectionCurrent !== (relationship.projectionStatus === "current")
+        || relationship.userActionRequired !== false
+        || (relationship.currentFromRevisionId !== null && typeof relationship.currentFromRevisionId !== "string")
+        || (relationship.currentToRevisionId !== null && typeof relationship.currentToRevisionId !== "string")
+        || !Number.isSafeInteger(relationship.approvedFromContinuityGeneration) || relationship.approvedFromContinuityGeneration < 0
+        || !Number.isSafeInteger(relationship.approvedToContinuityGeneration) || relationship.approvedToContinuityGeneration < 0
+        || (relationship.currentFromContinuityGeneration !== null
+          && (!Number.isSafeInteger(relationship.currentFromContinuityGeneration) || relationship.currentFromContinuityGeneration < 0))
+        || (relationship.currentToContinuityGeneration !== null
+          && (!Number.isSafeInteger(relationship.currentToContinuityGeneration) || relationship.currentToContinuityGeneration < 0)));
     if (!mappingCandidateIds.has(relationship.candidateId)
       || !mappingDescriptor.reviewDecisionIds.includes(relationship.reviewDecisionId)
       || !["IMPLEMENTS", "VERIFIED_BY"].includes(relationship.relationshipType)
-      || !["current", "stale-endpoint"].includes(relationship.projectionStatus)
+      || (graphVersion !== TEMPORAL_PROVENANCE_VERSION && !["current", "stale-endpoint"].includes(relationship.projectionStatus))
+      || currentMappingStatusInvalid
       || !hasEdge("PROMOTED_FROM", relationship.nodeId, relationship.candidateId)
       || !hasEdge("PRODUCES", relationship.reviewDecisionId, relationship.nodeId)) {
       fail(`Reviewed relationship receipt is incomplete: ${relationship.nodeId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
@@ -2839,8 +3092,17 @@ export function verifyTemporalProvenanceGraph(graph) {
       : ["Feature", "Capability"].includes(relationship.fromKind) && relationship.toKind === "Test";
     if (!canonicalDirection) fail(`Reviewed relationship direction is invalid: ${relationship.nodeId}`, "INVALID_FEATURE_MAPPING_DIRECTION");
     const hasCanonicalRelationship = hasEdge(relationship.relationshipType, relationship.fromNodeId, relationship.toNodeId);
-    if ((relationship.projectionStatus === "current") !== hasCanonicalRelationship) {
+    if (relationship.projectionStatus === "current" && !hasCanonicalRelationship) {
       fail(`Reviewed relationship projection status is inconsistent: ${relationship.nodeId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  for (const relationshipEdge of graph.edges.filter((edge) => ["IMPLEMENTS", "VERIFIED_BY"].includes(edge.type))) {
+    const backedByCurrentReceipt = reviewedRelationships.some((relationship) => relationship.projectionStatus === "current"
+      && relationship.relationshipType === relationshipEdge.type
+      && relationship.fromNodeId === relationshipEdge.from
+      && relationship.toNodeId === relationshipEdge.to);
+    if (!backedByCurrentReceipt) {
+      fail(`Canonical relationship has no current reviewed receipt: ${relationshipEdge.edgeId}`, "FEATURE_MAPPING_TEMPORAL_RELATION_MISSING");
     }
   }
   const changeDescriptor = (legacyV02 || legacyV03 || legacyV04) ? changeSetProjectionDescriptor(null) : graph.changeSetProjection;
@@ -2898,14 +3160,26 @@ export function verifyTemporalProvenanceGraph(graph) {
     }
   }
   for (const candidateSet of changeCandidateSets) {
+    const coverage = candidateSet.coverage;
+    const invalidCoverage = graphVersion === TEMPORAL_PROVENANCE_VERSION
+      && (!coverage || coverage.unit !== "repository-path" || !Array.isArray(coverage.units)
+        || coverage.totalChangedUnits !== coverage.units.length);
     if (!changeSetIds.has(candidateSet.changeSetId)
       || canonicalJson(candidateSet.candidateIds) !== canonicalJson(candidateSet.candidateIds.slice().sort())
-      || canonicalJson(candidateSet.unknownIds) !== canonicalJson(candidateSet.unknownIds.slice().sort())) {
+      || canonicalJson(candidateSet.unknownIds) !== canonicalJson(candidateSet.unknownIds.slice().sort()) || invalidCoverage) {
       fail(`Change impact candidate set is invalid: ${candidateSet.nodeId}`, "INVALID_CHANGE_IMPACT_TEMPORAL_NODE");
     }
     for (const candidateId of candidateSet.candidateIds) if (!changeCandidateIds.has(candidateId) || !hasEdge("CONTAINS", candidateSet.nodeId, candidateId)) {
       fail(`Change impact candidate containment is missing: ${candidateId}`, "CHANGE_IMPACT_TEMPORAL_RELATION_MISSING");
     }
+    for (const unknownId of candidateSet.unknownIds) if (!changeUnknowns.some((unknown) => unknown.nodeId === unknownId)
+      || !hasEdge("CONTAINS", candidateSet.nodeId, unknownId)) {
+      fail(`Change impact Unknown containment is missing: ${unknownId}`, "CHANGE_IMPACT_TEMPORAL_RELATION_MISSING");
+    }
+  }
+  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) for (const unknown of changeUnknowns) {
+    if (typeof unknown.unknownKind !== "string" || !unknown.unknownKind || !Array.isArray(unknown.changeIds)
+      || unknown.unknownStatus !== "open") fail(`Change impact Unknown is invalid: ${unknown.nodeId}`, "INVALID_CHANGE_IMPACT_TEMPORAL_NODE");
   }
   for (const candidate of changeCandidates) {
     if (!changeSetIds.has(candidate.changeSetId) || candidate.relationshipType !== "IMPACTS"
@@ -2968,7 +3242,7 @@ export function verifyTemporalProvenanceGraph(graph) {
       fail(`Git commit observation is not referenced by VCS or branch-state evidence: ${commit.nodeId}`, "VCS_EVIDENCE_TEMPORAL_RELATION_MISSING");
     }
   }
-  const documentDescriptor = (legacyV07 || legacyV08 || legacyV09 || legacyV10 || legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
+  const documentDescriptor = (legacyV07 || legacyV08 || legacyV09 || legacyV10 || legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.documentChangeProjection : documentChangeProjectionDescriptor(null);
   if (!documentDescriptor || !["not-provided", "projected"].includes(documentDescriptor.status)) {
     fail("Temporal graph document-change projection descriptor is invalid.", "INVALID_DOCUMENT_CHANGE_TEMPORAL_PROJECTION");
   }
@@ -3021,7 +3295,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     || !/^graph-snapshot-[a-f0-9]{24}$/.test(reference.graphSnapshotId || "") || !/^source-snapshot-[a-f0-9]{24}$/.test(reference.referencedSourceSnapshotId || "")) {
     fail(`DocumentProjectionReference is invalid: ${reference.nodeId}`, "INVALID_DOCUMENT_CHANGE_TEMPORAL_NODE");
   }
-  const observationDescriptor = graphVersion === TEMPORAL_PROVENANCE_VERSION ? graph.observationProjection : observationProjectionDescriptor(null);
+  const observationDescriptor = legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION ? graph.observationProjection : observationProjectionDescriptor(null);
   if (!observationDescriptor || !["not-provided", "projected"].includes(observationDescriptor.status)) fail("Observation projection descriptor is invalid.", "INVALID_OBSERVATION_TEMPORAL_DESCRIPTOR");
   for (const field of ["descriptorIds", "observationIds", "derivedObservationIds", "receiptIds"]) {
     if (!Array.isArray(observationDescriptor[field]) || canonicalJson(observationDescriptor[field]) !== canonicalJson([...new Set(observationDescriptor[field])].sort())) fail(`Observation descriptor ${field} is invalid.`, "INVALID_OBSERVATION_TEMPORAL_DESCRIPTOR");
@@ -3044,7 +3318,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     const sourceIds = graph.edges.filter((edge) => edge.type === "DERIVED_FROM" && edge.from === observation.nodeId).map((edge) => edge.to).sort();
     if (!sourceIds.length || sourceIds.some((id) => nodes.get(id)?.kind !== "ObservationRecord")) fail("DerivedObservationRecord source lineage is incomplete.", "OBSERVATION_TEMPORAL_RELATION_MISSING");
   }
-  const productOperatingDescriptor = (legacyV08 || legacyV09 || legacyV10 || legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.productOperatingProjection : productOperatingProjectionDescriptor(null);
+  const productOperatingDescriptor = (legacyV08 || legacyV09 || legacyV10 || legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.productOperatingProjection : productOperatingProjectionDescriptor(null);
   if (!productOperatingDescriptor || !["not-provided", "projected"].includes(productOperatingDescriptor.status)) fail("Product operating projection descriptor is invalid.", "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
   for (const field of ["signalIds", "hypothesisIds", "initiativeCandidateIds", "reviewDecisionIds", "reviewedInitiativeIds", "featureCandidateIds", "outcomeObservationIds"]) {
     if (!Array.isArray(productOperatingDescriptor[field]) || canonicalJson(productOperatingDescriptor[field]) !== canonicalJson([...new Set(productOperatingDescriptor[field])].sort())) fail(`Product operating descriptor ${field} is invalid.`, "INVALID_PRODUCT_OPERATING_TEMPORAL_DESCRIPTOR");
@@ -3061,7 +3335,7 @@ export function verifyTemporalProvenanceGraph(graph) {
   for (const [values, field] of operatingSets) if (canonicalJson(idsOf(values)) !== canonicalJson(productOperatingDescriptor[field])) fail(`Product operating projected ${field} does not match its descriptor.`, "PRODUCT_OPERATING_TEMPORAL_SET_MISMATCH");
   for (const hypothesis of operatingHypotheses) {
     for (const signalId of hypothesis.signalIds) if (!hasEdge("SUPPORTED_BY", hypothesis.nodeId, signalId)) fail("ProductHypothesis signal support relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
-    if (graphVersion === TEMPORAL_PROVENANCE_VERSION) for (const observationId of hypothesis.observationIds) if (!hasEdge("SUPPORTED_BY", hypothesis.nodeId, observationId)) fail("ProductHypothesis Observation support relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
+    if (legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) for (const observationId of hypothesis.observationIds) if (!hasEdge("SUPPORTED_BY", hypothesis.nodeId, observationId)) fail("ProductHypothesis Observation support relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
   }
   for (const candidate of operatingInitiativeCandidates) {
     for (const hypothesisId of candidate.hypothesisIds) if (!hasEdge("PROPOSES_FROM", candidate.nodeId, hypothesisId)) fail("Product Initiative hypothesis relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
@@ -3069,7 +3343,7 @@ export function verifyTemporalProvenanceGraph(graph) {
   for (const review of operatingReviews) if (!hasEdge("REVIEWED_BY", review.initiativeCandidateId, review.nodeId) || !hasEdge(review.disposition === "accept" ? "ACCEPTED_BY" : "REJECTED_BY", review.initiativeCandidateId, review.nodeId)) fail("Product Initiative review relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
   for (const initiative of operatingReviewedInitiatives) if (!hasEdge("PROMOTED_FROM", initiative.nodeId, initiative.initiativeCandidateId) || !hasEdge("PRODUCES", initiative.reviewDecisionId, initiative.nodeId)) fail("Reviewed Product Initiative lineage is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
   for (const outcome of operatingOutcomes) if (!hasEdge("OBSERVES", outcome.nodeId, outcome.changeSetId)) fail("OutcomeObservation relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
-  const releaseDescriptor = (legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.releaseObservationProjection : releaseObservationProjectionDescriptor(null);
+  const releaseDescriptor = (legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? graph.releaseObservationProjection : releaseObservationProjectionDescriptor(null);
   if (!releaseDescriptor || !["not-provided", "projected"].includes(releaseDescriptor.status)) fail("Release observation projection descriptor is invalid.", "INVALID_RELEASE_OBSERVATION_TEMPORAL_DESCRIPTOR");
   for (const field of ["branchStateObservationIds", "deploymentResultObservationIds", "releaseObservationIds"]) {
     if (!Array.isArray(releaseDescriptor[field]) || canonicalJson(releaseDescriptor[field]) !== canonicalJson([...new Set(releaseDescriptor[field])].sort())) fail(`Release observation descriptor ${field} is invalid.`, "INVALID_RELEASE_OBSERVATION_TEMPORAL_DESCRIPTOR");
@@ -3225,7 +3499,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     vcsEvidenceCount: vcsEvidenceNodes.length,
     gitCommitObservationCount: gitCommitNodes.length,
   });
-  if (legacyV07 || legacyV08 || legacyV09 || legacyV10 || legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV07 || legacyV08 || legacyV09 || legacyV10 || legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     documentChangeCandidateSetCount: documentCandidateSets.length,
     documentChangeCandidateCount: documentCandidates.length,
     documentChangeReviewDecisionCount: documentReviews.length,
@@ -3233,7 +3507,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     documentChangeApplicationCount: documentApplications.length,
     documentProjectionReferenceCount: documentReferences.length,
   });
-  if (legacyV08 || legacyV09 || legacyV10 || legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV08 || legacyV09 || legacyV10 || legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     productSignalCount: operatingSignals.length,
     productHypothesisCount: operatingHypotheses.length,
     productInitiativeCandidateCount: operatingInitiativeCandidates.length,
@@ -3242,13 +3516,13 @@ export function verifyTemporalProvenanceGraph(graph) {
     productFeatureCandidateCount: operatingFeatureCandidates.length,
     outcomeObservationCount: operatingOutcomes.length,
   });
-  if (graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     observationTypeDescriptorCount: observationTypeDescriptors.length,
     observationCollectionReceiptCount: observationReceipts.length,
     observationRecordCount: observationRecords.length,
     derivedObservationRecordCount: derivedObservationRecords.length,
   });
-  if (legacyV11 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
+  if (legacyV11 || legacyV12 || graphVersion === TEMPORAL_PROVENANCE_VERSION) Object.assign(summary, {
     branchStateObservationCount: branchStateObservations.length,
     deploymentResultObservationCount: deploymentResultObservations.length,
     releaseObservationCount: releaseObservations.length,
@@ -3353,27 +3627,59 @@ export function queryTemporalProvenanceGraph(graph, {
   const inclusionReasons = new Map(anchors.map((node) => [node.nodeId, exactAnchorMode ? "exact-head-anchor" : "lexical-discovery-match"]));
   let frontier = new Set(selected);
   const selectedEdges = [];
-  let nodeLimitExcluded = Math.max(0, matching.length - anchors.length);
-  let edgeLimitExcluded = 0;
+  const selectedEdgeIds = new Set();
+  const nodeLimitExcludedIds = new Set(matching.slice(anchors.length).map((node) => node.nodeId));
+  const edgeLimitExcludedIds = new Set();
+  const boundaryItems = [];
+  const addBoundary = (edge, omittedNodeId, selectedNodeId, reason) => {
+    const key = `${edge?.edgeId || "anchor"}:${omittedNodeId || ""}:${reason}`;
+    if (boundaryItems.some((item) => item.key === key)) return;
+    boundaryItems.push({ key, edgeId: edge?.edgeId || null, relationType: edge?.type || null,
+      selectedNodeId: selectedNodeId || null, omittedNodeId: omittedNodeId || null,
+      nextAnchorId: omittedNodeId || null, reason });
+  };
+  for (const node of matching.slice(anchors.length)) addBoundary(null, node.nodeId, null, "anchor-node-limit");
   const eligibleEdges = graph.edges.filter((edge) => edgeEligible(edge) && eligibleNodeIds.has(edge.from) && eligibleNodeIds.has(edge.to));
   for (let level = 0; level < safeDepth && frontier.size; level += 1) {
     const next = new Set();
     for (const edge of eligibleEdges) {
       if (!frontier.has(edge.from) && !frontier.has(edge.to)) continue;
-      if (selectedEdges.length >= safeMaxEdges) { edgeLimitExcluded += 1; continue; }
+      if (selectedEdgeIds.has(edge.edgeId)) continue;
       const missing = [edge.from, edge.to].filter((nodeId) => !selected.has(nodeId) && !next.has(nodeId));
-      if (selected.size + next.size + missing.length > safeMaxNodes) { nodeLimitExcluded += missing.length; continue; }
+      if (selected.size + next.size + missing.length > safeMaxNodes) {
+        for (const nodeId of missing) {
+          nodeLimitExcludedIds.add(nodeId);
+          addBoundary(edge, nodeId, edge.from === nodeId ? edge.to : edge.from, "node-limit");
+        }
+        continue;
+      }
+      if (selectedEdges.length >= safeMaxEdges) {
+        edgeLimitExcludedIds.add(edge.edgeId);
+        const omittedNodeId = missing[0] || null;
+        addBoundary(edge, omittedNodeId, omittedNodeId === edge.from ? edge.to : edge.from, "edge-limit");
+        continue;
+      }
       for (const nodeId of missing) {
         next.add(nodeId);
         inclusionReasons.set(nodeId, `traversed-depth-${level + 1}`);
       }
-      if (!selectedEdges.some((candidate) => candidate.edgeId === edge.edgeId)) selectedEdges.push(edge);
+      selectedEdges.push(edge);
+      selectedEdgeIds.add(edge.edgeId);
     }
     for (const nodeId of next) selected.add(nodeId);
     frontier = next;
   }
+  if (safeDepth >= 0 && frontier.size) for (const edge of eligibleEdges) {
+    if (selectedEdgeIds.has(edge.edgeId) || (!frontier.has(edge.from) && !frontier.has(edge.to))) continue;
+    const omittedNodeId = !selected.has(edge.from) ? edge.from : !selected.has(edge.to) ? edge.to : null;
+    if (omittedNodeId) addBoundary(edge, omittedNodeId, edge.from === omittedNodeId ? edge.to : edge.from, "depth-limit");
+  }
   const nodes = graph.nodes.filter((node) => selected.has(node.nodeId));
   selectedEdges.sort((left, right) => left.edgeId.localeCompare(right.edgeId));
+  boundaryItems.sort((left, right) => compareText(left.reason, right.reason)
+    || compareText(left.edgeId || "", right.edgeId || "") || compareText(left.omittedNodeId || "", right.omittedNodeId || ""));
+  const boundaryLimit = 100;
+  const boundedBoundaryItems = boundaryItems.slice(0, boundaryLimit).map(({ key, ...item }) => item);
   const traversalQuery = {
     anchorMode: exactAnchorMode ? "exact-head-proposed" : "lexical-discovery",
     normalizedQuery,
@@ -3407,11 +3713,17 @@ export function queryTemporalProvenanceGraph(graph, {
       unmatchedNodeCount: exactAnchorMode ? 0 : graph.nodes.filter((node) => nodeEligible(node) && !searchable(node).includes(normalizedQuery) && !selected.has(node.nodeId)).length,
       disallowedNodeCount: graph.nodes.filter((node) => !nodeEligible(node)).length,
       disallowedEdgeCount: graph.edges.filter((edge) => !edgeEligible(edge)).length,
-      nodeLimitExcluded,
-      edgeLimitExcluded,
+      nodeLimitExcluded: nodeLimitExcludedIds.size,
+      edgeLimitExcluded: edgeLimitExcludedIds.size,
       unreviewedCandidatesExcluded: graph.nodes.filter((node) => candidateSurfaceKinds.has(node.kind) && !includeUnreviewedCandidates).length,
     },
-    truncated: nodeLimitExcluded > 0 || edgeLimitExcluded > 0,
+    boundary: {
+      items: boundedBoundaryItems,
+      omittedItemCount: Math.max(0, boundaryItems.length - boundedBoundaryItems.length),
+      nextAnchorIds: [...new Set(boundaryItems.map((item) => item.nextAnchorId).filter(Boolean))].sort().slice(0, boundaryLimit),
+      complete: boundaryItems.length === 0,
+    },
+    truncated: boundaryItems.length > 0,
     authority: "derived-evidence-only",
     instructionAuthority: false,
     promotionAuthority: false,

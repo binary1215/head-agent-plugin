@@ -20,6 +20,7 @@ import { withProjectMutationAsync } from "./project-mutation-lock.mjs";
 const MAX_CANDIDATES = 500;
 const MAX_EVIDENCE = 750;
 const MAX_UNKNOWNS = 100;
+const MAX_DIAGNOSTIC_PATHS = 200;
 
 const fail = (message, code = "FEATURE_MAPPING_ERROR") => {
   const error = new Error(message);
@@ -267,6 +268,8 @@ function candidateSetArtifact({ project, sessionId, worldModel, candidates, evid
 
 function candidatesFromSemanticProposal(proposal, worldModel) {
   const graph = worldModel.temporalProvenanceGraph;
+  const continuityGenerations = graph.logicalLineageState?.continuityGenerationByLogicalEntityId || {};
+  const continuityUnknown = new Set(graph.logicalLineageState?.continuityUnknownLogicalEntityIds || []);
   const nodeById = new Map(graph.nodes.map((node) => [node.nodeId, node]));
   const currentRevisionByLogical = new Map(graph.edges.filter((edge) => edge.type === "CURRENT_REVISION")
     .map((edge) => [edge.from, nodeById.get(edge.to)]));
@@ -305,6 +308,9 @@ function candidatesFromSemanticProposal(proposal, worldModel) {
     const sourceRevision = currentRevisionByLogical.get(sourceNode.nodeId);
     const productRevision = currentRevisionByLogical.get(productNode.nodeId);
     if (!sourceRevision || !productRevision) fail("Feature mapping proposal endpoints must have current revisions.", "FEATURE_MAPPING_PROPOSAL_EVIDENCE_MISSING");
+    if (continuityUnknown.has(sourceNode.nodeId) || continuityUnknown.has(productNode.nodeId)) {
+      fail("Feature mapping proposal endpoint continuity is unknown because its prior derived view is unavailable; restore verified lineage evidence before approval.", "FEATURE_MAPPING_PROPOSAL_CONTINUITY_UNKNOWN");
+    }
     const sourceFileId = sourceNode.kind === "Symbol" ? sourceNode.fileId : sourceNode.fileId || sourceNode.nodeId;
     const contentDigest = fileDigestById.get(sourceFileId) || "";
     const evidence = evidenceArtifact({
@@ -317,8 +323,13 @@ function candidatesFromSemanticProposal(proposal, worldModel) {
       statement: `Fresh HEAD cites current ${sourceNode.kind} ${sourceNode.name || sourceNode.path} as evidence for a proposed ${relationshipType} relation with authoritative ${productNode.kind} ${productRevision.semantic.name || productNode.key}.`,
     });
     evidenceById.set(evidence.evidenceId, evidence);
-    const productEndpoint = endpointFor(productNode, productRevision, { name: productRevision.semantic.name || "" });
-    const sourceEndpoint = endpointFor(sourceNode, sourceRevision);
+    const productEndpoint = endpointFor(productNode, productRevision, {
+      name: productRevision.semantic.name || "",
+      continuityGeneration: continuityGenerations[productNode.nodeId] || 0,
+    });
+    const sourceEndpoint = endpointFor(sourceNode, sourceRevision, {
+      continuityGeneration: continuityGenerations[sourceNode.nodeId] || 0,
+    });
     const from = relationshipType === "IMPLEMENTS" ? sourceEndpoint : productEndpoint;
     const to = relationshipType === "IMPLEMENTS" ? productEndpoint : sourceEndpoint;
     return candidateArtifact({
@@ -684,6 +695,116 @@ function candidateEvidenceIsCurrent(candidateSet, world) {
     && world.snapshot.productModel.productModelHash === candidateSet.productModelHash;
 }
 
+function reviewedRelationshipDiagnostics(world) {
+  const graph = world.snapshot.temporalProvenanceGraph;
+  const relationships = graph.nodes
+    .filter((node) => node.kind === "ReviewedRelationship")
+    .map((node) => ({
+      reviewedRelationshipId: node.nodeId,
+      relationshipType: node.relationshipType,
+      fromNodeId: node.fromNodeId,
+      toNodeId: node.toNodeId,
+      approvalStatus: node.approvalStatus || "approved",
+      endpointStatus: node.endpointStatus || (node.projectionStatus === "current" ? "present" : "missing"),
+      evidenceStatus: node.evidenceStatus || (node.projectionStatus === "current" ? "unchanged" : "unavailable"),
+      semanticAssessmentStatus: node.semanticAssessmentStatus || (node.projectionStatus === "current" ? "assessed" : "not-assessed"),
+      projectionStatus: node.projectionStatus,
+      projectionCurrent: node.projectionCurrent ?? node.projectionStatus === "current",
+      currentFromRevisionId: node.currentFromRevisionId ?? null,
+      currentToRevisionId: node.currentToRevisionId ?? null,
+      userActionRequired: false,
+    })).sort((left, right) => left.reviewedRelationshipId.localeCompare(right.reviewedRelationshipId));
+  const product = world.snapshot.productModel;
+  const nodeById = new Map(graph.nodes.map((node) => [node.nodeId, node]));
+  const groupByKey = new Map(product.featureGroups.map((group) => [group.key, group]));
+  const groupPaths = (groupKey, seen = new Set()) => {
+    if (seen.has(groupKey)) return [[groupKey]];
+    const group = groupByKey.get(groupKey);
+    if (!group || !group.parentFeatureGroupKeys.length) return [[groupKey]];
+    const nextSeen = new Set([...seen, groupKey]);
+    return group.parentFeatureGroupKeys.flatMap((parentKey) => groupPaths(parentKey, nextSeen)
+      .map((path) => [...path, groupKey]));
+  };
+  const productLogicalByKindKey = new Map(graph.nodes.filter((node) => ["Feature", "FeatureGroup", "Capability"].includes(node.kind))
+    .map((node) => [`${node.kind}:${node.key}`, node.nodeId]));
+  const allCodeToProductPaths = relationships.flatMap((relationship) => {
+    const productKind = relationship.relationshipType === "IMPLEMENTS" ? nodeById.get(relationship.toNodeId)?.kind : nodeById.get(relationship.fromNodeId)?.kind;
+    const productNodeId = relationship.relationshipType === "IMPLEMENTS" ? relationship.toNodeId : relationship.fromNodeId;
+    const sourceNodeId = relationship.relationshipType === "IMPLEMENTS" ? relationship.fromNodeId : relationship.toNodeId;
+    const productNode = nodeById.get(productNodeId);
+    const base = {
+      reviewedRelationshipId: relationship.reviewedRelationshipId,
+      relationshipType: relationship.relationshipType,
+      sourceNodeId,
+      sourcePath: nodeById.get(sourceNodeId)?.path || "",
+      productNodeId,
+      productKind,
+      productKey: productNode?.key || "",
+      projectionStatus: relationship.projectionStatus,
+    };
+    if (productKind !== "Feature") return [{ ...base, featureGroupPathKeys: [], featureGroupPathNodeIds: [] }];
+    const feature = product.features.find((item) => item.key === productNode.key);
+    if (!feature?.featureGroupKeys?.length) return [{ ...base, featureGroupPathKeys: [], featureGroupPathNodeIds: [] }];
+    return feature.featureGroupKeys.flatMap((groupKey) => groupPaths(groupKey).map((pathKeys) => ({
+      ...base,
+      featureGroupPathKeys: pathKeys,
+      featureGroupPathNodeIds: pathKeys.map((key) => productLogicalByKindKey.get(`FeatureGroup:${key}`)).filter(Boolean),
+    })));
+  }).sort((left, right) => left.reviewedRelationshipId.localeCompare(right.reviewedRelationshipId)
+    || left.featureGroupPathKeys.join("/").localeCompare(right.featureGroupPathKeys.join("/")));
+  const codeToProductPaths = allCodeToProductPaths.slice(0, MAX_DIAGNOSTIC_PATHS);
+  const omittedPaths = allCodeToProductPaths.slice(MAX_DIAGNOSTIC_PATHS);
+  const featureCoverage = product.features.map((feature) => {
+    const nodeId = productLogicalByKindKey.get(`Feature:${feature.key}`);
+    const matching = relationships.filter((relationship) => relationship.relationshipType === "IMPLEMENTS" && relationship.toNodeId === nodeId);
+    return {
+      featureKey: feature.key,
+      featureNodeId: nodeId,
+      featureGroupKeys: feature.featureGroupKeys,
+      mappingStatus: matching.some((item) => item.projectionCurrent) ? "current"
+        : matching.length ? "historical-or-stale" : "unmapped",
+      reviewedRelationshipIds: matching.map((item) => item.reviewedRelationshipId).sort(),
+    };
+  }).sort((left, right) => left.featureKey.localeCompare(right.featureKey));
+  const groupCoverage = product.featureGroups.map((group) => {
+    const descendantKeys = new Set(product.featureGroups.filter((candidate) => groupPaths(candidate.key).some((path) => path.includes(group.key))).map((item) => item.key));
+    const members = featureCoverage.filter((feature) => feature.featureGroupKeys.some((key) => descendantKeys.has(key)));
+    return {
+      featureGroupKey: group.key,
+      featureGroupNodeId: productLogicalByKindKey.get(`FeatureGroup:${group.key}`),
+      parentFeatureGroupKeys: group.parentFeatureGroupKeys,
+      featureCount: members.length,
+      currentMappedFeatureCount: members.filter((feature) => feature.mappingStatus === "current").length,
+      staleMappedFeatureCount: members.filter((feature) => feature.mappingStatus === "historical-or-stale").length,
+      unmappedFeatureCount: members.filter((feature) => feature.mappingStatus === "unmapped").length,
+    };
+  }).sort((left, right) => left.featureGroupKey.localeCompare(right.featureGroupKey));
+  return {
+    reviewedCount: relationships.length,
+    projectionCurrentCount: relationships.filter((item) => item.projectionCurrent).length,
+    needsHeadRecheckCount: relationships.filter((item) => item.semanticAssessmentStatus === "needs-recheck").length,
+    reintroducedEndpointCount: relationships.filter((item) => item.endpointStatus === "reintroduced").length,
+    missingEndpointCount: relationships.filter((item) => item.endpointStatus === "missing").length,
+    userActionRequired: false,
+    relationships,
+    productCoverage: {
+      featureCoverage,
+      featureGroupCoverage: groupCoverage,
+      codeToProductPaths,
+      pathBoundary: {
+        complete: omittedPaths.length === 0,
+        included: codeToProductPaths.length,
+        total: allCodeToProductPaths.length,
+        omitted: omittedPaths.length,
+        nextReviewedRelationshipIds: [...new Set(omittedPaths.map((item) => item.reviewedRelationshipId))].slice(0, 20),
+        expansion: "query the current GraphSnapshot by the listed ReviewedRelationship ids",
+      },
+      authority: "read-only-P4-diagnostic",
+      userActionRequired: false,
+    },
+  };
+}
+
 export function inspectFeatureMapping({ root = "." } = {}) {
   const inspected = readyProject(root, "Feature mapping inspection");
   const file = stateFile(inspected.project.projectRoot);
@@ -738,6 +859,7 @@ export function inspectFeatureMapping({ root = "." } = {}) {
       matchesMappingState: world.snapshot.worldModelId === state.worldModelId
         && world.snapshot.temporalProvenanceGraph.graphSnapshotId === state.graphSnapshotId,
     },
+    relationshipDiagnostics: reviewedRelationshipDiagnostics(world),
     authority: {
       candidates: "non-authoritative-until-explicit-review",
       reviewedRelationships: "explicit-user-reviewed-mapping-facts",

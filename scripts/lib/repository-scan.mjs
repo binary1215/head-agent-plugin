@@ -26,7 +26,7 @@ import {
   verifyRepositorySourceScope,
 } from "./repository-source-scope.mjs";
 
-export const REPOSITORY_SCAN_VERSION = "0.4.0";
+export const REPOSITORY_SCAN_VERSION = "0.5.0";
 export const REPOSITORY_SCAN_OPERATION = "repository.scan.v1";
 export const REPOSITORY_SCAN_SEMANTIC_PRODUCER = Object.freeze({
   name: "head-agent-core-repository-scan",
@@ -144,6 +144,8 @@ function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = 
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) fail("Repository scan root is not a directory.", "REPOSITORY_SCAN_ROOT_INVALID");
   if (previousResult) validateRepositoryScanResult(previousResult);
   const previousFiles = new Map((previousResult?.files || []).map((file) => [file.path, file]));
+  const previousAnalysisReusable = previousResult?.protocol?.version === REPOSITORY_SCAN_VERSION
+    && previousResult?.sourceAnalysisVersion === SOURCE_ANALYSIS_VERSION;
   const managed = new Set(input.managedRootFiles);
   const files = [];
   const skipped = Object.fromEntries(SKIPPED_FIELDS.map((field) => [field, 0]));
@@ -179,7 +181,7 @@ function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = 
       const classification = classifySourcePath(relative, extension);
       const contentDigest = digest(raw);
       const previous = previousFiles.get(relative);
-      const reusable = previous
+      const reusable = previousAnalysisReusable && previous
         && previous.digest === contentDigest
         && previous.bytes === raw.length
         && previous.classification === classification
@@ -405,12 +407,13 @@ function validateLineRecord(record, fields, label) {
 
 export function validateRepositoryScanResult(result) {
   const currentProtocol = result?.protocol?.version === REPOSITORY_SCAN_VERSION;
-  const scopedProtocol = currentProtocol || result?.protocol?.version === "0.3.0";
-  const legacyProtocol = new Set(["0.2.0", "0.3.0"]).has(result?.protocol?.version);
+  const scopedProtocol = currentProtocol || new Set(["0.3.0", "0.4.0"]).has(result?.protocol?.version);
+  const legacyProtocol = new Set(["0.2.0", "0.3.0", "0.4.0"]).has(result?.protocol?.version);
   assertFields(result, ["schemaVersion", "kind", "protocol", "sourceAnalysisVersion", "authority", "instructionAuthority", "promotionAuthority", ...(scopedProtocol ? ["sourceScope"] : []), "files", "skipped", "summary", "scanId", "scanHash"], "Repository scan result");
   if (result.schemaVersion !== 1 || result.kind !== "RepositoryScanResult"
     || result.protocol?.name !== "head-agent-core-repository-scan" || (!currentProtocol && !legacyProtocol)
-    || result.sourceAnalysisVersion !== SOURCE_ANALYSIS_VERSION || result.authority !== "derived-evidence-only"
+    || (currentProtocol ? result.sourceAnalysisVersion !== SOURCE_ANALYSIS_VERSION : !["0.1.0", "0.2.0"].includes(result.sourceAnalysisVersion))
+    || result.authority !== "derived-evidence-only"
     || result.instructionAuthority !== false || result.promotionAuthority !== false || !Array.isArray(result.files)) {
     fail("Repository scan result contract is invalid.", "INVALID_REPOSITORY_SCAN_RESULT");
   }
@@ -424,11 +427,27 @@ export function validateRepositoryScanResult(result) {
       || !CLASSIFICATIONS.has(file.classification) || !SOURCE_LANGUAGES.has(file.language)) fail(`${label} metadata is invalid.`, "INVALID_REPOSITORY_SCAN_RESULT");
     if (!Array.isArray(file.symbols) || !Array.isArray(file.dependencies)) fail(`${label} analysis arrays are invalid.`, "INVALID_REPOSITORY_SCAN_RESULT");
     for (const [symbolIndex, symbol] of file.symbols.entries()) {
-      validateLineRecord(symbol, ["name", "kind", "line"], `${label}.symbols[${symbolIndex}]`);
-      if (typeof symbol.name !== "string" || !symbol.name || !SYMBOL_KINDS.has(symbol.kind)) fail(`${label} symbol is invalid.`, "INVALID_REPOSITORY_SCAN_RESULT");
+      validateLineRecord(symbol, currentProtocol
+        ? ["name", "kind", "line", "endLine", "scopePath", "qualifiedName", "signature", "identityAmbiguous"]
+        : ["name", "kind", "line"], `${label}.symbols[${symbolIndex}]`);
+      if (typeof symbol.name !== "string" || !symbol.name || !SYMBOL_KINDS.has(symbol.kind)
+        || (currentProtocol && (!Number.isInteger(symbol.endLine) || symbol.endLine < symbol.line
+          || typeof symbol.scopePath !== "string" || typeof symbol.qualifiedName !== "string" || !symbol.qualifiedName
+          || typeof symbol.signature !== "string" || !symbol.signature || typeof symbol.identityAmbiguous !== "boolean"))) {
+        fail(`${label} symbol is invalid.`, "INVALID_REPOSITORY_SCAN_RESULT");
+      }
     }
     assertOrdered(file.symbols, (left, right) => left.line - right.line || compareText(left.name, right.name), `${label}.symbols`);
-    if (new Set(file.symbols.map((symbol) => `${symbol.line}|${symbol.kind}|${symbol.name}`)).size !== file.symbols.length) fail(`${label}.symbols contains duplicates.`, "INVALID_REPOSITORY_SCAN_RESULT");
+    const declarationsByLocation = new Map();
+    for (const symbol of file.symbols) {
+      const key = `${symbol.line}|${symbol.kind}|${symbol.name}`;
+      if (!declarationsByLocation.has(key)) declarationsByLocation.set(key, []);
+      declarationsByLocation.get(key).push(symbol);
+    }
+    if ([...declarationsByLocation.values()].some((declarations) => declarations.length > 1
+      && (!currentProtocol || declarations.some((symbol) => symbol.identityAmbiguous !== true)))) {
+      fail(`${label}.symbols contains unmarked duplicate declarations.`, "INVALID_REPOSITORY_SCAN_RESULT");
+    }
     for (const [dependencyIndex, dependency] of file.dependencies.entries()) {
       validateLineRecord(dependency, ["specifier", "kind", "line"], `${label}.dependencies[${dependencyIndex}]`);
       if (typeof dependency.specifier !== "string" || !dependency.specifier || !DEPENDENCY_KINDS.has(dependency.kind)) fail(`${label} dependency is invalid.`, "INVALID_REPOSITORY_SCAN_RESULT");
@@ -443,8 +462,10 @@ export function validateRepositoryScanResult(result) {
     }
     assertOrdered(file.semanticFacts.bindings, (left, right) => compareText(left.local, right.local) || compareText(left.specifier, right.specifier) || compareText(left.imported, right.imported), `${label}.semanticFacts.bindings`);
     for (const [callIndex, call] of file.semanticFacts.calls.entries()) {
-      validateLineRecord(call, ["callee", "line"], `${label}.semanticFacts.calls[${callIndex}]`);
-      if (typeof call.callee !== "string" || !call.callee) fail(`${label} call is invalid.`, "INVALID_REPOSITORY_SCAN_RESULT");
+      validateLineRecord(call, currentProtocol ? ["callee", "line", "callerQualifiedName", "callerIdentityAmbiguous"] : ["callee", "line"], `${label}.semanticFacts.calls[${callIndex}]`);
+      if (typeof call.callee !== "string" || !call.callee
+        || (currentProtocol && ((call.callerQualifiedName !== null && (typeof call.callerQualifiedName !== "string" || !call.callerQualifiedName))
+          || typeof call.callerIdentityAmbiguous !== "boolean"))) fail(`${label} call is invalid.`, "INVALID_REPOSITORY_SCAN_RESULT");
     }
     assertOrdered(file.semanticFacts.calls, (left, right) => left.line - right.line || compareText(left.callee, right.callee), `${label}.semanticFacts.calls`);
   }

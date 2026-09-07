@@ -1,0 +1,133 @@
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import {
+  buildRepositoryScanInput,
+  executeIncrementalRepositoryScan,
+  scanRepositoryReference,
+  validateRepositoryScanResult,
+} from "../scripts/lib/repository-scan.mjs";
+import { buildSemanticGraph } from "../scripts/lib/semantic-graph.mjs";
+import { extractSemanticSourceFacts, extractSourceSymbols } from "../scripts/lib/source-analysis.mjs";
+import { buildTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
+import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+
+const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
+
+function reidentifyScan(payload) {
+  const scanHash = crypto.createHash("sha256").update(JSON.stringify(canonical(payload))).digest("hex");
+  return { ...payload, scanId: `repository-scan-${scanHash.slice(0, 24)}`, scanHash };
+}
+
+function emptyProductModel() {
+  return normalizeProductModelDocument({
+    schemaVersion: 1,
+    featureGroups: [], capabilities: [], features: [], requirements: [], constraints: [], decisions: [],
+  });
+}
+
+test("qualified declarations preserve Python annotations, multiline headers, and same-name scopes", () => {
+  const source = `class A:
+    def read(self) -> bool:
+        return helper()
+
+class B:
+    async def read(
+        self,
+        value: str,
+    ) -> bool:
+        return helper()
+
+def helper():
+    return True
+`;
+  const symbols = extractSourceSymbols(source, "python");
+  assert.deepEqual(symbols.filter((symbol) => symbol.name === "read").map((symbol) => symbol.qualifiedName), ["A.read", "B.read"]);
+  assert.match(symbols.find((symbol) => symbol.qualifiedName === "A.read").signature, /-> bool:/u);
+  assert.match(symbols.find((symbol) => symbol.qualifiedName === "B.read").signature, /value: str/u);
+  const facts = extractSemanticSourceFacts(source, "python");
+  assert.deepEqual(facts.calls.filter((call) => call.callee === "helper").map((call) => call.callerQualifiedName), ["A.read", "B.read"]);
+
+  const file = {
+    path: "src/readers.py", digest: crypto.createHash("sha256").update(source).digest("hex"), freshness: "active",
+    bytes: Buffer.byteLength(source), classification: "source", language: "python", symbols, dependencies: [], semanticFacts: facts,
+  };
+  const semantic = buildSemanticGraph({ files: [file] });
+  const nodes = new Map(semantic.nodes.map((node) => [node.id, node]));
+  assert.deepEqual(semantic.edges.filter((edge) => edge.type === "CALLS").map((edge) => nodes.get(edge.from).qualifiedName).sort(), ["A.read", "B.read"]);
+  const temporal = buildTemporalProvenanceGraph({ projectId: "project-source-analysis", files: [file], productModel: emptyProductModel() });
+  const reads = temporal.nodes.filter((node) => node.kind === "Symbol" && node.name === "read");
+  assert.equal(new Set(reads.map((node) => node.nodeId)).size, 2);
+  assert.deepEqual(reads.map((node) => node.qualifiedName).sort(), ["A.read", "B.read"]);
+});
+
+test("expression arrows cannot capture the next declaration and comments cannot create relations", () => {
+  const source = `// function phantom() { return hidden(); }
+export const first = () => 1;
+export function second() {
+  const text = "third()";
+  return third();
+}
+export function third() { return 3; }
+`;
+  const symbols = extractSourceSymbols(source, "javascript");
+  assert.deepEqual(symbols.map(({ qualifiedName, line, endLine }) => ({ qualifiedName, line, endLine })), [
+    { qualifiedName: "first", line: 2, endLine: 2 },
+    { qualifiedName: "second", line: 3, endLine: 6 },
+    { qualifiedName: "third", line: 7, endLine: 7 },
+  ]);
+  const calls = extractSemanticSourceFacts(source, "javascript").calls.filter((call) => call.callee === "third");
+  assert.deepEqual(calls, [{ callee: "third", line: 5, callerQualifiedName: "second", callerIdentityAmbiguous: false }]);
+});
+
+test("canonical declaration ranges exclude calls after a closed body", () => {
+  assert.equal(extractSourceSymbols("def f():\n    return 1\n", "python")[0].endLine, 3);
+  assert.deepEqual(extractSemanticSourceFacts("function f() {} f();", "javascript").calls, [
+    { callee: "f", line: 1, callerQualifiedName: null, callerIdentityAmbiguous: false },
+  ]);
+});
+
+test("0.4 scans remain readable but are reanalyzed instead of reused as 0.5 metadata", async (t) => {
+  fs.mkdirSync(testParent, { recursive: true });
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(testParent, "head-agent-legacy-scan-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "app.py"), "def read_cancel_token() -> bool:\n    return True\n");
+  const current = scanRepositoryReference(buildRepositoryScanInput({ projectRoot: root }));
+  const legacyPayload = {
+    ...structuredClone(current),
+    protocol: { ...current.protocol, version: "0.4.0" },
+    sourceAnalysisVersion: "0.2.0",
+    files: current.files.map((file) => ({
+      ...file,
+      symbols: file.symbols.map(({ name, kind, line }) => ({ name, kind, line })),
+      semanticFacts: {
+        bindings: file.semanticFacts.bindings,
+        calls: file.semanticFacts.calls.map(({ callee, line }) => ({ callee, line })),
+      },
+    })),
+  };
+  delete legacyPayload.scanId;
+  delete legacyPayload.scanHash;
+  const legacy = reidentifyScan(legacyPayload);
+  assert.doesNotThrow(() => validateRepositoryScanResult(legacy));
+
+  const { files, skipped, ...repositoryScan } = legacy;
+  const upgraded = await executeIncrementalRepositoryScan({
+    projectRoot: root,
+    previousSnapshot: { repositoryScan, files, skipped },
+  });
+  assert.deepEqual(upgraded.diagnostics.reusedPaths, []);
+  assert.deepEqual(upgraded.diagnostics.analyzedPaths, ["app.py"]);
+  assert.equal(upgraded.result.protocol.version, "0.5.0");
+  assert.equal(upgraded.result.sourceAnalysisVersion, "0.3.0");
+  assert.equal(upgraded.result.files[0].symbols[0].qualifiedName, "read_cancel_token");
+});

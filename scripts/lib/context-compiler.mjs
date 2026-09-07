@@ -182,6 +182,12 @@ function compactTraversalMetadata(traversal) {
       digest: digest(canonicalJson(inclusion)),
     },
     exclusion: traversal.exclusion,
+    boundary: traversal.boundary ? {
+      items: compactList(traversal.boundary.items, 12),
+      nextAnchorIds: compactList(traversal.boundary.nextAnchorIds, 12),
+      omittedItemCount: traversal.boundary.omittedItemCount,
+      complete: traversal.boundary.complete,
+    } : null,
     truncated: traversal.truncated,
   };
 }
@@ -569,7 +575,13 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
     freshness: node.freshness,
   }));
   const selectedProductNodeIds = new Set(compactEntities.map((item) => item.nodeId));
-  const compactRelationships = traversal.edges.filter((edge) => selectedProductNodeIds.has(edge.from) || selectedProductNodeIds.has(edge.to))
+  const relationshipBoundary = traversal.edges.filter((edge) => selectedProductNodeIds.has(edge.from) !== selectedProductNodeIds.has(edge.to))
+    .map((edge) => ({ edgeId: edge.edgeId, type: edge.type,
+      includedEndpointId: selectedProductNodeIds.has(edge.from) ? edge.from : edge.to,
+      omittedEndpointId: selectedProductNodeIds.has(edge.from) ? edge.to : edge.from,
+      nextAnchorId: selectedProductNodeIds.has(edge.from) ? edge.to : edge.from }))
+    .sort((left, right) => left.edgeId.localeCompare(right.edgeId));
+  const compactRelationships = traversal.edges.filter((edge) => selectedProductNodeIds.has(edge.from) && selectedProductNodeIds.has(edge.to))
     .slice(0, MAX_PRODUCT_CONTEXT_RELATIONSHIPS).map((edge) => ({
     edgeId: edge.edgeId,
     type: edge.type,
@@ -592,6 +604,11 @@ function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapt
     projectionOmissions: {
       entities: Math.max(0, traversal.nodes.length - compactEntities.length),
       relationships: Math.max(0, traversal.edges.length - compactRelationships.length),
+    },
+    relationshipBoundary: {
+      items: relationshipBoundary.slice(0, 50),
+      omitted: Math.max(0, relationshipBoundary.length - 50),
+      complete: relationshipBoundary.length === 0,
     },
     temporalTraversal: compactTraversalMetadata(traversal),
     worldModelId: worldModel.snapshot.worldModelId,
@@ -1028,7 +1045,7 @@ function candidateEvidenceMatches(candidate, need) {
     matchedEntityKeys = need.entityKeys.filter((key) => presentKeys.has(key));
     if (!matchedEntityKeys.length) return [];
   }
-  if (!["semantic-relation", "temporal-relation"].includes(need.kind) && !facetMatch(candidateBody, need.facets)) return [];
+  if (!["semantic-relation", "temporal-relation", "product-context"].includes(need.kind) && !facetMatch(candidateBody, need.facets)) return [];
   const simpleKinds = {
     claim: "Claim",
     decision: "Decision",
@@ -1041,6 +1058,7 @@ function candidateEvidenceMatches(candidate, need) {
     if (need.kind === "product-context") {
       if (candidate.kind !== "ProductContext") return [];
       const identities = record.entities.filter((entity) => (!need.entityKeys.length || matchedEntityKeys.includes(entity.key))
+        && facetMatch(facetContentText(productEntityFacetValues(entity)), need.facets)
         && entity.logicalEntityId && entity.currentRevisionId
         && entity.authorityClass === "canon-projected" && entity.freshness === "current")
         .map((entity) => ({

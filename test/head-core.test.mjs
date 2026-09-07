@@ -3189,14 +3189,26 @@ test("routes deterministic repository scan v1 through a replaceable compute adap
   assert.equal(first.scanId, repeated.scanId);
   assert.equal(first.scanHash, repeated.scanHash);
   assert.equal(first.scanId, expected.scanId);
-  const legacyV03 = reidentify({ ...clone(first), protocol: { ...first.protocol, version: "0.3.0" } }, {
+  const legacyV03 = clone(first);
+  legacyV03.protocol.version = "0.3.0";
+  legacyV03.sourceAnalysisVersion = "0.2.0";
+  for (const file of legacyV03.files) {
+    file.symbols = [...new Map(file.symbols
+      .map(({ name, kind, line }) => ({ name, kind, line }))
+      .map((symbol) => [`${symbol.line}|${symbol.kind}|${symbol.name}`, symbol])).values()];
+    file.semanticFacts.calls = file.semanticFacts.calls.map(({ callee, line }) => ({ callee, line }));
+  }
+  legacyV03.summary.symbolCount = legacyV03.files.reduce((count, file) => count + file.symbols.length, 0);
+  const identifiedLegacyV03 = reidentify(legacyV03, {
     prefix: "repository-scan",
     idKey: "scanId",
     hashKey: "scanHash",
   });
-  assert.doesNotThrow(() => validateRepositoryScanResult(legacyV03));
+  assert.doesNotThrow(() => validateRepositoryScanResult(identifiedLegacyV03));
   assert.equal(first.summary.fileCount, 10);
-  assert.equal(first.files.find((file) => file.path === "fixtures/duplicate-symbols.mjs").symbols.length, 1);
+  const duplicateSymbols = first.files.find((file) => file.path === "fixtures/duplicate-symbols.mjs").symbols;
+  assert.equal(duplicateSymbols.length, 2);
+  assert.equal(duplicateSymbols.every((symbol) => symbol.identityAmbiguous === true), true);
   assert.equal(JSON.stringify(first).includes(corpus), false);
   assert.equal(first.files.every((file) => !path.isAbsolute(file.path) && file.instructionAuthority == null), true);
   assert.equal(first.files.find((file) => file.path === "src/main.mjs").semanticFacts.calls.some((call) => call.callee === "double"), true);

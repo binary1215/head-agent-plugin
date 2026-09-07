@@ -285,7 +285,13 @@ test("explicit stale mapping rejection unblocks a fresh reviewed proposal and Co
     assert.ok(Object.values(graph.revisionParentIds).flat().includes(previousRevision.nodeId));
     assert.deepEqual(fs.readFileSync(priorFile), priorBytes);
     assert.deepEqual(graph.nodes.filter((node) => node.kind === "ReviewedRelationship").map((node) => node.reviewDecisionId), [prior.reviewDecision.reviewDecisionId]);
-    assert.ok(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.authorityClass === "reviewed"));
+    const historicalRelationship = graph.nodes.find((node) => node.kind === "ReviewedRelationship"
+      && node.reviewDecisionId === prior.reviewDecision.reviewDecisionId);
+    assert.equal(historicalRelationship.approvalStatus, "approved", "the immutable review remains preserved");
+    assert.equal(historicalRelationship.evidenceStatus, "changed", "changed source is not projected as current evidence");
+    assert.equal(historicalRelationship.projectionCurrent, false);
+    assert.equal(graph.edges.some((edge) => edge.type === "IMPLEMENTS" && edge.authorityClass === "reviewed"), false,
+      "historical approval cannot masquerade as a current implementation relation");
     assert.ok(graph.edges.some((edge) => edge.type === "REJECTED_BY" && edge.to === rejected.reviewDecision.reviewDecisionId));
     const direct = inspectFeatureMapping({ root });
     const cli = await runCommand(["feature-mapping-status", root]);
@@ -299,7 +305,10 @@ test("explicit stale mapping rejection unblocks a fresh reviewed proposal and Co
     const approved = await reviewFeatureMapping({ root, candidateSetId: fresh.candidateSet.candidateSetId,
       disposition: "accept-all", rationale: "Approve the fresh exact evidence after rejecting the obsolete proposal." });
     assert.equal(approved.status, "feature_mappings_reviewed");
-    assert.equal(inspectWorldModel({ root }).status, "current");
+    const refreshedWorld = inspectWorldModel({ root });
+    assert.equal(refreshedWorld.status, "current");
+    assert.ok(refreshedWorld.snapshot.temporalProvenanceGraph.edges.some((edge) => edge.type === "IMPLEMENTS"
+      && edge.authorityClass === "reviewed"), "only the fresh review restores a current implementation relation");
     const capsule = compileContext({ root, task: "Explain current delivery implementation.", persist: false,
       evidenceNeeds: [{ id: "delivery-product", kind: "product-context", entityKeys: ["delivery"], minimumItems: 1 },
         { id: "delivery-source", kind: "repository-source", paths: ["src/delivery.mjs"], minimumItems: 1 }] }).capsule;

@@ -2,8 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const CHANGE_SET_VERSION = "0.1.0";
-export const CHANGE_SET_PROJECTION_VERSION = "0.2.0";
+export const CHANGE_SET_VERSION = "0.2.0";
+export const CHANGE_SET_PROJECTION_VERSION = "0.3.0";
 export const VCS_EVIDENCE_VERSION = "0.1.0";
 export const CHANGE_SET_DIRECTORY = ".head/change-sets/records";
 export const CHANGE_IMPACT_CANDIDATE_DIRECTORY = ".head/change-sets/impact-candidate-sets";
@@ -103,7 +103,7 @@ function verifyChange(change) {
 export function verifyChangeSet(document, projectId = "") {
   verifyIdentity(document, { idField: "changeSetId", hashField: "changeSetHash", prefix: "change-set", label: "ChangeSet" });
   if (document.schemaVersion !== 1 || document.kind !== "ChangeSet"
-    || document.protocol?.name !== "head-agent-core-change-set" || document.protocol?.version !== CHANGE_SET_VERSION
+    || document.protocol?.name !== "head-agent-core-change-set" || !["0.1.0", CHANGE_SET_VERSION].includes(document.protocol?.version)
     || (projectId && document.projectId !== projectId)
     || typeof document.sessionId !== "string" || !document.sessionId
     || !/^result-packet-[a-f0-9]{24}$/.test(document.resultPacketId || "")
@@ -219,8 +219,9 @@ function verifyImpactCandidate(candidate, changeSet) {
 
 export function verifyChangeImpactCandidateSet(document, changeSet, projectId = "") {
   verifyIdentity(document, { idField: "candidateSetId", hashField: "candidateSetHash", prefix: "change-impact-candidates", label: "Change impact candidate set" });
+  const legacy = document.protocol?.version === "0.1.0";
   if (document.schemaVersion !== 1 || document.kind !== "ChangeImpactCandidateSet"
-    || document.protocol?.name !== "head-agent-core-change-impact-candidates" || document.protocol?.version !== CHANGE_SET_VERSION
+    || document.protocol?.name !== "head-agent-core-change-impact-candidates" || !["0.1.0", CHANGE_SET_VERSION].includes(document.protocol?.version)
     || (projectId && document.projectId !== projectId) || !changeSet || document.changeSetId !== changeSet.changeSetId
     || document.afterSourceSnapshotId !== changeSet.after.sourceSnapshotId
     || document.authorityClass !== "candidate-set" || document.instructionAuthority !== false || document.promotionAuthority !== false
@@ -237,9 +238,47 @@ export function verifyChangeImpactCandidateSet(document, changeSet, projectId = 
   if (changeSetCanonicalJson(document.candidates.map((item) => item.candidateId)) !== changeSetCanonicalJson([...ids].sort())) {
     fail("Change impact candidates must use identity order.", "CHANGE_SET_ORDER_MISMATCH");
   }
+  const knownChangeIds = new Set(changeSet.changes.map((item) => item.changeId));
   for (const unknown of document.unknowns) if (!unknown || !/^change-impact-unknown-[a-f0-9]{24}$/.test(unknown.unknownId || "")
-    || typeof unknown.statement !== "string" || !unknown.statement || unknown.status !== "open") {
+    || typeof unknown.statement !== "string" || !unknown.statement || unknown.status !== "open"
+    || (!legacy && (typeof unknown.kind !== "string" || !unknown.kind || !Array.isArray(unknown.changeIds)
+      || unknown.changeIds.some((id) => !knownChangeIds.has(id))))) {
     fail("Change impact Unknown is invalid.", "INVALID_CHANGE_IMPACT_UNKNOWN");
+  }
+  if (!legacy) {
+    const coverage = document.coverage;
+    if (!coverage || coverage.unit !== "repository-path" || !Array.isArray(coverage.units)
+      || coverage.totalChangedUnits !== coverage.units.length || coverage.totalChanges !== changeSet.changes.length) {
+      fail("Change impact coverage is invalid.", "INVALID_CHANGE_IMPACT_COVERAGE");
+    }
+    const covered = new Set();
+    const statusCounts = { mapped: 0, partial: 0, unmapped: 0, "historical-only": 0 };
+    let mappedChanges = 0;
+    let historicalOnlyChanges = 0;
+    let unmappedChanges = 0;
+    let previousKey = "";
+    for (const unit of coverage.units) {
+      if (!unit || typeof unit.unitKey !== "string" || !unit.unitKey || (previousKey && previousKey.localeCompare(unit.unitKey) >= 0)
+        || !Object.hasOwn(statusCounts, unit.status)) fail("Change impact coverage units are invalid.", "INVALID_CHANGE_IMPACT_COVERAGE");
+      previousKey = unit.unitKey;
+      for (const field of ["changeIds", "mappedChangeIds", "historicalOnlyChangeIds", "unmappedChangeIds"]) sortedUnique(unit[field], `Coverage ${unit.unitKey} ${field}`);
+      const partition = [...unit.mappedChangeIds, ...unit.historicalOnlyChangeIds, ...unit.unmappedChangeIds].sort();
+      if (changeSetCanonicalJson(partition) !== changeSetCanonicalJson(unit.changeIds)
+        || unit.changeIds.some((id) => !knownChangeIds.has(id) || covered.has(id))) {
+        fail("Change impact coverage must partition each change exactly once.", "INVALID_CHANGE_IMPACT_COVERAGE");
+      }
+      unit.changeIds.forEach((id) => covered.add(id));
+      statusCounts[unit.status] += 1;
+      mappedChanges += unit.mappedChangeIds.length;
+      historicalOnlyChanges += unit.historicalOnlyChangeIds.length;
+      unmappedChanges += unit.unmappedChangeIds.length;
+    }
+    if (covered.size !== changeSet.changes.length || coverage.fullyMappedUnits !== statusCounts.mapped
+      || coverage.partiallyMappedUnits !== statusCounts.partial || coverage.unmappedUnits !== statusCounts.unmapped
+      || coverage.historicalOnlyUnits !== statusCounts["historical-only"] || coverage.mappedChanges !== mappedChanges
+      || coverage.historicalOnlyChanges !== historicalOnlyChanges || coverage.unmappedChanges !== unmappedChanges) {
+      fail("Change impact coverage summary does not match its units.", "INVALID_CHANGE_IMPACT_COVERAGE");
+    }
   }
   return document;
 }
@@ -247,7 +286,7 @@ export function verifyChangeImpactCandidateSet(document, changeSet, projectId = 
 export function verifyChangeImpactReviewDecision(document, candidateSet, projectId = "") {
   verifyIdentity(document, { idField: "reviewDecisionId", hashField: "reviewDecisionHash", prefix: "change-impact-review-decision", label: "Change impact ReviewDecision" });
   if (document.schemaVersion !== 1 || document.kind !== "ReviewDecision"
-    || document.protocol?.name !== "head-agent-core-change-impact-review" || document.protocol?.version !== CHANGE_SET_VERSION
+    || document.protocol?.name !== "head-agent-core-change-impact-review" || !["0.1.0", CHANGE_SET_VERSION].includes(document.protocol?.version)
     || document.decisionScope !== "change-impact" || (projectId && document.projectId !== projectId)
     || !["accept-all", "accept-selection", "reject"].includes(document.disposition)
     || document.authority !== "explicit-user-change-impact-review" || document.instructionAuthority !== true
@@ -310,10 +349,10 @@ function merge(items, additional, idField, label) {
 
 export function verifyChangeSetProjectionInput(projection) {
   const projectionVersion = projection?.protocol?.version;
-  const legacy = projectionVersion === CHANGE_SET_VERSION;
+  const legacy = projectionVersion === "0.1.0";
   if (!projection || projection.kind !== "ChangeSetProjectionInput"
     || projection.protocol?.name !== "head-agent-core-change-set-projection"
-    || ![CHANGE_SET_VERSION, CHANGE_SET_PROJECTION_VERSION].includes(projectionVersion)
+    || !["0.1.0", "0.2.0", CHANGE_SET_PROJECTION_VERSION].includes(projectionVersion)
     || !Array.isArray(projection.changeSets) || !Array.isArray(projection.candidateSets) || !Array.isArray(projection.reviewDecisions)
     || (!legacy && !Array.isArray(projection.vcsEvidence))) {
     fail("ChangeSet projection input is invalid.", "INVALID_CHANGE_SET_PROJECTION");

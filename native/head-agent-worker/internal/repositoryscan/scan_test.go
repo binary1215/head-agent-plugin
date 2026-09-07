@@ -20,7 +20,7 @@ func TestTrackedCorpusMatchesReviewedIdentity(t *testing.T) {
 		t.Fatal(operationFailure)
 	}
 	document := result.(map[string]any)
-	if document["scanId"] != "repository-scan-13e0ce69d2a574c1ac81639e" {
+	if document["scanId"] != "repository-scan-1794e5d5144e32c68dc7ac38" {
 		t.Fatalf("unexpected scan identity: %v", document["scanId"])
 	}
 	summary := document["summary"].(map[string]any)
@@ -79,5 +79,23 @@ func TestRepositoryScanExcludesTechnicalRuntimeCacheAndEvidenceDirectories(t *te
 	skipped := document["skipped"].(map[string]any)
 	if summary["fileCount"] != 1 || skipped["excludedDirectory"] != 4 {
 		t.Fatalf("technical runtime, cache, or evidence directories entered product evidence: summary=%#v skipped=%#v", summary, skipped)
+	}
+}
+
+func TestSourceAnalysisUsesExactDeclarationRanges(t *testing.T) {
+	python := "def f():\n    return 1\n"
+	pythonSymbols := extractSymbols(python, "python", newlineOffsets(python))
+	if len(pythonSymbols) != 1 || pythonSymbols[0].(map[string]any)["endLine"] != 3 {
+		t.Fatalf("Python trailing-line range diverged from the canonical source analysis: %#v", pythonSymbols)
+	}
+
+	javascript := "function f() {} f();"
+	javascriptCalls := extractCalls(javascript, "javascript", newlineOffsets(javascript))
+	if len(javascriptCalls) != 1 {
+		t.Fatalf("unexpected JavaScript calls: %#v", javascriptCalls)
+	}
+	call := javascriptCalls[0].(map[string]any)
+	if call["callee"] != "f" || call["callerQualifiedName"] != nil || call["callerIdentityAmbiguous"] != false {
+		t.Fatalf("top-level call was incorrectly attributed to a closed declaration: %#v", call)
 	}
 }

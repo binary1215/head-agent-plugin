@@ -68,7 +68,9 @@ function verifyEndpoint(endpoint, label) {
   if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)
     || typeof endpoint.nodeId !== "string" || !endpoint.nodeId
     || typeof endpoint.kind !== "string" || !endpoint.kind
-    || typeof endpoint.revisionId !== "string" || !endpoint.revisionId) {
+    || typeof endpoint.revisionId !== "string" || !endpoint.revisionId
+    || (endpoint.continuityGeneration != null
+      && (!Number.isSafeInteger(endpoint.continuityGeneration) || endpoint.continuityGeneration < 0))) {
     fail(`${label} is invalid.`, "INVALID_FEATURE_MAPPING_ENDPOINT");
   }
   return endpoint;

@@ -24,8 +24,8 @@ import (
 const (
 	Operation             = "repository.scan.v1"
 	ProducerName          = "head-agent-core-repository-scan"
-	ProducerVersion       = "0.4.0"
-	SourceAnalysisVersion = "0.2.0"
+	ProducerVersion       = "0.5.0"
+	SourceAnalysisVersion = "0.3.0"
 	maximumSymbolsPerFile = 200
 )
 
@@ -53,8 +53,8 @@ var (
 	javascriptFunction = regexp.MustCompile(`\b(export\s+)?(async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
 	javascriptClass    = regexp.MustCompile(`\b(export\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
 	javascriptBinding  = regexp.MustCompile(`\b(export\s+)?(const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(async\s*)?(function\b|\([^)]*\)\s*=>|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)`)
-	pythonFunction     = regexp.MustCompile(`(?m)^\s*(async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	pythonClass        = regexp.MustCompile(`(?m)^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	pythonFunction     = regexp.MustCompile(`(?m)^[ \t]*(async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	pythonClass        = regexp.MustCompile(`(?m)^[ \t]*class\s+([A-Za-z_][A-Za-z0-9_]*)`)
 	markdownHeading    = regexp.MustCompile(`(?m)^#{1,6}\s+(.+?)\s*$`)
 
 	javascriptDependency = regexp.MustCompile(`\b(from\s+|import\s*\(|require\s*\()\s*["']([^"']+)["']`)
@@ -67,9 +67,9 @@ var (
 	javascriptRequireNamed = regexp.MustCompile(`\b(const|let|var)\s+\{([^}]+)\}\s*=\s*require\s*\(\s*["']([^"']+)["']\s*\)`)
 	javascriptColonSplit   = regexp.MustCompile(`\s*:\s*`)
 	javascriptRequire      = regexp.MustCompile(`\b(const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*require\s*\(\s*["']([^"']+)["']\s*\)`)
-	pythonFromImport       = regexp.MustCompile(`(?m)^\s*from\s+([.A-Za-z_][A-Za-z0-9_.]*)\s+import\s+([^#\n]+)`)
+	pythonFromImport       = regexp.MustCompile(`(?m)^[ \t]*from\s+([.A-Za-z_][A-Za-z0-9_.]*)\s+import\s+([^#\n]+)`)
 	pythonAsSplit          = regexp.MustCompile(`\s+as\s+`)
-	pythonImport           = regexp.MustCompile(`(?m)^\s*import\s+([A-Za-z_][A-Za-z0-9_.]*)(\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?`)
+	pythonImport           = regexp.MustCompile(`(?m)^[ \t]*import\s+([A-Za-z_][A-Za-z0-9_.]*)(\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?`)
 	callPattern            = regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)?)\s*\(`)
 	declarationPrefix      = regexp.MustCompile(`\b(function|class|def|new)\s*$`)
 )
@@ -296,7 +296,6 @@ type symbolPattern struct {
 
 func regexSymbols(text string, lines []int, patterns []symbolPattern, maximum int) []any {
 	result := make([]any, 0)
-	seen := map[string]bool{}
 	for _, pattern := range patterns {
 		for _, match := range pattern.Regex.FindAllStringSubmatchIndex(text, -1) {
 			groupOffset := pattern.Group * 2
@@ -305,15 +304,12 @@ func regexSymbols(text string, lines []int, patterns []symbolPattern, maximum in
 			}
 			name := text[match[groupOffset]:match[groupOffset+1]]
 			line := lineAt(lines, match[0])
-			identity := fmt.Sprintf("%d\x00%s\x00%s", line, pattern.Kind, name)
-			if seen[identity] {
-				continue
-			}
-			seen[identity] = true
 			result = append(result, map[string]any{
-				"name": name,
-				"kind": pattern.Kind,
-				"line": line,
+				"name":          name,
+				"kind":          pattern.Kind,
+				"line":          line,
+				"startIndex":    match[0],
+				"matchEndIndex": match[1],
 			})
 			if len(result) >= maximum {
 				return sortSymbols(result)
@@ -321,6 +317,217 @@ func regexSymbols(text string, lines []int, patterns []symbolPattern, maximum in
 		}
 	}
 	return sortSymbols(result)
+}
+
+func normalizedSignature(value string) string {
+	normalized := []rune(strings.Join(strings.Fields(value), " "))
+	if len(normalized) > 500 {
+		normalized = normalized[:500]
+	}
+	return string(normalized)
+}
+
+func sourceLines(text string) []string {
+	return strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+}
+
+func indentation(value string) int {
+	count := 0
+	for _, character := range value {
+		if character == ' ' {
+			count++
+		} else if character == '\t' {
+			count += 4
+		} else {
+			break
+		}
+	}
+	return count
+}
+
+func braceEnd(text string, open int) int {
+	if open < 0 || open >= len(text) || text[open] != '{' {
+		return -1
+	}
+	depth := 0
+	for index := open; index < len(text); index++ {
+		if text[index] == '{' {
+			depth++
+		} else if text[index] == '}' {
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func pythonHeaderEnd(masked string, start int) int {
+	depth := 0
+	for index := start; index < len(masked); index++ {
+		switch masked[index] {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ':':
+			if depth == 0 {
+				return index + 1
+			}
+		}
+	}
+	return -1
+}
+
+func enrichSymbols(text, masked, language string, values []any, lines []int, includeRanges bool) []any {
+	textLines := sourceLines(text)
+	for _, value := range values {
+		symbol := value.(map[string]any)
+		line := symbol["line"].(int)
+		start := symbol["startIndex"].(int)
+		matchEnd := symbol["matchEndIndex"].(int)
+		endLine := line
+		scopePath := ""
+		signature := ""
+		if line > 0 && line <= len(textLines) {
+			signature = normalizedSignature(strings.TrimSpace(textLines[line-1]))
+		}
+		if language == "javascript" || language == "typescript" {
+			lineEnd := strings.IndexByte(masked[matchEnd:], '\n')
+			if lineEnd < 0 {
+				lineEnd = len(masked)
+			} else {
+				lineEnd += matchEnd
+			}
+			open := -1
+			matched := masked[start:matchEnd]
+			if symbol["kind"] == "binding" && strings.Contains(matched, "=>") {
+				bodyStart := matchEnd
+				for bodyStart < len(masked) && (masked[bodyStart] == ' ' || masked[bodyStart] == '\t' || masked[bodyStart] == '\r' || masked[bodyStart] == '\n') {
+					bodyStart++
+				}
+				if bodyStart < len(masked) && masked[bodyStart] == '{' {
+					open = bodyStart
+				}
+			} else if openRelative := strings.IndexByte(masked[matchEnd:], '{'); openRelative >= 0 && matchEnd+openRelative <= lineEnd+500 {
+				open = matchEnd + openRelative
+			}
+			end := braceEnd(masked, open)
+			if end >= 0 {
+				endLine = lineAt(lines, end)
+				signature = normalizedSignature(text[start:open])
+				symbol["endIndex"] = end + 1
+			} else {
+				statementEnd := lineEnd
+				if semicolon := strings.IndexByte(masked[matchEnd:lineEnd], ';'); semicolon >= 0 {
+					statementEnd = matchEnd + semicolon + 1
+				}
+				endLine = lineAt(lines, statementEnd)
+				signature = normalizedSignature(text[start:statementEnd])
+				symbol["endIndex"] = statementEnd
+			}
+		} else if language == "python" {
+			headerEnd := pythonHeaderEnd(masked, start)
+			if headerEnd < 0 {
+				headerEnd = matchEnd
+			}
+			headerEndLine := lineAt(lines, headerEnd-1)
+			signature = normalizedSignature(text[start:headerEnd])
+			currentIndent := indentation(textLines[line-1])
+			endLine = len(textLines)
+			symbol["endIndex"] = len(masked)
+			for after := headerEndLine; after < len(textLines); after++ {
+				if strings.TrimSpace(textLines[after]) == "" {
+					continue
+				}
+				if indentation(textLines[after]) <= currentIndent {
+					endLine = after
+					if after == 0 {
+						symbol["endIndex"] = 0
+					} else {
+						symbol["endIndex"] = lines[after-1] + 1
+					}
+					break
+				}
+			}
+		}
+		symbol["endLine"] = endLine
+		symbol["scopePath"] = scopePath
+		symbol["qualifiedName"] = symbol["name"].(string)
+		symbol["signature"] = signature
+	}
+	if language == "markdown" {
+		headings := make([]string, 0, 6)
+		for _, value := range values {
+			symbol := value.(map[string]any)
+			line := symbol["line"].(int)
+			level := 1
+			if line > 0 && line <= len(textLines) {
+				level = 0
+				for _, character := range textLines[line-1] {
+					if character == '#' {
+						level++
+					} else {
+						break
+					}
+				}
+			}
+			for len(headings) >= level {
+				headings = headings[:len(headings)-1]
+			}
+			scope := strings.Join(headings, " / ")
+			symbol["scopePath"] = scope
+			if scope != "" {
+				symbol["qualifiedName"] = scope + " / " + symbol["name"].(string)
+			}
+			headings = append(headings, symbol["name"].(string))
+		}
+	}
+	if language == "python" || language == "javascript" || language == "typescript" {
+		for _, value := range values {
+			symbol := value.(map[string]any)
+			containers := make([]map[string]any, 0)
+			for _, possibleValue := range values {
+				possible := possibleValue.(map[string]any)
+				if possible["startIndex"] == symbol["startIndex"] {
+					continue
+				}
+				if possible["line"].(int) < symbol["line"].(int) && possible["endLine"].(int) >= symbol["endLine"].(int) {
+					containers = append(containers, possible)
+				}
+			}
+			sort.SliceStable(containers, func(left, right int) bool { return containers[left]["line"].(int) < containers[right]["line"].(int) })
+			names := make([]string, 0, len(containers))
+			for _, container := range containers {
+				names = append(names, container["name"].(string))
+			}
+			scope := strings.Join(names, ".")
+			symbol["scopePath"] = scope
+			if scope != "" {
+				symbol["qualifiedName"] = scope + "." + symbol["name"].(string)
+			}
+		}
+	}
+	counts := map[string]int{}
+	for _, value := range values {
+		symbol := value.(map[string]any)
+		key := symbol["kind"].(string) + ":" + symbol["qualifiedName"].(string)
+		counts[key]++
+	}
+	for _, value := range values {
+		symbol := value.(map[string]any)
+		key := symbol["kind"].(string) + ":" + symbol["qualifiedName"].(string)
+		symbol["identityAmbiguous"] = counts[key] > 1
+		if !includeRanges {
+			delete(symbol, "startIndex")
+			delete(symbol, "endIndex")
+		}
+		delete(symbol, "matchEndIndex")
+	}
+	return values
 }
 
 func sortSymbols(values []any) []any {
@@ -335,24 +542,29 @@ func sortSymbols(values []any) []any {
 	return values
 }
 
-func extractSymbols(text, language string, lines []int) []any {
+func extractSymbolsInternal(text, language string, lines []int, includeRanges bool) []any {
+	masked := maskNonCode(text, language)
 	switch language {
 	case "javascript", "typescript":
-		return regexSymbols(text, lines, []symbolPattern{
+		return enrichSymbols(text, masked, language, regexSymbols(masked, lines, []symbolPattern{
 			{Kind: "function", Regex: javascriptFunction, Group: 3},
 			{Kind: "class", Regex: javascriptClass, Group: 2},
 			{Kind: "binding", Regex: javascriptBinding, Group: 3},
-		}, maximumSymbolsPerFile)
+		}, maximumSymbolsPerFile), lines, includeRanges)
 	case "python":
-		return regexSymbols(text, lines, []symbolPattern{
+		return enrichSymbols(text, masked, language, regexSymbols(masked, lines, []symbolPattern{
 			{Kind: "function", Regex: pythonFunction, Group: 2},
 			{Kind: "class", Regex: pythonClass, Group: 1},
-		}, maximumSymbolsPerFile)
+		}, maximumSymbolsPerFile), lines, includeRanges)
 	case "markdown":
-		return regexSymbols(text, lines, []symbolPattern{{Kind: "heading", Regex: markdownHeading, Group: 1}}, maximumSymbolsPerFile)
+		return enrichSymbols(text, text, language, regexSymbols(text, lines, []symbolPattern{{Kind: "heading", Regex: markdownHeading, Group: 1}}, maximumSymbolsPerFile), lines, includeRanges)
 	default:
 		return []any{}
 	}
+}
+
+func extractSymbols(text, language string, lines []int) []any {
+	return extractSymbolsInternal(text, language, lines, false)
 }
 
 func addDependency(result *[]any, seen map[string]bool, specifier, kind string, line int) {
@@ -507,6 +719,82 @@ func prefixByUTF16(text string, byteIndex, maximumUnits int) string {
 	return string(utf16.Decode(units))
 }
 
+func maskNonCode(text, language string) string {
+	masked := []byte(text)
+	mode := "code"
+	quote := byte(0)
+	escaped := false
+	for index := 0; index < len(masked); index++ {
+		character := text[index]
+		next := byte(0)
+		if index+1 < len(text) {
+			next = text[index+1]
+		}
+		preserve := character == '\n' || character == '\r'
+		switch mode {
+		case "line-comment":
+			if character == '\n' {
+				mode = "code"
+			} else {
+				masked[index] = ' '
+			}
+			continue
+		case "block-comment":
+			if character == '*' && next == '/' {
+				masked[index], masked[index+1] = ' ', ' '
+				index++
+				mode = "code"
+			} else if !preserve {
+				masked[index] = ' '
+			}
+			continue
+		case "string":
+			if !preserve {
+				masked[index] = ' '
+			}
+			if escaped {
+				escaped = false
+			} else if character == '\\' {
+				escaped = true
+			} else if character == quote {
+				mode = "code"
+			}
+			continue
+		case "triple-string":
+			if index+2 < len(text) && text[index] == quote && text[index+1] == quote && text[index+2] == quote {
+				masked[index], masked[index+1], masked[index+2] = ' ', ' ', ' '
+				index += 2
+				mode = "code"
+			} else if !preserve {
+				masked[index] = ' '
+			}
+			continue
+		}
+		if language == "python" && character == '#' {
+			masked[index] = ' '
+			mode = "line-comment"
+		} else if language != "python" && character == '/' && next == '/' {
+			masked[index], masked[index+1] = ' ', ' '
+			index++
+			mode = "line-comment"
+		} else if language != "python" && character == '/' && next == '*' {
+			masked[index], masked[index+1] = ' ', ' '
+			index++
+			mode = "block-comment"
+		} else if language == "python" && index+2 < len(text) && (text[index:index+3] == "'''" || text[index:index+3] == "\"\"\"") {
+			quote = character
+			masked[index], masked[index+1], masked[index+2] = ' ', ' ', ' '
+			index += 2
+			mode = "triple-string"
+		} else if character == '\'' || character == '"' || (language != "python" && character == '`') {
+			quote = character
+			masked[index] = ' '
+			mode = "string"
+		}
+	}
+	return string(masked)
+}
+
 func extractCalls(text, language string, lines []int) []any {
 	if language != "javascript" && language != "typescript" && language != "python" {
 		return []any{}
@@ -516,13 +804,38 @@ func extractCalls(text, language string, lines []int) []any {
 		"function": true, "return": true, "typeof": true, "new": true,
 		"class": true, "def": true, "with": true, "assert": true, "lambda": true,
 	}
+	masked := maskNonCode(text, language)
+	symbols := extractSymbolsInternal(text, language, lines, true)
 	result := make([]any, 0)
-	for _, match := range callPattern.FindAllStringSubmatchIndex(text, -1) {
-		callee := capture(text, match, 1)
-		if excluded[callee] || declarationPrefix.MatchString(prefixByUTF16(text, match[0], 24)) {
+	for _, match := range callPattern.FindAllStringSubmatchIndex(masked, -1) {
+		callee := capture(masked, match, 1)
+		if excluded[callee] || declarationPrefix.MatchString(prefixByUTF16(masked, match[0], 24)) {
 			continue
 		}
-		result = append(result, map[string]any{"callee": callee, "line": lineAt(lines, match[0])})
+		callIndex := match[0]
+		callLine := lineAt(lines, callIndex)
+		var caller map[string]any
+		for _, value := range symbols {
+			symbol := value.(map[string]any)
+			if symbol["kind"] != "function" && symbol["kind"] != "binding" {
+				continue
+			}
+			startIndex, startOK := symbol["startIndex"].(int)
+			endIndex, endOK := symbol["endIndex"].(int)
+			if startOK && endOK && startIndex < callIndex && callIndex < endIndex {
+				if caller == nil || endIndex-startIndex < caller["endIndex"].(int)-caller["startIndex"].(int) {
+					caller = symbol
+				}
+			}
+		}
+		callerName := any(nil)
+		callerAmbiguous := false
+		if caller != nil {
+			callerName = caller["qualifiedName"]
+			callerAmbiguous = caller["identityAmbiguous"].(bool)
+		}
+		result = append(result, map[string]any{"callee": callee, "line": callLine,
+			"callerQualifiedName": callerName, "callerIdentityAmbiguous": callerAmbiguous})
 	}
 	sort.SliceStable(result, func(left, right int) bool {
 		l := result[left].(map[string]any)

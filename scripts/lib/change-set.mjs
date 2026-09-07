@@ -158,9 +158,9 @@ function revisionChanges(before, after) {
     const payload = {
       changeKind: !previous ? "added" : !current ? "removed" : "modified",
       logicalEntityId,
-      entityKind: current?.entityKind || previous.entityKind,
-      path: current?.path || previous.path,
-      name: current?.name || previous.name,
+      entityKind: current?.entityKind || previous?.entityKind || "",
+      path: current?.path || previous?.path || "",
+      name: current?.name || previous?.name || "",
       beforeRevisionId: previous?.revisionId || null,
       afterRevisionId: current?.revisionId || null,
     };
@@ -189,6 +189,8 @@ function impactCandidateSet(changeSet, afterSnapshot) {
     changeByLogical.get(change.logicalEntityId).push(change);
   }
   const grouped = new Map();
+  const currentMappedChanges = new Set();
+  const historicalMappedChanges = new Set();
   for (const relationship of graph.nodes.filter((node) => node.kind === "ReviewedRelationship")) {
     let changedLogicalId = "";
     let targetNodeId = "";
@@ -203,13 +205,21 @@ function impactCandidateSet(changeSet, afterSnapshot) {
       targetKind = relationship.fromKind;
     }
     if (!changedLogicalId || !["Feature", "Capability"].includes(targetKind)) continue;
+    const relationshipCurrent = relationship.projectionStatus === "current";
+    const relationshipSupportsReview = relationshipCurrent
+      || (relationship.projectionStatus === "stale-evidence" && relationship.endpointStatus === "present" && relationship.evidenceStatus === "changed");
+    for (const change of changeByLogical.get(changedLogicalId)) {
+      (relationshipSupportsReview ? currentMappedChanges : historicalMappedChanges).add(change.changeId);
+    }
+    if (!relationshipSupportsReview) continue;
     const revisionId = currentProductRevision(graph, targetNodeId);
     if (!revisionId) continue;
     const key = `${targetKind}:${targetNodeId}:${revisionId}`;
-    if (!grouped.has(key)) grouped.set(key, { target: { kind: targetKind, nodeId: targetNodeId, revisionId }, changeIds: new Set(), reviewedRelationshipIds: new Set() });
+    if (!grouped.has(key)) grouped.set(key, { target: { kind: targetKind, nodeId: targetNodeId, revisionId }, changeIds: new Set(), reviewedRelationshipIds: new Set(), semanticRecheckRequired: false });
     const group = grouped.get(key);
     for (const change of changeByLogical.get(changedLogicalId)) group.changeIds.add(change.changeId);
     group.reviewedRelationshipIds.add(relationship.nodeId);
+    if (!relationshipCurrent) group.semanticRecheckRequired = true;
   }
   const candidates = [...grouped.values()].map((group) => {
     const payload = {
@@ -221,8 +231,10 @@ function impactCandidateSet(changeSet, afterSnapshot) {
       target: group.target,
       changeIds: [...group.changeIds].sort(),
       reviewedRelationshipIds: [...group.reviewedRelationshipIds].sort(),
-      confidence: 1,
-      explanation: "Reviewed Feature mapping relations connect changed code or tests to this product concept.",
+      confidence: group.semanticRecheckRequired ? 0.8 : 1,
+      explanation: group.semanticRecheckRequired
+        ? "A reviewed mapping connects this still-present logical endpoint to the product concept, but its source evidence changed; explicit impact review must reassess the connection."
+        : "Reviewed Feature mapping relations connect changed code or tests to this product concept.",
       authorityClass: "candidate",
       instructionAuthority: false,
       promotionAuthority: false,
@@ -230,11 +242,51 @@ function impactCandidateSet(changeSet, afterSnapshot) {
     const hash = changeSetDigest(changeSetCanonicalJson(payload));
     return { ...payload, candidateId: `change-impact-candidate-${hash.slice(0, 24)}`, candidateHash: hash };
   }).sort((left, right) => left.candidateId.localeCompare(right.candidateId));
-  const unknowns = candidates.length ? [] : (() => {
-    const payload = { changeSetId: changeSet.changeSetId, statement: "No reviewed Feature or Capability mapping connects the changed File, Symbol, or Test entities to Product Canon.", status: "open" };
+  const unitsByPath = new Map();
+  for (const change of changeSet.changes) {
+    const unitKey = change.path || change.logicalEntityId;
+    if (!unitsByPath.has(unitKey)) unitsByPath.set(unitKey, []);
+    unitsByPath.get(unitKey).push(change);
+  }
+  const coverageUnits = [...unitsByPath.entries()].map(([unitKey, changes]) => {
+    const fileLevelCurrent = changes.some((change) => change.entityKind === "File" && currentMappedChanges.has(change.changeId));
+    const fileLevelHistorical = changes.some((change) => change.entityKind === "File" && historicalMappedChanges.has(change.changeId));
+    const mappedChangeIds = changes.filter((change) => fileLevelCurrent || currentMappedChanges.has(change.changeId)).map((change) => change.changeId).sort();
+    const historicalOnlyChangeIds = changes.filter((change) => !mappedChangeIds.includes(change.changeId)
+      && (fileLevelHistorical || historicalMappedChanges.has(change.changeId))).map((change) => change.changeId).sort();
+    const unmappedChangeIds = changes.filter((change) => !mappedChangeIds.includes(change.changeId)
+      && !historicalOnlyChangeIds.includes(change.changeId)).map((change) => change.changeId).sort();
+    const status = mappedChangeIds.length && (unmappedChangeIds.length || historicalOnlyChangeIds.length) ? "partial"
+      : unmappedChangeIds.length ? "unmapped"
+        : historicalOnlyChangeIds.length && !mappedChangeIds.length ? "historical-only" : "mapped";
+    return { unitKey, path: changes[0].path || "", status,
+      changeIds: changes.map((change) => change.changeId).sort(), mappedChangeIds, historicalOnlyChangeIds, unmappedChangeIds };
+  }).sort((left, right) => left.unitKey.localeCompare(right.unitKey));
+  const coverage = {
+    unit: "repository-path",
+    totalChangedUnits: coverageUnits.length,
+    fullyMappedUnits: coverageUnits.filter((unit) => unit.status === "mapped").length,
+    partiallyMappedUnits: coverageUnits.filter((unit) => unit.status === "partial").length,
+    unmappedUnits: coverageUnits.filter((unit) => unit.status === "unmapped").length,
+    historicalOnlyUnits: coverageUnits.filter((unit) => unit.status === "historical-only").length,
+    totalChanges: changeSet.changes.length,
+    mappedChanges: coverageUnits.reduce((count, unit) => count + unit.mappedChangeIds.length, 0),
+    historicalOnlyChanges: coverageUnits.reduce((count, unit) => count + unit.historicalOnlyChangeIds.length, 0),
+    unmappedChanges: coverageUnits.reduce((count, unit) => count + unit.unmappedChangeIds.length, 0),
+    units: coverageUnits,
+  };
+  const unknowns = [];
+  const addUnknown = (kind, statement, changeIds) => {
+    const payload = { changeSetId: changeSet.changeSetId, kind, statement, changeIds: [...changeIds].sort(), status: "open" };
     const hash = changeSetDigest(changeSetCanonicalJson(payload));
-    return [{ ...payload, unknownId: `change-impact-unknown-${hash.slice(0, 24)}` }];
-  })();
+    unknowns.push({ ...payload, unknownId: `change-impact-unknown-${hash.slice(0, 24)}` });
+  };
+  const unmappedChangeIds = coverageUnits.flatMap((unit) => unit.unmappedChangeIds).sort();
+  const historicalOnlyChangeIds = coverageUnits.flatMap((unit) => unit.historicalOnlyChangeIds).sort();
+  if (unmappedChangeIds.length) addUnknown("unmapped-change-coverage",
+    `${unmappedChangeIds.length} changed revision(s) have no current reviewed Feature or Capability mapping; this is unresolved impact evidence, not proof of no impact.`, unmappedChangeIds);
+  if (historicalOnlyChangeIds.length) addUnknown("historical-mapping-only",
+    `${historicalOnlyChangeIds.length} changed revision(s) connect only to historical or stale mapping evidence and require fresh HEAD assessment.`, historicalOnlyChangeIds);
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ChangeImpactCandidateSet",
@@ -246,6 +298,7 @@ function impactCandidateSet(changeSet, afterSnapshot) {
     afterGraphSnapshotId: changeSet.after.graphSnapshotId,
     candidates,
     unknowns,
+    coverage,
     authorityClass: "candidate-set",
     instructionAuthority: false,
     promotionAuthority: false,
