@@ -553,6 +553,7 @@ async function refreshWorldModelLocked({
     ...common,
     parentSourceSnapshotIds: previousSnapshot.temporalProvenanceGraph.parentSourceSnapshotIds,
     revisionParentIds: previousSnapshot.temporalProvenanceGraph.revisionParentIds,
+    filterRevisionParentsToCurrentEntities: true,
   });
   const additionalParentsRequested = request.additionalParentSourceSnapshotIds
     .some((parentId) => !previousSnapshot.temporalProvenanceGraph.parentSourceSnapshotIds.includes(parentId));

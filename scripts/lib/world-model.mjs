@@ -43,6 +43,7 @@ import {
 import { buildRepositorySourceScope, readRepositorySourceScope } from "./repository-source-scope.mjs";
 import {
   buildTemporalProvenanceGraph,
+  filterRevisionParentsForCurrentTemporalEntities,
   TEMPORAL_PROVENANCE_VERSION,
   verifyTemporalProvenanceGraph,
 } from "./temporal-provenance.mjs";
@@ -932,11 +933,15 @@ async function buildWorldModelLocked({
   releaseObservationProjectionInput = null,
   parentSourceSnapshotIds = [],
   revisionParentIds = {},
+  filterRevisionParentsToCurrentEntities = false,
   repositoryScanExecution = null,
   expectedWorldModelId = "",
   expectedCurrentWorldModelId = "",
   writerLease = null,
 } = {}) {
+  if (filterRevisionParentsToCurrentEntities && persist) {
+    fail("Current-entity revision-parent filtering is available only for non-persisted refresh previews.", "REVISION_PARENT_FILTER_PREVIEW_ONLY");
+  }
   const inspected = readyProject(root);
   const project = inspected.project;
   const managedRootFiles = managedRootFilesForProject(project);
@@ -993,6 +998,14 @@ async function buildWorldModelLocked({
     adapter: sourceRelationEvidenceAdapter,
   });
   const semanticGraph = buildSemanticGraph({ files: scan.files, sourceRelationEvidence: sourceRelationResult.evidence });
+  const selectedRevisionParentIds = filterRevisionParentsToCurrentEntities
+    ? filterRevisionParentsForCurrentTemporalEntities({
+      projectId: project.projectId,
+      files: scan.files,
+      productModel: productCanon.model,
+      revisionParentIds,
+    })
+    : revisionParentIds;
   const temporalProvenanceGraph = buildTemporalProvenanceGraph({
     projectId: project.projectId,
     files: scan.files,
@@ -1006,7 +1019,7 @@ async function buildWorldModelLocked({
     productOperatingProjection,
     releaseObservationProjection,
     parentSourceSnapshotIds,
-    revisionParentIds,
+    revisionParentIds: selectedRevisionParentIds,
   });
   const sourceDigest = sourceDigestFor(
     scan.files,

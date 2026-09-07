@@ -287,36 +287,97 @@ function revisionReferenceKind(revisionId) {
   return "";
 }
 
-function productRecordsFor({ projectId, productModel, productEvidenceId, revisionParents, knownLogicalIds }) {
+function temporalLogicalEntityDescriptors({ projectId, files, productModel }) {
+  const orderedFiles = [...files].sort((left, right) => String(left.path).localeCompare(String(right.path)));
+  const logicalEntityIds = new Set();
+  const fileDescriptors = orderedFiles.map((file) => {
+    if (!file || typeof file.path !== "string" || !file.path || !/^[a-f0-9]{64}$/.test(file.digest || "")) {
+      fail("Every temporal file requires a path and SHA-256 digest.", "INVALID_TEMPORAL_FILE");
+    }
+    const fileId = identity("file", { projectId, path: file.path });
+    logicalEntityIds.add(fileId);
+    const occurrences = new Map();
+    const symbols = [...(file.symbols || [])].sort((left, right) => Number(left.line || 0) - Number(right.line || 0)
+      || String(left.kind).localeCompare(String(right.kind)) || String(left.name).localeCompare(String(right.name)));
+    const symbolDescriptors = symbols.map((symbol) => {
+      const occurrenceKey = `${symbol.kind || "symbol"}:${symbol.name || ""}`;
+      const occurrence = (occurrences.get(occurrenceKey) || 0) + 1;
+      occurrences.set(occurrenceKey, occurrence);
+      const symbolId = identity("symbol", {
+        fileId,
+        symbolKind: symbol.kind || "symbol",
+        name: symbol.name || "",
+        occurrence,
+      });
+      logicalEntityIds.add(symbolId);
+      return {
+        symbolId,
+        name: symbol.name || "",
+        symbolKind: symbol.kind || "symbol",
+        occurrence,
+        line: Number(symbol.line || 1),
+      };
+    });
+    const testId = file.classification === "test" ? identity("test", { projectId, path: file.path }) : null;
+    if (testId) logicalEntityIds.add(testId);
+    return { file, fileId, symbolDescriptors, testId };
+  });
+
   if (!productModel || typeof productModel !== "object" || Array.isArray(productModel)) fail("productModel is required.", "INVALID_TEMPORAL_PRODUCT_MODEL");
   if (!/^product-model-[a-f0-9]{24}$/.test(productModel.productModelId || "") || !/^[a-f0-9]{64}$/.test(productModel.productModelHash || "")) {
     fail("productModel requires verified content-derived identity.", "INVALID_TEMPORAL_PRODUCT_MODEL");
   }
-  if (typeof productEvidenceId !== "string" || !productEvidenceId) fail("productEvidenceId is required.", "INVALID_TEMPORAL_PRODUCT_MODEL");
-  const records = [];
+  const productDescriptors = [];
   for (const [kind, definition] of Object.entries(PRODUCT_DEFINITIONS)) {
     const entities = productModel[definition.collection];
     if (!Array.isArray(entities)) fail(`productModel.${definition.collection} must be an array.`, "INVALID_TEMPORAL_PRODUCT_MODEL");
     for (const entity of entities) {
       if (!entity || typeof entity.key !== "string" || !entity.key) fail(`${kind} requires a stable key.`, "INVALID_TEMPORAL_PRODUCT_MODEL");
       const logicalEntityId = identity(definition.prefix, { projectId, key: entity.key });
-      knownLogicalIds.add(logicalEntityId);
-      const parentRevisionIds = parentIdsFor(revisionParents, logicalEntityId, definition.revisionPrefix);
-      const semantic = canonical(entity);
-      const revisionId = identity(definition.revisionPrefix, { logicalEntityId, semantic, parentRevisionIds });
-      records.push({
-        kind,
-        revisionKind: `${kind}Revision`,
-        key: entity.key,
-        logicalEntityId,
-        revisionId,
-        parentRevisionIds,
-        semantic,
-        evidenceIds: [productEvidenceId],
-      });
+      logicalEntityIds.add(logicalEntityId);
+      productDescriptors.push({ kind, definition, entity, logicalEntityId });
     }
   }
-  return records.sort((left, right) => left.logicalEntityId.localeCompare(right.logicalEntityId));
+  productDescriptors.sort((left, right) => left.logicalEntityId.localeCompare(right.logicalEntityId));
+  return {
+    fileDescriptors,
+    productDescriptors,
+    logicalEntityIds: [...logicalEntityIds].sort(),
+  };
+}
+
+export function currentTemporalLogicalEntityIds({ projectId, files, productModel = null } = {}) {
+  if (typeof projectId !== "string" || !projectId.trim()) fail("projectId is required.", "TEMPORAL_PROJECT_ID_REQUIRED");
+  if (!Array.isArray(files)) fail("files must be an array.", "TEMPORAL_FILES_REQUIRED");
+  const selectedProductModel = productModel || normalizeProductModelDocument(emptyProductModelDocument());
+  return temporalLogicalEntityDescriptors({ projectId, files, productModel: selectedProductModel }).logicalEntityIds;
+}
+
+// Incremental preview helper only: the normal graph builder intentionally keeps
+// rejecting unknown caller-supplied parent keys.
+export function filterRevisionParentsForCurrentTemporalEntities({ projectId, files, productModel = null, revisionParentIds = {} } = {}) {
+  const currentIds = new Set(currentTemporalLogicalEntityIds({ projectId, files, productModel }));
+  const revisionParents = normalizeRevisionParentIds(revisionParentIds);
+  return Object.fromEntries(Object.entries(revisionParents).filter(([logicalEntityId]) => currentIds.has(logicalEntityId)));
+}
+
+function productRecordsFor({ productDescriptors, productEvidenceId, revisionParents }) {
+  if (typeof productEvidenceId !== "string" || !productEvidenceId) fail("productEvidenceId is required.", "INVALID_TEMPORAL_PRODUCT_MODEL");
+  return productDescriptors.map(({ kind, definition, entity, logicalEntityId }) => {
+    const parentRevisionIds = parentIdsFor(revisionParents, logicalEntityId, definition.revisionPrefix);
+    const semantic = canonical(entity);
+    const revisionId = identity(definition.revisionPrefix, { logicalEntityId, semantic, parentRevisionIds });
+    return {
+      kind,
+      revisionKind: `${kind}Revision`,
+      key: entity.key,
+      logicalEntityId,
+      revisionId,
+      parentRevisionIds,
+      semantic,
+      evidenceIds: [productEvidenceId],
+    };
+  });
 }
 
 function onboardingProjectionDescriptor(projection) {
@@ -1711,17 +1772,10 @@ export function buildTemporalProvenanceGraph({
   });
   const parents = normalizeParentSourceSnapshotIds(parentSourceSnapshotIds);
   const revisionParents = normalizeRevisionParentIds(revisionParentIds);
-  const orderedFiles = [...files].sort((left, right) => String(left.path).localeCompare(String(right.path)));
   const repositoryId = identity("repository", { projectId });
-  const records = [];
-  const knownLogicalIds = new Set();
-
-  for (const file of orderedFiles) {
-    if (!file || typeof file.path !== "string" || !file.path || !/^[a-f0-9]{64}$/.test(file.digest || "")) {
-      fail("Every temporal file requires a path and SHA-256 digest.", "INVALID_TEMPORAL_FILE");
-    }
-    const fileId = identity("file", { projectId, path: file.path });
-    knownLogicalIds.add(fileId);
+  const descriptors = temporalLogicalEntityDescriptors({ projectId, files, productModel: selectedProductModel });
+  const knownLogicalIds = new Set(descriptors.logicalEntityIds);
+  const records = descriptors.fileDescriptors.map(({ file, fileId, symbolDescriptors, testId }) => {
     const fileParentRevisionIds = parentIdsFor(revisionParents, fileId, "file-revision");
     const fileRevisionId = identity("file-revision", {
       logicalEntityId: fileId,
@@ -1730,58 +1784,40 @@ export function buildTemporalProvenanceGraph({
       classification: file.classification || "source",
       parentRevisionIds: fileParentRevisionIds,
     });
-    const occurrences = new Map();
-    const symbols = [...(file.symbols || [])].sort((left, right) => Number(left.line || 0) - Number(right.line || 0)
-      || String(left.kind).localeCompare(String(right.kind)) || String(left.name).localeCompare(String(right.name)));
-    const symbolRecords = symbols.map((symbol) => {
-      const occurrenceKey = `${symbol.kind || "symbol"}:${symbol.name || ""}`;
-      const occurrence = (occurrences.get(occurrenceKey) || 0) + 1;
-      occurrences.set(occurrenceKey, occurrence);
-      const symbolId = identity("symbol", {
-        fileId,
-        symbolKind: symbol.kind || "symbol",
-        name: symbol.name || "",
-        occurrence,
-      });
-      knownLogicalIds.add(symbolId);
+    const symbolRecords = symbolDescriptors.map(({ symbolId, name, symbolKind, occurrence, line }) => {
       const symbolParentRevisionIds = parentIdsFor(revisionParents, symbolId, "symbol-revision");
       const symbolRevisionId = identity("symbol-revision", {
         logicalEntityId: symbolId,
         fileRevisionId,
-        line: Number(symbol.line || 1),
+        line,
         parentRevisionIds: symbolParentRevisionIds,
       });
       return {
         symbolId,
         symbolRevisionId,
         symbolParentRevisionIds,
-        name: symbol.name || "",
-        symbolKind: symbol.kind || "symbol",
+        name,
+        symbolKind,
         occurrence,
-        line: Number(symbol.line || 1),
+        line,
       };
     });
-    let testRecord = null;
-    if (file.classification === "test") {
-      const testId = identity("test", { projectId, path: file.path });
-      knownLogicalIds.add(testId);
+    const testRecord = testId ? (() => {
       const testParentRevisionIds = parentIdsFor(revisionParents, testId, "test-revision");
       const testRevisionId = identity("test-revision", {
         logicalEntityId: testId,
         fileRevisionId,
         parentRevisionIds: testParentRevisionIds,
       });
-      testRecord = { testId, testRevisionId, testParentRevisionIds };
-    }
-    records.push({ file, fileId, fileRevisionId, fileParentRevisionIds, symbolRecords, testRecord, evidenceId: evidenceId(file) });
-  }
+      return { testId, testRevisionId, testParentRevisionIds };
+    })() : null;
+    return { file, fileId, fileRevisionId, fileParentRevisionIds, symbolRecords, testRecord, evidenceId: evidenceId(file) };
+  });
 
   const productRecords = productRecordsFor({
-    projectId,
-    productModel: selectedProductModel,
+    productDescriptors: descriptors.productDescriptors,
     productEvidenceId: selectedProductEvidenceId,
     revisionParents,
-    knownLogicalIds,
   });
 
   for (const logicalEntityId of Object.keys(revisionParents)) {
