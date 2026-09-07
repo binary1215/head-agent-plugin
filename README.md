@@ -654,6 +654,8 @@ without creating authority:
 See [Product Operating Loop](docs/product-operating-loop.md).
 Git ref and deployment plumbing is documented in
 [Release observation](docs/release-observation.md).
+Per-environment and per-target application, failure, and rollback history is
+documented in [Delivery state observation](docs/delivery-observation.md).
 
 ## Graph and records
 
@@ -687,6 +689,15 @@ Observation, but that edge remains evidence for a hypothesis rather than a
 promotion of measured data into product truth. If Observation storage is
 damaged, only that graph layer is reported unavailable; unrelated product work
 continues.
+
+Delivery observations add practical operational genealogy without turning the
+graph into a deployment controller. Each Host event names an environment,
+target, artifact revision, explicit sequence, and predecessor. The read-only
+current-state card shows uniform, mixed, or unknown observed state; failed
+attempts do not erase the last applied revision, rollback remains in history,
+and unobserved targets are never guessed successful. Exact retained source
+revisions receive verified `AT_REVISION` links; declared strings stay visibly
+unverified.
 
 Policy genealogy stays equally explicit. A proposed create, revision, or
 retirement is P3 evidence until the user accepts that exact candidate. The
@@ -845,6 +856,7 @@ Status labels are evidence claims, not roadmap promises:
 | Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | **Available** |
 | Runtime evidence | Claude Code live model-call conformance | **Experimental** |
 | Release evidence | provider-neutral Git ref, deployment-result, and release observations | **Available** |
+| Delivery evidence | provider-neutral per-environment/target applied, failed, and rollback history with exact optional source-revision links | **Available** |
 | Common observations | reuse-first exact evidence preparation plus paged Host source discovery and opaque-ID collection | **Available** |
 | Product policy | schema-v2 Policy proposal, exact application and semantic references, user review, evidence-currentness diagnostics, revision and retirement lineage | **Available** |
 | Measurement | versioned metric definitions, exact observations, condition-aware comparison, non-causal assessment and bounded lineage | **Available** |
@@ -916,6 +928,7 @@ Additional references:
 - [Product Operating Loop](docs/product-operating-loop.md)
 - [Release observation](docs/release-observation.md)
 - [Common Observation contract](docs/observation-adapters.md)
+- [Delivery state observation](docs/delivery-observation.md)
 - [Non-blocking Conformance reconciliation](docs/conformance-reconciliation.md)
 - [Incremental refresh](docs/incremental-refresh.md)
 - [Compaction recovery](docs/compaction-recovery.md)

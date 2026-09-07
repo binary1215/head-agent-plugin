@@ -1,6 +1,6 @@
 # Common Observation contract and adapters
 
-Read [Architecture](architecture.md) and [Authority planes](authority-plane-contract.md) before changing this contract. Release-specific evidence remains documented in [Release observation](release-observation.md), while exact task inclusion remains documented in [Context Compiler](context-compiler.md).
+Read [Architecture](architecture.md) and [Authority planes](authority-plane-contract.md) before changing this contract. Release-specific evidence remains documented in [Release observation](release-observation.md), per-target delivery history in [Delivery state observation](delivery-observation.md), and exact task inclusion in [Context Compiler](context-compiler.md).
 
 Status: implemented provider-neutral P3 evidence grammar and P4 projection.
 
@@ -18,9 +18,13 @@ Core publishes each create-only Observation artifact with an atomic same-directo
 
 Coverage is explicit: complete, sampled, partial, or unknown. Complete coverage is accepted only when a bounded enumeration supplies a query digest, equal examined and source totals, and zero omissions. An adapter cannot claim completeness from a sample.
 
-The rebuildable `ObservationStatusProjection` creates only `CONFORMS_TO`, `EVIDENCED_BY`, and `DERIVED_FROM`. It does not infer impact, motivation, measurement, ownership, success, or Feature links. Product interpretation belongs to a HEAD-authored `ProductHypothesis` or the existing review-gated candidate flow. `ProductSignal` remains available for lossless human/source statements; it is not manufactured from arbitrary payload fields.
+The rebuildable common `ObservationStatusProjection` creates `CONFORMS_TO`, `EVIDENCED_BY`, and `DERIVED_FROM`. It does not infer impact, motivation, measurement, ownership, success, or Feature links. The delivery specialization may additionally add `AT_REVISION` only after verifying an exact retained World `FileRevision`; declared revision strings receive no such edge. Product interpretation belongs to a HEAD-authored `ProductHypothesis` or the existing review-gated candidate flow. `ProductSignal` remains available for lossless human/source statements; it is not manufactured from arbitrary payload fields.
 
 Release evidence is a strict specialization, not a replacement by the generic adapter. `BranchStateObservation`, `DeploymentResultObservation`, and `ReleaseObservation` preserve their exact Git reachability, approval, commit, ref, and lineage checks.
+
+Per-target delivery history is another thin specialization. It reuses the common immutable record and receipt, derives current state from explicit sequence/predecessor evidence rather than receipt time, leaves conflicts unknown, and never infers completeness for unobserved targets. It adds no deployment engine or approval gate.
+
+Because a verified `delivery.state` record grants the graph-specific `AT_REVISION` proof label, that type is reserved to the dedicated delivery writer. Generic ingestion and registered generic adapters reject it instead of trusting a self-asserted binding. This does not close custom Observation types or add a human confirmation: it keeps the mechanically elevated claim behind its exact same-Project World/revision verifier.
 
 ## Host adapter SDK and reference file adapter
 
@@ -142,3 +146,6 @@ Ordinary inspection remains ephemeral. Persist an Observation only when cross-Ru
 - the same metric key and version cannot acquire two definitions, while a new explicit version remains available;
 - numeric before/after comparison remains usable across disclosed adapter-revision and collection-condition differences without claiming semantic equivalence, normalization, or causality;
 - metric assessment and follow-up stay P3 evidence/candidates and do not mutate Conformance, Product Canon, or P2 recovery.
+- delivery failure never overwrites prior applied state, rollback remains a new immutable event, and conflicting order stays unknown;
+- exact delivery revision bindings are verified before persistence and connected in P4, while declared-only references remain disclosed and unlinked;
+- delivery status is bounded and cannot infer success for unobserved targets or deployment completeness.

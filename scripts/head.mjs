@@ -32,6 +32,7 @@ import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProduc
 import { inspectProductPolicyStatus, proposeProductPolicy, readProductPolicyCandidate, readProductPolicyReviewDecision, reviewProductPolicy } from "./lib/product-policy.mjs";
 import { assessMetricComparison, compareMetricObservations, defineMetric, inspectMeasurements, proposeMetricFollowUp, recordMetricObservation, traceMeasurementLineage } from "./lib/measurement-workflow.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
+import { inspectDeliveryState, recordDeliveryObservation } from "./lib/delivery-observation.mjs";
 import { collectRegisteredObservation, ingestJsonObservationEventFile, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
 import { diffGraphLineage, inspectGraphLineage, traceGraphLineage } from "./lib/graph-lineage.mjs";
@@ -153,6 +154,8 @@ export function usage({ all = false } = {}) {
       "head product-signal-record <project> --input <signal.json>",
       "head release-observe <project> --input <deployment-result.json>",
       "head release-status <project>",
+      "head delivery-observe <project> --input <delivery-observation.json>",
+      "head delivery-status <project> [--environment <key>] [--target <key>] [--history-limit <1..4096>]",
       "head observation-sources <project>",
       "head observation-prepare <project> --type-key <key> [--subject-type <key>] [--subject-key <key>] [--adapter-key <key>] [--observed-after <timestamp>] [--observed-before <timestamp>] [--source-availability <state>] [--existing-limit <1-100>] [--source-limit <1-64>] [--source-projection <id> --source-cursor <source-id>]",
       "head observation-source-collect <project> --source <observation-source-id>",
@@ -434,6 +437,8 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (command === "product-operating-status") return inspectProductOperatingLoop({ root, fresh: options.fresh === true });
   if (command === "release-observe") return observeReleaseState({ root, input: inputJson(options, "DeploymentResultObservation") });
   if (command === "release-status") return inspectReleaseObservations({ root });
+  if (command === "delivery-observe") return recordDeliveryObservation({ ...inputJson(options, "Delivery observation"), root });
+  if (command === "delivery-status") return inspectDeliveryState({ root, environmentKey: options.environment || "", targetKey: options.target || "", historyLimit: options["history-limit"] == null ? 100 : Number(options["history-limit"]) });
   if (command === "observation-sources") return inspectObservationSources({
     root,
     registry: observationRegistry,

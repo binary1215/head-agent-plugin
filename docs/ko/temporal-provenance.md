@@ -36,7 +36,7 @@ Temporal provenance protocol `0.14.0`은 [`AuthorityPlaneContract`](authority-pl
 - product operating evidence: `ProductSignal`, `ProductHypothesis`, 숨겨진 `ProductInitiativeCandidate` 및 `ProductFeatureCandidate`, 과거의 `ProductFeatureReference`, 명시적인 `ProductInitiativeReviewDecision`, 별도의 `ReviewedProductInitiative` 및 execution-bound `OutcomeObservation` node
 - release evidence: `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObservation` 및 내장된 불변 `GitCommit` observation
 - Policy review history: 숨겨진 `ProductPolicyCandidate`와 `ProductPolicyEvidence`, 명시적 `ProductPolicyReviewDecision`, historical `ProductModelRevisionReference`, 그리고 semantic content가 승인된 proposal과 일치하는 정확한 현재 `PolicyRevision`
-- common measurement evidence: `ObservationTypeDescriptor`, `ObservationCollectionReceipt`, `ObservationRecord`, `DerivedObservationRecord`. Interpretation은 graph authority 밖에 남습니다.
+- common observation 및 measurement evidence: `ObservationTypeDescriptor`, `ObservationCollectionReceipt`, `ObservationRecord`, `DerivedObservationRecord`. Interpretation은 graph authority 밖에 남습니다. 검증된 대상별 delivery event는 exact current `FileRevision` 또는 derived historical `RevisionReference`를 가리킬 수 있습니다.
 
 비영속적 `ProductLearningNote` 값은 절대 GraphSnapshot에 들어가지 않습니다. v0.2 Initiative candidate는 inline reasoning을 포함하면서 Feature resolution은 없을 수 있습니다. review 전까지는 `PROPOSES_TO` edge가 없고, 영속화된 hypothesis reference가 없으면 `PROPOSES_FROM` edge도 없습니다. 명시적 accept review는 별도의 reviewed Initiative에서 기존 Feature, Feature candidate 또는 정직하게 기록된 gap 중 정확히 하나를 해석합니다. candidate byte는 변경되지 않습니다.
 
@@ -67,7 +67,7 @@ projection된 모든 node는 `nodeId`, `kind`, `authorityClass`, `origin`, 정�
 - `SUPPORTED_BY`, `PROPOSES_FROM`, `PROPOSES_TO`, review/promotion relation 및 `OutcomeObservation -[:OBSERVES]-> ChangeSet|ReviewedProductInitiative`를 통한 product learning 및 observation
 - `AT_REVISION`, `OBSERVED_ON`, `EVIDENCED_BY` 및 선택적 `ReleaseObservation -[:DEPLOYS]-> ChangeSet`을 통한 release evidence
 - `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`, `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`, `PRODUCES`, `REFERENCES`를 통한 Policy proposal 및 approval과, 선택적 semantic reference가 명시된 경우 정확한 Policy-to-Requirement/Constraint/Decision `GOVERNED_BY` edge. 이후 무관한 Product Model 변경이 생겨도 변경되지 않은 현재 `PolicyRevision`으로 이어지는 accepted ReviewDecision path는 사라지지 않습니다.
-- `CONFORMS_TO`, `EVIDENCED_BY`, `DERIVED_FROM`을 통한 common Observation shape 및 derivation
+- `CONFORMS_TO`, `EVIDENCED_BY`, `DERIVED_FROM`을 통한 common Observation shape 및 derivation. 검증된 `delivery.state` record는 exact retained source revision에 한해 `AT_REVISION`도 사용할 수 있습니다. declared-only revision 문자열에는 graph edge를 만들지 않습니다.
 
 verifier는 digest mismatch, 지원되지 않는 node 또는 relation type, 중복 ID, 비결정적 순서, dangling 또는 invalid endpoint kind, 누락된 provenance, invalid authority flag, invalid confidence, scope mismatch 및 직접적인 self-parent cycle을 거부합니다.
 
@@ -108,6 +108,8 @@ node scripts/head.mjs world-temporal <project> --query <change-set-id> --relatio
 Context Compiler는 task-token overlap으로 temporal anchor를 추론하지 않습니다. HEAD가 `temporal-relation` EvidenceNeed에 현재 exact `graphAnchor`를 붙이면 Core는 Project·World Model·GraphSnapshot·node eligibility·relation allowlist·traversal bound를 검증한 뒤 별도 `GraphTraversalEvidence` carrier를 만듭니다. Local JSON, in-memory 및 활성 ArcadeDB adapter는 정확한 reference result를 반환해야 하며 adapter identity는 Capsule identity 바깥에 유지됩니다. [`graph-projection-adapter.md`](graph-projection-adapter.md)를 참조하세요.
 
 review된 execution change는 `ChangeSet` record를 정확한 before/after source revision에 결속합니다. review를 거친 current product impact는 정확한 Feature 또는 Capability revision에도 `AT_REVISION`으로 결속되며, 이후 drift가 생기면 historical receipt는 유지하되 current-impact claim은 제거합니다. Git ref만으로는 `DeploymentResultObservation` 또는 `ReleaseObservation`을 만들지 않습니다. Delivery lineage는 Host가 별도로 승인되고 성공했으며 exact commit이 일치하는 deployment evidence를 제출한 뒤에만 나타납니다.
+
+대상별 delivery genealogy는 이 release path와 구분됩니다. Host는 Git 없이도 명시적인 applied, failed, cancelled, rolled-back `delivery.state` event를 기록할 수 있습니다. Graph는 기계적으로 검증된 retained source revision만 연결하고, 현재 target state는 explicit sequence와 predecessor evidence를 사용하는 별도의 bounded P4 read projection입니다. Release approval, environment completeness 또는 unobserved target success를 추론하지 않습니다. [`delivery-observation.md`](delivery-observation.md)를 참고하세요.
 
 active deterministic Markdown renderer는 indexing 후 `DocumentProjectionAdapter`를 통해 검증된 이 graph를 사용합니다. canonical edge direction을 보존하고, relation endpoint를 node page에 연결하며, 정확한 GraphSnapshot 및 SourceSnapshot ID를 기록합니다. 생성된 page는 human view일 뿐이며, 절대 Context Compiler input으로 다시 순회되지 않습니다. 편집된 page는 비권위적 `DocumentChangeCandidateSet` evidence가 됩니다. 명시적 review는 이후 child graph로 projection되며, application receipt가 실제 application outcome을 결합한 다음 그다음 audit child graph가 해당 receipt를 projection합니다. 이 two-stage boundary는 동일한 GraphSnapshot의 이름을 가진 receipt에 GraphSnapshot hash가 종속되는 문제를 방지합니다. Context Compiler는 document candidate surface를 opt-in하지 않습니다. [`document-projection-adapter.md`](document-projection-adapter.md) 및 [`document-change-review.md`](document-change-review.md)를 참조하세요.
 

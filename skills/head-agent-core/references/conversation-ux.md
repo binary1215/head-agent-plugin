@@ -110,6 +110,13 @@ collection conditions that differ or remain unknown. State that no normalization
 or causality was established; do not demand user approval merely to view a
 conditional comparison.
 
+For delivery state, lead with the environment summary and show target detail
+only for mixed, failed, rolled-back, or unknown state. Say "observed targets"
+rather than "the deployment" because the Core has no product-specific target
+inventory. A failed `lastAttempt` beside a known current revision is actionable
+evidence, not a contradiction and not a new approval gate. Keep full history
+behind the bounded status limit unless the user asks for it.
+
 Successful entry and status are quiet by default: one line is enough unless the
 user asks for detail or a real exception exists. An exception names its owner,
 reason, affected operation, and next action. `userDecisionRequired` means a real

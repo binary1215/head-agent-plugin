@@ -550,6 +550,29 @@ export function formatCheckpointSync(value) {
   return `${lines.join("\n")}\n`;
 }
 
+export function formatDeliveryStatus(value) {
+  if (value?.status === "not_started") {
+    return "HEAD delivery evidence: none recorded for this selection. Ordinary work remains available.\n";
+  }
+  const lines = [`HEAD delivery evidence: ${value?.environments?.length || 0} environment(s), ${value?.targets?.length || 0} artifact-target history set(s).`];
+  for (const environment of (value?.environments || []).slice(0, 10)) {
+    const targetDetails = (value.targets || []).filter((target) => target.environmentKey === environment.environmentKey);
+    const revisions = [...new Set(targetDetails.filter((target) => target.current).map((target) => `${target.artifactKey}@${target.current.revisionKey}`))].sort();
+    const suffix = revisions.length ? ` — ${revisions.join(", ")}` : "";
+    lines.push(`${environment.environmentKey}: ${environment.state} across ${environment.observedTargetCount} observed target(s) and ${environment.observedArtifactTargetCount} artifact-target history set(s)${suffix}`);
+    for (const target of targetDetails.filter((item) => item.state === "unknown" || ["failed", "cancelled"].includes(item.lastAttempt?.outcome)).slice(0, 10)) {
+      const current = target.current ? `${target.artifactKey}@${target.current.revisionKey}` : "unknown";
+      const attempt = target.lastAttempt ? `; last attempt ${target.lastAttempt.outcome}` : "";
+      const issue = target.ordering?.issues?.[0]?.code ? `; order ${target.ordering.issues[0].code}` : "";
+      lines.push(`  ${target.targetKey}/${target.artifactKey}: current ${current}${attempt}${issue}`);
+    }
+  }
+  if ((value?.environments?.length || 0) > 10) lines.push(`Environments omitted from this card: ${value.environments.length - 10}`);
+  if (value?.history?.omitted) lines.push(`History omitted: ${value.history.omitted}; increase history_limit or use --history-limit when needed.`);
+  lines.push("Scope: observed targets only; completeness and unobserved target success are not inferred.");
+  return `${lines.join("\n")}\n`;
+}
+
 export function formatMcpToolContent(name, value) {
   if (name === "head_project_status") return formatProjectStatus(value);
   if (name === "head_project_initialize_or_resume") return formatProjectBootstrap(value);
@@ -558,6 +581,7 @@ export function formatMcpToolContent(name, value) {
   if (name === "head_onboarding_guide") return formatOnboardingGuide(value);
   if (name === "head_feature_mapping_status") return formatFeatureMappingStatus(value);
   if (name === "head_change_set_status") return formatChangeSetStatus(value);
+  if (name === "head_delivery_status") return formatDeliveryStatus(value);
   if (name === "head_pending_review") return formatPendingReview(value);
   if (name === "head_conformance_queue") return formatConformanceQueue(value);
   if (name === "head_conformance_read") return formatConformanceFinding(value);
@@ -589,6 +613,7 @@ export function formatCliResult(command, value) {
   if (["conversation-enter", "compaction-lifecycle-step"].includes(command)) return formatConversationRecovery(value);
   if (command === "feature-mapping-status") return formatFeatureMappingStatus(value);
   if (command === "change-set-status") return formatChangeSetStatus(value);
+  if (command === "delivery-status") return formatDeliveryStatus(value);
   if (command === "run-review-context") return formatPendingReview(value);
   if (command === "conformance-queue") return formatConformanceQueue(value);
   if (command === "conformance-read") return formatConformanceFinding(value);

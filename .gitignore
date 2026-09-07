@@ -24,6 +24,7 @@ test/*
 !test/native-smoke-cleanup.test.mjs
 !test/product-policy.test.mjs
 !test/measurement-workflow.test.mjs
+!test/delivery-observation.test.mjs
 .test-tmp-*/
 .qa-*/
 *.log

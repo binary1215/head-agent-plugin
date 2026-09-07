@@ -24,6 +24,7 @@ import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProduc
 import { inspectProductPolicyStatus, proposeProductPolicy, readProductPolicyCandidate, readProductPolicyReviewDecision, reviewProductPolicy } from "./lib/product-policy.mjs";
 import { assessMetricComparison, compareMetricObservations, defineMetric, inspectMeasurements, proposeMetricFollowUp, recordMetricObservation, traceMeasurementLineage } from "./lib/measurement-workflow.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
+import { inspectDeliveryState, recordDeliveryObservation } from "./lib/delivery-observation.mjs";
 import { collectRegisteredObservation, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
 import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
 import { diffGraphLineage, inspectGraphLineage, traceGraphLineage } from "./lib/graph-lineage.mjs";
@@ -186,6 +187,7 @@ const supplementalReadOnlyHints = {
   head_product_note: true,
   head_product_operating_status: true,
   head_release_status: true,
+  head_delivery_status: true,
   head_continuity_snapshot: true,
   head_feature_mapping_propose: false,
   head_feature_mapping_review: false,
@@ -209,6 +211,7 @@ const supplementalReadOnlyHints = {
   head_product_initiative_propose: false,
   head_product_initiative_review: false,
   head_product_outcome_observe: false,
+  head_delivery_observe: false,
 };
 export const tools = [
   {
@@ -497,6 +500,46 @@ export const tools = [
     description: "Read one bounded P4 measurement lineage from an exact graph anchor or metric key through the verified prepared-traversal path. This writes no Canon, decision, or recovery state.",
     inputSchema: { type: "object", properties: {
       project_root: { type: "string", minLength: 1 }, anchor_id: { type: "string", minLength: 1 }, metric_key: { type: "string", minLength: 1, maxLength: 128 }, type_version: { type: "string", minLength: 1, maxLength: 64 }, depth: { type: "integer", minimum: 0, maximum: 3, default: 3 }, max_nodes: { type: "integer", minimum: 1, maximum: 500, default: 128 }, max_edges: { type: "integer", minimum: 0, maximum: 1000, default: 256 },
+    }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_delivery_observe",
+    description: "Record one provider-neutral P3 delivery event for an exact environment and target. This adds no deployment action or approval gate; failures do not overwrite prior success, and an optional World revision binding is mechanically verified.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 },
+      environment_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+      target_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+      artifact_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      revision_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      revision_digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      outcome: { type: "string", enum: ["applied", "failed", "cancelled", "rolled-back"] },
+      sequence: { type: "integer", minimum: 0 },
+      predecessor_observation_id: { anyOf: [{ type: "string", pattern: "^observation-[a-f0-9]{24}$" }, { type: "null" }] },
+      rollback_target_observation_id: { anyOf: [{ type: "string", pattern: "^observation-[a-f0-9]{24}$" }, { type: "null" }] },
+      observed_at: { type: "string", format: "date-time" },
+      source_scope_digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      source_event_key_digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      source_evidence_digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      adapter_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
+      adapter_version: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" },
+      revision_reference: { type: "object", properties: {
+        world_model_id: { type: "string", pattern: "^world-model-[a-f0-9]{24}$" },
+        revision_id: { type: "string", pattern: "^file-revision-[a-f0-9]{24}$" },
+        source_path: { type: "string", minLength: 1, maxLength: 4096 },
+        digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      }, required: ["world_model_id", "revision_id", "source_path", "digest"], additionalProperties: false },
+    }, required: ["project_root", "environment_key", "target_key", "artifact_key", "revision_key", "revision_digest", "outcome", "sequence", "source_scope_digest", "source_event_key_digest", "source_evidence_digest"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "head_delivery_status",
+    description: "Read a bounded non-persisted P4 current-and-history delivery projection. Explicit sequence and predecessor evidence determine current state; receipt time, failed attempts, and unobserved targets never imply success.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 },
+      environment_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+      target_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+      history_limit: { type: "integer", minimum: 1, maximum: 4096, default: 100 },
     }, required: ["project_root"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -2013,6 +2056,33 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
         ? inspectMeasurements({ root: args.project_root })
       : name === "head_metric_trace"
         ? traceMeasurementLineage({ root: args.project_root, anchorId: args.anchor_id || "", metricKey: args.metric_key || "", typeVersion: args.type_version || "", depth: args.depth ?? 3, maxNodes: args.max_nodes ?? 128, maxEdges: args.max_edges ?? 256 })
+      : name === "head_delivery_observe"
+        ? recordDeliveryObservation({
+          root: args.project_root,
+          environmentKey: args.environment_key,
+          targetKey: args.target_key,
+          artifactKey: args.artifact_key,
+          revisionKey: args.revision_key,
+          revisionDigest: args.revision_digest,
+          outcome: args.outcome,
+          sequence: args.sequence,
+          predecessorObservationId: args.predecessor_observation_id ?? null,
+          rollbackTargetObservationId: args.rollback_target_observation_id ?? null,
+          observedAt: args.observed_at ?? null,
+          sourceScopeDigest: args.source_scope_digest,
+          sourceEventKeyDigest: args.source_event_key_digest,
+          sourceEvidenceDigest: args.source_evidence_digest,
+          adapterKey: args.adapter_key,
+          adapterVersion: args.adapter_version,
+          revisionReference: args.revision_reference ? {
+            worldModelId: args.revision_reference.world_model_id,
+            revisionId: args.revision_reference.revision_id,
+            sourcePath: args.revision_reference.source_path,
+            digest: args.revision_reference.digest,
+          } : null,
+        })
+      : name === "head_delivery_status"
+        ? inspectDeliveryState({ root: args.project_root, environmentKey: args.environment_key || "", targetKey: args.target_key || "", historyLimit: args.history_limit ?? 100 })
       : name === "head_feature_mapping_propose"
         ? startFeatureMapping({ root: args.project_root, semanticProposal: featureMappingProposalFromMcp(args.semantic_proposal) })
       : name === "head_feature_mapping_review"

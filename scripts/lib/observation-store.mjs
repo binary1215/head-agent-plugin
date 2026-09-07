@@ -205,7 +205,7 @@ export function registerObservationType({ root = ".", descriptor } = {}) {
   return { ...persisted, descriptor: normalized };
 }
 
-export function recordCollectedObservation({ root = ".", descriptor, input, adapterDescriptor, sourceScopeDigest } = {}) {
+function recordCollectedObservationInternal({ root = ".", descriptor, input, adapterDescriptor, sourceScopeDigest } = {}) {
   const inspected = assertObservationProjectReady(root);
   const registered = registerObservationType({ root: inspected.project.projectRoot, descriptor }).descriptor;
   const record = createObservationRecord({
@@ -245,6 +245,67 @@ export function recordCollectedObservation({ root = ".", descriptor, input, adap
   const receipt = verifyObservationCollectionReceipt(receiptIdentity(receiptPayload), inspected.project.projectId);
   const receiptPersisted = persistCreateOnly(inspected.project.projectRoot, OBSERVATION_RECEIPT_DIRECTORY, `${receipt.receiptId}.json`, receipt);
   return { status: recordPersisted.status === "existing" && receiptPersisted.status === "existing" ? "existing" : "recorded", descriptor: registered, observation: record, receipt };
+}
+
+export function recordCollectedObservation({ root = ".", descriptor, input, adapterDescriptor, sourceScopeDigest } = {}) {
+  const verifiedDescriptor = descriptor?.kind === "ObservationTypeDescriptor"
+    ? verifyObservationTypeDescriptor(descriptor)
+    : createObservationTypeDescriptor(descriptor);
+  if (verifiedDescriptor.typeKey === "delivery.state") {
+    fail(
+      "delivery.state is a Core-owned Observation specialization; use the dedicated delivery writer so exact revision bindings are verified.",
+      "RESERVED_OBSERVATION_TYPE_REQUIRES_SPECIALIZED_WRITER",
+    );
+  }
+  return recordCollectedObservationInternal({ root, descriptor: verifiedDescriptor, input, adapterDescriptor, sourceScopeDigest });
+}
+
+export async function recordDeliveryCollectedObservation({ root = ".", descriptor, input, adapterDescriptor, sourceScopeDigest } = {}) {
+  const inspected = assertObservationProjectReady(root);
+  const verifiedDescriptor = descriptor?.kind === "ObservationTypeDescriptor"
+    ? verifyObservationTypeDescriptor(descriptor)
+    : createObservationTypeDescriptor(descriptor);
+  if (verifiedDescriptor.typeKey !== "delivery.state") {
+    fail("The dedicated delivery writer only accepts delivery.state.", "INVALID_SPECIALIZED_OBSERVATION_TYPE");
+  }
+  const payload = input?.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    fail("Delivery Observation payload is invalid.", "INVALID_DELIVERY_REVISION_BINDING");
+  }
+  const boundFields = ["bound_world_model_id", "bound_revision_id", "bound_logical_entity_id", "bound_source_path"];
+  if (payload.revision_binding === "declared") {
+    if (boundFields.some((field) => Object.hasOwn(payload, field))) {
+      fail("Declared delivery revisions cannot contain verified source-revision fields.", "INVALID_DELIVERY_REVISION_BINDING");
+    }
+  } else if (payload.revision_binding === "verified-source-revision") {
+    if (boundFields.some((field) => typeof payload[field] !== "string" || !payload[field])) {
+      fail("Verified delivery revisions require every exact source-revision field.", "INVALID_DELIVERY_REVISION_BINDING");
+    }
+    const { readWorldModelSnapshot } = await import("./world-model.mjs");
+    const snapshot = readWorldModelSnapshot({
+      root: inspected.project.projectRoot,
+      worldModelId: payload.bound_world_model_id,
+    }).snapshot;
+    const revision = snapshot.temporalProvenanceGraph?.nodes.find((node) => node.nodeId === payload.bound_revision_id);
+    if (!revision || revision.kind !== "FileRevision"
+      || revision.logicalEntityId !== payload.bound_logical_entity_id
+      || revision.path !== payload.bound_source_path
+      || revision.digest !== payload.revision_digest) {
+      fail(
+        "Verified delivery revision binding does not match the retained World Model source revision.",
+        "INVALID_DELIVERY_REVISION_BINDING",
+      );
+    }
+  } else {
+    fail("Delivery revision binding must be declared or verified-source-revision.", "INVALID_DELIVERY_REVISION_BINDING");
+  }
+  return recordCollectedObservationInternal({
+    root: inspected.project.projectRoot,
+    descriptor: verifiedDescriptor,
+    input,
+    adapterDescriptor,
+    sourceScopeDigest,
+  });
 }
 
 export function recordDerivedObservation({ root = ".", descriptor, input } = {}) {

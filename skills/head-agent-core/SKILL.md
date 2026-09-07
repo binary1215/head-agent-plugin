@@ -234,6 +234,21 @@ Never convert that comparison into semantic equivalence or causality. Assessment
 is only a P3 ProductHypothesis; a follow-up remains an initiative candidate and
 uses the existing explicit Product review only if the user chooses to promote it.
 
+When the task asks what is currently deployed or delivered to named targets,
+use `head_delivery_status` and summarize observed `uniform`, `mixed`, or
+`unknown` state without asking the user for event JSON. A trusted Host adapter
+may call `head_delivery_observe`; neither the Host nor user needs an additional
+approval step because the record is P3 evidence and performs no deployment.
+Never choose current state by receipt time, let a failed attempt erase the last
+applied revision, infer success for an unobserved target, or call the projection
+a complete deployment inventory. A declared revision remains unverified. Only
+an exact retained World `FileRevision` binding may receive an `AT_REVISION`
+edge. Because that label is a Core proof, never route `delivery.state` through
+generic Observation ingestion; use the dedicated typed delivery call, which
+revalidates the exact same-Project World binding without adding user approval.
+Ordering conflicts are a disclosed `unknown` for that target, not a block
+on ordinary work or a request for a Product review.
+
 When approved Product Canon may have drifted from code or external evidence,
 keep Conformance reconciliation non-blocking. Call `head_conformance_prepare`
 without asking the user for Canon keys, graph IDs, digests, or JSON. Provider
@@ -362,6 +377,8 @@ Load only the reference needed for the current outcome:
 - Bounded workers or waves: read `../../docs/bounded-worker-wave.md`.
 - Git ref, deployment-result, or release observations: read
   `../../docs/release-observation.md`.
+- Per-environment and per-target applied, failed, or rollback history: read
+  `../../docs/delivery-observation.md`.
 - Role messaging: read `../../docs/role-coordination.md`.
 - Full CLI discovery: run `node <plugin-root>/scripts/head.mjs help-all`.
 

@@ -44,6 +44,10 @@ function fixture() {
   return root;
 }
 
+async function cleanupFixture(root) {
+  await fs.promises.rm(root, { recursive: true, force: true, maxRetries: process.platform === "win32" ? 20 : 0, retryDelay: 100 });
+}
+
 function deployment(commit, suffix, overrides = {}) {
   return {
     environmentKey: "production",
@@ -62,7 +66,7 @@ function deployment(commit, suffix, overrides = {}) {
 
 test("records Git refs and an approved successful deployment as P3 release evidence without authority amplification", async (t) => {
   const root = fixture();
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => cleanupFixture(root));
   const commit = git(root, ["rev-parse", "HEAD"]);
   const productCanonFile = path.join(root, ".head", "context", "product-model.json");
   const sessionPointerFile = path.join(root, ".head", "sessions", "current.json");
@@ -102,7 +106,7 @@ test("records Git refs and an approved successful deployment as P3 release evide
 
 test("fails closed for unapproved, failed, stale-ref, and divergent deployment results", async (t) => {
   const root = fixture();
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => cleanupFixture(root));
   const firstCommit = git(root, ["rev-parse", "HEAD"]);
   fs.appendFileSync(path.join(root, "src", "feature.mjs"), "export const second = true;\n");
   git(root, ["add", "src/feature.mjs"]);
@@ -126,7 +130,7 @@ test("fails closed for unapproved, failed, stale-ref, and divergent deployment r
 
 test("keeps host provenance at the adapter boundary and requires explicit MCP observation confirmation", async (t) => {
   const root = fixture();
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => cleanupFixture(root));
   const commit = git(root, ["rev-parse", "HEAD"]);
   const input = deployment(commit, "mcp");
   const denied = await dispatchMcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_release_observe", arguments: {

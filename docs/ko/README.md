@@ -15,6 +15,7 @@
 - [Product Model 정본](product-model.md)
 - [Product Operating Loop](product-operating-loop.md)
 - [Release observation](release-observation.md)
+- [전달 상태 관측](delivery-observation.md)
 
 ## 컨텍스트, 월드 모델, 검색
 

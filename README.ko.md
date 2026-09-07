@@ -627,6 +627,8 @@ Signal → Hypothesis → Initiative 후보 → 사용자 ReviewDecision
 참고하세요.
 Git ref 및 배포 배관은 [Release observation](docs/ko/release-observation.md)에
 설명되어 있습니다.
+환경별·대상별 적용, 실패 및 rollback 이력은
+[전달 상태 관측](docs/ko/delivery-observation.md)에 설명되어 있습니다.
 
 ## 그래프와 기록
 
@@ -659,6 +661,14 @@ graph에 들어갑니다. ProductHypothesis는 정확한 Observation을 가리�
 그 edge는 측정 데이터를 제품 진실로 승격하지 않고 hypothesis의 evidence로만
 남습니다. Observation 저장소가 손상되면 그 graph layer만 unavailable로
 표시되고 관련 없는 product 작업은 계속할 수 있습니다.
+
+Delivery observation은 graph를 배포 controller로 만들지 않으면서 실용적인
+운영 계보를 추가합니다. 각 Host event는 환경, 대상, artifact revision,
+명시적 sequence 및 predecessor를 지정합니다. Read-only current-state card는
+관측된 상태를 uniform, mixed 또는 unknown으로 보여줍니다. 실패 시도는 마지막
+applied revision을 지우지 않고 rollback은 history에 남으며 unobserved target은
+성공으로 추측하지 않습니다. Exact retained source revision에는 검증된
+`AT_REVISION` link가 생기고 declared string은 검증되지 않은 상태로 표시됩니다.
 
 Policy 계보도 같은 방식으로 명확히 남습니다. create, revision 또는 retirement
 proposal은 사용자가 정확한 candidate를 승인하기 전까지 P3 evidence입니다. 승인된
@@ -820,6 +830,7 @@ HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정�
 | 런타임 증거 | 세 런타임 결정론적 fixture 및 로컬 CLI 기능 probe | **사용 가능** |
 | 런타임 증거 | Claude Code 실제 모델 호출 적합성 | **실험적** |
 | 릴리스 증거 | 공급자 중립 Git ref, deployment-result 및 release observation | **사용 가능** |
+| 전달 증거 | 공급자 중립 환경/대상별 applied, failed, rollback 이력과 선택적 exact source-revision link | **사용 가능** |
 | 공통 관측 | 기존 exact evidence 우선 준비, Host source 페이지 탐색, opaque ID 수집 | **사용 가능** |
 | 제품 정책 | schema-v2 Policy proposal, 정확한 적용 대상과 semantic reference, user review, evidence-currentness 진단, revision 및 retirement lineage | **사용 가능** |
 | 측정 | versioned metric definition, exact observation, condition-aware comparison, non-causal assessment 및 bounded lineage | **사용 가능** |
@@ -887,6 +898,7 @@ HEAD Agent Core Plugin은
 - [Product Operating Loop](docs/ko/product-operating-loop.md)
 - [Release observation](docs/ko/release-observation.md)
 - [공통 Observation 계약](docs/ko/observation-adapters.md)
+- [전달 상태 관측](docs/ko/delivery-observation.md)
 - [비차단 Conformance 재정](docs/ko/conformance-reconciliation.md)
 - [증분 갱신](docs/ko/incremental-refresh.md)
 - [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)

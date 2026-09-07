@@ -15,6 +15,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 - [Product Model canon](product-model.md)
 - [Product Operating Loop](product-operating-loop.md)
 - [Release observation](release-observation.md)
+- [Delivery state observation](delivery-observation.md)
 
 ## Context, world, and retrieval
 

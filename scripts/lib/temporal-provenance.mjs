@@ -1887,6 +1887,69 @@ function appendObservationProjection({ projectId, sourceSnapshotId, projection, 
       freshness: "historical",
     }));
   }
+  for (const source of projection.nodes.filter((node) => node.kind === "ObservationRecord"
+    && node.typeKey === "delivery.state" && node.payload?.revision_binding === "verified-source-revision")) {
+    const reference = {
+      revisionId: source.payload.bound_revision_id,
+      logicalEntityId: source.payload.bound_logical_entity_id,
+      worldModelId: source.payload.bound_world_model_id,
+      path: source.payload.bound_source_path,
+      digest: source.payload.revision_digest,
+    };
+    if (!/^file-revision-[a-f0-9]{24}$/.test(reference.revisionId || "")
+      || !/^file-[a-f0-9]{24}$/.test(reference.logicalEntityId || "")
+      || !/^world-model-[a-f0-9]{24}$/.test(reference.worldModelId || "")
+      || typeof reference.path !== "string" || !reference.path
+      || !/^[a-f0-9]{64}$/.test(reference.digest || "")) {
+      fail("Verified delivery Observation has an invalid source revision binding.", "DELIVERY_REVISION_REFERENCE_INVALID");
+    }
+    let revision = nodeById.get(reference.revisionId);
+    if (revision) {
+      if (!["FileRevision", "RevisionReference"].includes(revision.kind)
+        || revision.logicalEntityId !== reference.logicalEntityId
+        || revision.kind === "FileRevision" && (revision.path !== reference.path || revision.digest !== reference.digest)
+        || revision.kind === "RevisionReference" && (revision.revisionKind !== "FileRevision"
+          || revision.path != null && revision.path !== reference.path
+          || revision.digest != null && revision.digest !== reference.digest)) {
+        fail("Verified delivery Observation conflicts with its projected source revision.", "DELIVERY_REVISION_REFERENCE_INVALID");
+      }
+      if (revision.kind === "RevisionReference") {
+        revision.path = reference.path;
+        revision.digest = reference.digest;
+        revision.referencedWorldModelId ??= reference.worldModelId;
+      }
+    } else {
+      revision = {
+        nodeId: reference.revisionId,
+        kind: "RevisionReference",
+        referencedRevisionId: reference.revisionId,
+        revisionKind: "FileRevision",
+        logicalEntityId: reference.logicalEntityId,
+        referencedWorldModelId: reference.worldModelId,
+        path: reference.path,
+        digest: reference.digest,
+        ...nodeMetadata({
+          evidenceIds: [source.nodeId, reference.worldModelId],
+          sourceSnapshotId,
+          authorityClass: "derived",
+          origin: "verified-delivery-revision-reference",
+          freshness: "historical",
+        }),
+      };
+      nodeById.set(revision.nodeId, revision);
+      nodes.push(revision);
+    }
+    edges.push(edgeRecord({
+      type: "AT_REVISION",
+      from: source.nodeId,
+      to: revision.nodeId,
+      sourceSnapshotId,
+      evidenceIds: [source.nodeId, reference.worldModelId],
+      origin: "verified-delivery-revision-binding",
+      authorityClass: "derived",
+      freshness: "historical",
+    }));
+  }
   return {
     observationTypeDescriptorCount: projection.descriptorIds.length,
     observationCollectionReceiptCount: projection.receiptIds.length,
@@ -2823,7 +2886,8 @@ function validEndpointKinds(type, fromKind, toKind) {
   if (type === "MATERIALIZED_AS") return fromKind === "ChangeSet" && toKind === "VcsEvidence";
   if (type === "OBSERVES") return fromKind === "OutcomeObservation" && ["ChangeSet", "ReviewedProductInitiative"].includes(toKind);
   if (type === "AT_REVISION") return (["BranchStateObservation", "ReleaseObservation"].includes(fromKind) && toKind === "GitCommit")
-    || (fromKind === "ReviewedImpact" && ["FeatureRevision", "CapabilityRevision"].includes(toKind));
+    || (fromKind === "ReviewedImpact" && ["FeatureRevision", "CapabilityRevision"].includes(toKind))
+    || (fromKind === "ObservationRecord" && ["FileRevision", "RevisionReference"].includes(toKind));
   if (type === "OBSERVED_ON") return fromKind === "ReleaseObservation" && toKind === "BranchStateObservation";
   if (type === "EVIDENCED_BY") return (fromKind === "ReleaseObservation" && toKind === "DeploymentResultObservation")
     || (fromKind === "ObservationRecord" && toKind === "ObservationCollectionReceipt");
@@ -3010,6 +3074,15 @@ export function verifyTemporalProvenanceGraph(graph) {
     const to = nodes.get(edge.to);
     if (!from || !to) fail(`Temporal edge ${edge.edgeId} has a dangling endpoint.`, "TEMPORAL_DANGLING_ENDPOINT");
     if (!validEndpointKinds(edge.type, from.kind, to.kind)) fail(`Temporal edge ${edge.edgeId} has invalid endpoint kinds.`, "TEMPORAL_ENDPOINT_KIND_MISMATCH");
+    if (edge.type === "AT_REVISION" && from.kind === "ObservationRecord") {
+      const payload = from.payload || {};
+      if (from.typeKey !== "delivery.state" || payload.revision_binding !== "verified-source-revision"
+        || edge.origin !== "verified-delivery-revision-binding" || edge.authorityClass !== "derived"
+        || edge.to !== payload.bound_revision_id || to.logicalEntityId !== payload.bound_logical_entity_id
+        || to.path !== payload.bound_source_path || to.digest !== payload.revision_digest) {
+        fail("Delivery Observation source revision relation is invalid.", "DELIVERY_REVISION_REFERENCE_INVALID");
+      }
+    }
     const payloadForId = { ...edge };
     delete payloadForId.edgeId;
     if (identity("temporal-edge", payloadForId) !== edge.edgeId) fail(`Temporal edge identity mismatch: ${edge.edgeId}`, "TEMPORAL_EDGE_IDENTITY_MISMATCH");
@@ -3596,6 +3669,12 @@ export function verifyTemporalProvenanceGraph(graph) {
     if (observation.sourceAuthority !== "non-authoritative-observation-evidence"
       || !hasEdge("CONFORMS_TO", observation.nodeId, observation.descriptorId)
       || !graph.edges.some((edge) => edge.type === "EVIDENCED_BY" && edge.from === observation.nodeId && nodes.get(edge.to)?.kind === "ObservationCollectionReceipt")) fail("ObservationRecord projection lineage is incomplete.", "OBSERVATION_TEMPORAL_RELATION_MISSING");
+    if (observation.typeKey === "delivery.state" && observation.payload?.revision_binding === "verified-source-revision") {
+      const revisionEdges = graph.edges.filter((edge) => edge.type === "AT_REVISION" && edge.from === observation.nodeId);
+      if (revisionEdges.length !== 1 || revisionEdges[0].to !== observation.payload.bound_revision_id) {
+        fail("Verified delivery Observation lacks one exact source revision relation.", "DELIVERY_REVISION_REFERENCE_MISSING");
+      }
+    }
   }
   for (const observation of derivedObservationRecords) {
     if (observation.sourceAuthority !== "non-authoritative-derived-observation-evidence" || !hasEdge("CONFORMS_TO", observation.nodeId, observation.descriptorId)) fail("DerivedObservationRecord descriptor lineage is incomplete.", "OBSERVATION_TEMPORAL_RELATION_MISSING");

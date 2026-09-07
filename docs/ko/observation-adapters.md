@@ -2,7 +2,7 @@
 
 # 공통 Observation 계약과 어댑터
 
-이 계약을 변경하기 전에 [아키텍처](architecture.md)와 [권한 평면](authority-plane-contract.md)을 읽으세요. 릴리스 전용 증거는 [Release observation](release-observation.md)에, 작업별 정확한 포함 방식은 [Context Compiler](context-compiler.md)에 설명되어 있습니다.
+이 계약을 변경하기 전에 [아키텍처](architecture.md)와 [권한 평면](authority-plane-contract.md)을 읽으세요. 릴리스 전용 증거는 [Release observation](release-observation.md)에, 대상별 전달 이력은 [전달 상태 관측](delivery-observation.md)에, 작업별 정확한 포함 방식은 [Context Compiler](context-compiler.md)에 설명되어 있습니다.
 
 상태: 공급자 중립 P3 증거 문법과 P4 프로젝션이 구현되었습니다.
 
@@ -20,9 +20,13 @@ Core는 같은 디렉터리의 atomic hard-link commit으로 각 create-only Obs
 
 Coverage는 complete, sampled, partial, unknown으로 명시됩니다. bounded enumeration이 query digest, 동일한 examined/source total과 omission 0을 제공할 때만 complete coverage를 받아들입니다. adapter가 sample을 complete라고 주장할 수 없습니다.
 
-재구축 가능한 `ObservationStatusProjection`은 `CONFORMS_TO`, `EVIDENCED_BY`, `DERIVED_FROM`만 만듭니다. impact, motivation, measurement, ownership, success 또는 Feature link를 추론하지 않습니다. 제품 해석은 HEAD가 작성한 `ProductHypothesis` 또는 기존 review-gated candidate flow가 담당합니다. `ProductSignal`은 원문 손실이 없는 사람/source 진술을 위해 유지되며 임의 payload field에서 만들어지지 않습니다.
+재구축 가능한 공통 `ObservationStatusProjection`은 `CONFORMS_TO`, `EVIDENCED_BY`, `DERIVED_FROM`을 만듭니다. impact, motivation, measurement, ownership, success 또는 Feature link를 추론하지 않습니다. Delivery specialization은 정확히 보존된 World `FileRevision`을 검증한 뒤에만 `AT_REVISION`을 추가할 수 있고, declared revision 문자열에는 이 edge를 만들지 않습니다. 제품 해석은 HEAD가 작성한 `ProductHypothesis` 또는 기존 review-gated candidate flow가 담당합니다. `ProductSignal`은 원문 손실이 없는 사람/source 진술을 위해 유지되며 임의 payload field에서 만들어지지 않습니다.
 
 릴리스 증거는 엄격한 specialization이며 generic adapter로 대체되지 않습니다. `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObservation`은 정확한 Git reachability, approval, commit, ref와 lineage 검사를 유지합니다.
+
+대상별 delivery history도 공통 계약을 얇게 specialization합니다. 공통 불변 record와 receipt를 재사용하고, receipt time이 아니라 explicit sequence/predecessor evidence에서 현재 상태를 파생하며, 충돌은 unknown으로 남기고 관측되지 않은 대상의 completeness를 추론하지 않습니다. 배포 엔진이나 승인 gate를 추가하지 않습니다.
+
+검증된 `delivery.state` record는 graph 전용 `AT_REVISION` proof label을 부여하므로 이 타입은 전용 delivery writer에 예약됩니다. 일반 ingestion과 registered generic adapter는 자기 선언된 binding을 신뢰하지 않고 이 타입을 거부합니다. custom Observation type을 닫거나 사람의 확인 단계를 추가하는 것이 아니라, 기계적으로 강화된 claim을 동일 Project의 정확한 World/revision verifier 뒤에 두는 경계입니다.
 
 ## Host adapter SDK와 reference file adapter
 
@@ -144,3 +148,6 @@ Context compilation은 기본적으로 공통 observation을 제외합니다. HE
 - 같은 metric key와 version은 두 개의 definition을 가질 수 없고, 새 explicit version은 계속 사용할 수 있습니다.
 - adapter-revision 및 collection-condition difference를 공개하면서 numeric before/after comparison을 계속 사용할 수 있지만 semantic equivalence, normalization 또는 causality를 주장하지 않습니다. 기록된 모든 수집 조건이 같아도 Core는 `recordedCollectionConditionsEquivalent: true`만 보고하며 semantic equivalence는 `not-assessed`로 남습니다.
 - metric assessment와 follow-up은 P3 evidence/candidate로 남고 Conformance, Product Canon 또는 P2 recovery를 변경하지 않습니다.
+- delivery failure는 이전 applied 상태를 덮지 않고, rollback은 새 불변 event로 남으며, 충돌하는 순서는 unknown으로 유지됩니다.
+- exact delivery revision binding은 persistence 전에 검증되어 P4에 연결되고 declared-only reference는 공개된 미연결 상태로 남습니다.
+- delivery status는 bounded이며 unobserved target success 또는 deployment completeness를 추론할 수 없습니다.
