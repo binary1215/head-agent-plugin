@@ -131,6 +131,14 @@ WholePlanSnapshot
 
 공급자 중립적인 실행 wave 가시성은 기존 HF-009 디스패치 위에 구성된 별도의 P3/P4/P5 조합입니다. `BoundedWorkerWave`는 권한 부여를 생성하거나 확대할 수 없습니다. 명시적 seal에는 모든 독립적 임대 소비가 필요합니다. status/results는 P4 뷰로, wait는 P5로 유지됩니다. 각 결과는 여전히 Fresh HEAD 검토와 명시적 HF-010 체크포인트 통합을 독립적으로 거칩니다. [`bounded-worker-wave.md`](bounded-worker-wave.md)를 참조하세요.
 
+Checkpoint 최신성은 정확한 현재 P2 identity와 Run/compaction 전이 상태를 포괄하는
+비지속 읽기 전용 basis를 사용합니다. Provider HEAD가 자연어 방향을 도출하고, Core는
+기존 mutation lock 안에서 그 basis를 다시 검증해 checkpoint 게시를 create, reuse,
+defer 또는 conflict로 처리할 뿐입니다. 동일 retry는 ledger나 pointer를 추가로 쓰지
+않습니다. P3/P4/P5는 방향을 작성하지 않고, open compaction을 대체하지 않으며,
+accepted-result binding은 기존 reviewed-Run integration transaction만 소유합니다.
+[`session-recovery.md`](session-recovery.md#최신성-gate를-적용한-checkpoint-동기화)를 참조하세요.
+
 버전 0.3 alpha는 Runs를 검증된 계약에 바인딩하고, 완료를 ResultPacket으로 변환하며, 결정론적인 최소 Fresh HEAD 검토 프로젝션을 구성하고, 수동 HEAD ReviewDecision에 그 정확한 프로젝션을 요구합니다. `revise`와 `expand`는 다른 Run에 앞서 ReviewDecision에 연결된 다음 WholePlanSnapshot을 요구합니다. 후보 지식과 HEAD 권고에는 계속 권한이 없습니다. 정확한 선택적 WorkspaceHost 연결은 P2 복원 후에만 활성화됩니다. 일반 공급자 resume/stream, 더 광범위한 런타임 제어 및 권한이 부여된 지식 승격 표면은 계속 연기됩니다.
 
 ## Repository World Model plane

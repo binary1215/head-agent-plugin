@@ -36,6 +36,16 @@ The user does not provide checkpoint identities, lifecycle events, trusted turn
 counters, or continuation tokens. Explicit `session-restore` and `compact-*`
 commands remain advanced diagnostic surfaces.
 
+At a natural durable-work or context-loss boundary outside an already open
+compaction epoch, provider HEAD may use `head_checkpoint_basis` followed by
+`head_checkpoint_sync`. The first call is a non-persisted read-only comparison;
+the second revalidates the same exact Project/Session/Run and publication state
+under the existing mutation lock. Identical state and direction reuses the
+current checkpoint without a write. Stale direction conflicts, and an incomplete
+Run transition or changed direction during an open epoch defers only the sync.
+The user is not asked to save, approve, or supply protocol fields. See
+[`session-recovery.md`](session-recovery.md#freshness-gated-checkpoint-synchronization).
+
 ## State transition
 
 ```text
@@ -141,6 +151,11 @@ boundary before provider compaction. Compaction never approves an open review,
 changes Product Canon or candidate bytes, or performs an external write. Explicit
 prepare may publish HEAD-authored P2 direction as a new checkpoint; provider
 compaction and continuation never author or replace that direction.
+
+General checkpoint sync never closes, aborts, or replaces an open epoch. Exact
+checkpoint reuse is free of artifact and pointer writes; any changed direction
+waits for the existing compaction transition to reach its own terminal path.
+This keeps operational recovery from becoming a new global work gate.
 
 Host integration additionally uses `head_conversation_enter` and
 `head_compaction_lifecycle_step`; they are not a user setup ritual. The lifecycle

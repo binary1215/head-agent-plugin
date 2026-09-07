@@ -77,6 +77,64 @@ returns the exact P2 direction and marks the evidence `missing-evidence`; it doe
 not manufacture a Fresh HEAD review context. The caller must recover or reproduce
 the required evidence before review.
 
+## Freshness-gated checkpoint synchronization
+
+Normal provider HEAD operation uses a read-derive-sync sequence rather than
+blindly rewriting the Session checkpoint:
+
+```text
+head_checkpoint_basis (read-only P4 comparison)
+  -> current provider HEAD derives direction from that exact basis
+  -> head_checkpoint_sync (locked P2 publish or exact reuse)
+```
+
+The non-persisted basis binds the exact Project and Session, current checkpoint,
+Session record hash, Run/WholePlan/ExecutionContract/Capsule and review
+references, any Run publication transition, and current compaction epoch. Core
+rebuilds it under the existing Session-recovery mutation lock immediately before
+publication. The basis is concurrency evidence, not recovery direction and not
+an approval.
+
+Synchronization has four explicit outcomes:
+
+- `created`: one new content-addressed checkpoint was published and the Session
+  pointer advanced;
+- `reused`: the current checkpoint already has the same normalized direction and
+  exact current lineage, so neither ledger nor Session pointer is written;
+- `deferred`: an incomplete exact Run transition or changed checkpoint during an
+  open compaction epoch must be handled first; ordinary independent work remains
+  available;
+- `conflict`: the supplied basis is stale or the recorded Run transition conflicts
+  with current Session state, so no recovery bytes are written.
+
+The checkpoint identity for one unchanged basis and direction is deterministic.
+Retries before ledger publication, after ledger publication but before Session
+pointer publication, and after pointer publication therefore converge without a
+second ledger entry. Concurrent identical calls converge on `created` plus
+`reused`; a different concurrent direction cannot overwrite the winner.
+
+Core can prove identity, lineage, transition state, and byte equivalence. It
+cannot prove that a model actually reconsidered natural-language direction.
+Provider HEAD must derive direction *after* reading the returned basis; changing
+only `expectedRecoveryBasisId` on an older direction violates the caller
+contract. This does not create a user confirmation step.
+
+Stable pending review is a valid checkpoint boundary. An incomplete finish or
+review publication is not: sync returns `deferred` until the exact existing Run
+operation completes its missing Session write. A general sync never accepts or
+creates `reviewedRunIntegration`. It may reuse an exactly current integrated
+checkpoint, but changed direction or lineage creates an unbound checkpoint;
+accepted-result binding remains exclusive to `run-integrate-checkpoint`.
+
+Short Observe work, conversation entry, status reads, and absent Host hooks do
+not create a first checkpoint. A trusted Host may invoke this sequence at a
+natural context-loss, handoff, or durable-Run boundary. Provider HEAD may also
+use it when an existing checkpoint should reflect a user objective/constraint
+change, verified stage completion, failure/wait transition, or whole-task
+completion. HEAD first decides whether durable recovery direction materially
+needs publication; this is never a mandatory per-turn call. No daemon, timer,
+extra per-turn model call, or provider-session identity is required.
+
 Protocol `0.1.0` and `0.2.0` checkpoints remain readable through the checkpoint
 reader for audit and compaction compatibility. They cannot drive current
 artifact-only restore because they predate the immutable Session pointer. The
@@ -156,6 +214,8 @@ does not change the checkpoint or restore projection's next direction.
 
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
+head checkpoint-basis <project>
+head checkpoint-sync <project> --input <head-direction.json>
 head session-restore <project> [--checkpoint <checkpoint-id>]
 head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
 head worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
@@ -171,8 +231,10 @@ head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```
 
-Typed MCP exposes continuation, dispatch/status/wait/apply, restore, and explicit
-integration. Restore, status, and wait are read-only. Continuation may refresh
+Typed MCP exposes `head_checkpoint_basis`, `head_checkpoint_sync`, continuation,
+dispatch/status/wait/apply, restore, and explicit integration. Basis, restore,
+status, and wait are read-only. Checkpoint sync is idempotent and revalidates its
+exact basis under the common mutation lock. Continuation may refresh
 only the injected host-local P5 attachment; dispatch and application are
 idempotent project-state writes. None grants review, Canon, publication, or
 external-action authority.

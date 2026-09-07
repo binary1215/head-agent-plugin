@@ -44,6 +44,18 @@ never asked for event, epoch, turn, or token fields. A new real user request
 supersedes a prepared continuation and may redirect future work, but it does not
 retroactively alter an existing checkpoint.
 
+When durable recovery direction genuinely needs publication, keep the mechanism
+behind the conversation: read `head_checkpoint_basis`, derive direction as the
+current provider HEAD from that exact basis, and call `head_checkpoint_sync`.
+Do not ask the user to type a checkpoint, basis ID, or save command. `created`
+and `reused` are quiet success. `deferred` and `conflict` are HEAD-owned follow-up
+for only the affected recovery path; they do not block ordinary independent
+work or imply a user decision. Never make this a per-turn ritual or create a
+checkpoint for a short Observe request. HEAD considers persistence only when an
+existing direction materially changes, a verified stage completes, work enters
+failure/waiting, the whole task completes, or handoff/context loss approaches;
+if the existing checkpoint remains sufficient, make no sync call.
+
 ## Decision presentation
 
 Present a protected decision as a compact card containing:

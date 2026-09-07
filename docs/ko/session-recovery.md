@@ -74,6 +74,59 @@ checkpoint 생성 후 P3 ResultPacket 증거가 삭제되었더라도 restore는
 반환하고 증거를 `missing-evidence`로 표시합니다. Fresh HEAD review context를 만들어내지
 않습니다. caller는 review 전에 필요한 증거를 복구하거나 재현해야 합니다.
 
+## 최신성 gate를 적용한 checkpoint 동기화
+
+일반 provider HEAD 작업은 Session checkpoint를 무조건 다시 쓰지 않고 다음
+read-derive-sync 순서를 사용합니다.
+
+```text
+head_checkpoint_basis (read-only P4 comparison)
+  -> current provider HEAD derives direction from that exact basis
+  -> head_checkpoint_sync (locked P2 publish or exact reuse)
+```
+
+비지속 basis는 정확한 Project와 Session, 현재 checkpoint, Session record hash,
+Run/WholePlan/ExecutionContract/Capsule 및 review reference, Run 게시 전이와 현재
+compaction epoch를 결속합니다. Core는 게시 직전에 기존 Session-recovery mutation
+lock 안에서 이 basis를 다시 구축합니다. basis는 동시성 증거이지 복구 방향이나 승인이
+아닙니다.
+
+동기화 결과는 네 가지입니다.
+
+- `created`: 새 content-addressed checkpoint 하나를 게시하고 Session pointer를
+  전진시켰습니다.
+- `reused`: 현재 checkpoint가 같은 정규화된 방향과 정확한 현재 lineage를 이미
+  가지므로 ledger와 Session pointer를 모두 쓰지 않았습니다.
+- `deferred`: 미완료된 정확한 Run 전이 또는 open compaction epoch 중 바뀐 checkpoint를
+  먼저 처리해야 합니다. 독립적인 일반 작업은 계속할 수 있습니다.
+- `conflict`: 전달된 basis가 오래됐거나 기록된 Run 전이가 현재 Session state와
+  충돌하므로 복구 byte를 쓰지 않았습니다.
+
+변하지 않은 basis와 방향에 대한 checkpoint identity는 결정론적입니다. ledger 게시
+전, ledger 게시 후 Session pointer 게시 전, pointer 게시 후의 재시도는 두 번째 ledger
+entry 없이 수렴합니다. 동시에 들어온 동일 호출은 `created`와 `reused`로 수렴하고,
+동시에 들어온 다른 방향은 먼저 게시된 방향을 덮어쓸 수 없습니다.
+
+Core는 identity, lineage, transition state와 byte 동등성만 증명할 수 있습니다. 모델이
+실제로 자연어 방향을 다시 검토했는지는 증명할 수 없습니다. Provider HEAD는 반환된
+basis를 읽은 *뒤* 방향을 도출해야 하며, 이전 방향에서 `expectedRecoveryBasisId`만
+바꾸는 것은 caller 계약 위반입니다. 이 계약은 사용자 확인 단계를 만들지 않습니다.
+
+안정된 pending review는 유효한 checkpoint boundary입니다. 완료되지 않은 finish 또는
+review 게시에서는 그렇지 않습니다. sync는 정확한 기존 Run 작업이 누락된 Session write를
+완료할 때까지 `deferred`를 반환합니다. 일반 sync는 `reviewedRunIntegration`을 받거나
+만들지 않습니다. 정확히 현재 상태인 integrated checkpoint는 재사용할 수 있지만, 바뀐
+방향이나 lineage는 binding 없는 checkpoint를 만듭니다. accepted-result binding은 계속
+`run-integrate-checkpoint`만 소유합니다.
+
+짧은 Observe 작업, conversation entry, status read와 Host hook 부재는 첫 checkpoint를
+만들지 않습니다. 신뢰할 수 있는 Host는 자연스러운 context-loss, handoff 또는 durable-Run
+boundary에서 이 순서를 호출할 수 있습니다. 기존 checkpoint에 사용자 objective/constraint
+변경, 검증된 단계 완료, failure/wait 전환 또는 전체 task 완료를 반영해야 할 때도 provider
+HEAD가 사용할 수 있습니다. 먼저 durable recovery direction을 실제로 게시할 필요가 있는지
+판단하므로 매 turn의 필수 호출이 아닙니다. daemon, timer, turn마다 추가되는 model call 또는
+provider-session identity도 필요하지 않습니다.
+
 Protocol `0.1.0` 및 `0.2.0` checkpoint는 audit 및 compaction compatibility를 위해
 checkpoint reader로 계속 읽을 수 있습니다. 그러나 immutable Session pointer보다 이전
 형식이므로 현재 artifact-only restore를 구동할 수 없습니다. 공개 `head checkpoint`
@@ -147,6 +200,8 @@ receipt는 통합이 ReviewDecision을 생성하지 않았고 ResultPacket은 �
 
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
+head checkpoint-basis <project>
+head checkpoint-sync <project> --input <head-direction.json>
 head session-restore <project> [--checkpoint <checkpoint-id>]
 head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
 head worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
@@ -162,8 +217,10 @@ head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```
 
-Typed MCP는 continuation, dispatch/status/wait/apply, restore 및 명시적 integration을
-노출합니다. restore, status 및 wait는 read-only입니다. continuation은 주입된 host-local
+Typed MCP는 `head_checkpoint_basis`, `head_checkpoint_sync`, continuation,
+dispatch/status/wait/apply, restore 및 명시적 integration을 노출합니다. basis, restore,
+status 및 wait는 read-only입니다. checkpoint sync는 멱등적이며 공통 mutation lock 안에서
+정확한 basis를 다시 검증합니다. continuation은 주입된 host-local
 P5 attachment만 새로 고칠 수 있습니다. dispatch와 application은 멱등적인 project-state
 write입니다. 어느 것도 review, Canon, publication 또는 external-action authority를
 부여하지 않습니다.

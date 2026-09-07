@@ -59,6 +59,14 @@ about the task and does not supply checkpoint IDs, turn counters, tokens, or
 recovery JSON. A newer real user request always wins over an older prepared
 continuation.
 
+When durable direction really changes, HEAD handles checkpoint publication too:
+it reads an exact current basis, derives direction in the conversation, and asks
+Core to create or reuse the checkpoint under one lock. Identical retries write
+nothing; stale direction cannot overwrite newer work. This runs only at useful
+boundaries such as a changed objective, verified stage, failure/wait, completion,
+handoff, or likely context loss—not on every turn and not for a short read-only
+task. The user does not operate this protocol.
+
 This restores the work direction, not a transcript or a model persona. When a
 Host has no native compaction hook, first-turn artifact restore still happens
 automatically while the provider's compaction action remains Host-owned. See
@@ -600,6 +608,11 @@ automatic read-only entry projection used by the Skill, while the `compact-*`
 and `head_compaction_lifecycle_step` surfaces are advanced adapter and diagnostic
 operations. Missing Host hooks do not create a setup gate and never block
 ordinary work.
+
+For a durable direction update, the Skill internally uses the read-only
+`head_checkpoint_basis` and idempotent `head_checkpoint_sync` surfaces. Core
+returns `created`, `reused`, `deferred`, or `conflict`; only the affected recovery
+path pauses, and none of these outcomes asks the user for checkpoint JSON.
 
 A newer real user turn wins over a pending continuation. See
 [Compaction recovery](docs/compaction-recovery.md) and

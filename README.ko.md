@@ -58,6 +58,13 @@ AI 작업의 결과가 시간이 지나도 하나의 검토된 제품 방향으�
 checkpoint ID, turn counter, token 또는 복구 JSON을 입력하지 않습니다. 그
 사이 실제 사용자의 새 요청이 들어오면 언제나 새 요청을 우선합니다.
 
+지속할 방향이 실제로 바뀌면 checkpoint 게시도 HEAD가 처리합니다. 정확한 현재 basis를
+읽고 대화 안에서 방향을 도출한 뒤, 하나의 lock 안에서 Core가 checkpoint를 만들거나
+재사용하게 합니다. 동일 retry는 아무것도 쓰지 않고, 오래된 방향은 더 새로운 작업을
+덮어쓸 수 없습니다. 사용자 objective 변경, 검증된 단계, failure/wait, 완료, handoff 또는
+context loss 가능성처럼 유용한 boundary에서만 수행하며, 매 turn이나 짧은 read-only
+task에는 수행하지 않습니다. 사용자는 이 protocol을 직접 조작하지 않습니다.
+
 이는 대화 내용이나 모델의 말투를 복원하는 기능이 아니라 작업 방향을 복원하는
 기능입니다. Host에 native compaction hook이 없어도 첫 turn의 artifact 복구는
 자동으로 수행되고 provider compaction 동작만 Host 소유로 남습니다. 자세한
@@ -576,6 +583,11 @@ P2 체크포인트와 검증된 계보에서 현재 입력을 재구성합니다
 `head_conversation_enter`를 자동 진입 projection으로 사용하고, `compact-*`와
 `head_compaction_lifecycle_step`은 고급 adapter 및 진단 surface로 남습니다.
 Host hook이 없어도 설정 gate가 생기지 않으며 일반 작업을 막지 않습니다.
+
+지속 가능한 방향 갱신이 필요할 때 Skill은 내부적으로 읽기 전용
+`head_checkpoint_basis`와 멱등적인 `head_checkpoint_sync` surface를 사용합니다. Core는
+`created`, `reused`, `deferred`, `conflict` 중 하나를 반환하며 영향을 받은 복구 경로만
+멈춥니다. 어느 결과도 사용자에게 checkpoint JSON을 요구하지 않습니다.
 
 더 새로운 실제 사용자 턴은 대기 중인 연속성보다 우선합니다. 자세한 내용은
 [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)와

@@ -169,7 +169,7 @@ export function formatConversationRecovery(value) {
   } else if (entry?.status === "conversation_direction_restored") {
     lines.push(
       "HEAD restored the verified project direction automatically.",
-      "User action: none — continue the original task.",
+      "User action: none — continue the task from the original objective.",
       "",
       `Purpose: ${compactText(restored.purpose || "verified current checkpoint", 240)}`,
       `Next expected result: ${compactText(restored.nextExpectedResult || "continue from the verified checkpoint", 240)}`,
@@ -478,6 +478,40 @@ export function formatContextPreview(value) {
   return `${lines.join("\n")}\n`;
 }
 
+export function formatCheckpointBasis(value) {
+  const basis = value?.basis || {};
+  const availability = value?.syncAvailability || "unknown";
+  const lines = [
+    availability === "ready"
+      ? "HEAD recovery basis: current and ready for a fresh HEAD direction."
+      : `HEAD recovery basis: ${availability}.`,
+    `Basis: ${basis.basisId || "unavailable"}`,
+    "User action: none. This read changed no checkpoint or authority.",
+  ];
+  if (availability !== "ready") lines.push("Next: HEAD handles the exact transition before retrying checkpoint sync; ordinary independent work remains available.");
+  lines.push("", "Technical details: rerun with --json");
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatCheckpointSync(value) {
+  const outcome = value?.outcome || "unknown";
+  const checkpointId = value?.checkpoint?.checkpointId || null;
+  const title = {
+    created: "HEAD recovery checkpoint: synchronized.",
+    reused: "HEAD recovery checkpoint: already current; no write was needed.",
+    deferred: "HEAD recovery checkpoint: deferred while an exact transition is recovered.",
+    conflict: "HEAD recovery checkpoint: stale or conflicting direction was not written.",
+  }[outcome] || `HEAD recovery checkpoint: ${outcome}.`;
+  const lines = [title];
+  if (checkpointId) lines.push(`Checkpoint: ${checkpointId}`);
+  if (value?.reasonCode) lines.push(`Reason: ${value.reasonCode}`);
+  lines.push(`Writes: ledger ${value?.writes?.checkpointLedger ?? 0}, Session pointer ${value?.writes?.sessionPointer ?? 0}`);
+  lines.push("User action: none. Ordinary independent work remains available.");
+  if (value?.retryGuidance) lines.push(`Next: ${value.retryGuidance}`);
+  lines.push("", "Technical details: rerun with --json");
+  return `${lines.join("\n")}\n`;
+}
+
 export function formatMcpToolContent(name, value) {
   if (name === "head_project_status") return formatProjectStatus(value);
   if (name === "head_project_initialize_or_resume") return formatProjectBootstrap(value);
@@ -492,6 +526,8 @@ export function formatMcpToolContent(name, value) {
   if (["head_onboarding_review", "head_feature_mapping_review", "head_conformance_disposition", "head_product_initiative_review"].includes(name)) return formatReviewOutcome(value);
   if (name === "head_context_prepare") return formatContextPreparation(value);
   if (name === "head_context_preview") return formatContextPreview(value);
+  if (name === "head_checkpoint_basis") return formatCheckpointBasis(value);
+  if (name === "head_checkpoint_sync") return formatCheckpointSync(value);
   return JSON.stringify(value);
 }
 
@@ -520,5 +556,7 @@ export function formatCliResult(command, value) {
   if (["onboarding-review", "feature-mapping-review", "change-impact-review", "run-review", "conformance-disposition", "product-initiative-review"].includes(command)) return formatReviewOutcome(value);
   if (command === "context-prepare") return formatContextPreparation(value);
   if (command === "context-preview") return formatContextPreview(value);
+  if (command === "checkpoint-basis") return formatCheckpointBasis(value);
+  if (command === "checkpoint-sync") return formatCheckpointSync(value);
   return `${JSON.stringify(value, null, 2)}\n`;
 }

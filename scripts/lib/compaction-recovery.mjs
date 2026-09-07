@@ -6,8 +6,10 @@ import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
+import { operationPointerHash, sessionStateHash } from "./run-lineage.mjs";
 
 export const COMPACTION_RECOVERY_VERSION = "0.3.0";
+export const RECOVERY_CHECKPOINT_SYNC_VERSION = "0.1.0";
 const RUN_RESULT_INTEGRATION_VERSION = "0.1.0";
 
 const OPEN_STATES = new Set(["preparing", "prepared", "provider_compacted", "verified"]);
@@ -177,6 +179,196 @@ function readSessionPointer(inspected) {
   };
 }
 
+function transitionRunId(state) {
+  return state.activeRunId || state.pendingReview?.runId || state.lastReviewedRunId || null;
+}
+
+function readTransitionRun(inspected) {
+  const runId = transitionRunId(inspected.state);
+  if (!runId) return null;
+  if (!/^run-[0-9]+-[a-f0-9]{6}$/.test(runId)) fail("Current Run transition id is invalid.", "INVALID_RUN_CANON");
+  const file = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", runId, "run.json");
+  if (!fs.existsSync(file)) fail(`Current Run canon not found: ${runId}`, "INVALID_RUN_CANON");
+  const run = readJson(file, "Current Run canon");
+  if (run.runId !== runId || !run.wholePlanId || !run.executionContractId || !run.capsuleId) {
+    fail("Current Run canon is incomplete or belongs to another Run.", "INVALID_RUN_CANON");
+  }
+  const contract = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: run.executionContractId }).artifact;
+  const plan = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: run.wholePlanId }).artifact;
+  const capsule = readContextCapsule({ root: inspected.project.projectRoot, capsuleId: run.capsuleId }).capsule;
+  if (contract.kind !== "ExecutionContract" || plan.kind !== "WholePlanSnapshot"
+    || contract.executionContractId !== run.executionContractId || contract.wholePlanId !== run.wholePlanId
+    || contract.capsuleId !== run.capsuleId) {
+    fail("Current Run transition lineage is inconsistent.", "RUN_LINEAGE_CONFLICT");
+  }
+  return {
+    file,
+    run,
+    lineage: {
+      runId,
+      runStatus: run.status,
+      wholePlanId: run.wholePlanId,
+      executionContractId: run.executionContractId,
+      capsuleId: run.capsuleId,
+      contextCapsuleDigest: capsule.capsuleHash,
+      resultPacketId: run.resultPacketId || null,
+      reviewDecisionId: run.reviewDecisionId || null,
+    },
+  };
+}
+
+function inspectRunTransitionState(inspected) {
+  const loaded = readTransitionRun(inspected);
+  if (!loaded) return { status: "none", lineage: null, transition: null };
+  const { run, lineage } = loaded;
+  const transition = run.sessionTransition;
+  if (!transition) return { status: "stable", lineage, transition: null };
+  if (!new Set(["finish", "review"]).has(transition.kind)
+    || transition.projectId !== inspected.project.projectId || transition.sessionId !== inspected.state.sessionId
+    || transition.runId !== run.runId || typeof transition.artifactId !== "string"
+    || typeof transition.changedAt !== "string" || !Number.isFinite(Date.parse(transition.changedAt))
+    || !/^[a-f0-9]{64}$/.test(transition.beforeSessionHash || "")
+    || !/^[a-f0-9]{64}$/.test(transition.afterSessionHash || "")
+    || !/^[a-f0-9]{64}$/.test(transition.afterOperationPointerHash || "")) {
+    fail("Current Run transition record is invalid.", "INVALID_RUN_CANON");
+  }
+  const expectedArtifactKind = transition.kind === "finish" ? "ResultPacket" : "ReviewDecision";
+  const terminalStatus = transition.kind === "finish" ? "awaiting_review" : "reviewed";
+  let artifactStatus = "missing-before-publication";
+  try {
+    const artifact = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: transition.artifactId }).artifact;
+    if (artifact.kind !== expectedArtifactKind) fail("Run transition artifact kind is invalid.", "RUN_TRANSITION_CONFLICT");
+    artifactStatus = "verified";
+  } catch (error) {
+    if (error.code !== "LINEAGE_ARTIFACT_NOT_FOUND") throw error;
+    if (run.status === terminalStatus && expectedArtifactKind !== "ResultPacket") throw error;
+    if (run.status === terminalStatus) artifactStatus = "missing-evidence";
+  }
+  const currentSessionHash = sessionStateHash(inspected.state);
+  const currentOperationPointerHash = operationPointerHash(inspected.state);
+  const committed = transition.kind === "finish"
+    ? run.status === terminalStatus
+      && inspected.state.pendingReview?.runId === run.runId
+      && inspected.state.pendingReview?.resultPacketId === transition.artifactId
+      && inspected.state.lastResultPacketId === transition.artifactId
+    : run.status === terminalStatus
+      && inspected.state.pendingReview == null
+      && inspected.state.lastReviewedRunId === run.runId
+      && inspected.state.lastReviewDecisionId === transition.artifactId;
+  let status;
+  if (committed) status = currentOperationPointerHash === transition.afterOperationPointerHash ? "committed" : "committed-later-state";
+  else if (currentSessionHash === transition.beforeSessionHash) status = "incomplete";
+  else status = "conflict";
+  return {
+    status,
+    lineage,
+    transition: {
+      kind: transition.kind,
+      artifactId: transition.artifactId,
+      changedAt: transition.changedAt,
+      transitionHash: digest(canonicalJson(transition)),
+      artifactStatus,
+      currentSessionHash,
+      currentOperationPointerHash,
+      beforeSessionHash: transition.beforeSessionHash,
+      afterSessionHash: transition.afterSessionHash,
+      afterOperationPointerHash: transition.afterOperationPointerHash,
+    },
+  };
+}
+
+function inspectCompactionStateForSync(inspected) {
+  const epoch = currentEpoch(inspected.project.projectRoot);
+  if (!epoch) return { status: "idle", epoch: null };
+  if (epoch.projectId !== inspected.project.projectId || epoch.sessionId !== inspected.state.sessionId
+    || !new Set([...OPEN_STATES, ...TERMINAL_STATES]).has(epoch.state)
+    || typeof epoch.checkpointId !== "string" || !/^checkpoint-[a-f0-9]{24}$/.test(epoch.checkpointId)
+    || typeof epoch.checkpointDigest !== "string" || !/^[a-f0-9]{64}$/.test(epoch.checkpointDigest)) {
+    fail("Current compaction epoch is invalid for this Project and Session.", "INVALID_COMPACTION_EPOCH");
+  }
+  const consumption = continuationConsumption(inspected.project.projectRoot, epoch);
+  if (consumption.status === "invalid") fail("Current compaction continuation consumption is invalid.", "INVALID_COMPACTION_CONSUMPTION");
+  if (epoch.state !== "preparing") {
+    const checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: epoch.checkpointId }).checkpoint;
+    if (checkpoint.checkpointDigest !== epoch.checkpointDigest) fail("Current compaction epoch checkpoint digest is invalid.", "COMPACTION_DIGEST_MISMATCH");
+  }
+  return {
+    status: OPEN_STATES.has(epoch.state) ? "open" : "terminal",
+    epoch: {
+      epochId: epoch.epochId,
+      state: epoch.state,
+      checkpointId: epoch.checkpointId,
+      checkpointDigest: epoch.checkpointDigest,
+      continuationConsumption: consumption.status,
+      updatedAt: epoch.updatedAt || null,
+    },
+  };
+}
+
+function recoveryCheckpointBasisFromInspection(inspected) {
+  const latestCheckpoint = inspected.state.latestCheckpoint
+    ? readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: inspected.state.latestCheckpoint }).checkpoint
+    : null;
+  const runTransition = inspectRunTransitionState(inspected);
+  const compaction = inspectCompactionStateForSync(inspected);
+  const payload = {
+    kind: "RecoveryCheckpointSyncBasis",
+    protocol: { name: "head-agent-core-recovery-checkpoint-sync", version: RECOVERY_CHECKPOINT_SYNC_VERSION },
+    persisted: false,
+    projectId: inspected.project.projectId,
+    sessionId: inspected.state.sessionId,
+    latestCheckpointId: latestCheckpoint?.checkpointId || null,
+    latestCheckpointDigest: latestCheckpoint?.checkpointDigest || null,
+    sessionRecordHash: sessionStateHash(inspected.state),
+    sessionUpdatedAt: inspected.state.updatedAt,
+    references: {
+      currentWholePlanId: inspected.state.currentWholePlanId || null,
+      activeRunId: inspected.state.activeRunId || null,
+      activeExecutionContractId: inspected.state.activeExecutionContractId || null,
+      lastResultPacketId: inspected.state.lastResultPacketId || null,
+      pendingReview: inspected.state.pendingReview == null ? null : canonical(inspected.state.pendingReview),
+      lastReviewDecisionId: inspected.state.lastReviewDecisionId || null,
+      lastReviewedRunId: inspected.state.lastReviewedRunId || null,
+      requiredPlanAction: inspected.state.requiredPlanAction == null ? null : canonical(inspected.state.requiredPlanAction),
+      runLineage: runTransition.lineage,
+    },
+    runTransition: { status: runTransition.status, transition: runTransition.transition },
+    compaction,
+    directionAuthorship: {
+      owner: "current-provider-head",
+      deriveAfterBasisRead: true,
+      replacingOnlyTheBasisIdOnAnOlderDirectionIsValid: false,
+      coreVerification: "exact-identity-lineage-and-concurrency-only",
+    },
+    authority: {
+      plane: "P4-non-persisted-comparison",
+      recovery: false,
+      instruction: false,
+      review: false,
+      promotion: false,
+      canonMutation: false,
+    },
+  };
+  const basisHash = digest(canonicalJson(payload));
+  return { ...payload, basisId: `recovery-basis-${basisHash.slice(0, 24)}`, basisHash };
+}
+
+export function inspectRecoveryCheckpointBasis({ root = "." } = {}) {
+  const inspected = readyProject(root, "recovery checkpoint freshness is inspected");
+  const basis = recoveryCheckpointBasisFromInspection(inspected);
+  return {
+    status: "recovery_checkpoint_basis_inspected",
+    basis,
+    syncAvailability: basis.runTransition.status === "incomplete" ? "deferred-run-transition"
+      : basis.runTransition.status === "conflict" ? "conflict-run-transition"
+        : basis.compaction.status === "open" ? "deferred-compaction" : "ready",
+    persisted: false,
+    authorityChanged: false,
+    ordinaryWorkBlocked: false,
+    userDecisionRequired: false,
+  };
+}
+
 function verifyIntegrationRequest(inspected, input, checkpointInput) {
   const requestFile = path.join(
     inspected.project.projectRoot,
@@ -281,16 +473,23 @@ function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
   };
 }
 
-function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds, reviewedRunIntegration }) {
+function normalizeCheckpointDirection(inspected, { purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] }) {
   const pendingReviewIds = inspected.state.pendingReview?.resultPacketId ? [inspected.state.pendingReview.resultPacketId] : [];
-  const normalizedCheckpointInput = {
-    runId: reviewedRunIntegration?.runId || null,
-    reviewDecisionId: reviewedRunIntegration?.reviewDecisionId || null,
+  return {
     purpose: requiredText(purpose, "Checkpoint purpose"),
     approvedDecisions: stringList(approvedDecisions, "Approved decisions"),
     currentPosition: requiredText(currentPosition, "Current position"),
     nextExpectedResult: requiredText(nextExpectedResult, "Next expected result"),
     openReviewIds: [...new Set([...stringList(openReviewIds || [], "Open review ids"), ...pendingReviewIds])].sort(),
+  };
+}
+
+function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds, reviewedRunIntegration, createdAt = null }) {
+  const direction = normalizeCheckpointDirection(inspected, { purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
+  const normalizedCheckpointInput = {
+    runId: reviewedRunIntegration?.runId || null,
+    reviewDecisionId: reviewedRunIntegration?.reviewDecisionId || null,
+    ...direction,
   };
   const verifiedIntegration = verifiedReviewedRunIntegration(inspected, reviewedRunIntegration, normalizedCheckpointInput);
   return {
@@ -308,7 +507,7 @@ function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, curr
     runPointer: readRunPointer(inspected),
     reviewedRunIntegration: verifiedIntegration,
     openReviewIds: normalizedCheckpointInput.openReviewIds,
-    createdAt: verifiedIntegration?.reviewedAt || now(),
+    createdAt: verifiedIntegration?.reviewedAt || createdAt || now(),
     authority: {
       recovery: "canonical-session-run-checkpoint",
       recoveryFieldSources: "explicit-head-user-direction-and-verified-p2-lineage-only",
@@ -351,6 +550,120 @@ function persistRecoveryCheckpoint(inspected, checkpoint) {
   const state = { ...inspected.state, latestCheckpoint: checkpointId, updatedAt: now() };
   replaceJson(path.join(inspected.project.projectRoot, ".head", "sessions", "current.json"), state);
   return { status: existed ? "existing" : "checkpointed", file, checkpoint, state };
+}
+
+function currentCheckpointForSync(inspected) {
+  if (!inspected.state.latestCheckpoint) return null;
+  return readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: inspected.state.latestCheckpoint }).checkpoint;
+}
+
+function checkpointMatchesSyncRequest(checkpoint, inspected, direction) {
+  if (!checkpoint || checkpoint.protocol?.version !== COMPACTION_RECOVERY_VERSION
+    || checkpoint.projectId !== inspected.project.projectId || checkpoint.sessionId !== inspected.state.sessionId) return false;
+  const comparableCheckpoint = {
+    purpose: checkpoint.purpose,
+    approvedDecisions: checkpoint.approvedDecisions,
+    currentPosition: checkpoint.currentPosition,
+    nextExpectedResult: checkpoint.nextExpectedResult,
+    openReviewIds: checkpoint.openReviewIds,
+    sessionPointer: checkpoint.sessionPointer,
+    runPointer: checkpoint.runPointer,
+  };
+  const expected = {
+    ...direction,
+    sessionPointer: readSessionPointer(inspected),
+    runPointer: readRunPointer(inspected),
+  };
+  return canonicalJson(comparableCheckpoint) === canonicalJson(expected);
+}
+
+function checkpointSyncOutcome(outcome, { expectedBasisId, basis, resultingBasis = null, checkpoint = null, persisted = null, reasonCode = null }) {
+  const writes = persisted
+    ? {
+        checkpointLedger: persisted.status === "checkpointed" ? 1 : 0,
+        sessionPointer: 1,
+      }
+    : { checkpointLedger: 0, sessionPointer: 0 };
+  return {
+    status: `recovery_checkpoint_sync_${outcome}`,
+    outcome,
+    expectedBasisId,
+    observedBasisId: basis.basisId,
+    basis,
+    resultingBasis,
+    checkpoint,
+    reasonCode,
+    writes,
+    persisted: outcome === "created",
+    authorityChanged: outcome === "created",
+    headActionRequired: new Set(["deferred", "conflict"]).has(outcome),
+    userDecisionRequired: false,
+    ordinaryWorkBlocked: false,
+    retryGuidance: outcome === "deferred"
+      ? "Recover or close the exact existing transition, inspect a fresh basis, and let HEAD re-derive direction before retrying."
+      : outcome === "conflict"
+        ? "Inspect a fresh basis and let HEAD re-derive direction; do not attach a new basis to an old direction."
+        : null,
+  };
+}
+
+export function syncRecoveryCheckpoint(options = {}) {
+  const allowed = new Set([
+    "root", "expectedRecoveryBasisId", "purpose", "approvedDecisions", "currentPosition", "nextExpectedResult", "openReviewIds",
+  ]);
+  const unexpected = Object.keys(options).filter((key) => !allowed.has(key));
+  if (unexpected.length) fail(`Recovery checkpoint sync contains unsupported fields: ${unexpected.sort().join(", ")}`, "INVALID_RECOVERY_CHECKPOINT_SYNC_INPUT");
+  const expectedBasisId = requiredText(options.expectedRecoveryBasisId, "Expected recovery basis id");
+  if (!/^recovery-basis-[a-f0-9]{24}$/.test(expectedBasisId)) fail("Expected recovery basis id is invalid.", "INVALID_RECOVERY_CHECKPOINT_BASIS_ID");
+  return withProjectMutation({ root: options.root, scope: "session-recovery" }, () => {
+    const inspected = readyProject(options.root, "recovery checkpoint direction is synchronized");
+    const direction = normalizeCheckpointDirection(inspected, options);
+    const basis = recoveryCheckpointBasisFromInspection(inspected);
+    if (basis.runTransition.status === "incomplete") {
+      return checkpointSyncOutcome("deferred", {
+        expectedBasisId, basis, reasonCode: "RUN_TRANSITION_INCOMPLETE",
+      });
+    }
+    if (basis.runTransition.status === "conflict") {
+      return checkpointSyncOutcome("conflict", {
+        expectedBasisId, basis, reasonCode: "RUN_TRANSITION_SESSION_DRIFT",
+      });
+    }
+    const currentCheckpoint = currentCheckpointForSync(inspected);
+    const exactReuse = checkpointMatchesSyncRequest(currentCheckpoint, inspected, direction);
+    if (exactReuse) {
+      return checkpointSyncOutcome("reused", { expectedBasisId, basis, checkpoint: currentCheckpoint });
+    }
+    if (basis.compaction.status === "open") {
+      return checkpointSyncOutcome("deferred", {
+        expectedBasisId, basis, reasonCode: "COMPACTION_EPOCH_OPEN",
+      });
+    }
+    if (expectedBasisId !== basis.basisId) {
+      return checkpointSyncOutcome("conflict", {
+        expectedBasisId, basis, reasonCode: "RECOVERY_CHECKPOINT_SYNC_STALE_BASIS",
+      });
+    }
+    const deterministicCreatedAt = typeof inspected.state.updatedAt === "string" && Number.isFinite(Date.parse(inspected.state.updatedAt))
+      ? inspected.state.updatedAt : inspected.project.createdAt;
+    const payload = recoveryCheckpointPayload({
+      inspected,
+      ...direction,
+      reviewedRunIntegration: null,
+      createdAt: deterministicCreatedAt,
+    });
+    const checkpointDigest = digest(canonicalJson(payload));
+    const checkpoint = { ...payload, checkpointId: `checkpoint-${checkpointDigest.slice(0, 24)}`, checkpointDigest };
+    const persisted = persistRecoveryCheckpoint(inspected, checkpoint);
+    const resultingInspection = readyProject(inspected.project.projectRoot, "recovery checkpoint synchronization result is read");
+    return checkpointSyncOutcome("created", {
+      expectedBasisId,
+      basis,
+      resultingBasis: recoveryCheckpointBasisFromInspection(resultingInspection),
+      checkpoint,
+      persisted,
+    });
+  });
 }
 
 export function readRecoveryCheckpoint({ root = ".", checkpointId } = {}) {

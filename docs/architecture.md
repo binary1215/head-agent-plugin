@@ -192,6 +192,15 @@ status/results remain P4 views and wait remains P5. Each result still crosses
 Fresh HEAD review and explicit HF-010 checkpoint integration independently. See
 [`bounded-worker-wave.md`](bounded-worker-wave.md).
 
+Checkpoint freshness uses a non-persisted read-only basis over the exact current
+P2 identities and Run/compaction transition state. Provider HEAD derives the
+natural-language direction; Core only revalidates that basis under the existing
+mutation lock and creates, reuses, defers, or conflicts the checkpoint publish.
+Identical retry has no extra ledger or pointer write. P3/P4/P5 never author the
+direction, open compaction is not replaced, and accepted-result binding remains
+exclusive to the existing reviewed-Run integration transaction. See
+[`session-recovery.md`](session-recovery.md#freshness-gated-checkpoint-synchronization).
+
 Version 0.3 alpha binds Runs to verified contracts, converts completion into a ResultPacket, builds a deterministic minimum Fresh HEAD review projection, and requires that exact projection for the manual HEAD ReviewDecision. `revise` and `expand` require a ReviewDecision-linked next WholePlanSnapshot before another Run. Candidate knowledge and HEAD recommendations remain authority-free. Exact optional WorkspaceHost attachment is active only after P2 restore; general provider resume/stream, broader runtime controls, and authorized knowledge-promotion surfaces remain deferred.
 
 ## Repository World Model plane

@@ -38,7 +38,7 @@ import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
 import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
-import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, inspectRecoveryCheckpointBasis, prepareCompaction, syncRecoveryCheckpoint, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
@@ -189,6 +189,8 @@ export function usage({ all = false } = {}) {
       "head graph-lineage-diff <project> --from <world-model-id> --to <world-model-id> [--limit <1-500>]",
       "head world-runtime <project> [--query <text>] [--runtime <name>] [--state <state>] [--kind <kind>] [--limit <1-500>]",
       "head checkpoint <project> --summary <text> [--next <text>]",
+      "head checkpoint-basis <project>",
+      "head checkpoint-sync <project> --input <head-direction.json>",
       "head session-restore <project> [--checkpoint <session-run-checkpoint-id>]",
       "head session-continue <project> --runtime <claude|codex|opencode> [--checkpoint <session-run-checkpoint-id>] [--binding-env <environment-name>]",
       "head compact-prepare <project> --input <recovery.json>",
@@ -591,6 +593,8 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
     approvedDecisions: [],
     openReviewIds: [],
   });
+  if (command === "checkpoint-basis") return inspectRecoveryCheckpointBasis({ root });
+  if (command === "checkpoint-sync") return syncRecoveryCheckpoint({ ...inputJson(options, "Recovery checkpoint sync"), root });
   if (command === "session-restore") return restoreSessionFromArtifacts({ root, checkpointId: options.checkpoint || null });
   if (command === "session-continue") {
     return continueSessionFromArtifacts({

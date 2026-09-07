@@ -30,7 +30,7 @@ import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
 import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
 import { recommendOperatingLane } from "./lib/operating-lane.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
-import { abortCompaction, continueCompaction, inspectCompaction, prepareCompaction, verifyCompaction } from "./lib/compaction-recovery.mjs";
+import { abortCompaction, continueCompaction, inspectCompaction, inspectRecoveryCheckpointBasis, prepareCompaction, syncRecoveryCheckpoint, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
@@ -681,6 +681,36 @@ export const tools = [
       required: ["project_root"],
       additionalProperties: false
     }
+  },
+  {
+    name: "head_checkpoint_basis",
+    description: "Read one non-persisted exact Project/Session/Run/plan/contract/Capsule/review and transition basis before HEAD derives recovery direction. This is P4 comparison evidence and writes no P2 direction.",
+    inputSchema: {
+      type: "object",
+      properties: { project_root: { type: "string", minLength: 1 } },
+      required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_checkpoint_sync",
+    description: "Publish or reuse one canonical P2 recovery checkpoint only when the exact read-only basis is current. Identical retries converge; stale direction conflicts; incomplete Run or open compaction transitions defer only this sync.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        expected_recovery_basis_id: { type: "string", pattern: "^recovery-basis-[a-f0-9]{24}$" },
+        purpose: { type: "string", minLength: 1 },
+        approved_decisions: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+        current_position: { type: "string", minLength: 1 },
+        next_expected_result: { type: "string", minLength: 1 },
+        open_review_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+      },
+      required: ["project_root", "expected_recovery_basis_id", "purpose", "approved_decisions", "current_position", "next_expected_result"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_session_restore",
@@ -1838,6 +1868,18 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
               ? readLineageArtifact({ root: args.project_root, artifactId: args.artifact_id })
               : name === "head_pending_review"
                 ? getPendingReviewContext({ root: args.project_root })
+                : name === "head_checkpoint_basis"
+                  ? inspectRecoveryCheckpointBasis({ root: args.project_root })
+                : name === "head_checkpoint_sync"
+                  ? syncRecoveryCheckpoint({
+                      root: args.project_root,
+                      expectedRecoveryBasisId: args.expected_recovery_basis_id,
+                      purpose: args.purpose,
+                      approvedDecisions: args.approved_decisions,
+                      currentPosition: args.current_position,
+                      nextExpectedResult: args.next_expected_result,
+                      openReviewIds: args.open_review_ids || [],
+                    })
                 : name === "head_session_restore"
                   ? restoreSessionFromArtifacts({ root: args.project_root, checkpointId: args.checkpoint_id || null })
                   : name === "head_session_continue"

@@ -73,6 +73,14 @@ Product Initiative review도 같은 non-amplification 규칙을 사용합니다.
 
 수락된 검토 결과는 명시적인 일회성 통합 작업으로만 복구에 연결될 수 있습니다. 호출자가 checkpoint 복구 필드를 제공하며, ResultPacket과 ReviewDecision은 검증된 참조일 뿐 암묵적인 필드 출처가 아닙니다. create-only P3 요청은 호출자가 제공한 해당 필드를 고정하고 P2 checkpoint는 요청의 ID와 input hash를 결속합니다. checkpoint를 직접 구성하여 이 transaction을 우회하거나 그와 다르게 만들 수 없습니다. 요청은 P3 provenance로 남으며, 그 결과 생기는 자체 완결적 P2 checkpoint를 복원하는 데 필요하지 않습니다. 결과 receipt는 P3로 남고, artifact-only Session restore는 정확한 P2 checkpoint와 현재 검증된 lineage에 대한 비지속적 P4 projection입니다.
 
+비지속 recovery checkpoint basis는 P4 비증폭 규칙을 따릅니다. Core가 오래됐거나 이미
+수렴한 게시 요청을 구분할 수 있도록 정확한 현재 P2 identity와 전이 상태만 결속합니다.
+자연어 복구 방향은 계속 provider HEAD만 도출하며, 해당 basis를 읽은 뒤 도출해야 합니다.
+basis의 존재, 바뀐 basis ID, Run result, open epoch 또는 운영 Host event는 checkpoint
+field의 출처가 될 수 없습니다. lock을 사용하는 sync는 명시적인 HEAD 방향으로 P2
+checkpoint 하나를 만들거나, 정확한 현재 byte를 재사용하거나, 미완료 전이를 연기하거나,
+오래된 상태를 거부할 수 있을 뿐입니다.
+
 선택적 live continuation도 같은 경계를 따릅니다. Core가 먼저 정확한 P2 checkpoint를 복원한 뒤, P5 WorkspaceHost adapter가 이미 실행 중인 endpoint 하나를 fresh-verify할 수 있습니다. 지속되지 않는 `ContinuationOutcome`은 `attached` 또는 공개된 새 논리 HEAD fallback을 보고합니다. 이는 SessionRestoreProjection을 변경하거나, provider identity를 지속하거나, 복구 권한을 주장할 수 없습니다.
 
 독립적으로 소유 가능한 worker 실행은 정확한 Run `ExecutionAuthorization` 위에 하나의 P3 `BoundedWorkerDispatch`를 기록합니다. P5 lease/process/wait 상태는 at-most-once 사용을 강제하고 진행 상황을 보고하지만, dispatch도 wait도 WholePlan을 변경하거나 ReviewDecision을 만들 수 없습니다. 그 결과인 P3 ResultPacket만 Fresh HEAD에 도달합니다. 새 P2 checkpoint를 쓰기 전에 명시적 P1 검토와 기존의 reviewed-result integration이 여전히 필요합니다.

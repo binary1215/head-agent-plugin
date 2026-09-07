@@ -132,6 +132,15 @@ resulting receipt remains P3, while artifact-only Session
 restore is a non-persisted P4 projection of the exact P2 checkpoint and current
 verified lineage.
 
+The non-persisted recovery checkpoint basis follows P4 non-amplification. It
+binds exact current P2 identities and transition state only so Core can detect a
+stale or convergent publish request. Provider HEAD remains the only component
+that derives natural-language recovery direction, and must do so after reading
+that basis. Basis existence, a changed basis ID, a Run result, an open epoch, or
+an operational Host event cannot supply a checkpoint field. The locked sync may
+only create one P2 checkpoint from explicit HEAD direction, reuse exact current
+bytes, defer an incomplete transition, or reject stale state.
+
 Optional live continuation follows the same boundary. Core restores the exact P2
 checkpoint first, then a P5 WorkspaceHost adapter may fresh-verify one already-
 running endpoint. The non-persisted `ContinuationOutcome` reports `attached` or a

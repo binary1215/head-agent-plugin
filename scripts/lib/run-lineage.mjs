@@ -20,10 +20,10 @@ function canonical(value) {
   if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
   return value;
 }
-const stateHash = (state) => crypto.createHash("sha256").update(JSON.stringify(canonical(state))).digest("hex");
+export const sessionStateHash = (state) => crypto.createHash("sha256").update(JSON.stringify(canonical(state))).digest("hex");
 
-function operationPointerHash(state) {
-  return stateHash(Object.fromEntries([
+export function operationPointerHash(state) {
+  return sessionStateHash(Object.fromEntries([
     "sessionId", "mode", "currentWholePlanId", "activeRunId", "activeExecutionContractId",
     "lastResultPacketId", "pendingReview", "lastReviewDecisionId", "lastReviewedRunId", "requiredPlanAction",
   ].map((key) => [key, state[key] ?? null])));
@@ -86,11 +86,11 @@ function prepareTransition({ run, inspected, kind, artifactId, changedAt, patch,
       fail("Run transition retry differs from its recorded input or identity.", "RUN_TRANSITION_CONFLICT");
     }
     const completedReplay = completedTransitionMatches(run, inspected.state, patch);
-    const hash = stateHash(inspected.state);
+    const hash = sessionStateHash(inspected.state);
     if (!completedReplay && hash !== existing.beforeSessionHash && hash !== existing.afterSessionHash) {
       fail("Session changed after the recorded Run transition.", "RUN_TRANSITION_SESSION_DRIFT");
     }
-    if (!completedReplay && stateHash({ ...inspected.state, ...patch, updatedAt: existing.changedAt }) !== existing.afterSessionHash) {
+    if (!completedReplay && sessionStateHash({ ...inspected.state, ...patch, updatedAt: existing.changedAt }) !== existing.afterSessionHash) {
       fail("Run transition target does not match its exact Session change.", "RUN_TRANSITION_CONFLICT");
     }
     if ((kind === "finish" && run.status === "awaiting_review" && run.completedAt !== existing.changedAt)
@@ -102,8 +102,8 @@ function prepareTransition({ run, inspected, kind, artifactId, changedAt, patch,
   const transition = {
     kind, artifactId, projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId, runId: run.runId, changedAt,
-    beforeSessionHash: stateHash(inspected.state),
-    afterSessionHash: stateHash({ ...inspected.state, ...patch, updatedAt: changedAt }),
+    beforeSessionHash: sessionStateHash(inspected.state),
+    afterSessionHash: sessionStateHash({ ...inspected.state, ...patch, updatedAt: changedAt }),
     afterOperationPointerHash: operationPointerHash({ ...inspected.state, ...patch }),
   };
   const prepared = { ...run, sessionTransition: transition };
@@ -113,13 +113,13 @@ function prepareTransition({ run, inspected, kind, artifactId, changedAt, patch,
 
 function commitSessionTransition({ root, inspected, run, patch }) {
   const transition = run.sessionTransition;
-  const currentHash = stateHash(inspected.state);
+  const currentHash = sessionStateHash(inspected.state);
   // A later explicit checkpoint may change only checkpoint metadata. Once the
   // exact operation is committed, acknowledge it without restoring older P2.
   if (completedTransitionMatches(run, inspected.state, patch)) return inspected.state;
   if (currentHash === transition.afterSessionHash) return inspected.state;
   const state = { ...inspected.state, ...patch, updatedAt: transition.changedAt };
-  if (currentHash !== transition.beforeSessionHash || stateHash(state) !== transition.afterSessionHash) {
+  if (currentHash !== transition.beforeSessionHash || sessionStateHash(state) !== transition.afterSessionHash) {
     fail("Run transition cannot overwrite changed Session state.", "RUN_TRANSITION_SESSION_DRIFT");
   }
   atomicWrite(stateFile(root), json(state));

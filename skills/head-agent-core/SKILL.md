@@ -274,6 +274,25 @@ attention, fail only the affected recovery operation and assign inspection to
 HEAD; never invent missing direction or ask the user to operate the recovery
 protocol.
 
+When durable recovery direction may have materially changed, HEAD first decides
+whether a checkpoint is useful. Relevant boundaries are: a user changes the
+current objective or constraint while a checkpoint already exists; a verified
+stage completes; work enters a failure or waiting state; the whole task
+completes; or a handoff, context-loss, or durable-Run boundary is approaching.
+Only when persistence is useful, call read-only `head_checkpoint_basis`. From
+that exact returned Project, Session,
+lineage, review, and transition basis, freshly derive the bounded recovery
+direction in the current provider HEAD, then call `head_checkpoint_sync`. Never
+resubmit old direction by replacing only `expected_recovery_basis_id`. Core can
+verify identity and concurrency, not whether natural-language reasoning was
+fresh. Handle `reused` and `created` silently; on `deferred` recover the named
+exact Run/compaction transition first; on `conflict` read a new basis and derive
+again. Do not ask the user to save, confirm, or fill this schema. Do not create a
+first checkpoint for short Observe work, every turn, or conversation entry, and
+do not call sync when the existing direction is already sufficient.
+General sync must not carry reviewed-Run integration fields; only the existing
+accepted-result integration operation owns that binding.
+
 Compaction is an intentional lossy provider operation. When the Host exposes a
 trusted lifecycle event, call `head_compaction_lifecycle_step`: provider HEAD
 authors current bounded direction only when an exact current checkpoint cannot

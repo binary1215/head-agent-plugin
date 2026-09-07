@@ -29,6 +29,15 @@ project 진입, compaction 후, provider 교체 후에 이를 자동 호출합�
 continuation token을 입력하지 않습니다. 명시적인 `session-restore`와
 `compact-*` command는 고급 진단 surface로 남습니다.
 
+이미 open 상태인 compaction epoch 바깥의 자연스러운 durable-work 또는 context-loss
+boundary에서 provider HEAD는 `head_checkpoint_basis` 다음에 `head_checkpoint_sync`를
+사용할 수 있습니다. 첫 호출은 비지속 읽기 전용 비교이고, 두 번째 호출은 기존 mutation
+lock 안에서 같은 정확한 Project/Session/Run 및 게시 상태를 다시 검증합니다. 상태와 방향이
+같으면 write 없이 현재 checkpoint를 재사용합니다. 오래된 방향은 충돌하고, 미완료 Run
+전이 또는 open epoch 중 바뀐 방향은 해당 sync만 연기합니다. 사용자에게 저장, 승인 또는
+protocol field 입력을 요구하지 않습니다. [`session-recovery.md`](session-recovery.md#최신성-gate를-적용한-checkpoint-동기화)를
+참조하세요.
+
 ## 상태 전이
 
 ```text
@@ -129,6 +138,11 @@ head compact-abort <project> --input <abort.json>
 수행하지 않습니다. 명시적 prepare는 HEAD가 작성한 P2 방향을 새 checkpoint로
 게시할 수 있지만, provider compaction과 continuation이 그 방향을 작성하거나
 대체하지는 않습니다.
+
+일반 checkpoint sync는 open epoch를 닫거나 abort하거나 대체하지 않습니다. 정확한
+checkpoint 재사용은 artifact와 pointer를 쓰지 않으며, 바뀐 방향은 기존 compaction
+전이가 자체 terminal path에 도달할 때까지 기다립니다. 따라서 운영 복구가 새로운 전역
+작업 gate가 되지 않습니다.
 
 Host 통합은 `head_conversation_enter`와 `head_compaction_lifecycle_step`도 사용하지만,
 이는 사용자 설정 절차가 아닙니다. adapter가 주입되지 않으면 lifecycle step은
