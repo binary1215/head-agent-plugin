@@ -21,10 +21,13 @@ every append advances it under the domain lock. A shorter event-and-marker tail
 therefore conflicts with the retained head instead of silently restoring free
 capacity.
 
-Provision, open, and every opened-capability use verify each existing directory
+Provisioning, opening, and every opened-capability use verify each existing directory
 prefix without following a symlink or junction and confirm its real path stays
-inside the configured Host root. This prevents an intermediate path from
-redirecting P5 state into the project.
+inside the configured Host root. Every journal append refreshes the verified
+tail and topology synchronously. A validator return also refreshes them before
+any generation, reservation, or lease consumption transition. This prevents an
+intermediate path from redirecting P5 state into the project during an awaited
+Host check.
 
 Policy is immutable and bounded: global concurrency is 1-64, per-capacity-key
 concurrency is 1-global, queue depth is 1-1024, and maximum wait is one second
@@ -57,9 +60,16 @@ or stale lineage before the callback leaves consumption at zero and removes the
 runtime owner lock.
 
 Because Host validation is asynchronous, the gate performs the exact lineage
-check again after the validator returns and immediately before consumption.
+and Host-storage check again after the validator returns and immediately before
+consumption.
 Queue cancellation, timeout, and validator-failure cleanup can terminate only
 the calling generation; an older caller cannot mutate a resumed generation.
+
+An authorization that is already consumed cannot create its first queue event.
+If an unreserved queued request becomes consumed or otherwise unavailable, the
+exact generation is cancelled before it can reserve capacity. A reserved
+restart with ambiguous cleanup remains unknown-blocking instead; this preserves
+uncertain prior work without letting an ineligible new request leak capacity.
 
 If consumption succeeds but the admission start marker cannot be committed,
 the provider operation is not started. The authorization remains consumed, the
@@ -82,7 +92,8 @@ never requeued.
 ## Status and authority
 
 `readWorkerAdmissionProjection(...)` is a non-persisted operational projection.
-It maps internal reservation/start-marker events to `capacity-reserved` and
+It maps internal `resumed` events back to the public `queued` state, maps
+reservation/start-marker events to `capacity-reserved`, and
 separates them from `executionEvidence`: verified authorization consumption,
 supervisor/provider start observation, and terminal evidence. Missing or
 damaged execution evidence is shown as unknown or unavailable, never inferred

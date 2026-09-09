@@ -432,19 +432,26 @@ test("consumption followed by admission marker failure stays consumed and makes 
   const f = await fixture(t);
   const created = f.provision("marker-failure");
   const markerDirectory = path.join(f.hostExpectationRoot, "worker-admission", "domains", created.admissionDomainId, "event-commits");
-  let sabotaged = false;
-  const host = f.open(created, async ({ phase }) => {
-    if (phase === "pre-consume" && !sabotaged) {
-      sabotaged = true;
-      fs.rmSync(markerDirectory, { recursive: true, force: true });
-      fs.writeFileSync(markerDirectory, "force marker commit failure\n");
-    }
-    return { status: "current" };
-  });
+  const host = f.open(created);
   const auth = f.authorization("codex");
   const dispatch = f.dispatch(auth);
   const reservation = await enqueueWorkerAdmission({ host, root: f.root, authorizationId: auth.authorizationId, dispatchId: dispatch.dispatchId });
-  await assert.rejects(() => withRuntimeExecutionLease({ projectRoot: f.root, authorization: auth, ownerFenceDigest: hash("uncertain-owner") }, async () => { throw new Error("provider must not run"); }, { preConsumeGate: reservation.preConsumeGate }), { code: "WORKER_ADMISSION_START_COMMIT_UNCERTAIN" });
+  const originalLinkSync = fs.linkSync;
+  let sabotaged = false;
+  fs.linkSync = (source, destination) => {
+    originalLinkSync(source, destination);
+    if (!sabotaged && path.basename(destination) === "consumption.json" && destination.includes(auth.authorizationId)) {
+      sabotaged = true;
+      fs.rmSync(markerDirectory, { recursive: true, force: true });
+      fs.writeFileSync(markerDirectory, "force marker commit failure after consumption\n");
+    }
+  };
+  try {
+    await assert.rejects(() => withRuntimeExecutionLease({ projectRoot: f.root, authorization: auth, ownerFenceDigest: hash("uncertain-owner") }, async () => { throw new Error("provider must not run"); }, { preConsumeGate: reservation.preConsumeGate }), { code: "WORKER_ADMISSION_START_COMMIT_UNCERTAIN" });
+  } finally {
+    fs.linkSync = originalLinkSync;
+  }
+  assert.equal(sabotaged, true);
   const lease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId });
   assert.equal(lease.status, "consumed-released");
   assert.equal(lease.release.operationStatus, "threw");
@@ -795,7 +802,7 @@ test("an old queued caller cannot cancel a resumed generation", async (t) => {
   await assert.rejects(() => oldCall, { code: "WORKER_ADMISSION_CANCELLED" });
   await waitForCondition(() => readWorkerAdmissionProjection(args).generation === 2);
   const beforeNewAbort = readWorkerAdmissionProjection(args);
-  assert.notEqual(beforeNewAbort.state, "cancelled");
+  assert.equal(beforeNewAbort.state, "queued");
   assert.equal(beforeNewAbort.generation, 2);
   newController.abort();
   await assert.rejects(() => resumedCall, { code: "WORKER_ADMISSION_CANCELLED" });
@@ -937,4 +944,154 @@ test("consumed release without descendant cleanup proof retains capacity", async
   controller.abort();
   await assert.rejects(() => next, { code: "WORKER_ADMISSION_CANCELLED" });
   assert.equal(readWorkerAdmissionProjection({ host, root: f.root, authorizationId: authorization.authorizationId }).state, "capacity-reserved");
+});
+
+test("storage redirected during final Host validation is rejected before consumption", async (t) => {
+  const f = await fixture(t);
+  const created = f.provision("validation-path-swap");
+  let enteredValidation;
+  let releaseValidation;
+  const validationEntered = new Promise((resolve) => { enteredValidation = resolve; });
+  const validationRelease = new Promise((resolve) => { releaseValidation = resolve; });
+  const host = f.open(created, async ({ phase }) => {
+    if (phase === "pre-consume") {
+      enteredValidation();
+      await validationRelease;
+    }
+    return { status: "current" };
+  });
+  const authorization = f.authorization("codex");
+  const reservation = await enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: authorization.authorizationId,
+    dispatchId: f.dispatch(authorization).dispatchId,
+  });
+  let operationCalls = 0;
+  const execution = withRuntimeExecutionLease({
+    projectRoot: f.root,
+    authorization,
+    ownerFenceDigest: hash("validation-path-swap-owner"),
+  }, async () => { operationCalls += 1; }, { preConsumeGate: reservation.preConsumeGate });
+  await validationEntered;
+  const eventRoot = path.join(f.admissionOperationalRoot, "worker-admission", "domains", created.admissionDomainId, "events");
+  const redirected = path.join(f.root, ".head", "redirected-admission-events");
+  fs.renameSync(eventRoot, redirected);
+  fs.symlinkSync(redirected, eventRoot, process.platform === "win32" ? "junction" : "dir");
+  releaseValidation();
+  await assert.rejects(() => execution, { code: "WORKER_ADMISSION_PATH_ESCAPE" });
+  const wroteRedirectedStart = fs.existsSync(path.join(redirected, "0000000003.json"));
+  const unavailable = readWorkerAdmissionProjection({ host, root: f.root, authorizationId: authorization.authorizationId });
+  fs.unlinkSync(eventRoot);
+  fs.renameSync(redirected, eventRoot);
+  assert.equal(wroteRedirectedStart, false);
+  assert.equal(unavailable.availability, "unavailable");
+  assert.equal(unavailable.state, "unknown-blocking");
+  assert.equal(operationCalls, 0);
+  assert.equal(inspectRuntimeExecutionLease({
+    projectRoot: f.root,
+    projectId: authorization.projectId,
+    authorizationId: authorization.authorizationId,
+  }).singleUseConsumed, false);
+  await reservation.finalize({ outcomeCode: "test-release" });
+});
+
+test("an authorization consumed before first admission creates no request or capacity leak", async (t) => {
+  const f = await fixture(t);
+  const authorization = f.authorization("codex");
+  const dispatch = f.dispatch(authorization);
+  await withRuntimeExecutionLease({
+    projectRoot: f.root,
+    authorization,
+    ownerFenceDigest: hash("consumed-before-admission-owner"),
+  }, async () => ({}));
+  const created = f.provision("consumed-before-admission", {
+    globalLimit: 1,
+    perKeyLimit: 1,
+    default: "hold-for-host-confirmation",
+    maxQueued: 4,
+    maxWaitMs: 1_000,
+  });
+  const host = f.open(created);
+  await assert.rejects(() => enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: authorization.authorizationId,
+    dispatchId: dispatch.dispatchId,
+  }), { code: "WORKER_ADMISSION_AUTHORIZATION_ALREADY_CONSUMED" });
+  assert.equal(readWorkerAdmissionProjection({
+    host,
+    root: f.root,
+    authorizationId: authorization.authorizationId,
+  }).state, "not-requested");
+  const eventRoot = path.join(f.admissionOperationalRoot, "worker-admission", "domains", created.admissionDomainId, "events");
+  assert.equal(fs.readdirSync(eventRoot).length, 0);
+  const nextAuthorization = f.authorization("codex");
+  const next = await enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: nextAuthorization.authorizationId,
+    dispatchId: f.dispatch(nextAuthorization, "developer").dispatchId,
+  });
+  await next.finalize({ outcomeCode: "test-release" });
+});
+
+test("external consumption during queued resume creates no new generation or reservation", async (t) => {
+  const f = await fixture(t);
+  const created = f.provision("consumed-during-resume", {
+    globalLimit: 1,
+    perKeyLimit: 1,
+    default: "hold-for-host-confirmation",
+    maxQueued: 4,
+    maxWaitMs: 5_000,
+  });
+  let enteredResume;
+  let releaseResume;
+  const resumeEntered = new Promise((resolve) => { enteredResume = resolve; });
+  const resumeRelease = new Promise((resolve) => { releaseResume = resolve; });
+  const host = f.open(created, async ({ phase }) => {
+    if (phase === "resume") {
+      enteredResume();
+      await resumeRelease;
+      return { status: "current", resume: true };
+    }
+    return { status: "current" };
+  });
+  const holderAuthorization = f.authorization("codex", "fixture/resume-capacity");
+  const holder = await enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: holderAuthorization.authorizationId,
+    dispatchId: f.dispatch(holderAuthorization).dispatchId,
+  });
+  const authorization = f.authorization("codex", "fixture/resume-capacity");
+  const dispatch = f.dispatch(authorization, "developer");
+  const args = { host, root: f.root, authorizationId: authorization.authorizationId, dispatchId: dispatch.dispatchId };
+  const original = enqueueWorkerAdmission(args);
+  await waitForCondition(() => readWorkerAdmissionProjection(args).state === "queued");
+  const resumed = enqueueWorkerAdmission(args);
+  await resumeEntered;
+  await withRuntimeExecutionLease({
+    projectRoot: f.root,
+    authorization,
+    ownerFenceDigest: hash("consumed-during-resume-owner"),
+  }, async () => ({}));
+  releaseResume();
+  await assert.rejects(() => resumed, { code: "WORKER_ADMISSION_AUTHORIZATION_ALREADY_CONSUMED" });
+  await assert.rejects(() => original, { code: "WORKER_ADMISSION_STALE_REQUEST" });
+  const eventRoot = path.join(f.admissionOperationalRoot, "worker-admission", "domains", created.admissionDomainId, "events");
+  const requestEvents = fs.readdirSync(eventRoot).sort()
+    .map((name) => JSON.parse(fs.readFileSync(path.join(eventRoot, name), "utf8")))
+    .filter((event) => event.authorizationId === authorization.authorizationId);
+  assert.deepEqual(requestEvents.map((event) => event.eventType), ["queued", "cancelled"]);
+  assert.equal(readWorkerAdmissionProjection(args).state, "cancelled");
+  await holder.finalize({ outcomeCode: "test-release" });
+  const nextAuthorization = f.authorization("codex", "fixture/resume-capacity");
+  const next = await enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: nextAuthorization.authorizationId,
+    dispatchId: f.dispatch(nextAuthorization, "reviewer").dispatchId,
+  });
+  await next.finalize({ outcomeCode: "test-release" });
 });

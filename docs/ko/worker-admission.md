@@ -20,8 +20,11 @@ event-commit marker 하나라도 없으면 해당 도메인은 unavailable입니
 provision할 수 없습니다.
 provision, open 및 열린 capability의 모든 사용은 기존 directory prefix를
 symlink나 junction을 따라가지 않고 검증하며, 실제 경로가 설정된 Host root
-안에 남는지 확인합니다. 따라서 중간 경로가 P5 상태를 프로젝트 안으로
-redirect하는 것도 허용하지 않습니다.
+안에 남는지 확인합니다. 모든 journal append는 검증된 tail과 경로 구조를
+동기적으로 다시 읽고, validator가 반환된 뒤에도 generation, reservation,
+lease consumption 전이를 쓰기 전에 다시 확인합니다. 따라서 Host 검증을
+기다리는 동안 중간 경로가 P5 상태를 프로젝트 안으로 redirect하는 것도
+허용하지 않습니다.
 expectation tree에는 genesis부터 권위가 없는 journal head도 항상 존재하며,
 domain lock 안의 append마다 전진합니다. 따라서 event와 marker tail을 함께
 잃어도 남은 head와 충돌하므로 이를 여유 capacity로 복원하지 않습니다.
@@ -54,10 +57,17 @@ authorization, dispatch, request generation, reservation fence를 다시
 consumption receipt를 쓸 수 있습니다. callback 전 취소나 stale lineage는
 소비를 0으로 유지하고 runtime owner lock을 제거합니다.
 
-Host 검증은 비동기이므로 validator가 반환된 뒤 소비 직전에 정확한 계보를
-다시 검사합니다. queue 취소, timeout, validator 실패 정리는 호출한 정확한
-generation만 terminal로 만들 수 있으며 이전 호출이 재개된 generation을
-변경할 수 없습니다.
+Host 검증은 비동기이므로 validator가 반환된 뒤 소비 직전에 정확한 계보와
+Host 저장 경로를 다시 검사합니다. queue 취소, timeout, validator 실패 정리는
+호출한 정확한 generation만 terminal로 만들 수 있으며 이전 호출이 재개된
+generation을 변경할 수 없습니다.
+
+이미 소비된 authorization은 최초 queue event도 만들 수 없습니다. 아직
+reserve되지 않은 queued 요청이 외부에서 소비되거나 사용할 수 없게 되면
+정확한 generation을 취소하고 capacity를 예약하지 않습니다. 반면 cleanup이
+불명확한 기존 reserved 재시작은 unknown-blocking으로 유지합니다. 이 구분은
+불확실한 기존 작업을 보존하면서 실행 불가능한 새 요청의 capacity 누수를
+막습니다.
 
 소비는 성공했지만 admission start marker commit이 실패하면 provider
 operation은 시작하지 않습니다. authorization은 소비된 상태로 남고 기존
@@ -80,7 +90,8 @@ generation으로 기록합니다. reserved 요청은 단순 resume 주장만으�
 ## 상태와 권위
 
 `readWorkerAdmissionProjection(...)`은 비지속 운영 projection입니다.
-내부 reservation/start-marker event는 `capacity-reserved`로 투영하며,
+내부 `resumed` event는 공개 `queued` 상태로 되돌려 투영하고,
+reservation/start-marker event는 `capacity-reserved`로 투영하며,
 authorization 소비, supervisor/provider 시작 관측, terminal 근거는 별도
 `executionEvidence`로 표시합니다. 실행 근거가 없거나 손상된 경우 reservation
 상태로 추정하지 않고 unknown 또는 unavailable을 공개합니다.

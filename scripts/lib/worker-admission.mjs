@@ -567,7 +567,18 @@ function readJournal(state) {
   return { events, lastHash: previousHash };
 }
 
+function refreshJournalLocked(state, journal) {
+  const current = readJournal(state);
+  if (current.events.length !== journal.events.length || current.lastHash !== journal.lastHash) {
+    fail("Worker admission journal changed during a locked operation.", "WORKER_ADMISSION_JOURNAL_UNAVAILABLE");
+  }
+  journal.events = current.events;
+  journal.lastHash = current.lastHash;
+  return journal;
+}
+
 function appendEventLocked(state, journal, input) {
+  refreshJournalLocked(state, journal);
   const sequence = journal.events.length + 1;
   const event = eventDocument(state, journal.lastHash, sequence, input);
   writeExclusive(eventFile(state.paths, sequence), event);
@@ -689,6 +700,33 @@ function queuedRequest(request) {
   return request.state === "queued" || request.state === "resumed";
 }
 
+function inspectAdmissionLease(target) {
+  return inspectRuntimeExecutionLease({
+    projectRoot: target.inspected.project.projectRoot,
+    projectId: target.authorization.projectId,
+    authorizationId: target.authorization.authorizationId,
+  });
+}
+
+function requireAvailableAdmissionLease(target) {
+  const lease = inspectAdmissionLease(target);
+  if (lease.singleUseConsumed) {
+    fail("Worker admission cannot accept an authorization that is already consumed.", "WORKER_ADMISSION_AUTHORIZATION_ALREADY_CONSUMED");
+  }
+  if (lease.status !== "available") {
+    fail("Worker admission requires an available runtime execution lease.", "WORKER_ADMISSION_AUTHORIZATION_UNAVAILABLE");
+  }
+  return lease;
+}
+
+function requireUnconsumedAdmissionLease(target) {
+  const lease = inspectAdmissionLease(target);
+  if (lease.singleUseConsumed) {
+    fail("Worker admission authorization was consumed before admission committed its start.", "WORKER_ADMISSION_AUTHORIZATION_ALREADY_CONSUMED");
+  }
+  return lease;
+}
+
 function expireQueuedLocked(state, journal, requests, now = Date.now()) {
   for (const request of requests.values()) {
     if (queuedRequest(request) && (!request.deadlineAt || Date.parse(request.deadlineAt) <= now)) {
@@ -711,6 +749,31 @@ function appendReservedCancellationIfExact(state, journal, { requestId, generati
     || request.ownerFenceDigest !== ownerFenceDigest) return false;
   appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode } });
   return true;
+}
+
+function requireRequestLeaseAvailable(state, journal, request, target) {
+  let lease;
+  try {
+    lease = requireAvailableAdmissionLease(target);
+  } catch (error) {
+    if (request.state === "reserved") {
+      appendEventLocked(state, journal, {
+        ...request,
+        eventType: "unknown-blocking",
+        details: { outcomeCode: "reserved-restart-cleanup-unproven" },
+      });
+      fail("Reserved admission cannot resume without definitive process-cleanup evidence.", "WORKER_ADMISSION_UNKNOWN_BLOCKING");
+    }
+    appendQueuedTerminalIfExact(state, journal, {
+      requestId: request.requestId,
+      generation: request.generation,
+      eventType: "cancelled",
+      outcomeCode: error.code === "WORKER_ADMISSION_AUTHORIZATION_ALREADY_CONSUMED"
+        ? "authorization-already-consumed" : "authorization-lease-unavailable",
+    });
+    throw error;
+  }
+  return lease;
 }
 
 function verifyValidatorResult(value) {
@@ -789,7 +852,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
 
   await withDomainLock(state, async (journal) => {
     const requests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
-    const existing = requests.get(requestId);
+    let existing = requests.get(requestId);
     if (existing) {
       if (existing.authorizationId !== authorizationId || existing.dispatchId !== dispatchId || existing.capacityKey !== key) {
         fail("Worker admission request identity conflicts with existing history.", "WORKER_ADMISSION_REQUEST_CONFLICT");
@@ -797,25 +860,22 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
       if (TERMINAL_STATES.has(existing.state) || existing.state === "start-committed" || existing.state === "unknown-blocking") {
         fail("Worker admission request cannot be replayed after a terminal or consumed state.", "WORKER_ADMISSION_REQUEST_REPLAY_REJECTED");
       }
-      if (existing.state === "reserved") {
-        const lease = inspectRuntimeExecutionLease({
-          projectRoot: target.inspected.project.projectRoot,
-          projectId: target.authorization.projectId,
-          authorizationId,
-        });
-        if (lease.status !== "available" || lease.singleUseConsumed) {
-          appendEventLocked(state, journal, {
-            ...existing,
-            eventType: "unknown-blocking",
-            details: { outcomeCode: "reserved-restart-cleanup-unproven" },
-          });
-          fail("Reserved admission cannot resume without definitive process-cleanup evidence.", "WORKER_ADMISSION_UNKNOWN_BLOCKING");
-        }
-      }
+      requireRequestLeaseAvailable(state, journal, existing, target);
       const validation = await hostValidate(state, { phase: "resume", root: target.inspected.project.projectRoot, authorizationId, dispatchId, requestId, generation: existing.generation });
       if (!validation.resume || validation.status !== "current") {
         fail("Restarted admission remains held until explicit Host validation.", "WORKER_ADMISSION_RESUME_CONFIRMATION_REQUIRED");
       }
+      refreshJournalLocked(state, journal);
+      existing = reduceJournal(journal.events).get(requestId);
+      if (!existing || !new Set(["queued", "resumed", "reserved"]).has(existing.state)) {
+        fail("Worker admission request changed during Host resume validation.", "WORKER_ADMISSION_STALE_REQUEST");
+      }
+      const resumedTarget = currentTarget(root, authorizationId, dispatchId);
+      if (resumedTarget.authorization.authorizationHash !== target.authorization.authorizationHash
+        || resumedTarget.dispatch.dispatchHash !== target.dispatch.dispatchHash) {
+        fail("Worker admission target changed during Host resume validation.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
+      }
+      requireRequestLeaseAvailable(state, journal, existing, resumedTarget);
       generation = existing.generation + 1;
       appendEventLocked(state, journal, {
         eventType: "resumed", requestId, authorizationId, dispatchId, capacityKey: key, generation,
@@ -823,6 +883,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
       });
       return;
     }
+    requireAvailableAdmissionLease(target);
     if ([...requests.values()].filter(queuedRequest).length >= state.metadata.policy.maxQueued) {
       fail("Worker admission queue capacity is exceeded.", "WORKER_ADMISSION_QUEUE_CAPACITY_EXCEEDED");
     }
@@ -851,8 +912,8 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
       fail("Worker admission expired before reservation.", "WORKER_ADMISSION_EXPIRED");
     }
     reserved = await withDomainLock(state, async (journal) => {
-      const requests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
-      const request = requests.get(requestId);
+      let requests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
+      let request = requests.get(requestId);
       if (request?.state === "expired" && request.generation === generation) {
         fail("Worker admission expired before reservation.", "WORKER_ADMISSION_EXPIRED");
       }
@@ -860,10 +921,11 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         fail("Worker admission queue state changed unexpectedly.", "WORKER_ADMISSION_STALE_REQUEST");
       }
       try {
-        const current = currentTarget(root, authorizationId, dispatchId);
+        let current = currentTarget(root, authorizationId, dispatchId);
         if (current.authorization.authorizationHash !== target.authorization.authorizationHash) {
           fail("Worker admission authorization changed while queued.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
         }
+        requireRequestLeaseAvailable(state, journal, request, current);
         if (mode === "detached") {
           const validation = await hostValidate(state, { phase: "queued", root: current.inspected.project.projectRoot, authorizationId, dispatchId, requestId, generation });
           if (validation.status !== "current") {
@@ -871,6 +933,18 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
             appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode: `host-${validation.status}` } });
             fail("Detached worker admission was cancelled by Host validation.", "WORKER_ADMISSION_CANCELLED");
           }
+          refreshJournalLocked(state, journal);
+          requests = reduceJournal(journal.events);
+          request = requests.get(requestId);
+          if (!request || !queuedRequest(request) || request.generation !== generation) {
+            fail("Worker admission queue changed during Host validation.", "WORKER_ADMISSION_STALE_REQUEST");
+          }
+          current = currentTarget(root, authorizationId, dispatchId);
+          if (current.authorization.authorizationHash !== target.authorization.authorizationHash
+            || current.dispatch.dispatchHash !== target.dispatch.dispatchHash) {
+            fail("Worker admission target changed during queued Host validation.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
+          }
+          requireRequestLeaseAvailable(state, journal, request, current);
         }
       } catch (error) {
         try {
@@ -903,14 +977,15 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
     // Lease owner fences and admission fences are deliberately distinct.
     if (owner.ownerFenceDigest === reserved.ownerFenceDigest) fail("Admission fence cannot replace runtime owner fence.", "WORKER_ADMISSION_FENCE_ALIAS_REJECTED");
     await withDomainLock(state, async (journal) => {
-      const request = reduceJournal(journal.events).get(requestId);
+      let request = reduceJournal(journal.events).get(requestId);
       if (!request || request.state !== "reserved" || request.generation !== generation
         || request.ownerFenceDigest !== reserved.ownerFenceDigest || request.authorizationId !== authorizationId
         || request.dispatchId !== dispatchId) {
         fail("Worker admission reservation is stale or tampered.", "WORKER_ADMISSION_RESERVATION_CONFLICT");
       }
       try {
-        currentTarget(root, authorizationId, dispatchId);
+        const initial = currentTarget(root, authorizationId, dispatchId);
+        requireUnconsumedAdmissionLease(initial);
         if (signal?.aborted) fail("Worker admission was cancelled before lease consumption.", "WORKER_ADMISSION_CANCELLED");
         const validation = state.preStartValidate
           ? await hostValidate(state, { phase: "pre-consume", root: path.resolve(root), authorizationId, dispatchId, requestId, generation })
@@ -919,11 +994,19 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         if (validation.status !== "current") {
           fail("Worker admission final Host validation did not prove the request current.", validation.status === "unavailable" ? "WORKER_ADMISSION_VALIDATION_UNAVAILABLE" : "WORKER_ADMISSION_CANCELLED");
         }
+        refreshJournalLocked(state, journal);
+        request = reduceJournal(journal.events).get(requestId);
+        if (!request || request.state !== "reserved" || request.generation !== generation
+          || request.ownerFenceDigest !== reserved.ownerFenceDigest || request.authorizationId !== authorizationId
+          || request.dispatchId !== dispatchId) {
+          fail("Worker admission reservation changed during final Host validation.", "WORKER_ADMISSION_RESERVATION_CONFLICT");
+        }
         const current = currentTarget(root, authorizationId, dispatchId);
         if (current.authorization.authorizationHash !== target.authorization.authorizationHash
           || current.dispatch.dispatchHash !== target.dispatch.dispatchHash) {
           fail("Worker admission target changed during final Host validation.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
         }
+        requireUnconsumedAdmissionLease(current);
       } catch (error) {
         const outcomeCode = error.code === "WORKER_ADMISSION_CANCELLED"
           ? "attached-signal-aborted" : "pre-consume-validation-failed";
@@ -985,6 +1068,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
 
 function publicAdmissionState(request) {
   if (!request) return "not-requested";
+  if (request.state === "queued" || request.state === "resumed") return "queued";
   if (request.state === "reserved" || request.state === "start-committed") return "capacity-reserved";
   return request.state;
 }
