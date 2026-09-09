@@ -18,6 +18,10 @@ append-only event journal, 별도의 Host expectation intent/commit chain은 모
 event-commit marker 하나라도 없으면 해당 도메인은 unavailable입니다. 누락을
 빈 queue나 여유 capacity로 해석하지 않습니다. 같은 domain ID는 다시
 provision할 수 없습니다.
+provision, open 및 열린 capability의 모든 사용은 기존 directory prefix를
+symlink나 junction을 따라가지 않고 검증하며, 실제 경로가 설정된 Host root
+안에 남는지 확인합니다. 따라서 중간 경로가 P5 상태를 프로젝트 안으로
+redirect하는 것도 허용하지 않습니다.
 expectation tree에는 genesis부터 권위가 없는 journal head도 항상 존재하며,
 domain lock 안의 append마다 전진합니다. 따라서 event와 marker tail을 함께
 잃어도 남은 head와 충돌하므로 이를 여유 capacity로 복원하지 않습니다.
@@ -50,14 +54,21 @@ authorization, dispatch, request generation, reservation fence를 다시
 consumption receipt를 쓸 수 있습니다. callback 전 취소나 stale lineage는
 소비를 0으로 유지하고 runtime owner lock을 제거합니다.
 
+Host 검증은 비동기이므로 validator가 반환된 뒤 소비 직전에 정확한 계보를
+다시 검사합니다. queue 취소, timeout, validator 실패 정리는 호출한 정확한
+generation만 terminal로 만들 수 있으며 이전 호출이 재개된 generation을
+변경할 수 없습니다.
+
 소비는 성공했지만 admission start marker commit이 실패하면 provider
 operation은 시작하지 않습니다. authorization은 소비된 상태로 남고 기존
 lease 오류/release 정리를 수행하며, 영향받은 admission domain은 unavailable
 또는 unknown-blocking으로 표시됩니다. 이 상태를 replay하거나 여유 capacity로
 계산하지 않습니다.
 
-capacity는 확정적인 runtime lease 정리 증거가 있거나 소비 전 실패가
-입증된 뒤에만 반환합니다. 같은 finalize 재시도는 수렴하고 다른 결과나
+capacity는 검증된 정확한 runtime result가 no-child 실행을 확정하거나
+provider 종료 관측과 소유한 process tree 정리를 모두 증명했을 때, 또는
+소비 전 실패가 입증된 뒤에만 반환합니다. runtime owner lock 해제만으로는
+자손 정리 증거가 되지 않습니다. 같은 finalize 재시도는 수렴하고 다른 결과나
 stale finalize는 실패합니다. 재시작한 queued 요청은 Host validator가
 `current`와 `resume`을 모두 명시해야 하며 원래 deadline을 유지한 새
 generation으로 기록합니다. reserved 요청은 단순 resume 주장만으로 풀지
@@ -97,9 +108,10 @@ node --test test/worker-admission.test.mjs
 npm run verify:runtime-lifecycle
 ```
 
-targeted test는 정확한 provisioning/open, paired-tail 유실과 의미 전이
-tamper fail-closed, validator 대기 구간을 포함한 소비 0회 취소, one-shot
-callback 폐기, available lease의 안전한 resume와 claimed restart 차단, 같은
-key FIFO, 독립 domain·process 경합,
-세 runtime adapter의 guard 경로, 소비 전 target resolution 중단, 선택적 wave
-detail, 소비 후 event marker 실패를 검증합니다.
+targeted test는 정확한 provisioning/open, 중간 link 거부, paired-tail 유실과
+의미 전이 tamper fail-closed, 최종 계보 drift, generation-fenced 취소·만료,
+throwing detached validation 정리, validator 대기 구간을 포함한 소비 0회
+취소, one-shot callback 폐기, available lease의 안전한 resume와 claimed
+restart 차단, 같은 key FIFO, 독립 domain·process 경합, 세 runtime adapter의
+guard 경로, 정상 target resolution 뒤 abort, 선택적 wave detail, 소비 후
+event marker 실패, 불확실한 descendant cleanup의 capacity 유지를 검증합니다.

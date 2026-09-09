@@ -8,10 +8,15 @@ import test from "node:test";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
-import { startRun } from "../scripts/lib/run-lineage.mjs";
+import { finishRun, startRun } from "../scripts/lib/run-lineage.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "../scripts/lib/runtime-protocol-evidence.mjs";
-import { buildRuntimeInvocationAuthorization } from "../scripts/lib/runtime-invocation-lifecycle.mjs";
+import {
+  buildRuntimeInvocationAuthorization,
+  buildRuntimeInvocationLifecycleReceipt,
+  buildRuntimeResultPacketDraft,
+} from "../scripts/lib/runtime-invocation-lifecycle.mjs";
+import { persistRuntimeInvocationRecord } from "../scripts/lib/runtime-invocation-record.mjs";
 import {
   RUNTIME_OPERATIONAL_STATE_ENV,
   createRuntimePreConsumeGateCapability,
@@ -255,7 +260,33 @@ test("worker admission cancellation and branded callback preserve zero or exactl
     terminalEvidence: "none",
     diagnosticCode: null,
   });
-  await withRuntimeExecutionLease({ projectRoot: f.root, authorization: auth3, ownerFenceDigest: hash("finalize-owner") }, async () => ({}), { preConsumeGate: reservation3.preConsumeGate });
+  const ownerFenceDigest = hash("finalize-owner");
+  const leased3 = await withRuntimeExecutionLease({ projectRoot: f.root, authorization: auth3, ownerFenceDigest }, async ({ consumption }) => ({
+    receipt: buildRuntimeInvocationLifecycleReceipt({
+      authorization: auth3,
+      events: [],
+      consumption,
+      status: "completed",
+      exitCode: 0,
+      signal: "",
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      stdoutDigest: hash(""),
+      stderrDigest: hash(""),
+      callerFenceDigest: ownerFenceDigest,
+      childFenceDigest: hash("finalize-child"),
+      childStarted: false,
+      childExitObserved: false,
+      terminationRequested: false,
+      projectFenceValidated: true,
+      inputDigestObserved: auth3.executionInput.digest,
+      noDescendantFixture: true,
+      descendantTreeOwnershipValidated: false,
+      providerMode: "codex-protocol-fixture",
+    }),
+  }), { preConsumeGate: reservation3.preConsumeGate });
+  const draft3 = buildRuntimeResultPacketDraft({ authorization: auth3, receipt: leased3.result.receipt, leaseRelease: leased3.release });
+  persistRuntimeInvocationRecord({ projectRoot: f.root, authorization: auth3, events: [], receipt: leased3.result.receipt, draft: draft3 });
   assert.equal((await reservation3.finalize({ outcomeCode: "completed" })).status, "released");
   assert.equal((await reservation3.finalize({ outcomeCode: "completed" })).status, "existing");
   await assert.rejects(() => reservation3.finalize({ outcomeCode: "failed" }), { code: "WORKER_ADMISSION_FINALIZE_CONFLICT" });
@@ -360,6 +391,40 @@ test("all provider adapters honor final admission cancellation before spawn and 
   const targetAbortLease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: targetAbortAuthorization.projectId, authorizationId: targetAbortAuthorization.authorizationId });
   assert.equal(targetAbortLease.singleUseConsumed, false);
   assert.equal(readWorkerAdmissionProjection({ host: targetAbortHost, root: f.root, authorizationId: targetAbortAuthorization.authorizationId }).state, "released");
+  assert.equal(spawnCalls, 0);
+
+  const signalAbortDomain = f.provision("target-signal-abort");
+  const signalAbortHost = f.open(signalAbortDomain);
+  const signalAbortAuthorization = f.authorization("codex");
+  f.dispatch(signalAbortAuthorization, "coder");
+  const signalController = new AbortController();
+  const codexObservation = f.protocolEvidence.observations.find((item) => item.runtime === "codex").executable;
+  await assert.rejects(() => executeBoundedWorkerDispatch({
+    root: f.root,
+    authorizationId: signalAbortAuthorization.authorizationId,
+    role: "coder",
+    admissionHost: signalAbortHost,
+    execution: {
+      signal: signalController.signal,
+      protocolEvidence: f.protocolEvidence,
+      projectBinding: f.projectBinding,
+      evidenceMode: "protocol-fixture",
+      providerArguments: ["--never-spawn"],
+      targetResolver: () => {
+        signalController.abort();
+        return { executablePath: process.execPath, observation: codexObservation };
+      },
+      supervisorSelection: Object.freeze({ testOnlyNoSpawn: true }),
+      spawnImplementation: () => { spawnCalls += 1; throw new Error("must not spawn"); },
+    },
+  }), { code: "WORKER_ADMISSION_CANCELLED" });
+  const signalAbortLease = inspectRuntimeExecutionLease({
+    projectRoot: f.root,
+    projectId: signalAbortAuthorization.projectId,
+    authorizationId: signalAbortAuthorization.authorizationId,
+  });
+  assert.equal(signalAbortLease.singleUseConsumed, false);
+  assert.equal(readWorkerAdmissionProjection({ host: signalAbortHost, root: f.root, authorizationId: signalAbortAuthorization.authorizationId }).state, "cancelled");
   assert.equal(spawnCalls, 0);
 });
 
@@ -650,4 +715,226 @@ test("queued restart requires explicit Host resume and preserves the original de
   const reservation = await resumed;
   assert.equal(reservation.generation, 2);
   await reservation.finalize({ outcomeCode: "test-release" });
+});
+
+test("final pre-consume guard rejects a Run closed during Host validation", async (t) => {
+  const f = await fixture(t);
+  const created = f.provision("lineage-window");
+  let enteredValidation;
+  let releaseValidation;
+  const validationEntered = new Promise((resolve) => { enteredValidation = resolve; });
+  const validationRelease = new Promise((resolve) => { releaseValidation = resolve; });
+  const host = f.open(created, async ({ phase }) => {
+    if (phase === "pre-consume") {
+      enteredValidation();
+      await validationRelease;
+    }
+    return { status: "current" };
+  });
+  const authorization = f.authorization("codex");
+  const dispatch = f.dispatch(authorization);
+  const reservation = await enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: authorization.authorizationId,
+    dispatchId: dispatch.dispatchId,
+  });
+  let operationCalls = 0;
+  const execution = withRuntimeExecutionLease({
+    projectRoot: f.root,
+    authorization,
+    ownerFenceDigest: hash("lineage-window-owner"),
+  }, async () => { operationCalls += 1; }, { preConsumeGate: reservation.preConsumeGate });
+  await validationEntered;
+  finishRun({
+    root: f.root,
+    outcome: "Close the test Run during pending Host validation",
+    evidence: [{ uri: "fixture", digest: hash("lineage-window-evidence") }],
+    verification: [{ check: "fixture transition", status: "passed" }],
+  });
+  releaseValidation();
+  await assert.rejects(() => execution, { code: "WORKER_ADMISSION_LINEAGE_CONFLICT" });
+  const lease = inspectRuntimeExecutionLease({
+    projectRoot: f.root,
+    projectId: authorization.projectId,
+    authorizationId: authorization.authorizationId,
+  });
+  assert.equal(lease.singleUseConsumed, false);
+  assert.equal(operationCalls, 0);
+  assert.equal((await reservation.finalize({ outcomeCode: "test-cleanup" })).status, "existing-terminal");
+});
+
+test("an old queued caller cannot cancel a resumed generation", async (t) => {
+  const f = await fixture(t);
+  const created = f.provision("generation-fence", {
+    globalLimit: 1,
+    perKeyLimit: 1,
+    default: "hold-for-host-confirmation",
+    maxQueued: 4,
+    maxWaitMs: 5_000,
+  });
+  const oldController = new AbortController();
+  const newController = new AbortController();
+  const host = f.open(created, async ({ phase }) => {
+    if (phase === "resume") oldController.abort();
+    return { status: "current", resume: phase === "resume" };
+  });
+  const holderAuthorization = f.authorization("codex", "fixture/holder");
+  const holder = await enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: holderAuthorization.authorizationId,
+    dispatchId: f.dispatch(holderAuthorization).dispatchId,
+  });
+  const authorization = f.authorization("codex", "fixture/queued");
+  const dispatch = f.dispatch(authorization, "developer");
+  const args = { host, root: f.root, authorizationId: authorization.authorizationId, dispatchId: dispatch.dispatchId };
+  const oldCall = enqueueWorkerAdmission({ ...args, signal: oldController.signal });
+  await waitForCondition(() => readWorkerAdmissionProjection(args).state === "queued");
+  const resumedCall = enqueueWorkerAdmission({ ...args, signal: newController.signal });
+  await assert.rejects(() => oldCall, { code: "WORKER_ADMISSION_CANCELLED" });
+  await waitForCondition(() => readWorkerAdmissionProjection(args).generation === 2);
+  const beforeNewAbort = readWorkerAdmissionProjection(args);
+  assert.notEqual(beforeNewAbort.state, "cancelled");
+  assert.equal(beforeNewAbort.generation, 2);
+  newController.abort();
+  await assert.rejects(() => resumedCall, { code: "WORKER_ADMISSION_CANCELLED" });
+  await holder.finalize({ outcomeCode: "test-release" });
+});
+
+test("a throwing detached validator releases its exact queue generation", async (t) => {
+  const f = await fixture(t);
+  const created = f.provision("validator-throw", {
+    globalLimit: 2,
+    perKeyLimit: 1,
+    default: "hold-for-host-confirmation",
+    maxQueued: 4,
+    maxWaitMs: 5_000,
+  });
+  const failedAuthorization = f.authorization("codex", "fixture/key-a");
+  const host = f.open(created, async ({ phase, authorizationId }) => {
+    if (phase === "queued" && authorizationId === failedAuthorization.authorizationId) {
+      const error = new Error("Fixture Host validation failed");
+      error.code = "FIXTURE_HOST_VALIDATOR_THROW";
+      throw error;
+    }
+    return { status: "current" };
+  });
+  const failedDispatch = f.dispatch(failedAuthorization);
+  await assert.rejects(() => enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: failedAuthorization.authorizationId,
+    dispatchId: failedDispatch.dispatchId,
+    mode: "detached",
+  }), { code: "FIXTURE_HOST_VALIDATOR_THROW" });
+  assert.equal(readWorkerAdmissionProjection({
+    host,
+    root: f.root,
+    authorizationId: failedAuthorization.authorizationId,
+  }).state, "cancelled");
+  const nextAuthorization = f.authorization("codex", "fixture/key-b");
+  const next = await enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: nextAuthorization.authorizationId,
+    dispatchId: f.dispatch(nextAuthorization, "developer").dispatchId,
+  });
+  assert.equal(next.generation, 1);
+  await next.finalize({ outcomeCode: "test-release" });
+});
+
+test("intermediate links cannot redirect Host admission state into the project", async (t) => {
+  const f = await fixture(t);
+  const projectTarget = path.join(f.root, ".head", "host-state-fixture");
+  fs.mkdirSync(projectTarget);
+  const redirectedBase = path.join(f.admissionOperationalRoot, "worker-admission");
+  fs.symlinkSync(projectTarget, redirectedBase, process.platform === "win32" ? "junction" : "dir");
+  assert.throws(() => f.provision("junction-provision"), { code: "WORKER_ADMISSION_PATH_ESCAPE" });
+  assert.equal(fs.readdirSync(projectTarget).length, 0);
+  fs.unlinkSync(redirectedBase);
+
+  const created = f.provision("junction-after-open");
+  const host = f.open(created);
+  const savedBase = path.join(f.container, "saved-worker-admission");
+  fs.renameSync(redirectedBase, savedBase);
+  fs.symlinkSync(projectTarget, redirectedBase, process.platform === "win32" ? "junction" : "dir");
+  const authorization = f.authorization("codex");
+  f.dispatch(authorization);
+  const projection = readWorkerAdmissionProjection({ host, root: f.root, authorizationId: authorization.authorizationId });
+  assert.equal(projection.availability, "unavailable");
+  assert.equal(projection.state, "unknown-blocking");
+  assert.equal(fs.readdirSync(projectTarget).length, 0);
+  fs.unlinkSync(redirectedBase);
+  fs.renameSync(savedBase, redirectedBase);
+});
+
+test("consumed release without descendant cleanup proof retains capacity", async (t) => {
+  const f = await fixture(t);
+  const created = f.provision("unproven-cleanup");
+  const host = f.open(created);
+  const authorization = f.authorization("codex");
+  const dispatch = f.dispatch(authorization);
+  const reservation = await enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: authorization.authorizationId,
+    dispatchId: dispatch.dispatchId,
+  });
+  const ownerFenceDigest = hash("unproven-cleanup-owner");
+  const leased = await withRuntimeExecutionLease({ projectRoot: f.root, authorization, ownerFenceDigest }, async ({ consumption }) => ({
+    receipt: buildRuntimeInvocationLifecycleReceipt({
+      authorization,
+      events: [],
+      consumption,
+      status: "failed",
+      exitCode: 1,
+      signal: "",
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      stdoutDigest: hash(""),
+      stderrDigest: hash(""),
+      callerFenceDigest: ownerFenceDigest,
+      childFenceDigest: hash("unproven-cleanup-child"),
+      childStarted: true,
+      childExitObserved: true,
+      terminationRequested: false,
+      projectFenceValidated: true,
+      inputDigestObserved: hash(""),
+      noDescendantFixture: false,
+      descendantTreeOwnershipValidated: false,
+      providerMode: "codex-protocol-fixture",
+      supervision: {
+        supervisionMode: "native-process-tree",
+        supervisionStrategy: process.platform === "win32" ? "windows-job-object" : "posix-process-group",
+        supervisorManifestDigest: hash("test-only-supervisor-manifest"),
+        ownershipEstablished: true,
+        providerChildStarted: true,
+        providerChildExitObserved: false,
+        treeCleanupAttempted: false,
+        treeCleanupVerified: false,
+      },
+    }),
+  }), { preConsumeGate: reservation.preConsumeGate });
+  const draft = buildRuntimeResultPacketDraft({ authorization, receipt: leased.result.receipt, leaseRelease: leased.release });
+  persistRuntimeInvocationRecord({ projectRoot: f.root, authorization, events: [], receipt: leased.result.receipt, draft });
+  await assert.rejects(() => reservation.finalize({ outcomeCode: "failed" }), { code: "WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING" });
+  const controller = new AbortController();
+  const nextAuthorization = f.authorization("codex");
+  let nextReserved = false;
+  const next = enqueueWorkerAdmission({
+    host,
+    root: f.root,
+    authorizationId: nextAuthorization.authorizationId,
+    dispatchId: f.dispatch(nextAuthorization, "developer").dispatchId,
+    signal: controller.signal,
+  }).then((held) => {
+    nextReserved = true;
+    return held;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(nextReserved, false);
+  controller.abort();
+  await assert.rejects(() => next, { code: "WORKER_ADMISSION_CANCELLED" });
+  assert.equal(readWorkerAdmissionProjection({ host, root: f.root, authorizationId: authorization.authorizationId }).state, "capacity-reserved");
 });

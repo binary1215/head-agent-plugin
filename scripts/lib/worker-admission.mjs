@@ -70,6 +70,45 @@ function isWithin(parent, child) {
   return relative === "" || relative && !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
 }
 
+function verifySafeDirectoryChain(root, directory, label, { create = false } = {}) {
+  const expectedRoot = fs.realpathSync(root);
+  const target = path.resolve(directory);
+  if (!isWithin(expectedRoot, target)) fail(`${label} escapes its configured Host root.`, "WORKER_ADMISSION_PATH_ESCAPE");
+  const relative = path.relative(expectedRoot, target);
+  let cursor = expectedRoot;
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    cursor = path.join(cursor, segment);
+    if (!fs.existsSync(cursor)) {
+      if (!create) fail(`${label} is missing.`, "WORKER_ADMISSION_DOMAIN_UNAVAILABLE");
+      fs.mkdirSync(cursor, { recursive: false });
+    }
+    const stat = fs.lstatSync(cursor);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) fail(`${label} contains an unsafe directory.`, "WORKER_ADMISSION_PATH_ESCAPE");
+    const actual = fs.realpathSync(cursor);
+    if (!isWithin(expectedRoot, actual)) fail(`${label} resolves outside its configured Host root.`, "WORKER_ADMISSION_PATH_ESCAPE");
+  }
+  return target;
+}
+
+function verifyStorageTopology({ operational, expectation, paths }, { createBases = false } = {}) {
+  verifySafeDirectoryChain(operational, paths.operationalBase, "Worker admission operational storage", { create: createBases });
+  verifySafeDirectoryChain(expectation, paths.expectationBase, "Worker admission expectation storage", { create: createBases });
+  for (const [root, directory, label] of [
+    [operational, path.dirname(paths.domain), "Worker admission operational domains"],
+    [expectation, path.dirname(paths.expectation), "Worker admission expectation domains"],
+  ]) {
+    verifySafeDirectoryChain(root, directory, label, { create: createBases });
+  }
+  for (const [root, directory, label] of [
+    [operational, paths.domain, "Worker admission domain"],
+    [operational, path.join(paths.domain, "events"), "Worker admission event storage"],
+    [expectation, paths.expectation, "Worker admission expectation"],
+    [expectation, path.join(paths.expectation, "event-commits"), "Worker admission event commits"],
+  ]) {
+    if (fs.existsSync(directory)) verifySafeDirectoryChain(root, directory, label);
+  }
+}
+
 function validateRootSeparation(operationalStateRoot, hostExpectationRoot, projectRoot = null) {
   if (operationalStateRoot === hostExpectationRoot
     || isWithin(operationalStateRoot, hostExpectationRoot)
@@ -317,7 +356,7 @@ export function provisionWorkerAdmissionDomain({
   validateRootSeparation(operational, expectation);
   const selectedPolicy = normalizePolicy(policy);
   const paths = domainPaths(operational, expectation, newAdmissionDomainId);
-  fs.mkdirSync(paths.expectationBase, { recursive: true });
+  verifyStorageTopology({ operational, expectation, paths }, { createBases: true });
   const releaseProvisionLock = acquireDirectoryLock(paths.provisionLock, "WORKER_ADMISSION_PROVISION_BUSY");
   let staging = null;
   try {
@@ -328,18 +367,20 @@ export function provisionWorkerAdmissionDomain({
     const metadata = metadataDocument({ domainId: newAdmissionDomainId, instanceId, policy: selectedPolicy });
     const genesis = genesisDocument(metadata);
     const intent = expectationIntent(metadata);
-    fs.mkdirSync(path.dirname(paths.expectation), { recursive: true });
+    verifyStorageTopology({ operational, expectation, paths }, { createBases: true });
     fs.mkdirSync(paths.expectation, { recursive: false });
+    verifySafeDirectoryChain(expectation, paths.expectation, "Worker admission expectation");
     writeExclusive(path.join(paths.expectation, "provision-intent.json"), intent);
-    fs.mkdirSync(paths.stagingBase, { recursive: true });
+    verifySafeDirectoryChain(operational, paths.stagingBase, "Worker admission staging storage", { create: true });
     staging = path.join(paths.stagingBase, `${newAdmissionDomainId}.${instanceId}`);
     fs.mkdirSync(staging, { recursive: false });
+    verifySafeDirectoryChain(operational, staging, "Worker admission staging domain");
     writeExclusive(path.join(staging, "metadata.json"), metadata);
     writeExclusive(path.join(staging, "genesis.json"), genesis);
     fs.mkdirSync(path.join(staging, "events"));
-    fs.mkdirSync(path.dirname(paths.domain), { recursive: true });
     fs.renameSync(staging, paths.domain);
     staging = null;
+    verifyStorageTopology({ operational, expectation, paths });
     writeExclusive(path.join(paths.expectation, "journal-head.json"), journalHeadDocument(metadata, 0, genesis.genesisHash));
     const commit = provisionCommit(metadata, genesis, intent);
     writeExclusive(path.join(paths.expectation, "provision-commit.json"), commit);
@@ -380,6 +421,7 @@ export function openWorkerAdmissionHost({
     fail("Worker admission pre-start validator must be a Host function.", "INVALID_WORKER_ADMISSION_VALIDATOR");
   }
   const paths = domainPaths(operational, expectation, admissionDomainId);
+  verifyStorageTopology({ operational, expectation, paths });
   const verified = verifyProvisionArtifacts(paths, expectedDomainInstanceId, expectedMetadataHash);
   const openedState = { operational, expectation, paths, ...verified, preStartValidate };
   readJournal(openedState);
@@ -477,6 +519,7 @@ function updateJournalHead(state, sequence, eventHash) {
 }
 
 function readJournal(state) {
+  verifyStorageTopology(state);
   verifyProvisionArtifacts(state.paths, state.metadata.domainInstanceId, state.metadata.metadataHash);
   const eventDirectory = path.join(state.paths.domain, "events");
   const markerDirectory = path.join(state.paths.expectation, "event-commits");
@@ -536,6 +579,7 @@ function appendEventLocked(state, journal, input) {
 }
 
 async function withDomainLock(state, operation) {
+  verifyStorageTopology(state);
   const lock = path.join(state.paths.domain, "domain.lock");
   let release;
   for (let attempt = 0; attempt < 500; attempt += 1) {
@@ -654,6 +698,21 @@ function expireQueuedLocked(state, journal, requests, now = Date.now()) {
   return reduceJournal(journal.events);
 }
 
+function appendQueuedTerminalIfExact(state, journal, { requestId, generation, eventType, outcomeCode }) {
+  const request = reduceJournal(journal.events).get(requestId);
+  if (!request || !queuedRequest(request) || request.generation !== generation || request.ownerFenceDigest !== null) return false;
+  appendEventLocked(state, journal, { ...request, eventType, details: { outcomeCode } });
+  return true;
+}
+
+function appendReservedCancellationIfExact(state, journal, { requestId, generation, ownerFenceDigest, outcomeCode }) {
+  const request = reduceJournal(journal.events).get(requestId);
+  if (!request || request.state !== "reserved" || request.generation !== generation
+    || request.ownerFenceDigest !== ownerFenceDigest) return false;
+  appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode } });
+  return true;
+}
+
 function verifyValidatorResult(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)
     || !new Set(["current", "cancelled", "superseded", "unavailable"]).has(value.status)
@@ -691,6 +750,30 @@ function publicReservation(state, request, gate, finalize) {
     preConsumeGate: gate,
     finalize,
   });
+}
+
+function requireDefinitiveExecutionCleanup(root, authorizationId) {
+  let result;
+  try {
+    result = readRuntimeInvocationResult({ root, authorizationId });
+  } catch (error) {
+    if (error.code === "RUNTIME_INVOCATION_RESULT_NOT_FOUND") {
+      fail("Consumed admission capacity requires a verified runtime result.", "WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING");
+    }
+    throw error;
+  }
+  const boundary = result.receipt.processBoundary;
+  const exactChildOnlySettled = boundary.noDescendantFixture === true
+    && boundary.exactChildStarted === boundary.exactChildExitObserved;
+  const ownedProviderTreeSettled = boundary.noDescendantFixture === false
+    && boundary.providerChildStarted === true
+    && boundary.providerChildExitObserved === true
+    && boundary.treeCleanupVerified === true
+    && boundary.descendantTreeOwnershipValidated === true;
+  if (!exactChildOnlySettled && !ownedProviderTreeSettled) {
+    fail("Runtime descendant cleanup is not definitively verified.", "WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING");
+  }
+  return result;
 }
 
 export async function enqueueWorkerAdmission({ host, root = ".", authorizationId, dispatchId, mode = "attached", signal = null } = {}) {
@@ -753,35 +836,49 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
   while (!reserved) {
     if (signal?.aborted) {
       await withDomainLock(state, async (journal) => {
-        const request = reduceJournal(journal.events).get(requestId);
-        if (request && queuedRequest(request)) appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode: "attached-signal-aborted" } });
+        appendQueuedTerminalIfExact(state, journal, {
+          requestId, generation, eventType: "cancelled", outcomeCode: "attached-signal-aborted",
+        });
       });
       fail("Worker admission was cancelled before lease consumption.", "WORKER_ADMISSION_CANCELLED");
     }
     if (Date.now() - startedAt >= state.metadata.policy.maxWaitMs) {
       await withDomainLock(state, async (journal) => {
-        const request = reduceJournal(journal.events).get(requestId);
-        if (request && queuedRequest(request)) appendEventLocked(state, journal, { ...request, eventType: "expired", details: { outcomeCode: "max-wait-exceeded" } });
+        appendQueuedTerminalIfExact(state, journal, {
+          requestId, generation, eventType: "expired", outcomeCode: "max-wait-exceeded",
+        });
       });
       fail("Worker admission expired before reservation.", "WORKER_ADMISSION_EXPIRED");
     }
     reserved = await withDomainLock(state, async (journal) => {
       const requests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
       const request = requests.get(requestId);
+      if (request?.state === "expired" && request.generation === generation) {
+        fail("Worker admission expired before reservation.", "WORKER_ADMISSION_EXPIRED");
+      }
       if (!request || !queuedRequest(request) || request.generation !== generation) {
         fail("Worker admission queue state changed unexpectedly.", "WORKER_ADMISSION_STALE_REQUEST");
       }
-      const current = currentTarget(root, authorizationId, dispatchId);
-      if (current.authorization.authorizationHash !== target.authorization.authorizationHash) {
-        fail("Worker admission authorization changed while queued.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
-      }
-      if (mode === "detached") {
-        const validation = await hostValidate(state, { phase: "queued", root: current.inspected.project.projectRoot, authorizationId, dispatchId, requestId, generation });
-        if (validation.status !== "current") {
-          if (validation.status === "unavailable") return null;
-          appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode: `host-${validation.status}` } });
-          fail("Detached worker admission was cancelled by Host validation.", "WORKER_ADMISSION_CANCELLED");
+      try {
+        const current = currentTarget(root, authorizationId, dispatchId);
+        if (current.authorization.authorizationHash !== target.authorization.authorizationHash) {
+          fail("Worker admission authorization changed while queued.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
         }
+        if (mode === "detached") {
+          const validation = await hostValidate(state, { phase: "queued", root: current.inspected.project.projectRoot, authorizationId, dispatchId, requestId, generation });
+          if (validation.status !== "current") {
+            if (validation.status === "unavailable") return null;
+            appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode: `host-${validation.status}` } });
+            fail("Detached worker admission was cancelled by Host validation.", "WORKER_ADMISSION_CANCELLED");
+          }
+        }
+      } catch (error) {
+        try {
+          appendQueuedTerminalIfExact(state, journal, {
+            requestId, generation, eventType: "cancelled", outcomeCode: "queue-validation-failed",
+          });
+        } catch {}
+        throw error;
       }
       const all = [...requests.values()];
       const active = all.filter(activeRequest);
@@ -812,21 +909,30 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         || request.dispatchId !== dispatchId) {
         fail("Worker admission reservation is stale or tampered.", "WORKER_ADMISSION_RESERVATION_CONFLICT");
       }
-      currentTarget(root, authorizationId, dispatchId);
-      if (signal?.aborted) {
-        appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode: "attached-signal-aborted" } });
-        fail("Worker admission was cancelled before lease consumption.", "WORKER_ADMISSION_CANCELLED");
-      }
-      const validation = state.preStartValidate
-        ? await hostValidate(state, { phase: "pre-consume", root: path.resolve(root), authorizationId, dispatchId, requestId, generation })
-        : { status: mode === "attached" ? "current" : "unavailable", resume: false };
-      if (signal?.aborted) {
-        appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode: "attached-signal-aborted" } });
-        fail("Worker admission was cancelled before lease consumption.", "WORKER_ADMISSION_CANCELLED");
-      }
-      if (validation.status !== "current") {
-        if (validation.status !== "unavailable") appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode: `host-${validation.status}` } });
-        fail("Worker admission final Host validation did not prove the request current.", validation.status === "unavailable" ? "WORKER_ADMISSION_VALIDATION_UNAVAILABLE" : "WORKER_ADMISSION_CANCELLED");
+      try {
+        currentTarget(root, authorizationId, dispatchId);
+        if (signal?.aborted) fail("Worker admission was cancelled before lease consumption.", "WORKER_ADMISSION_CANCELLED");
+        const validation = state.preStartValidate
+          ? await hostValidate(state, { phase: "pre-consume", root: path.resolve(root), authorizationId, dispatchId, requestId, generation })
+          : { status: mode === "attached" ? "current" : "unavailable", resume: false };
+        if (signal?.aborted) fail("Worker admission was cancelled before lease consumption.", "WORKER_ADMISSION_CANCELLED");
+        if (validation.status !== "current") {
+          fail("Worker admission final Host validation did not prove the request current.", validation.status === "unavailable" ? "WORKER_ADMISSION_VALIDATION_UNAVAILABLE" : "WORKER_ADMISSION_CANCELLED");
+        }
+        const current = currentTarget(root, authorizationId, dispatchId);
+        if (current.authorization.authorizationHash !== target.authorization.authorizationHash
+          || current.dispatch.dispatchHash !== target.dispatch.dispatchHash) {
+          fail("Worker admission target changed during final Host validation.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
+        }
+      } catch (error) {
+        const outcomeCode = error.code === "WORKER_ADMISSION_CANCELLED"
+          ? "attached-signal-aborted" : "pre-consume-validation-failed";
+        try {
+          appendReservedCancellationIfExact(state, journal, {
+            requestId, generation, ownerFenceDigest: reserved.ownerFenceDigest, outcomeCode,
+          });
+        } catch {}
+        throw error;
       }
       const consumption = commitConsumption();
       try {
@@ -862,6 +968,9 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
       const lease = inspectRuntimeExecutionLease({ projectRoot: path.resolve(root), projectId: target.authorization.projectId, authorizationId });
       if (request.state === "start-committed" && lease.status !== "consumed-released") {
         fail("Consumed admission capacity cannot be released without definitive lease cleanup evidence.", "WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING");
+      }
+      if (request.state === "start-committed") {
+        requireDefinitiveExecutionCleanup(path.resolve(root), authorizationId);
       }
       if (request.state === "reserved" && lease.singleUseConsumed) {
         fail("Admission start evidence is missing for a consumed authorization.", "WORKER_ADMISSION_JOURNAL_UNAVAILABLE");
@@ -975,6 +1084,7 @@ export function readWorkerAdmissionProjection({ host, root = ".", authorizationI
       "WORKER_ADMISSION_DOMAIN_UNAVAILABLE", "WORKER_ADMISSION_DOMAIN_IDENTITY_CONFLICT",
       "WORKER_ADMISSION_PROVISION_CONFLICT", "WORKER_ADMISSION_GENESIS_CONFLICT",
       "WORKER_ADMISSION_JOURNAL_UNAVAILABLE", "WORKER_ADMISSION_EVENT_TRANSITION_CONFLICT",
+      "WORKER_ADMISSION_PATH_ESCAPE",
       "INVALID_WORKER_ADMISSION_ARTIFACT", "INVALID_WORKER_ADMISSION_EVENT", "INVALID_WORKER_ADMISSION_METADATA",
     ]).has(error.code)) throw error;
     return {
