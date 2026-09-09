@@ -28,6 +28,18 @@ function canonicalValue(value) {
 const canonicalJson = (value) => JSON.stringify(canonicalValue(value));
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
+const preConsumeGateHandlers = new WeakMap();
+
+// This capability is intentionally not serializable. It is an internal Host-to-lease
+// handoff, not a field accepted from execution JSON and not a security boundary
+// against malicious code already executing in the trusted Host process.
+export function createRuntimePreConsumeGateCapability(handler) {
+  if (typeof handler !== "function") fail("Runtime pre-consume gate requires a handler.", "INVALID_RUNTIME_PRE_CONSUME_GATE");
+  const capability = Object.freeze(Object.create(null));
+  preConsumeGateHandlers.set(capability, handler);
+  return capability;
+}
+
 function identify(payload, prefix, idKey, hashKey) {
   const hash = digest(canonicalJson(payload));
   return { ...payload, [idKey]: `${prefix}-${hash.slice(0, 24)}`, [hashKey]: hash };
@@ -619,8 +631,15 @@ export function verifyRuntimeExecutionLeaseOwnership({ projectRoot, operationalS
   return { owner, consumption };
 }
 
-export async function withRuntimeExecutionLease({ projectRoot, authorization, ownerFenceDigest }, operation) {
+export async function withRuntimeExecutionLease(
+  { projectRoot, authorization, ownerFenceDigest },
+  operation,
+  { preConsumeGate = null } = {},
+) {
   if (typeof operation !== "function") fail("Runtime execution lease requires an operation.", "INVALID_RUNTIME_EXECUTION_LEASE_OPERATION");
+  if (preConsumeGate !== null && !preConsumeGateHandlers.has(preConsumeGate)) {
+    fail("Runtime pre-consume gate capability is invalid.", "INVALID_RUNTIME_PRE_CONSUME_GATE");
+  }
   const verified = requireAuthorizationShape(authorization);
   const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: true });
   const owner = acquire({ projectRoot, operationalStateRoot, authorization: verified, ownerFenceDigest });
@@ -628,7 +647,33 @@ export async function withRuntimeExecutionLease({ projectRoot, authorization, ow
   let result;
   let operationError;
   try {
-    consumption = consume(projectRoot, verified, owner);
+    if (preConsumeGate === null) {
+      consumption = consume(projectRoot, verified, owner);
+    } else {
+      let callbackOpen = true;
+      let callbackCalls = 0;
+      const commitConsumption = () => {
+        if (!callbackOpen || callbackCalls !== 0) {
+          fail("Runtime consumption callback is no longer usable.", "RUNTIME_CONSUMPTION_CALLBACK_REPLAYED");
+        }
+        callbackCalls += 1;
+        consumption = consume(projectRoot, verified, owner);
+        return consumption;
+      };
+      try {
+        await preConsumeGateHandlers.get(preConsumeGate)({
+          authorization: verified,
+          owner,
+          operationalStateRoot,
+          commitConsumption,
+        });
+      } finally {
+        callbackOpen = false;
+      }
+      if (callbackCalls !== 1 || !consumption) {
+        fail("Runtime pre-consume gate did not commit exactly one lease consumption.", "RUNTIME_PRE_CONSUME_GATE_DID_NOT_COMMIT");
+      }
+    }
     result = await operation({ lease: owner, consumption, operationalStateRoot });
   } catch (error) {
     operationError = error;

@@ -74,3 +74,9 @@ Typed MCP는 동일한 Core 함수와 정체성을 사용하여 동등한
 `head_bounded_worker_wave_*` 도구를 노출합니다. 안전한 Skill 흐름은 개별 dispatch를
 만들고 wave를 생성한 뒤, 각 구성원을 기존 실행 경로로 실행합니다. 검증된 실행
 증거가 나온 뒤에만 seal하고 status 또는 bounded wait를 사용합니다.
+
+Embedding Host는 열린 Worker Admission capability를 wave status에 선택적으로
+전달할 수 있습니다. 이 경우 P5 queue/reservation detail만 추가되며 wave
+state machine이나 `started` 증거는 바뀌지 않습니다. capability가 없는 일반
+CLI/MCP 및 Core 호출은 그대로 유지됩니다. 자세한 내용은
+[worker-admission.md](worker-admission.md)를 참조하세요.

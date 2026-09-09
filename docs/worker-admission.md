@@ -1,0 +1,109 @@
+# Provider-neutral worker admission
+
+Worker admission is an optional P5 Host capacity boundary for already-created
+`BoundedWorkerDispatch` records. It does not create an authorization, choose a
+model, widen a worker scope, launch a provider session, or decide whether a
+result is accepted. A Host that does not configure admission keeps the existing
+dispatch, runtime-lease, result, and wave behavior unchanged.
+
+## Durable Host domain
+
+The Host provisions a domain once with
+`provisionWorkerAdmissionDomain(...)`, then opens that exact identity with
+`openWorkerAdmissionHost(...)`. Operational metadata, an append-only event
+journal, and a separate Host-expectation intent/commit chain live outside the
+project. The caller must provide the expected domain-instance ID and metadata
+hash when opening it. A missing intent, commit, metadata, genesis, event, or
+event-commit marker makes that domain unavailable; absence is never interpreted
+as an empty queue or free capacity. The same domain ID cannot be reprovisioned.
+The expectation tree also keeps a non-authoritative journal head from genesis;
+every append advances it under the domain lock. A shorter event-and-marker tail
+therefore conflicts with the retained head instead of silently restoring free
+capacity.
+
+Policy is immutable and bounded: global concurrency is 1-64, per-capacity-key
+concurrency is 1-global, queue depth is 1-1024, and maximum wait is one second
+to one day. The capacity key is derived only from the verified authorization:
+
+```text
+runtime/<exact-runtime>/model/<exact-provider-model-or-unspecified>
+```
+
+FIFO applies within one key. Across keys, the oldest currently eligible key
+head is selected, so one saturated model does not reserve capacity belonging to
+another key.
+
+## Final consumption boundary
+
+`enqueueWorkerAdmission(...)` records a queue request before it can reserve
+capacity. Reservation alone is not execution evidence. The returned
+pre-consume capability is a non-serializable, branded Host capability carried
+as a separate internal argument through `executeRuntimeInvocation` and the
+Claude, Codex, and OpenCode adapters. An identically shaped JSON value is not a
+capability.
+
+The runtime lease still owns the authoritative consumption variable. After the
+normal runtime owner lock is acquired, the admission gate revalidates exact
+Project, Session, Run, WholePlan, ExecutionContract, Capsule, authorization,
+dispatch, request generation, and reservation fence under the admission-domain
+lock. It receives a revocable one-shot callback from the lease. Only that
+callback can write the existing immutable consumption receipt. A cancellation
+or stale lineage before the callback leaves consumption at zero and removes the
+runtime owner lock.
+
+If consumption succeeds but the admission start marker cannot be committed,
+the provider operation is not started. The authorization remains consumed, the
+normal lease error/release cleanup runs, and the affected admission domain is
+reported as unavailable or unknown-blocking. It is never replayed or counted as
+free capacity.
+
+Capacity is released only after definitive runtime-lease cleanup evidence, or
+after a proved pre-consumption failure. Identical finalization converges;
+divergent or stale finalization fails. A restarted queued request remains held
+until the Host validator explicitly returns both `current` and `resume`; it
+preserves the original deadline and records a new generation. A reserved retry
+also requires an available, unconsumed runtime lease plus explicit `current` and
+`resume` Host validation. A claimed or consumed lease becomes
+`unknown-blocking`; a bare resume assertion cannot release it. Consumed work is
+never requeued.
+
+## Status and authority
+
+`readWorkerAdmissionProjection(...)` is a non-persisted operational projection.
+It maps internal reservation/start-marker events to `capacity-reserved` and
+separates them from `executionEvidence`: verified authorization consumption,
+supervisor/provider start observation, and terminal evidence. Missing or
+damaged execution evidence is shown as unknown or unavailable, never inferred
+from reservation state.
+`readBoundedWorkerWaveStatus(...)` can optionally attach one admission detail
+per member when passed an opened Host capability. Without that capability, its
+existing output and behavior are unchanged. Admission loss does not disable
+ordinary wave status or P2 recovery; it only makes the optional admission
+detail unavailable.
+
+Admission events and projections have no instruction, review, promotion,
+Product Canon, completion, or recovery authority. Wave `started` continues to
+mean durable authorization consumption or terminal runtime result, never queue
+or reservation state. Result flow remains `ResultPacket -> Fresh HEAD ->
+explicit ReviewDecision -> explicit P2 checkpoint integration`.
+
+There is intentionally no public CLI/MCP surface in this slice. Provisioning,
+Host expectation storage, cancellation wiring, and restart validation belong
+to a provider-neutral Host adapter. Provider session IDs, process IDs, sockets,
+panes, TUI state, and Herdr identities are not persisted in Core semantic
+state.
+
+## Verification
+
+```text
+node --test test/worker-admission.test.mjs
+npm run verify:runtime-lifecycle
+```
+
+The targeted test covers exact provisioning/open, paired-tail loss and semantic
+transition tamper fail-closed, zero-consumption cancellation including the
+validator window, one-shot callback revocation, safe available-lease resume and
+claimed-restart blocking,
+same-key FIFO, independent domains and process contention, all three runtime-
+adapter guard paths, target-resolution abort before consumption, optional wave
+detail, and consumption followed by event-marker failure.

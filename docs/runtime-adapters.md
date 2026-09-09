@@ -264,3 +264,12 @@ Read-only path discovery, bounded non-session version invocation, provider-speci
 6. failure behavior that preserves Session request identity or Run WholePlan/Capsule/ExecutionContract identity plus evidence lineage.
 
 Point-in-time `RuntimeStateAdapter` exports remain a separate evidence-only facility. They do not satisfy this control activation gate.
+
+## Optional Host capacity admission
+
+Provider-neutral Hosts may place existing bounded-worker dispatches behind the
+optional P5 admission contract in [worker-admission.md](worker-admission.md).
+The admission capability travels to the runtime lease as a separate branded
+internal argument; it is never accepted from execution JSON. Hosts that do not
+configure admission retain the exact pre-existing invocation order and public
+surfaces.
