@@ -984,7 +984,7 @@ test("storage redirected during final Host validation is rejected before consump
   const unavailable = readWorkerAdmissionProjection({ host, root: f.root, authorizationId: authorization.authorizationId });
   fs.unlinkSync(eventRoot);
   fs.renameSync(redirected, eventRoot);
-  fs.rmdirSync(path.join(path.dirname(eventRoot), "domain.lock"));
+  fs.rmSync(path.join(path.dirname(eventRoot), "domain.lock"), { recursive: true });
   assert.equal(wroteRedirectedStart, false);
   assert.equal(unavailable.availability, "unavailable");
   assert.equal(unavailable.state, "unknown-blocking");
@@ -1042,9 +1042,85 @@ test("unsafe domain replacement cannot redirect lock cleanup into the project", 
     authorizationId: authorization.authorizationId,
   }).singleUseConsumed, false);
   fs.unlinkSync(domainRoot);
-  fs.rmdirSync(path.join(redirected, "domain.lock"));
+  fs.rmSync(path.join(redirected, "domain.lock"), { recursive: true });
   fs.renameSync(redirected, domainRoot);
   await reservation.finalize({ outcomeCode: "test-release" });
+});
+
+test("a displaced lock owner cannot delete a later live lock at the same safe path", async (t) => {
+  const f = await fixture(t);
+  const created = f.provision("displaced-lock-owner");
+  let enterA;
+  let resumeA;
+  let enterB;
+  let resumeB;
+  let cancelB = false;
+  const enteredA = new Promise((resolve) => { enterA = resolve; });
+  const releasedA = new Promise((resolve) => { resumeA = resolve; });
+  const enteredB = new Promise((resolve) => { enterB = resolve; });
+  const releasedB = new Promise((resolve) => { resumeB = resolve; });
+  const hostA = f.open(created, async ({ phase }) => {
+    if (phase === "pre-consume") {
+      enterA();
+      await releasedA;
+    }
+    return { status: "current" };
+  });
+  const hostB = f.open(created, async ({ phase }) => {
+    if (phase === "queued") {
+      enterB();
+      await releasedB;
+      if (cancelB) return { status: "cancelled" };
+    }
+    return { status: "current" };
+  });
+  const authorizationA = f.authorization("codex");
+  const authorizationB = f.authorization("codex");
+  const reservationA = await enqueueWorkerAdmission({
+    host: hostA,
+    root: f.root,
+    authorizationId: authorizationA.authorizationId,
+    dispatchId: f.dispatch(authorizationA).dispatchId,
+  });
+  let operationCalls = 0;
+  const executionA = withRuntimeExecutionLease({
+    projectRoot: f.root,
+    authorization: authorizationA,
+    ownerFenceDigest: hash("displaced-lock-owner-fence"),
+  }, async () => { operationCalls += 1; }, { preConsumeGate: reservationA.preConsumeGate });
+  await enteredA;
+  const lockPath = path.join(f.admissionOperationalRoot, "worker-admission", "domains", created.admissionDomainId, "domain.lock");
+  const displaced = path.join(f.container, "displaced-original-domain.lock");
+  const firstLockId = String(fs.statSync(lockPath, { bigint: true }).ino);
+  fs.renameSync(lockPath, displaced);
+  const authorizationBDispatch = f.dispatch(authorizationB, "developer");
+  const pendingB = enqueueWorkerAdmission({
+    host: hostB,
+    root: f.root,
+    authorizationId: authorizationB.authorizationId,
+    dispatchId: authorizationBDispatch.dispatchId,
+    mode: "detached",
+  });
+  await enteredB;
+  const secondLockId = String(fs.statSync(lockPath, { bigint: true }).ino);
+  resumeA();
+  await assert.rejects(() => executionA, { code: "WORKER_ADMISSION_LOCK_OWNERSHIP_LOST" });
+  assert.notEqual(firstLockId, secondLockId);
+  assert.equal(fs.existsSync(lockPath), true, "stale cleanup must preserve the later caller's live lock");
+  assert.equal(fs.existsSync(displaced), true, "the displaced original remains explicit Host recovery state");
+  assert.equal(operationCalls, 0);
+  assert.equal(inspectRuntimeExecutionLease({
+    projectRoot: f.root,
+    projectId: authorizationA.projectId,
+    authorizationId: authorizationA.authorizationId,
+  }).singleUseConsumed, false);
+  cancelB = true;
+  resumeB();
+  await assert.rejects(() => pendingB, { code: "WORKER_ADMISSION_CANCELLED" });
+  assert.equal(fs.existsSync(lockPath), false, "the current owner removes its own lock on cancellation");
+  fs.rmSync(displaced, { recursive: true });
+  await reservationA.finalize({ outcomeCode: "test-release" });
+  assert.equal(fs.existsSync(lockPath), false, "normal finalize removes its own lock");
 });
 
 test("an authorization consumed before first admission creates no request or capacity leak", async (t) => {

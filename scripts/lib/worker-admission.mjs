@@ -158,18 +158,79 @@ function domainPaths(operationalStateRoot, hostExpectationRoot, domainId) {
   };
 }
 
+function lockIdentity(stat) {
+  return Object.freeze({ device: String(stat.dev), inode: String(stat.ino) });
+}
+
+function sameLockIdentity(left, right) {
+  return left.device === right.device && left.inode === right.inode;
+}
+
+function lockOwnerDocument(token) {
+  const payload = {
+    schemaVersion: 1,
+    kind: "WorkerAdmissionDirectoryLockOwner",
+    protocolVersion: WORKER_ADMISSION_VERSION,
+    token,
+    authority: "host-operational-lock-only",
+    recoveryAuthority: false,
+    instructionAuthority: false,
+    reviewAuthority: false,
+    promotionAuthority: false,
+    mutatesCanon: false,
+  };
+  return { ...payload, ownerHash: digest(canonicalJson(payload)) };
+}
+
 function acquireDirectoryLock(directory, code = "WORKER_ADMISSION_DOMAIN_BUSY") {
   try { fs.mkdirSync(directory); }
   catch (error) {
     if (error.code === "EEXIST") fail("Worker admission domain is busy or has an unresolved Host lock.", code);
     throw error;
   }
+  const ownerFile = path.join(directory, "owner.json");
+  const owner = lockOwnerDocument(crypto.randomBytes(32).toString("hex"));
+  try {
+    writeExclusive(ownerFile, owner);
+  } catch (error) {
+    try { fs.rmdirSync(directory); } catch {}
+    throw error;
+  }
+  const acquiredDirectoryIdentity = lockIdentity(fs.lstatSync(directory, { bigint: true }));
+  const acquiredOwnerIdentity = lockIdentity(fs.lstatSync(ownerFile, { bigint: true }));
   let open = true;
-  return () => {
-    if (!open) return;
-    open = false;
-    fs.rmdirSync(directory);
+  const assertOwned = () => {
+    let directoryStat;
+    let ownerStat;
+    try {
+      directoryStat = fs.lstatSync(directory, { bigint: true });
+      ownerStat = fs.lstatSync(ownerFile, { bigint: true });
+    } catch {
+      fail("Worker admission lock ownership is missing.", "WORKER_ADMISSION_LOCK_OWNERSHIP_LOST");
+    }
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()
+      || !ownerStat.isFile() || ownerStat.isSymbolicLink()
+      || !sameLockIdentity(acquiredDirectoryIdentity, lockIdentity(directoryStat))
+      || !sameLockIdentity(acquiredOwnerIdentity, lockIdentity(ownerStat))
+      || canonicalJson(readJson(ownerFile, "Worker admission lock owner", "WORKER_ADMISSION_LOCK_OWNERSHIP_LOST")) !== canonicalJson(owner)) {
+      fail("Worker admission lock is owned by another acquisition.", "WORKER_ADMISSION_LOCK_OWNERSHIP_LOST");
+    }
   };
+  const release = () => {
+    if (!open) return;
+    assertOwned();
+    fs.unlinkSync(ownerFile);
+    let directoryStat;
+    try { directoryStat = fs.lstatSync(directory, { bigint: true }); }
+    catch { fail("Worker admission lock changed during release.", "WORKER_ADMISSION_LOCK_OWNERSHIP_LOST"); }
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()
+      || !sameLockIdentity(acquiredDirectoryIdentity, lockIdentity(directoryStat))) {
+      fail("Worker admission lock changed during release.", "WORKER_ADMISSION_LOCK_OWNERSHIP_LOST");
+    }
+    fs.rmdirSync(directory);
+    open = false;
+  };
+  return Object.freeze({ assertOwned, release });
 }
 
 function metadataDocument({ domainId, instanceId, policy }) {
@@ -357,7 +418,7 @@ export function provisionWorkerAdmissionDomain({
   const selectedPolicy = normalizePolicy(policy);
   const paths = domainPaths(operational, expectation, newAdmissionDomainId);
   verifyStorageTopology({ operational, expectation, paths }, { createBases: true });
-  const releaseProvisionLock = acquireDirectoryLock(paths.provisionLock, "WORKER_ADMISSION_PROVISION_BUSY");
+  const provisionLock = acquireDirectoryLock(paths.provisionLock, "WORKER_ADMISSION_PROVISION_BUSY");
   let staging = null;
   try {
     if (fs.existsSync(paths.domain) || fs.existsSync(paths.expectation)) {
@@ -393,7 +454,7 @@ export function provisionWorkerAdmissionDomain({
     };
   } finally {
     if (staging && fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
-    releaseProvisionLock();
+    provisionLock.release();
   }
 }
 
@@ -592,27 +653,31 @@ function appendEventLocked(state, journal, input) {
 async function withDomainLock(state, operation) {
   verifyStorageTopology(state);
   const lock = path.join(state.paths.domain, "domain.lock");
-  let release;
+  let lockLease;
   for (let attempt = 0; attempt < 500; attempt += 1) {
-    try { release = acquireDirectoryLock(lock); break; }
+    try { lockLease = acquireDirectoryLock(lock); break; }
     catch (error) {
       if (error.code !== "WORKER_ADMISSION_DOMAIN_BUSY") throw error;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
-  if (!release) fail("Worker admission domain lock did not become available.", "WORKER_ADMISSION_DOMAIN_BUSY");
+  if (!lockLease) fail("Worker admission domain lock did not become available.", "WORKER_ADMISSION_DOMAIN_BUSY");
+  const assertLockOwned = () => {
+    verifyStorageTopology(state);
+    verifySafeDirectoryChain(state.operational, lock, "Worker admission domain lock");
+    lockLease.assertOwned();
+  };
   let operationError = null;
   try {
     const journal = readJournal(state);
-    return await operation(journal);
+    return await operation(journal, assertLockOwned);
   } catch (error) {
     operationError = error;
     throw error;
   } finally {
     try {
-      verifyStorageTopology(state);
-      verifySafeDirectoryChain(state.operational, lock, "Worker admission domain lock");
-      release();
+      assertLockOwned();
+      lockLease.release();
     } catch (cleanupError) {
       if (!operationError) throw cleanupError;
     }
@@ -861,7 +926,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
   const startedAt = Date.now();
   let generation = 1;
 
-  await withDomainLock(state, async (journal) => {
+  await withDomainLock(state, async (journal, assertLockOwned) => {
     const requests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
     let existing = requests.get(requestId);
     if (existing) {
@@ -873,6 +938,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
       }
       requireRequestLeaseAvailable(state, journal, existing, target);
       const validation = await hostValidate(state, { phase: "resume", root: target.inspected.project.projectRoot, authorizationId, dispatchId, requestId, generation: existing.generation });
+      assertLockOwned();
       refreshJournalLocked(state, journal);
       const refreshedRequests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
       existing = refreshedRequests.get(requestId);
@@ -934,7 +1000,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
       });
       fail("Worker admission expired before reservation.", "WORKER_ADMISSION_EXPIRED");
     }
-    reserved = await withDomainLock(state, async (journal) => {
+    reserved = await withDomainLock(state, async (journal, assertLockOwned) => {
       let requests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
       let request = requests.get(requestId);
       if (request?.state === "expired" && request.generation === generation) {
@@ -951,6 +1017,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         requireRequestLeaseAvailable(state, journal, request, current);
         if (mode === "detached") {
           const validation = await hostValidate(state, { phase: "queued", root: current.inspected.project.projectRoot, authorizationId, dispatchId, requestId, generation });
+          assertLockOwned();
           refreshJournalLocked(state, journal);
           requests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
           request = requests.get(requestId);
@@ -974,6 +1041,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         }
       } catch (error) {
         try {
+          assertLockOwned();
           appendQueuedTerminalIfExact(state, journal, {
             requestId, generation, eventType: "cancelled", outcomeCode: "queue-validation-failed",
           });
@@ -1002,7 +1070,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
     if (authorization.authorizationId !== authorizationId) fail("Admission capability targets another authorization.", "WORKER_ADMISSION_AUTHORIZATION_CONFLICT");
     // Lease owner fences and admission fences are deliberately distinct.
     if (owner.ownerFenceDigest === reserved.ownerFenceDigest) fail("Admission fence cannot replace runtime owner fence.", "WORKER_ADMISSION_FENCE_ALIAS_REJECTED");
-    await withDomainLock(state, async (journal) => {
+    await withDomainLock(state, async (journal, assertLockOwned) => {
       let request = reduceJournal(journal.events).get(requestId);
       if (!request || request.state !== "reserved" || request.generation !== generation
         || request.ownerFenceDigest !== reserved.ownerFenceDigest || request.authorizationId !== authorizationId
@@ -1016,6 +1084,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         const validation = state.preStartValidate
           ? await hostValidate(state, { phase: "pre-consume", root: path.resolve(root), authorizationId, dispatchId, requestId, generation })
           : { status: mode === "attached" ? "current" : "unavailable", resume: false };
+        assertLockOwned();
         if (signal?.aborted) fail("Worker admission was cancelled before lease consumption.", "WORKER_ADMISSION_CANCELLED");
         if (validation.status !== "current") {
           fail("Worker admission final Host validation did not prove the request current.", validation.status === "unavailable" ? "WORKER_ADMISSION_VALIDATION_UNAVAILABLE" : "WORKER_ADMISSION_CANCELLED");
@@ -1037,6 +1106,7 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         const outcomeCode = error.code === "WORKER_ADMISSION_CANCELLED"
           ? "attached-signal-aborted" : "pre-consume-validation-failed";
         try {
+          assertLockOwned();
           appendReservedCancellationIfExact(state, journal, {
             requestId, generation, ownerFenceDigest: reserved.ownerFenceDigest, outcomeCode,
           });

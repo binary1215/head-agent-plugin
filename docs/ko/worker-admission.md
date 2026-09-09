@@ -25,9 +25,15 @@ symlink나 junction을 따라가지 않고 검증하며, 실제 경로가 설정
 lease consumption 전이를 쓰기 전에 다시 확인합니다. 따라서 Host 검증을
 기다리는 동안 중간 경로가 P5 상태를 프로젝트 안으로 redirect하는 것도
 허용하지 않습니다.
-domain lock을 정리할 때도 같은 검사를 수행합니다. 경로가 교체됐거나 안전하지
-않으면 그 경로를 따라 삭제하지 않고 lock을 명시적 Host 복구 대상으로
-남깁니다.
+각 directory lock 획득은 create-only 무작위 owner token을 쓰고 디렉터리와
+token 파일의 identity를 기록합니다. Host 검증을 기다린 뒤와 정리 직전에
+호출자가 그 정확한 객체를 계속 소유하는지 확인합니다. lock이 이동·유실·교체된
+경우에는 명시적 Host 복구 대상으로 남기므로 오래된 정리가 같은 안전한 경로를
+나중에 획득한 협력적 호출자의 lock을 삭제하지 않습니다. 자신의 token을 지운
+뒤에도 디렉터리 identity를 다시 확인합니다. 마지막 identity 확인과 `rmdir`
+시스템 호출 사이의 간격은 임의 파일시스템 변경까지 막는 보장이 아닙니다.
+Host는 domain을 명시적 복구 상태로 전환하지 않은 채 정리 중인 lock 경로를
+이동해서는 안 됩니다.
 expectation tree에는 genesis부터 권위가 없는 journal head도 항상 존재하며,
 domain lock 안의 append마다 전진합니다. 따라서 event와 marker tail을 함께
 잃어도 남은 head와 충돌하므로 이를 여유 capacity로 복원하지 않습니다.
