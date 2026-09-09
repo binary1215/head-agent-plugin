@@ -16,6 +16,24 @@ const INTERPRETATION_MODES = new Set([
   "current-typed-with-historical-provenance",
   "opaque-legacy-revision",
 ]);
+const ROLE_PATH_SPECS = Object.freeze({
+  "historical-candidate-set": {
+    id: /^onboarding-candidates-[a-f0-9]{24}$/,
+    path: (artifactId) => `.head/onboarding/candidate-sets/${artifactId}.json`,
+  },
+  "historical-review": {
+    id: /^onboarding-review-decision-[a-f0-9]{24}$/,
+    path: (artifactId) => `.head/onboarding/review-decisions/${artifactId}.json`,
+  },
+  "historical-product-revision": {
+    id: /^product-model-[a-f0-9]{24}$/,
+    path: (artifactId) => `.head/onboarding/product-model-revisions/${artifactId}.json`,
+  },
+  "legacy-world-embedding-reference": {
+    id: /^world-model-[a-f0-9]{24}$/,
+    path: (artifactId) => `.head/world-model/snapshots/${artifactId}.json`,
+  },
+});
 const MAX_ENTRIES = 512;
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -99,6 +117,10 @@ export function verifyHistoricalInventoryEntries(entries, { projectRoot, project
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== entry.byteLength) fail(`Historical artifact bytes changed: ${entry.path}`, "HISTORICAL_BOUNDARY_INTEGRITY_DRIFT");
       const bytes = fs.readFileSync(file);
       if (historicalBoundaryDigest(bytes) !== entry.sha256) fail(`Historical artifact digest changed: ${entry.path}`, "HISTORICAL_BOUNDARY_INTEGRITY_DRIFT");
+    }
+    const roleSpec = ROLE_PATH_SPECS[entry.role];
+    if (!roleSpec.id.test(entry.artifactId) || entry.path !== roleSpec.path(entry.artifactId)) {
+      fail("Historical inventory role, path, and artifact identity do not agree.", "HISTORICAL_BOUNDARY_ROLE_PATH_MISMATCH");
     }
     seenRoles.add(entry.role);
   }

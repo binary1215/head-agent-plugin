@@ -161,7 +161,7 @@ function inventoryRevision(projectRoot, productModelId) {
   return { revision, inventory: entry(relative, "historical-product-revision", productModelId, revision.kind || "ProductModelRevision", String(revision.schemaVersion || ""), snapshot.bytes, interpretationMode) };
 }
 
-function artifactDocuments(projectRoot, relativeDirectory, filePattern, label) {
+function artifactDocuments(projectRoot, relativeDirectory, filePattern, idField, label) {
   const directory = path.join(projectRoot, ...relativeDirectory.split("/"));
   if (!fs.existsSync(directory) || !fs.lstatSync(directory).isDirectory() || fs.lstatSync(directory).isSymbolicLink()) {
     fail(`${label} directory is missing or unsafe.`, "LEGACY_MIGRATOR_ARTIFACT_MISSING");
@@ -172,7 +172,11 @@ function artifactDocuments(projectRoot, relativeDirectory, filePattern, label) {
   return files.map((item) => {
     if (!item.isFile() || item.isSymbolicLink() || !filePattern.test(item.name)) fail(`${label} directory contains an unsafe entry.`, "LEGACY_MIGRATOR_ARTIFACT_MISSING");
     const relative = `${relativeDirectory}/${item.name}`;
-    return { relative, ...readArtifact(path.join(directory, item.name), label) };
+    const artifact = readArtifact(path.join(directory, item.name), label);
+    if (`${artifact.document?.[idField]}.json` !== item.name) {
+      fail(`${label} filename does not match its document identity.`, "LEGACY_MIGRATOR_ARTIFACT_ID_PATH_MISMATCH");
+    }
+    return { relative, ...artifact };
   });
 }
 
@@ -292,7 +296,7 @@ export function inspectLegacyOnboarding({ root = "." } = {}) {
   const state = verifyOnboardingState(rawState, { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId });
   if (state.phase !== "ready" || !state.candidateSetId || !state.latestReviewDecisionId || !state.productModelId) fail("First slice requires complete ready onboarding.", "LEGACY_MIGRATOR_INCOMPLETE_READY");
   const candidateArtifacts = artifactDocuments(projectRoot, ONBOARDING_CANDIDATE_DIRECTORY,
-    /^onboarding-candidates-[a-f0-9]{24}\.json$/, "Onboarding candidate set");
+    /^onboarding-candidates-[a-f0-9]{24}\.json$/, "candidateSetId", "Onboarding candidate set");
   const candidateDocuments = candidateArtifacts.map((artifact) => artifact.document);
   const candidateArtifactById = new Map(candidateArtifacts.map((artifact) => [artifact.document.candidateSetId, artifact]));
   const legacyCandidates = candidateDocuments.filter((document) => FAMILIES[document.protocol?.version]);
@@ -300,7 +304,7 @@ export function inspectLegacyOnboarding({ root = "." } = {}) {
     fail("Legacy candidate does not match the canonical Session.", "LEGACY_MIGRATOR_READY_BINDING_MISMATCH");
   }
   const reviewArtifacts = artifactDocuments(projectRoot, ONBOARDING_REVIEW_DIRECTORY,
-    /^onboarding-review-decision-[a-f0-9]{24}\.json$/, "Onboarding ReviewDecision");
+    /^onboarding-review-decision-[a-f0-9]{24}\.json$/, "reviewDecisionId", "Onboarding ReviewDecision");
   const reviewDocuments = reviewArtifacts.map((artifact) => artifact.document);
   const reviewArtifactById = new Map(reviewArtifacts.map((artifact) => [artifact.document.reviewDecisionId, artifact]));
   const legacyChain = validateLegacyChain({ candidates: legacyCandidates, reviews: reviewDocuments, projectId: inspected.project.projectId });

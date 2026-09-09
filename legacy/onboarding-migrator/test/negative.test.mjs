@@ -207,6 +207,31 @@ test("legacy semantic validation and inventory identity use one bounded byte gen
   assert.deepEqual(boundaryFiles(fixture.root), {});
 });
 
+test("candidate and review filenames must equal their document identities", async (t) => {
+  for (const role of ["candidate", "review"]) {
+    const fixture = await legacyReadyFixture({ version: "0.3.0" });
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    const document = role === "candidate" ? fixture.candidate : fixture.review;
+    const directory = path.join(fixture.root, ".head", "onboarding", role === "candidate" ? "candidate-sets" : "review-decisions");
+    const id = role === "candidate" ? document.candidateSetId : document.reviewDecisionId;
+    const renamed = role === "candidate" ? `onboarding-candidates-${"f".repeat(24)}.json`
+      : `onboarding-review-decision-${"f".repeat(24)}.json`;
+    fs.renameSync(path.join(directory, `${id}.json`), path.join(directory, renamed));
+    const before = snapshotFiles(fixture.root);
+    assert.throws(() => applyMigration({ root: fixture.root }), { code: "LEGACY_MIGRATOR_ARTIFACT_ID_PATH_MISMATCH" });
+    assert.deepEqual(snapshotFiles(fixture.root), before);
+    assert.deepEqual(boundaryFiles(fixture.root), {});
+  }
+
+  const canonical = await legacyReadyFixture({ version: "0.3.0" });
+  t.after(() => fs.rmSync(canonical.root, { recursive: true, force: true }));
+  const inspected = inspectLegacyOnboarding({ root: canonical.root });
+  const candidateEntry = inspected.entries.find((entry) => entry.role === "historical-candidate-set");
+  assert.throws(() => verifyHistoricalInventoryEntries([{ ...candidateEntry,
+    path: `.head/onboarding/candidate-sets/onboarding-candidates-${"f".repeat(24)}.json` }],
+  { projectRoot: canonical.root, verifyBytes: false }), { code: "HISTORICAL_BOUNDARY_ROLE_PATH_MISMATCH" });
+});
+
 test("current Core independently derives every historical Product revision interpretation", async (t) => {
   const opaque = await legacyReadyFixture({ version: "0.3.0", opaquePreviousRevision: true });
   t.after(() => fs.rmSync(opaque.root, { recursive: true, force: true }));
@@ -304,11 +329,15 @@ test("committed replay rejects a divergent inventory and cross-project or wrong-
   assert.throws(() => applyHistoricalArtifactBoundary({ root: fixture.root, verifiedInventory: inspected.capability, hostMode: "automatic" }), { code: "HISTORICAL_BOUNDARY_HOST_MODE_REQUIRED" });
   assert.throws(() => applyHistoricalArtifactBoundary({ root: other.root, verifiedInventory: inspected.capability, hostMode: "explicit-one-shot" }), { code: "HISTORICAL_BOUNDARY_PROJECT_MISMATCH" });
   applyHistoricalArtifactBoundary({ root: fixture.root, verifiedInventory: inspected.capability, hostMode: "explicit-one-shot" });
-  const readme = fs.readFileSync(path.join(fixture.root, "README.md"));
+  const worldModelId = fixture.accepted.state.worldModelId;
+  const worldPath = `.head/world-model/snapshots/${worldModelId}.json`;
+  const worldFile = path.join(fixture.root, ...worldPath.split("/"));
+  const world = readJson(worldFile);
+  const worldBytes = fs.readFileSync(worldFile);
   const extraEntries = [...inspected.entries, {
-    path: "README.md", role: "legacy-world-embedding-reference", artifactId: "world-model-aaaaaaaaaaaaaaaaaaaaaaaa",
-    protocolFamily: "fixture-world", protocolVersion: "1", byteLength: readme.byteLength,
-    sha256: historicalBoundaryDigest(readme), interpretationMode: "opaque-historical",
+    path: worldPath, role: "legacy-world-embedding-reference", artifactId: worldModelId,
+    protocolFamily: world.protocol?.name || world.kind, protocolVersion: world.protocol?.version || String(world.schemaVersion), byteLength: worldBytes.byteLength,
+    sha256: historicalBoundaryDigest(worldBytes), interpretationMode: "opaque-historical",
   }].sort((left, right) => left.path.localeCompare(right.path, "en"));
   const divergent = createVerifiedHistoricalInventoryCapability({ root: fixture.root, projectId: inspected.projectId, entries: extraEntries, validation: inspected.validation });
   assert.throws(() => applyHistoricalArtifactBoundary({ root: fixture.root, verifiedInventory: divergent, hostMode: "explicit-one-shot" }), { code: "HISTORICAL_BOUNDARY_DIVERGENT_REPLAY" });
