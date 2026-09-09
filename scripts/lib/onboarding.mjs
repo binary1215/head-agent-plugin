@@ -37,6 +37,8 @@ import {
 import { buildWorldModel, inspectWorldModel, readWorldModel, readWorldModelSnapshot } from "./world-model.mjs";
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./repository-source-scope.mjs";
 import { withProjectMutation, withProjectMutationAsync } from "./project-mutation-lock.mjs";
+import { historicalEntryForPath, readCommittedHistoricalArtifactBoundary } from "./historical-artifact-boundary-store.mjs";
+import { publishHistoricalContinuityReceipt } from "./historical-continuity.mjs";
 
 export const ONBOARDING_CANDIDATE_VERSION = "0.4.0";
 export const ONBOARDING_REVIEW_VERSION = "0.1.0";
@@ -384,6 +386,10 @@ export function readOnboardingCandidateSet({ root = ".", candidateSetId } = {}) 
   const inspected = readyProject(root, "candidate-set inspection");
   const file = candidateSetFile(inspected.project.projectRoot, candidateSetId);
   if (!fs.existsSync(file)) fail(`Onboarding candidate set not found: ${candidateSetId}`, "ONBOARDING_CANDIDATE_SET_NOT_FOUND");
+  const historical = readCommittedHistoricalArtifactBoundary({ root: inspected.project.projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
+  const relative = `${ONBOARDING_CANDIDATE_DIRECTORY}/${candidateSetId}.json`;
+  const historicalEntry = historicalEntryForPath(historical, relative, "historical-candidate-set");
+  if (historicalEntry) return { status: "historical-ready-opaque", file, candidateSet: null, historicalArtifact: historicalEntry, historicalBoundaryId: historical.boundary.boundaryId };
   return { status: "verified", file, candidateSet: verifyCandidateSet(readJson(file, "Onboarding candidate set"), inspected.project.projectId) };
 }
 
@@ -572,6 +578,69 @@ async function rebuildWithOnboardingProjection({
 
 export async function startOnboarding(options = {}) {
   return withProjectMutationAsync({ root: options.root ?? ".", scope: "onboarding-promotion" }, () => startOnboardingLocked(options));
+}
+
+export async function proposeOnboardingSemanticRefresh(options = {}) {
+  return withProjectMutationAsync({ root: options.root ?? ".", scope: "onboarding-promotion" }, () => proposeOnboardingSemanticRefreshLocked(options));
+}
+
+async function proposeOnboardingSemanticRefreshLocked({ root = ".", semanticProposal } = {}) {
+  const inspected = readyProject(root, "historical onboarding semantic refresh");
+  if (inspected.state.activeRunId || inspected.state.pendingReview) fail("Semantic refresh cannot change product authority while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
+  const projectRoot = inspected.project.projectRoot;
+  const previousState = ensureOnboardingState(inspected);
+  if (previousState.phase !== "ready") fail("Semantic refresh requires ready onboarding state.", "ONBOARDING_REFRESH_NOT_AVAILABLE");
+  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId: inspected.project.projectId, allowAbsent: false });
+  const previousIsHistorical = Boolean(historicalEntryForPath(historical, `${ONBOARDING_CANDIDATE_DIRECTORY}/${previousState.candidateSetId}.json`, "historical-candidate-set"));
+  if (!previousIsHistorical && previousState.candidateSetId) readOnboardingCandidateSet({ root: projectRoot, candidateSetId: previousState.candidateSetId });
+  if (semanticProposal == null) fail("A fresh current HEAD semantic proposal is required.", "ONBOARDING_SEMANTIC_REPROPOSAL_REQUIRED");
+  const productCanon = readProductModelCanon({ projectRoot });
+  if (productCanon.status !== "present" || productCanon.model.productModelId !== previousState.productModelId) fail("Product Canon changed before semantic refresh.", "ONBOARDING_PRODUCT_CANON_DRIFT");
+  let world;
+  try { world = inspectWorldModel({ root: projectRoot }); }
+  catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; }
+  if (!world || world.status !== "current") world = await buildWorldModel({ root: projectRoot, persist: true });
+  const semantic = candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot);
+  const candidateSet = buildCandidateSet({
+    projectId: inspected.project.projectId,
+    sessionId: inspected.state.sessionId,
+    inputMode: "existing",
+    storageSelectionId: previousState.storageSelectionId,
+    worldModel: world.snapshot,
+    candidates: semantic.candidates,
+    evidence: semantic.evidence,
+    unknowns: semantic.unknowns,
+    parentCandidateSetIds: previousIsHistorical || !previousState.candidateSetId ? [] : [previousState.candidateSetId],
+    producerReviewDecisionId: null,
+  });
+  persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId), candidateSet, "Onboarding candidate set");
+  const continuityReceipt = previousIsHistorical ? publishHistoricalContinuityReceipt({ root: projectRoot, currentCandidateSet: candidateSet }) : null;
+  const projectedWorld = await rebuildWithOnboardingProjection({
+    projectRoot,
+    projectId: inspected.project.projectId,
+    currentProductModelId: productCanon.model.productModelId,
+    sourceWorld: world,
+  });
+  const phase = candidateSet.candidates.length ? "awaiting-review" : "awaiting-evidence";
+  const state = writeState(projectRoot, previousState, {
+    phase,
+    candidateSetId: candidateSet.candidateSetId,
+    latestReviewDecisionId: null,
+    productModelId: productCanon.model.productModelId,
+    previousProductModelId: productCanon.model.productModelId,
+    worldModelId: projectedWorld.snapshot.worldModelId,
+    sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+  });
+  return {
+    status: phase === "awaiting-review" ? "awaiting_onboarding_review" : "awaiting_onboarding_evidence",
+    state,
+    candidateSet,
+    continuityReceipt,
+    historicalCoverage: historical.coverage,
+    worldModel: { worldModelId: projectedWorld.snapshot.worldModelId, sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+      graphSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId },
+    authority: { candidate: "P3-non-authoritative", continuity: "P3-evidence", productCanonChanged: false },
+  };
 }
 
 async function startOnboardingLocked({ root = ".", mode = "existing", storage = null, brief = null, semanticProposal = null, sourceScope = null } = {}) {
@@ -906,6 +975,9 @@ export function readOnboardingReviewDecision({ root = ".", reviewDecisionId } = 
   const inspected = readyProject(root, "onboarding review inspection");
   const file = reviewDecisionFile(inspected.project.projectRoot, reviewDecisionId);
   if (!fs.existsSync(file)) fail(`Onboarding ReviewDecision not found: ${reviewDecisionId}`, "ONBOARDING_REVIEW_NOT_FOUND");
+  const historical = readCommittedHistoricalArtifactBoundary({ root: inspected.project.projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
+  const historicalEntry = historicalEntryForPath(historical, `${ONBOARDING_REVIEW_DIRECTORY}/${reviewDecisionId}.json`, "historical-review");
+  if (historicalEntry) return { status: "historical-ready-opaque", file, reviewDecision: null, historicalArtifact: historicalEntry, historicalBoundaryId: historical.boundary.boundaryId };
   const reviewDecision = verifyReviewDecision(readJson(file, "Onboarding ReviewDecision"), inspected.project.projectId);
   if (reviewDecision.reviewDecisionId !== reviewDecisionId) fail("Onboarding ReviewDecision identity does not match its requested file.", "ONBOARDING_REVIEW_IDENTITY_MISMATCH");
   const candidateSet = readOnboardingCandidateSet({ root: inspected.project.projectRoot, candidateSetId: reviewDecision.candidateSetId }).candidateSet;
@@ -1295,6 +1367,11 @@ async function recoverOnboardingPromotionLocked({ root = "." } = {}) {
   const projectRoot = inspected.project.projectRoot;
   if (!fs.existsSync(stateFile(projectRoot))) return null;
   const state = ensureOnboardingState(inspected);
+  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
+  if (state.candidateSetId && historicalEntryForPath(historical, `${ONBOARDING_CANDIDATE_DIRECTORY}/${state.candidateSetId}.json`, "historical-candidate-set")) {
+    if (state.phase !== "ready") fail("Opaque historical onboarding cannot execute promotion recovery.", "ONBOARDING_HISTORICAL_RECOVERY_RETIRED");
+    return null;
+  }
   const own = decisionForCandidate(projectRoot, state.candidateSetId);
   const nonPromoting = nonPromotingDecisionForState(projectRoot, state, own);
   if (nonPromoting) {
@@ -1377,7 +1454,11 @@ async function reviewOnboardingLocked({
   const projectRoot = inspected.project.projectRoot;
   const state = ensureOnboardingState(inspected);
   const reviewedSetId = requiredText(candidateSetId, "candidateSetId");
-  const candidateSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: reviewedSetId }).candidateSet;
+  const candidateRead = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: reviewedSetId });
+  if (candidateRead.status === "historical-ready-opaque") {
+    fail("Historical candidates are audit-only and cannot receive a new ReviewDecision.", "ONBOARDING_HISTORICAL_CANDIDATE_REVIEW_RETIRED");
+  }
+  const candidateSet = candidateRead.candidateSet;
   const recorded = decisionForCandidate(projectRoot, reviewedSetId);
   if (recorded) {
     if (recorded.promotionAuthority) {
@@ -1566,6 +1647,58 @@ export function inspectOnboarding({ root = "." } = {}) {
     readJson(storageSelectionFile(projectRoot, state.storageSelectionId), "Onboarding storage selection"),
     inspected.project.projectId,
   );
+  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
+  const historicalCandidate = state.candidateSetId
+    ? historicalEntryForPath(historical, `${ONBOARDING_CANDIDATE_DIRECTORY}/${state.candidateSetId}.json`, "historical-candidate-set")
+    : null;
+  if (historicalCandidate) {
+    const latestReviewDecisionId = onboardingStateLatestReviewDecisionId(state);
+    const historicalReview = latestReviewDecisionId
+      ? historicalEntryForPath(historical, `${ONBOARDING_REVIEW_DIRECTORY}/${latestReviewDecisionId}.json`, "historical-review")
+      : null;
+    if (state.phase !== "ready" || !historicalReview) fail("Historical onboarding boundary does not cover a complete ready state.", "HISTORICAL_BOUNDARY_INCOMPLETE");
+    const productCanon = readProductModelCanon({ projectRoot });
+    if (productCanon.status !== "present" || productCanon.model.productModelId !== state.productModelId) {
+      fail("Historical boundary cannot replace current Product Canon validation.", "ONBOARDING_PRODUCT_CANON_DRIFT");
+    }
+    const currentRevision = readProductRevision(projectRoot, state.productModelId).revision;
+    if (currentRevision.productModelHash !== productCanon.model.productModelHash) fail("Current Product revision does not match Canon.", "ONBOARDING_PRODUCT_CANON_DRIFT");
+    let world = null;
+    if (state.worldModelId) {
+      try {
+        const inspectedWorld = inspectWorldModel({ root: projectRoot });
+        world = { status: inspectedWorld.status, worldModelId: inspectedWorld.snapshot.worldModelId,
+          sourceSnapshotId: inspectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
+          graphSnapshotId: inspectedWorld.snapshot.temporalProvenanceGraph.graphSnapshotId,
+          matchesOnboardingSnapshot: inspectedWorld.snapshot.worldModelId === state.worldModelId };
+      } catch (error) {
+        if (!ABSENT_WORLD_CODES.has(error.code)) throw error;
+        world = { status: "unavailable", reasonCode: error.code, ordinaryWorkBlocked: false, nextAction: "refresh_product_world" };
+      }
+    }
+    return {
+      status: world?.status === "current" ? "ready" : "ready_world_changed",
+      state,
+      sessionRecord,
+      storageSelection,
+      candidateSet: null,
+      reviewDecision: null,
+      historical: {
+        applicationStatus: historical.applicationStatus,
+        boundaryIntegrity: historical.boundaryIntegrity,
+        boundaryId: historical.boundary.boundaryId,
+        candidate: historicalCandidate,
+        review: historicalReview,
+        coverage: historical.coverage,
+        nextAction: "Use a fresh current semantic proposal only when product meaning should change.",
+      },
+      productModel: productCanon.model,
+      productModelRevisions: { current: currentRevision },
+      worldModel: world,
+      recovery: { nextAction: world?.status === "current" ? "continue" : "refresh_product_world", userReviewRequired: false, ordinaryWorkBlocked: false },
+      authority: { productCanon: "user-owned-project-canon", candidates: "historical-ready-opaque", graph: "rebuildable-derived-evidence" },
+    };
+  }
   const candidateSet = state.candidateSetId
     ? readOnboardingCandidateSet({ root: projectRoot, candidateSetId: state.candidateSetId }).candidateSet
     : null;

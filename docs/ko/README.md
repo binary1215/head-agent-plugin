@@ -12,6 +12,7 @@
 - [공급자 중립 HEAD 헌법](head-constitution.md)
 - [권한 평면과 Graph/기록 경계](authority-plane-contract.md)
 - [프로젝트 온보딩](onboarding.md)
+- [독립 실행 legacy 온보딩 migrator 경계](onboarding-migrator.md)
 - [Product Model 정본](product-model.md)
 - [Product Operating Loop](product-operating-loop.md)
 - [Release observation](release-observation.md)

@@ -65,6 +65,28 @@ If repository evidence changes before review, do not reuse or automatically
 replay the proposal. Re-inspect the new SourceSnapshot and submit a fresh
 proposal; the stale candidate set remains immutable evidence.
 
+## Continue after a historical boundary
+
+If the guide or status reports `historical-ready-opaque`, do not parse, review,
+promote, or recover the historical candidate through current Core. Do not look
+for, download, invoke, or expose the standalone migrator during a normal plugin
+conversation. A completed boundary means the old approval is preserved as
+opaque P3/P4 evidence and ordinary current status, World, Context, and Session
+recovery may continue.
+
+Only when the user actually requests a product-meaning change, inspect current
+repository evidence and call `head_onboarding_semantic_refresh` with a fresh
+current semantic proposal. The first current candidate has no typed historical
+parent. Present it for the same explicit `head_onboarding_review` used by any
+other current candidate. The continuity receipt and `HISTORICALLY_FOLLOWS`
+projection are evidence only; never describe them as approval, recovery
+direction, or Canon authority.
+
+If status reports an incomplete boundary, unsupported legacy state, missing
+historical bytes, or integrity drift, stop Product governance mutation and
+report the exact recovery condition. Do not reset state, synthesize an empty
+Canon, or rerun onboarding to bypass it.
+
 ## Activate optional GraphDB projection
 
 Use this path only when onboarding already selected GraphDB and the user asks to

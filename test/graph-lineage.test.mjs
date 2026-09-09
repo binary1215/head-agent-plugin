@@ -116,13 +116,16 @@ test("the current reader preserves digest-valid temporal 0.12 vocabulary compati
   legacy.protocol.version = "0.12.0";
   delete legacy.productModelSchemaVersion;
   delete legacy.logicalLineageState;
-  legacy.nodeKinds = legacy.nodeKinds.filter((kind) => !["Policy", "PolicyRevision", "ProductModelRevisionReference", "ProductPolicyCandidate", "ProductPolicyEvidence", "ProductPolicyReviewDecision"].includes(kind));
+  legacy.nodeKinds = legacy.nodeKinds.filter((kind) => !["Policy", "PolicyRevision", "ProductModelRevisionReference", "ProductPolicyCandidate", "ProductPolicyEvidence", "ProductPolicyReviewDecision", "HistoricalOnboardingCandidateReference"].includes(kind));
+  legacy.relationTypes = legacy.relationTypes.filter((type) => type !== "HISTORICALLY_FOLLOWS");
   delete legacy.productPolicyProjection;
   delete legacy.summary.policyCount;
   delete legacy.summary.productPolicyCandidateCount;
   delete legacy.summary.productPolicyEvidenceCount;
   delete legacy.summary.productPolicyReviewDecisionCount;
   delete legacy.summary.appliedProductPolicyDecisionCount;
+  delete legacy.summary.historicalOnboardingReferenceCount;
+  delete legacy.summary.historicalContinuityCount;
   delete legacy.graphSnapshotId;
   delete legacy.graphSnapshotHash;
   legacy.graphSnapshotHash = graphDigest(legacy);

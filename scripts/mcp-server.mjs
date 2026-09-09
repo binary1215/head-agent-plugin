@@ -8,7 +8,7 @@ import { prepareContextWorkflow, previewContextWorkflow } from "./lib/context-wo
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
 import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
-import { inspectOnboarding, reviewOnboarding } from "./lib/onboarding.mjs";
+import { inspectOnboarding, proposeOnboardingSemanticRefresh, reviewOnboarding } from "./lib/onboarding.mjs";
 import { inspectConversationalOnboarding } from "./lib/onboarding-conversation.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
 import { inspectFeatureMapping, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
@@ -109,6 +109,47 @@ const observationInputSchema = {
   required: ["subject", "form", "temporal_scope", "source_event_key_digest", "source_evidence_digest", "coverage", "payload"], additionalProperties: false,
 };
 const nullableIdentity = (pattern) => ({ anyOf: [{ type: "string", pattern }, { type: "null" }] });
+const onboardingSemanticProposalSchema = {
+  type: "object",
+  description: "Fresh provider-HEAD-authored P3 product candidates. Core verifies exact current source evidence and never treats this proposal as Product Canon.",
+  properties: {
+    schemaVersion: { type: "integer", const: 1 },
+    sourceSnapshotId: { type: "string", pattern: "^source-snapshot-[a-f0-9]{24}$" },
+    candidates: {
+      type: "array", minItems: 1, maxItems: 200,
+      items: {
+        type: "object",
+        properties: {
+          productKind: { type: "string", enum: ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"] },
+          proposedEntity: { type: "object" },
+          explanation: { type: "string", minLength: 1, maxLength: 2000 },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          evidence: {
+            type: "array", minItems: 1, maxItems: 8,
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string", minLength: 1 },
+                line: { type: "integer", minimum: 1 },
+                contentDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+                symbol: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string", minLength: 1 }, kind: { type: "string", minLength: 1 }, line: { type: "integer", minimum: 1 },
+                  },
+                  required: ["name", "kind", "line"], additionalProperties: false,
+                },
+              },
+              required: ["path", "line"], additionalProperties: false,
+            },
+          },
+        },
+        required: ["productKind", "proposedEntity", "evidence", "explanation", "confidence"], additionalProperties: false,
+      },
+    },
+  },
+  required: ["schemaVersion", "sourceSnapshotId", "candidates"], additionalProperties: false,
+};
 const conformanceBaselineSchema = {
   type: "object",
   properties: {
@@ -152,6 +193,7 @@ const supplementalReadOnlyHints = {
   head_runtime_invocation_lease_status: true,
   head_runtime_invocation_result: true,
   head_onboarding_status: true,
+  head_onboarding_semantic_refresh: false,
   head_product_policy_status: true,
   head_product_policy_candidate: true,
   head_product_policy_review_decision: true,
@@ -346,6 +388,20 @@ export const tools = [
         },
       },
       required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_onboarding_semantic_refresh",
+    description: "Create a fresh current P3 semantic onboarding proposal after a completed historical boundary. This creates only P3 candidates and continuity evidence; Product Canon changes only through a later explicit user ReviewDecision.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        semantic_proposal: onboardingSemanticProposalSchema,
+      },
+      required: ["project_root", "semantic_proposal"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1983,6 +2039,8 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           profile: args.profile || "core",
           onboarding: onboardingInputFromMcp(args),
         })
+      : name === "head_onboarding_semantic_refresh"
+        ? proposeOnboardingSemanticRefresh({ root: args.project_root, semanticProposal: args.semantic_proposal })
       : name === "head_onboarding_review"
         ? compactReviewResult(await reviewOnboarding({
           root: args.project_root,

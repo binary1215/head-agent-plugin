@@ -18,9 +18,9 @@ Initialization now creates:
 The HEAD Session identity is independent from Claude Code, Codex, OpenCode, and all other provider conversation IDs. Older initialized projects report `migration_required` through read-only inspection. The next mutating onboarding command creates the missing Session record, local storage selection, and state pointer while preserving the existing Session ID and Product Model identity.
 
 State-pointer protocol `0.2.0` names the most recent decision as
-`latestReviewDecisionId`. Digest-valid `0.1.0` pointers whose compatibility field
-is `reviewDecisionId` remain readable and are rewritten only by a later explicit
-state transition. A successor candidate separately names the `revise` decision
+`latestReviewDecisionId`. Current Core no longer interprets state protocol
+`0.1.0`; projects that still use it require the separately pinned legacy
+migrator or a separately reviewed recovery path. A successor candidate separately names the `revise` decision
 that produced it as `producerReviewDecisionId`; the producer and latest review
 are intentionally different after that successor is accepted or rejected.
 
@@ -41,6 +41,26 @@ initialized
 Fresh HEAD semantic proposals and user-owned briefs create `OnboardingCandidateSet` evidence with `instructionAuthority: false` and `promotionAuthority: false`. Core does not infer product meaning from symbol names, repository paths, README headings, or lexical rules. It verifies every proposed source path, digest, line, optional symbol, Product Model reference, and resource bound against the current World Model. Only an explicit `ReviewDecision` with `decisionScope: "product-canon-bootstrap"` may write Product Canon. A candidate is never mutated or relabeled: revision creates a successor candidate with a new identity, and acceptance creates separate canon plus an immutable decision receipt.
 
 Candidate protocol `0.4.0` derives candidate-set identity from project, Session, mode, exact SourceSnapshot, Product Model input, bounded semantic proposals, verified Evidence, Unknowns, ancestry, producer ReviewDecision, and producer policy. It deliberately excludes the derived World Model ID so authority review is not coupled to a materialized-view pointer. Candidate sets from the retired lexical-inference protocols are rejected and must be replaced by fresh HEAD semantic proposals against the current SourceSnapshot.
+
+## Historical onboarding boundary
+
+Completed candidate protocols `0.1.0` through `0.3.0` are interpreted only by
+the standalone package documented in
+[`onboarding-migrator.md`](onboarding-migrator.md). The current plugin does not
+ship, import, invoke, or expose that parser through MCP. A successful one-shot
+apply writes only a create-only P3 boundary, application receipt, and final
+commit marker. Historical candidates and their reviews then remain opaque,
+while Product Model revisions that independently pass the current verifier keep
+their original P1 status.
+
+Normal status, World, Context, Session recovery, and new current onboarding work
+continue without the helper. If product meaning should change, the provider
+HEAD authors a fresh current semantic proposal with
+`head_onboarding_semantic_refresh` or `onboarding-semantic-refresh`; the user
+then reviews the new candidate through the ordinary ReviewDecision path. The
+first current candidate does not reuse a historical candidate as typed ancestry.
+Instead, a P3 continuity receipt and P4 `HISTORICALLY_FOLLOWS` edge preserve only
+historical continuity and grant no instruction, recovery, or promotion authority.
 
 ## Public initialize and resume path
 
@@ -298,7 +318,15 @@ The read-only MCP tool `head_onboarding_status` verifies the state pointer, Sess
 
 ## Temporal graph projection
 
-World Model `0.14.0` continues to load bounded immutable onboarding artifacts and verify every nested content identity before projecting them through onboarding projection protocol `0.1.0` into P4 temporal provenance protocol `0.11.0`. Candidate sets connect to exact source evidence, candidates connect to Evidence and separate proposed product-concept references, and ReviewDecisions preserve accepted, rejected, revised, and promotion outcomes. A revise decision has an explicit `PRODUCES` edge to its successor candidate set; a later accepted decision separately connects to immutable previous/resulting ProductModelRevision receipts, and the resulting receipt links back to the promoted candidate identities.
+Current World snapshots project onboarding through temporal provenance protocol
+`0.15.0`. Candidate sets connect to exact source evidence, candidates connect to
+Evidence and separate proposed product-concept references, and ReviewDecisions
+preserve accepted, rejected, revised, and promotion outcomes. A revise decision
+has an explicit `PRODUCES` edge to its successor candidate set; a later accepted
+decision separately connects to immutable previous/resulting ProductModelRevision
+receipts, and the resulting receipt links back to the promoted candidate identities.
+Opaque historical candidate references expose only bounded IDs and digests and
+connect to a fresh current candidate solely through `HISTORICALLY_FOLLOWS`.
 
 This graph is an audit and traversal projection, not the decision source. All projected node and edge instruction/promotion flags are false, even when the source ReviewDecision records the user's promotion authority. Normal traversal hides CandidateSet, candidate, Evidence, Unknown, and proposed-concept nodes. A user can explicitly inspect them with `world-temporal --include-candidates true` or MCP `include_unreviewed_candidates: true`; the Context Compiler never enables that option. Reviewed decision and ProductModelRevision receipts remain available in normal reviewed traversal.
 

@@ -12,6 +12,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 - [Provider-neutral HEAD constitution](head-constitution.md)
 - [Authority planes and the Graph/record boundary](authority-plane-contract.md)
 - [Project onboarding](onboarding.md)
+- [Standalone legacy onboarding migrator boundary](onboarding-migrator.md)
 - [Product Model canon](product-model.md)
 - [Product Operating Loop](product-operating-loop.md)
 - [Release observation](release-observation.md)

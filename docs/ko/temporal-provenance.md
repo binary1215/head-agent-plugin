@@ -21,7 +21,7 @@ Evidence로만 사용되는 Git commit, branch, tag, GraphDB record ID, provider
 
 ## Logical entity와 불변 revision
 
-Temporal provenance protocol `0.14.0`은 [`AuthorityPlaneContract`](authority-plane-contract.md) 아래에 P4 재구축 가능 relation 및 retrieval index를 구체화합니다. digest가 유효한 `0.2.0`부터 `0.13.0`까지의 protocol은 계속 읽을 수 있습니다. 새 graph는 기존 identity를 보존하면서 정확한 Policy proposal/review genealogy와 common Observation derivation을 추가합니다.
+Temporal provenance protocol `0.15.0`은 [`AuthorityPlaneContract`](authority-plane-contract.md) 아래에 P4 재구축 가능 relation 및 retrieval index를 구체화합니다. digest가 유효한 `0.2.0`부터 `0.14.0`까지의 protocol은 계속 읽을 수 있습니다. 새 graph는 기존 identity와 Policy·Observation projection을 보존하면서 범위가 한정된 opaque historical onboarding reference를 추가합니다.
 
 - 안정적인 product logical entity: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, `Decision`, schema-v2 `Policy`
 - 불변 product state: 이에 대응하는 `*Revision` kind
@@ -29,6 +29,7 @@ Temporal provenance protocol `0.14.0`은 [`AuthorityPlaneContract`](authority-pl
 - 불변 implementation state: `FileRevision`, `SymbolRevision`, `TestRevision`
 - temporal root 및 외부 ancestry reference: `SourceSnapshot`, `SourceSnapshotReference`, `RevisionReference`
 - onboarding evidence 및 review history: `OnboardingCandidateSet`, `OnboardingProductCandidate`, `OnboardingEvidence`, `OnboardingUnknown`, `OnboardingReviewDecision`, `ProductConceptReference`, `ProductModelRevision`
+- 범위가 한정된 historical onboarding continuity: opaque `HistoricalOnboardingCandidateReference` node와 권한이 없는 `HISTORICALLY_FOLLOWS` edge. 정확한 `typedRevisionIds` 및 `opaqueRevisionIds` coverage는 projection된 revision set과 일치해야 하며 P1 또는 recovery authority를 부여할 수 없습니다.
 - mapping review history: `FeatureMappingCandidateSet`, `FeatureMappingCandidate`, `FeatureMappingEvidence`, `FeatureMappingUnknown`, `FeatureMappingReviewDecision`, `ReviewedRelationship`, 과거의 `MappingEndpointReference`
 - change lineage: `ChangeSet`, `ChangeRevisionReference`, execution-lineage reference, `ChangeImpactCandidateSet`, `ChangeImpactCandidate`, `ChangeImpactUnknown`, `ChangeImpactReviewDecision`, `ReviewedImpact`, 과거의 product reference
 - 선택적 외부 change evidence: `VcsEvidence` 및 불변 `GitCommit` observation node. attachment가 없을 때는 이러한 node가 생략되며 ChangeSet을 절대 대체하지 않습니다.
@@ -61,6 +62,7 @@ projection된 모든 node는 `nodeId`, `kind`, `authorityClass`, `origin`, 정�
 - `PROPOSES_FROM`, `PROPOSES_TO`, `SUPPORTED_BY`
 - `REVIEWED_BY`, `ACCEPTED_BY`, `REJECTED_BY`
 - `PRODUCES` 및 `PROMOTED_FROM`. onboarding에서 `revise ReviewDecision -[:PRODUCES]-> successor CandidateSet`은 `accept ReviewDecision -[:PRODUCES]-> ProductModelRevision`과 구별됩니다.
+- `HISTORICALLY_FOLLOWS`를 통한 비권위적 historical continuity
 - review를 거친 canonical `IMPLEMENTS` 및 `VERIFIED_BY` edge
 - 제공자 중립적 `CHANGES` 및 `SUPERSEDES` lineage와 명시적으로 review를 거친 `IMPACTS` edge
 - 선택적 `ChangeSet -[:MATERIALIZED_AS]-> VcsEvidence -[:REFERENCES]-> GitCommit` evidence link

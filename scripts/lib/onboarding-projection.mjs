@@ -8,6 +8,8 @@ import {
   onboardingCanonicalJson,
   onboardingDigest,
 } from "./onboarding-contract.mjs";
+import { readHistoricalContinuityReceipts } from "./historical-continuity.mjs";
+import { historicalEntryForPath, readCommittedHistoricalArtifactBoundary } from "./historical-artifact-boundary-store.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument, PRODUCT_ENTITY_KINDS_V1 as PRODUCT_ENTITY_KINDS } from "./product-model.mjs";
 
 export const ONBOARDING_GRAPH_PROJECTION_VERSION = "0.1.0";
@@ -353,6 +355,7 @@ export function loadOnboardingGraphProjection({
     || !/^product-model-[a-f0-9]{24}$/.test(currentProductModelId || "")) {
     fail("Onboarding graph projection scope is invalid.", "INVALID_ONBOARDING_PROJECTION_SCOPE");
   }
+  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId, allowAbsent: true });
   const candidateFiles = readArtifactDirectory(projectRoot, ONBOARDING_CANDIDATE_DIRECTORY, {
     idPattern: /^onboarding-candidates-[a-f0-9]{24}$/,
     idField: "candidateSetId",
@@ -373,9 +376,32 @@ export function loadOnboardingGraphProjection({
   });
   const totalBytes = candidateFiles.totalBytes + reviewFiles.totalBytes + revisionFiles.totalBytes;
   if (totalBytes > ARTIFACT_LIMITS.maxTotalBytes) fail("Onboarding projection exceeds the total byte bound.", "ONBOARDING_PROJECTION_LIMIT");
-  const candidateSets = mergeArtifacts(candidateFiles.documents, additionalCandidateSets, "candidateSetId", "Onboarding candidate set");
-  const reviewDecisions = mergeArtifacts(reviewFiles.documents, additionalReviewDecisions, "reviewDecisionId", "Onboarding ReviewDecision");
-  const productModelRevisions = mergeArtifacts(revisionFiles.documents, additionalProductModelRevisions, "productModelId", "Product Model revision");
+  const partition = (documents, relativeDirectory, idField, role) => {
+    const current = [];
+    for (const document of documents) {
+      const relative = `${relativeDirectory}/${document[idField]}.json`;
+      const entry = historicalEntryForPath(historical, relative, role);
+      if (!entry) {
+        if (document.protocol?.name === "head-agent-core-onboarding-candidates" && document.protocol?.version !== CANDIDATE_PROTOCOL_VERSION) {
+          fail(`Unsupported historical artifact is outside the committed boundary: ${relative}`, "HISTORICAL_BOUNDARY_COVERAGE_DRIFT");
+        }
+        current.push(document);
+        continue;
+      }
+      if (entry.artifactId !== document[idField] || entry.protocolFamily !== (document.protocol?.name || document.kind)
+        || entry.protocolVersion !== (document.protocol?.version || String(document.schemaVersion || ""))) {
+        fail(`Historical boundary role or protocol does not match: ${relative}`, "HISTORICAL_BOUNDARY_INTEGRITY_DRIFT");
+      }
+      if (role === "historical-product-revision" && entry.interpretationMode === "current-typed-with-historical-provenance") current.push(document);
+    }
+    return current;
+  };
+  const storedCurrentCandidates = partition(candidateFiles.documents, ONBOARDING_CANDIDATE_DIRECTORY, "candidateSetId", "historical-candidate-set");
+  const storedCurrentReviews = partition(reviewFiles.documents, ONBOARDING_REVIEW_DIRECTORY, "reviewDecisionId", "historical-review");
+  const storedCurrentRevisions = partition(revisionFiles.documents, ONBOARDING_PRODUCT_REVISION_DIRECTORY, "productModelId", "historical-product-revision");
+  const candidateSets = mergeArtifacts(storedCurrentCandidates, additionalCandidateSets, "candidateSetId", "Onboarding candidate set");
+  const reviewDecisions = mergeArtifacts(storedCurrentReviews, additionalReviewDecisions, "reviewDecisionId", "Onboarding ReviewDecision");
+  const productModelRevisions = mergeArtifacts(storedCurrentRevisions, additionalProductModelRevisions, "productModelId", "Product Model revision");
   if (candidateSets.length > ARTIFACT_LIMITS.maxCandidateSets || reviewDecisions.length > ARTIFACT_LIMITS.maxReviewDecisions
     || productModelRevisions.length > ARTIFACT_LIMITS.maxProductModelRevisions) {
     fail("Onboarding projection additions exceed artifact-count bounds.", "ONBOARDING_PROJECTION_LIMIT");
@@ -426,6 +452,7 @@ export function loadOnboardingGraphProjection({
       fail(`Accepted ReviewDecision has incomplete Product Model revision evidence: ${review.reviewDecisionId}`, "ONBOARDING_PROJECTION_PRODUCT_REVISION_MISSING");
     }
   }
+  const continuityReceipts = historical ? readHistoricalContinuityReceipts({ root: projectRoot, boundary: historical.boundary, currentCandidateSets: candidateSets }) : [];
   const payload = {
     kind: "OnboardingGraphProjectionInput",
     protocol: { name: "head-agent-core-onboarding-graph-projection", version: ONBOARDING_GRAPH_PROJECTION_VERSION },
@@ -434,6 +461,21 @@ export function loadOnboardingGraphProjection({
     candidateSets,
     reviewDecisions,
     productModelRevisions,
+    historicalCoverage: historical ? {
+      boundaryId: historical.boundary.boundaryId,
+      boundaryHash: historical.boundary.boundaryHash,
+      boundaryIntegrity: historical.boundaryIntegrity,
+      applicationStatus: historical.applicationStatus,
+      ...historical.coverage,
+      references: historical.boundary.entries.map((entry) => ({
+        path: entry.path,
+        role: entry.role,
+        artifactId: entry.artifactId,
+        sha256: entry.sha256,
+        interpretationMode: entry.interpretationMode,
+      })),
+      continuityReceipts,
+    } : null,
     limits: ARTIFACT_LIMITS,
     authority: "mixed-source-derived-projection-input",
     instructionAuthority: false,
@@ -461,6 +503,73 @@ export function verifyOnboardingGraphProjectionInput(document) {
   const hash = digest(canonicalJson(payload));
   if (document.projectionInputHash !== hash || document.projectionInputId !== `onboarding-graph-input-${hash.slice(0, 24)}`) {
     fail("Onboarding graph projection input digest verification failed.", "ONBOARDING_GRAPH_PROJECTION_DIGEST_MISMATCH");
+  }
+  const historical = document.historicalCoverage;
+  if (historical) {
+    if (!/^historical-boundary-[a-f0-9]{24}$/.test(historical.boundaryId || "") || !/^[a-f0-9]{64}$/.test(historical.boundaryHash || "")
+      || historical.boundaryIntegrity !== "verified" || historical.applicationStatus !== "committed"
+      || !Array.isArray(historical.references) || !Array.isArray(historical.continuityReceipts)) {
+      fail("Historical onboarding projection coverage is invalid.", "INVALID_ONBOARDING_HISTORICAL_COVERAGE");
+    }
+    for (const field of ["opaqueCandidateSetIds", "opaqueReviewDecisionIds", "typedRevisionIds", "opaqueRevisionIds", "legacyWorldEmbeddingReferenceIds"]) {
+      if (!Array.isArray(historical[field]) || canonicalJson(historical[field]) !== canonicalJson([...new Set(historical[field])].sort())) {
+        fail(`Historical onboarding ${field} must be sorted and unique.`, "INVALID_ONBOARDING_HISTORICAL_COVERAGE");
+      }
+    }
+    if (historical.typedRevisionIds.some((id) => historical.opaqueRevisionIds.includes(id))) {
+      fail("Historical typed and opaque Product revision coverage must be disjoint.", "INVALID_ONBOARDING_HISTORICAL_COVERAGE");
+    }
+    const referenceSpecs = new Map([
+      ["historical-candidate-set", { id: /^onboarding-candidates-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => `${ONBOARDING_CANDIDATE_DIRECTORY}/${id}.json` }],
+      ["historical-review", { id: /^onboarding-review-decision-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => `${ONBOARDING_REVIEW_DIRECTORY}/${id}.json` }],
+      ["historical-product-revision", { id: /^product-model-[a-f0-9]{24}$/, modes: new Set(["current-typed-with-historical-provenance", "opaque-legacy-revision"]), path: (id) => `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${id}.json` }],
+      ["legacy-world-embedding-reference", { id: /^world-model-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => `.head/world-model/snapshots/${id}.json` }],
+    ]);
+    const referenceById = new Map();
+    for (const reference of historical.references) {
+      const spec = referenceSpecs.get(reference.role);
+      if (typeof reference.path !== "string" || !reference.path || typeof reference.role !== "string"
+        || typeof reference.artifactId !== "string" || !reference.artifactId || !/^[a-f0-9]{64}$/.test(reference.sha256 || "")
+        || !spec || !spec.id.test(reference.artifactId) || !spec.modes.has(reference.interpretationMode)
+        || reference.path !== spec.path(reference.artifactId)
+        || referenceById.has(`${reference.role}:${reference.artifactId}`)) {
+        fail("Historical onboarding reference is invalid.", "INVALID_ONBOARDING_HISTORICAL_COVERAGE");
+      }
+      referenceById.set(`${reference.role}:${reference.artifactId}`, reference);
+    }
+    const idsFor = (role, mode = null) => historical.references
+      .filter((reference) => reference.role === role && (mode == null || reference.interpretationMode === mode))
+      .map((reference) => reference.artifactId).sort();
+    if (canonicalJson(idsFor("historical-candidate-set")) !== canonicalJson(historical.opaqueCandidateSetIds)
+      || canonicalJson(idsFor("historical-review")) !== canonicalJson(historical.opaqueReviewDecisionIds)
+      || canonicalJson(idsFor("historical-product-revision", "current-typed-with-historical-provenance")) !== canonicalJson(historical.typedRevisionIds)
+      || canonicalJson(idsFor("historical-product-revision", "opaque-legacy-revision")) !== canonicalJson(historical.opaqueRevisionIds)
+      || canonicalJson(idsFor("legacy-world-embedding-reference")) !== canonicalJson(historical.legacyWorldEmbeddingReferenceIds)) {
+      fail("Historical onboarding coverage does not match its exact references.", "INVALID_ONBOARDING_HISTORICAL_COVERAGE");
+    }
+    const projectedRevisionIds = document.productModelRevisions.map((revision) => revision.productModelId);
+    const typedRevisionIds = new Set(projectedRevisionIds);
+    if (typedRevisionIds.size !== projectedRevisionIds.length
+      || historical.typedRevisionIds.some((id) => !typedRevisionIds.has(id))
+      || historical.opaqueRevisionIds.some((id) => typedRevisionIds.has(id))
+      || historical.opaqueCandidateSetIds.some((id) => document.candidateSets.some((candidate) => candidate.candidateSetId === id))
+      || historical.opaqueReviewDecisionIds.some((id) => document.reviewDecisions.some((review) => review.reviewDecisionId === id))) {
+      fail("Historical onboarding coverage conflicts with the current typed projection sets.", "INVALID_ONBOARDING_HISTORICAL_COVERAGE");
+    }
+    const candidateById = new Map(document.candidateSets.map((candidate) => [candidate.candidateSetId, candidate]));
+    const receiptIds = new Set();
+    for (const receipt of historical.continuityReceipts) {
+      const source = referenceById.get(`historical-candidate-set:${receipt.historicalCandidateSetId}`);
+      const target = candidateById.get(receipt.currentCandidateSetId);
+      if (receipt.relation !== "HISTORICALLY_FOLLOWS" || receipt.boundaryId !== historical.boundaryId || receipt.boundaryHash !== historical.boundaryHash
+        || source?.sha256 !== receipt.historicalCandidateSetHash || target?.candidateSetHash !== receipt.currentCandidateSetHash
+        || !/^historical-continuity-[a-f0-9]{24}$/.test(receipt.receiptId || "") || !/^[a-f0-9]{64}$/.test(receipt.receiptHash || "")
+        || receiptIds.has(receipt.receiptId)
+        || receipt.instructionAuthority !== false || receipt.promotionAuthority !== false || receipt.recoveryAuthority !== false) {
+        fail("Historical onboarding continuity binding is invalid.", "INVALID_ONBOARDING_HISTORICAL_COVERAGE");
+      }
+      receiptIds.add(receipt.receiptId);
+    }
   }
   return document;
 }
