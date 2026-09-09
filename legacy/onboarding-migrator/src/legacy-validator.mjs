@@ -27,6 +27,7 @@ const FAMILIES = Object.freeze({
   "0.3.0": { worldModel: "absent", reviewField: "producerReviewDecisionId" },
 });
 const MAX_FILES = 512;
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_BYTES = 64 * 1024 * 1024;
 const KIND_ORDER = new Map(PRODUCT_ENTITY_KINDS_V1.map((kind, index) => [kind, index]));
 
@@ -54,10 +55,21 @@ function sortedUnique(values, label) {
   return sorted;
 }
 
-function entry(projectRoot, relative, role, artifactId, protocolFamily, protocolVersion, interpretationMode = "opaque-historical") {
-  const file = path.join(projectRoot, ...relative.split("/"));
-  if (!fs.existsSync(file) || !fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()) fail(`Legacy artifact is missing or unsafe: ${relative}`, "LEGACY_MIGRATOR_ARTIFACT_MISSING");
+function readArtifact(file, label) {
+  let stat;
+  try { stat = fs.lstatSync(file); }
+  catch { fail(`${label} is missing or unsafe.`, "LEGACY_MIGRATOR_ARTIFACT_MISSING"); }
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > MAX_ENTRY_BYTES) {
+    fail(`${label} is missing, unsafe, or exceeds its byte bound.`, stat.size > MAX_ENTRY_BYTES ? "LEGACY_MIGRATOR_LIMIT" : "LEGACY_MIGRATOR_ARTIFACT_MISSING");
+  }
   const bytes = fs.readFileSync(file);
+  let document;
+  try { document = JSON.parse(bytes.toString("utf8")); }
+  catch (error) { fail(`${label} is invalid JSON: ${error.message}`, "LEGACY_MIGRATOR_INVALID_JSON"); }
+  return { document, bytes };
+}
+
+function entry(relative, role, artifactId, protocolFamily, protocolVersion, bytes, interpretationMode = "opaque-historical") {
   return { path: relative, role, artifactId, protocolFamily, protocolVersion, byteLength: bytes.byteLength, sha256: historicalBoundaryDigest(bytes), interpretationMode };
 }
 
@@ -142,10 +154,11 @@ function revisionInterpretation(revision) {
 
 function inventoryRevision(projectRoot, productModelId) {
   const relative = `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${productModelId}.json`;
-  const revision = readJson(path.join(projectRoot, ...relative.split("/")), "Historical Product Model revision");
+  const snapshot = readArtifact(path.join(projectRoot, ...relative.split("/")), "Historical Product Model revision");
+  const revision = snapshot.document;
   if (revision.productModelId !== productModelId) fail("Historical Product revision filename does not match its identity.", "LEGACY_MIGRATOR_REVISION_INVALID");
   const interpretationMode = revisionInterpretation(revision);
-  return { revision, inventory: entry(projectRoot, relative, "historical-product-revision", productModelId, revision.kind || "ProductModelRevision", String(revision.schemaVersion || ""), interpretationMode) };
+  return { revision, inventory: entry(relative, "historical-product-revision", productModelId, revision.kind || "ProductModelRevision", String(revision.schemaVersion || ""), snapshot.bytes, interpretationMode) };
 }
 
 function artifactDocuments(projectRoot, relativeDirectory, filePattern, label) {
@@ -158,7 +171,8 @@ function artifactDocuments(projectRoot, relativeDirectory, filePattern, label) {
   if (files.length > MAX_FILES) fail(`${label} directory exceeds its bound.`, "LEGACY_MIGRATOR_LIMIT");
   return files.map((item) => {
     if (!item.isFile() || item.isSymbolicLink() || !filePattern.test(item.name)) fail(`${label} directory contains an unsafe entry.`, "LEGACY_MIGRATOR_ARTIFACT_MISSING");
-    return readJson(path.join(directory, item.name), label);
+    const relative = `${relativeDirectory}/${item.name}`;
+    return { relative, ...readArtifact(path.join(directory, item.name), label) };
   });
 }
 
@@ -277,14 +291,18 @@ export function inspectLegacyOnboarding({ root = "." } = {}) {
   if (rawState.protocol?.version !== ONBOARDING_STATE_PROTOCOL_VERSION) fail("First slice does not migrate legacy onboarding state.", "LEGACY_MIGRATOR_UNSUPPORTED_STATE");
   const state = verifyOnboardingState(rawState, { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId });
   if (state.phase !== "ready" || !state.candidateSetId || !state.latestReviewDecisionId || !state.productModelId) fail("First slice requires complete ready onboarding.", "LEGACY_MIGRATOR_INCOMPLETE_READY");
-  const candidateDocuments = artifactDocuments(projectRoot, ONBOARDING_CANDIDATE_DIRECTORY,
+  const candidateArtifacts = artifactDocuments(projectRoot, ONBOARDING_CANDIDATE_DIRECTORY,
     /^onboarding-candidates-[a-f0-9]{24}\.json$/, "Onboarding candidate set");
+  const candidateDocuments = candidateArtifacts.map((artifact) => artifact.document);
+  const candidateArtifactById = new Map(candidateArtifacts.map((artifact) => [artifact.document.candidateSetId, artifact]));
   const legacyCandidates = candidateDocuments.filter((document) => FAMILIES[document.protocol?.version]);
   for (const candidate of legacyCandidates) if (candidate.sessionId !== state.sessionId) {
     fail("Legacy candidate does not match the canonical Session.", "LEGACY_MIGRATOR_READY_BINDING_MISMATCH");
   }
-  const reviewDocuments = artifactDocuments(projectRoot, ONBOARDING_REVIEW_DIRECTORY,
+  const reviewArtifacts = artifactDocuments(projectRoot, ONBOARDING_REVIEW_DIRECTORY,
     /^onboarding-review-decision-[a-f0-9]{24}\.json$/, "Onboarding ReviewDecision");
+  const reviewDocuments = reviewArtifacts.map((artifact) => artifact.document);
+  const reviewArtifactById = new Map(reviewArtifacts.map((artifact) => [artifact.document.reviewDecisionId, artifact]));
   const legacyChain = validateLegacyChain({ candidates: legacyCandidates, reviews: reviewDocuments, projectId: inspected.project.projectId });
   const candidate = legacyChain.terminalCandidate;
   const review = legacyChain.terminalReview;
@@ -305,18 +323,21 @@ export function inspectLegacyOnboarding({ root = "." } = {}) {
     if (!entryPaths.has(value.path)) { entries.push(value); entryPaths.add(value.path); }
   };
   for (const legacyCandidate of legacyCandidates) {
-    addEntry(entry(projectRoot, `${ONBOARDING_CANDIDATE_DIRECTORY}/${legacyCandidate.candidateSetId}.json`,
-      "historical-candidate-set", legacyCandidate.candidateSetId, legacyCandidate.protocol.name, legacyCandidate.protocol.version));
+    const artifact = candidateArtifactById.get(legacyCandidate.candidateSetId);
+    addEntry(entry(artifact.relative, "historical-candidate-set", legacyCandidate.candidateSetId,
+      legacyCandidate.protocol.name, legacyCandidate.protocol.version, artifact.bytes));
     if (legacyCandidate.worldModelId) {
       const worldRelative = `.head/world-model/snapshots/${legacyCandidate.worldModelId}.json`;
-      const world = readJson(path.join(projectRoot, ...worldRelative.split("/")), "Legacy World embedding");
-      addEntry(entry(projectRoot, worldRelative, "legacy-world-embedding-reference", legacyCandidate.worldModelId,
-        world.protocol?.name || world.kind || "WorldModel", world.protocol?.version || String(world.schemaVersion || "")));
+      const worldArtifact = readArtifact(path.join(projectRoot, ...worldRelative.split("/")), "Legacy World embedding");
+      const world = worldArtifact.document;
+      addEntry(entry(worldRelative, "legacy-world-embedding-reference", legacyCandidate.worldModelId,
+        world.protocol?.name || world.kind || "WorldModel", world.protocol?.version || String(world.schemaVersion || ""), worldArtifact.bytes));
     }
   }
   for (const historicalReview of legacyChain.reviewById.values()) {
-    addEntry(entry(projectRoot, `${ONBOARDING_REVIEW_DIRECTORY}/${historicalReview.reviewDecisionId}.json`,
-      "historical-review", historicalReview.reviewDecisionId, historicalReview.protocol.name, historicalReview.protocol.version));
+    const artifact = reviewArtifactById.get(historicalReview.reviewDecisionId);
+    addEntry(entry(artifact.relative, "historical-review", historicalReview.reviewDecisionId,
+      historicalReview.protocol.name, historicalReview.protocol.version, artifact.bytes));
     const previous = inventoryRevision(projectRoot, historicalReview.previousProductModelId);
     if (previous.revision.productModelHash !== historicalReview.previousProductModelHash) fail("Historical review previous revision binding is invalid.", "LEGACY_MIGRATOR_READY_BINDING_MISMATCH");
     addEntry(previous.inventory);

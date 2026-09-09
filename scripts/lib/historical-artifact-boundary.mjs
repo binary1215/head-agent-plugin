@@ -11,6 +11,7 @@ import {
 } from "./onboarding-contract.mjs";
 import { verifyProductModelRevisionForProjection } from "./onboarding-projection.mjs";
 import { readProductModelCanon } from "./product-model.mjs";
+import { inspectRecoveryCheckpointBasis, readRecoveryCheckpoint } from "./compaction-recovery.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import {
   HISTORICAL_BOUNDARY_PROTOCOL_VERSION,
@@ -57,29 +58,53 @@ function fileBasis(projectRoot, relative, id = null) {
 }
 
 function verifyReferencedP2(projectRoot, state) {
+  const before = inspectRecoveryCheckpointBasis({ root: projectRoot }).basis;
   const files = [];
   if (state.latestCheckpoint) {
-    if (!/^checkpoint-[a-f0-9]{24}$/.test(state.latestCheckpoint)) fail("Current checkpoint identity is invalid.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
-    const relative = `.head/sessions/ledger/${state.latestCheckpoint}.json`;
-    const checkpoint = readJson(path.join(projectRoot, ...relative.split("/")), "Current recovery checkpoint");
-    if (checkpoint.checkpointId !== state.latestCheckpoint || !/^[a-f0-9]{64}$/.test(checkpoint.checkpointDigest || "")) fail("Current checkpoint is not independently readable.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
-    const payload = { ...checkpoint };
-    delete payload.checkpointId;
-    delete payload.checkpointDigest;
-    const digest = historicalBoundaryDigest(onboardingCanonicalJson(payload));
-    if (digest !== checkpoint.checkpointDigest) fail("Current checkpoint digest is invalid.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
+    const verified = readRecoveryCheckpoint({ root: projectRoot, checkpointId: state.latestCheckpoint });
+    const relative = relativePath(projectRoot, verified.file);
+    const checkpoint = readJson(verified.file, "Current recovery checkpoint");
+    if (historicalBoundaryCanonicalJson(checkpoint) !== historicalBoundaryCanonicalJson(verified.checkpoint)) {
+      fail("Current checkpoint bytes changed after current verification.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
+    }
     files.push(fileBasis(projectRoot, relative, state.latestCheckpoint));
   }
-  const runIds = [...new Set([state.activeRunId, state.pendingReview?.runId].filter(Boolean))];
+  const runIds = [...new Set([state.activeRunId, state.pendingReview?.runId, state.lastReviewedRunId].filter(Boolean))];
   for (const runId of runIds) {
-    if (!/^run-[0-9]+-[a-f0-9]{6}$/.test(runId)) fail("Current Run identity is invalid.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
     const relative = `.head/sessions/runs/${runId}/run.json`;
-    const run = readJson(path.join(projectRoot, ...relative.split("/")), "Current Run");
-    if (run.runId !== runId) fail("Current Run is not independently readable.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
     files.push(fileBasis(projectRoot, relative, runId));
   }
   if (files.length > MAX_BASIS_FILES) fail("Current P2 basis exceeds its bound.", "HISTORICAL_BOUNDARY_LIMIT");
-  return files.sort((a, b) => a.path.localeCompare(b.path, "en"));
+  const after = inspectRecoveryCheckpointBasis({ root: projectRoot }).basis;
+  if (before.basisId !== after.basisId || before.basisHash !== after.basisHash) {
+    fail("Current P2 changed while its application basis was captured.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
+  }
+  return {
+    semanticBasisId: after.basisId,
+    semanticBasisHash: after.basisHash,
+    files: files.sort((a, b) => a.path.localeCompare(b.path, "en")),
+  };
+}
+
+function verifyHistoricalRevisionInterpretations(entries, projectRoot) {
+  for (const entry of entries.filter((item) => item.role === "historical-product-revision")) {
+    const file = path.join(projectRoot, ...entry.path.split("/"));
+    const document = readJson(file, "Historical Product Model revision");
+    if (document.productModelId !== entry.artifactId) {
+      fail("Historical Product revision identity does not match its inventory entry.", "HISTORICAL_BOUNDARY_REVISION_INTERPRETATION_MISMATCH");
+    }
+    let interpretationMode = "opaque-legacy-revision";
+    try {
+      verifyProductModelRevisionForProjection(document);
+      interpretationMode = "current-typed-with-historical-provenance";
+    } catch {
+      // The external validator owns legacy semantic parsing. Current Core owns
+      // only the independent typed-versus-opaque interpretation boundary.
+    }
+    if (entry.interpretationMode !== interpretationMode) {
+      fail("Historical Product revision interpretation was not independently derived by current Core.", "HISTORICAL_BOUNDARY_REVISION_INTERPRETATION_MISMATCH");
+    }
+  }
 }
 
 export function captureHistoricalBoundaryApplicationBasis({ root = "." } = {}) {
@@ -141,6 +166,7 @@ export function createVerifiedHistoricalInventoryCapability({ root = ".", projec
     fail("External historical validation is incomplete.", "HISTORICAL_BOUNDARY_EXTERNAL_VALIDATION_REQUIRED");
   }
   verifyHistoricalInventoryEntries(entries, { projectRoot, projectId, verifyBytes: true });
+  verifyHistoricalRevisionInterpretations(entries, projectRoot);
   const basis = captureHistoricalBoundaryApplicationBasis({ root: projectRoot });
   if (basis.projectId !== projectId) fail("Historical inventory belongs to another Project.", "HISTORICAL_BOUNDARY_PROJECT_MISMATCH");
   const capability = deepFreeze({
@@ -268,6 +294,7 @@ export function applyHistoricalArtifactBoundary({ root = ".", verifiedInventory,
       }
       return { status: "already-applied", writes: 0, boundary: existing.boundary, receipt: existing.receipt, commit: existing.commit, coverage: existing.coverage };
     }
+    verifyHistoricalRevisionInterpretations(verifiedInventory.entries, projectRoot);
     const basis = captureHistoricalBoundaryApplicationBasis({ root });
     if (historicalBoundaryCanonicalJson(verifiedInventory.appliedAtBasis) !== historicalBoundaryCanonicalJson(basis.appliedAtBasis)) {
       fail(existing ? "Incomplete historical boundary basis drifted before final commit."

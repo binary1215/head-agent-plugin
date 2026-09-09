@@ -5,8 +5,17 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { buildWorldModel } from "../../../scripts/lib/world-model.mjs";
-import { loadOnboardingGraphProjection, verifyOnboardingGraphProjectionInput } from "../../../scripts/lib/onboarding-projection.mjs";
+import {
+  loadOnboardingGraphProjection,
+  verifyOnboardingGraphProjectionInput,
+  verifyProductModelRevisionForProjection,
+} from "../../../scripts/lib/onboarding-projection.mjs";
 import { verifyTemporalProvenanceGraph } from "../../../scripts/lib/temporal-provenance.mjs";
+import {
+  createRecoveryCheckpoint,
+  inspectRecoveryCheckpointBasis,
+  readRecoveryCheckpoint,
+} from "../../../scripts/lib/compaction-recovery.mjs";
 import {
   createVerifiedHistoricalInventoryCapability,
   applyHistoricalArtifactBoundary,
@@ -24,7 +33,10 @@ import { legacyReadyFixture, pluginRoot, snapshotFiles } from "./fixture.mjs";
 const boundaryFiles = (root) => snapshotFiles(root, (name) => name.startsWith(".head/onboarding/historical-boundaries/"));
 
 function readJson(file) { return JSON.parse(fs.readFileSync(file, "utf8")); }
-function writeJson(file, value) { fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`); }
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+}
 function identify(document, idField, hashField, prefix) {
   const payload = structuredClone(document);
   delete payload[idField];
@@ -61,7 +73,7 @@ test("first slice rejects unsupported, incomplete, and current-unreadable bases 
   await expectNoBoundaryWrite(t, async ({ root }) => rewriteState(root, (state) => { state.phase = "awaiting-review"; }), "LEGACY_MIGRATOR_INCOMPLETE_READY");
   await expectNoBoundaryWrite(t, async ({ root, candidate }) => fs.rmSync(path.join(root, ".head", "onboarding", "candidate-sets", `${candidate.candidateSetId}.json`)), "LEGACY_MIGRATOR_UNSUPPORTED_CHAIN");
   await expectNoBoundaryWrite(t, async ({ root, review }) => fs.rmSync(path.join(root, ".head", "onboarding", "review-decisions", `${review.reviewDecisionId}.json`)), "LEGACY_MIGRATOR_UNSUPPORTED_CHAIN");
-  await expectNoBoundaryWrite(t, async ({ root, review }) => fs.rmSync(path.join(root, ".head", "onboarding", "product-model-revisions", `${review.resultingProductModelId}.json`)), "LEGACY_MIGRATOR_INVALID_JSON");
+  await expectNoBoundaryWrite(t, async ({ root, review }) => fs.rmSync(path.join(root, ".head", "onboarding", "product-model-revisions", `${review.resultingProductModelId}.json`)), "LEGACY_MIGRATOR_ARTIFACT_MISSING");
   await expectNoBoundaryWrite(t, async ({ root }) => fs.rmSync(path.join(root, ".head", "context", "product-model.json")), "LEGACY_MIGRATOR_CURRENT_CANON_UNSUPPORTED");
   await expectNoBoundaryWrite(t, async ({ root }) => fs.rmSync(path.join(root, ".head", "sessions", "current.json")), null);
 });
@@ -129,6 +141,100 @@ test("first apply rejects a capability whose exact preflight basis drifted", asy
     hostMode: "explicit-one-shot" }), { code: "HISTORICAL_BOUNDARY_PREFLIGHT_BASIS_DRIFT" });
   assert.deepEqual(snapshotFiles(fixture.root), before);
   assert.deepEqual(boundaryFiles(fixture.root), {});
+});
+
+test("first apply requires current-readable checkpoint and Run P2 while accepting a verified checkpoint", async (t) => {
+  const brokenRun = await legacyReadyFixture({ version: "0.3.0" });
+  t.after(() => fs.rmSync(brokenRun.root, { recursive: true, force: true }));
+  const runId = "run-1234567890123-abcdef";
+  writeJson(path.join(brokenRun.root, ".head", "sessions", "runs", runId, "run.json"), { runId });
+  const brokenStateFile = path.join(brokenRun.root, ".head", "sessions", "current.json");
+  writeJson(brokenStateFile, { ...readJson(brokenStateFile), activeRunId: runId });
+  assert.throws(() => inspectRecoveryCheckpointBasis({ root: brokenRun.root }), { code: "INVALID_RUN_CANON" });
+  const beforeBrokenRun = snapshotFiles(brokenRun.root);
+  assert.throws(() => applyMigration({ root: brokenRun.root }), { code: "INVALID_RUN_CANON" });
+  assert.deepEqual(snapshotFiles(brokenRun.root), beforeBrokenRun);
+  assert.deepEqual(boundaryFiles(brokenRun.root), {});
+
+  const crossProject = await legacyReadyFixture({ version: "0.3.0" });
+  t.after(() => fs.rmSync(crossProject.root, { recursive: true, force: true }));
+  const original = createRecoveryCheckpoint({ root: crossProject.root, purpose: "Fixture-only validation",
+    approvedDecisions: [], currentPosition: "Before migration", nextExpectedResult: "Validate current P2" });
+  const payload = { ...original.checkpoint, projectId: `head-${"f".repeat(20)}` };
+  delete payload.checkpointId;
+  delete payload.checkpointDigest;
+  const checkpointDigest = onboardingDigest(onboardingCanonicalJson(payload));
+  const checkpoint = { ...payload, checkpointId: `checkpoint-${checkpointDigest.slice(0, 24)}`, checkpointDigest };
+  const checkpointFile = path.join(path.dirname(original.file), `${checkpoint.checkpointId}.json`);
+  writeJson(checkpointFile, checkpoint);
+  const crossStateFile = path.join(crossProject.root, ".head", "sessions", "current.json");
+  writeJson(crossStateFile, { ...readJson(crossStateFile), latestCheckpoint: checkpoint.checkpointId });
+  assert.throws(() => readRecoveryCheckpoint({ root: crossProject.root, checkpointId: checkpoint.checkpointId }), { code: "INVALID_RECOVERY_CHECKPOINT" });
+  const beforeCrossProject = snapshotFiles(crossProject.root);
+  assert.throws(() => applyMigration({ root: crossProject.root }), { code: "INVALID_RECOVERY_CHECKPOINT" });
+  assert.deepEqual(snapshotFiles(crossProject.root), beforeCrossProject);
+  assert.deepEqual(boundaryFiles(crossProject.root), {});
+
+  const verified = await legacyReadyFixture({ version: "0.3.0" });
+  t.after(() => fs.rmSync(verified.root, { recursive: true, force: true }));
+  const validCheckpoint = createRecoveryCheckpoint({ root: verified.root, purpose: "Fixture-only validation",
+    approvedDecisions: [], currentPosition: "Before migration", nextExpectedResult: "Preserve current P2" });
+  assert.equal(readRecoveryCheckpoint({ root: verified.root, checkpointId: validCheckpoint.checkpoint.checkpointId }).status, "verified");
+  assert.equal(applyMigration({ root: verified.root }).status, "applied");
+});
+
+test("legacy semantic validation and inventory identity use one bounded byte generation", async (t) => {
+  const fixture = await legacyReadyFixture({ version: "0.3.0" });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const candidateFile = path.join(fixture.root, ".head", "onboarding", "candidate-sets", `${fixture.candidate.candidateSetId}.json`);
+  const originalRead = fs.readFileSync;
+  let injected = false;
+  fs.readFileSync = function instrumentedRead(input, options) {
+    if (!injected && typeof input === "string" && path.resolve(input) === path.resolve(candidateFile) && options === undefined) {
+      injected = true;
+      const changed = JSON.parse(originalRead.call(fs, candidateFile, "utf8"));
+      changed.promotionAuthority = true;
+      writeJson(candidateFile, changed);
+    }
+    return originalRead.call(fs, input, options);
+  };
+  try {
+    assert.throws(() => applyMigration({ root: fixture.root }), { code: "LEGACY_MIGRATOR_DIGEST_MISMATCH" });
+  } finally {
+    fs.readFileSync = originalRead;
+  }
+  assert.equal(injected, true);
+  assert.deepEqual(boundaryFiles(fixture.root), {});
+});
+
+test("current Core independently derives every historical Product revision interpretation", async (t) => {
+  const opaque = await legacyReadyFixture({ version: "0.3.0", opaquePreviousRevision: true });
+  t.after(() => fs.rmSync(opaque.root, { recursive: true, force: true }));
+  const opaquePreflight = inspectLegacyOnboarding({ root: opaque.root });
+  const opaqueEntry = opaquePreflight.entries.find((entry) => entry.interpretationMode === "opaque-legacy-revision");
+  assert.ok(opaqueEntry);
+  assert.throws(() => verifyProductModelRevisionForProjection(readJson(path.join(opaque.root, opaqueEntry.path))),
+    { code: "INVALID_ONBOARDING_PRODUCT_REVISION" });
+  const falselyTyped = opaquePreflight.entries.map((entry) => entry.path === opaqueEntry.path
+    ? { ...entry, interpretationMode: "current-typed-with-historical-provenance" } : entry);
+  const beforeOpaque = snapshotFiles(opaque.root);
+  assert.throws(() => createVerifiedHistoricalInventoryCapability({ root: opaque.root, projectId: opaquePreflight.projectId,
+    entries: falselyTyped, validation: opaquePreflight.validation }), { code: "HISTORICAL_BOUNDARY_REVISION_INTERPRETATION_MISMATCH" });
+  assert.deepEqual(snapshotFiles(opaque.root), beforeOpaque);
+  assert.deepEqual(boundaryFiles(opaque.root), {});
+
+  const typed = await legacyReadyFixture({ version: "0.3.0" });
+  t.after(() => fs.rmSync(typed.root, { recursive: true, force: true }));
+  const typedPreflight = inspectLegacyOnboarding({ root: typed.root });
+  const typedEntry = typedPreflight.entries.find((entry) => entry.interpretationMode === "current-typed-with-historical-provenance");
+  assert.ok(typedEntry);
+  const falselyOpaque = typedPreflight.entries.map((entry) => entry.path === typedEntry.path
+    ? { ...entry, interpretationMode: "opaque-legacy-revision" } : entry);
+  const beforeTyped = snapshotFiles(typed.root);
+  assert.throws(() => createVerifiedHistoricalInventoryCapability({ root: typed.root, projectId: typedPreflight.projectId,
+    entries: falselyOpaque, validation: typedPreflight.validation }), { code: "HISTORICAL_BOUNDARY_REVISION_INTERPRETATION_MISMATCH" });
+  assert.deepEqual(snapshotFiles(typed.root), beforeTyped);
+  assert.deepEqual(boundaryFiles(typed.root), {});
 });
 
 test("historical projection and temporal coverage reject surplus and orphan references", async (t) => {
