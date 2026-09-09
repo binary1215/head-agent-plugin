@@ -28,6 +28,8 @@ tail and topology synchronously. A validator return also refreshes them before
 any generation, reservation, or lease consumption transition. This prevents an
 intermediate path from redirecting P5 state into the project during an awaited
 Host check.
+Domain-lock cleanup performs the same check and leaves an unsafe or displaced
+lock untouched for explicit Host recovery instead of following a replaced path.
 
 Policy is immutable and bounded: global concurrency is 1-64, per-capacity-key
 concurrency is 1-global, queue depth is 1-1024, and maximum wait is one second
@@ -64,6 +66,8 @@ and Host-storage check again after the validator returns and immediately before
 consumption.
 Queue cancellation, timeout, and validator-failure cleanup can terminate only
 the calling generation; an older caller cannot mutate a resumed generation.
+The original queue deadline is re-applied after queued or resume validation, so
+an awaited Host response cannot extend the deadline or create a late reservation.
 
 An authorization that is already consumed cannot create its first queue event.
 If an unreserved queued request becomes consumed or otherwise unavailable, the

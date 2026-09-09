@@ -25,6 +25,9 @@ symlink나 junction을 따라가지 않고 검증하며, 실제 경로가 설정
 lease consumption 전이를 쓰기 전에 다시 확인합니다. 따라서 Host 검증을
 기다리는 동안 중간 경로가 P5 상태를 프로젝트 안으로 redirect하는 것도
 허용하지 않습니다.
+domain lock을 정리할 때도 같은 검사를 수행합니다. 경로가 교체됐거나 안전하지
+않으면 그 경로를 따라 삭제하지 않고 lock을 명시적 Host 복구 대상으로
+남깁니다.
 expectation tree에는 genesis부터 권위가 없는 journal head도 항상 존재하며,
 domain lock 안의 append마다 전진합니다. 따라서 event와 marker tail을 함께
 잃어도 남은 head와 충돌하므로 이를 여유 capacity로 복원하지 않습니다.
@@ -61,6 +64,9 @@ Host 검증은 비동기이므로 validator가 반환된 뒤 소비 직전에 �
 Host 저장 경로를 다시 검사합니다. queue 취소, timeout, validator 실패 정리는
 호출한 정확한 generation만 terminal로 만들 수 있으며 이전 호출이 재개된
 generation을 변경할 수 없습니다.
+queued 또는 resume 검증이 끝난 뒤에도 원래 queue deadline을 다시 적용하므로,
+늦게 반환된 Host 응답이 deadline을 연장하거나 뒤늦은 reservation을 만들 수
+없습니다.
 
 이미 소비된 authorization은 최초 queue event도 만들 수 없습니다. 아직
 reserve되지 않은 queued 요청이 외부에서 소비되거나 사용할 수 없게 되면

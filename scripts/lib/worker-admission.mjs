@@ -601,11 +601,21 @@ async function withDomainLock(state, operation) {
     }
   }
   if (!release) fail("Worker admission domain lock did not become available.", "WORKER_ADMISSION_DOMAIN_BUSY");
+  let operationError = null;
   try {
     const journal = readJournal(state);
     return await operation(journal);
+  } catch (error) {
+    operationError = error;
+    throw error;
   } finally {
-    release();
+    try {
+      verifyStorageTopology(state);
+      verifySafeDirectoryChain(state.operational, lock, "Worker admission domain lock");
+      release();
+    } catch (cleanupError) {
+      if (!operationError) throw cleanupError;
+    }
   }
 }
 
@@ -653,7 +663,8 @@ function reduceJournal(events) {
                 ? new Set(["queued", "resumed", "reserved"]).has(previous.state) && sameGeneration
                   && event.ownerFenceDigest === previous.ownerFenceDigest
                 : event.eventType === "expired"
-                  ? new Set(["queued", "resumed"]).has(previous.state) && sameGeneration && event.ownerFenceDigest === null
+                  ? new Set(["queued", "resumed", "reserved"]).has(previous.state) && sameGeneration
+                    && event.ownerFenceDigest === previous.ownerFenceDigest
                   : event.eventType === "unknown-blocking"
                     ? new Set(["reserved", "start-committed"]).has(previous.state) && sameGeneration
                       && event.ownerFenceDigest === previous.ownerFenceDigest
@@ -862,11 +873,15 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
       }
       requireRequestLeaseAvailable(state, journal, existing, target);
       const validation = await hostValidate(state, { phase: "resume", root: target.inspected.project.projectRoot, authorizationId, dispatchId, requestId, generation: existing.generation });
+      refreshJournalLocked(state, journal);
+      const refreshedRequests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
+      existing = refreshedRequests.get(requestId);
+      if (existing?.state === "expired") {
+        fail("Worker admission expired during Host resume validation.", "WORKER_ADMISSION_EXPIRED");
+      }
       if (!validation.resume || validation.status !== "current") {
         fail("Restarted admission remains held until explicit Host validation.", "WORKER_ADMISSION_RESUME_CONFIRMATION_REQUIRED");
       }
-      refreshJournalLocked(state, journal);
-      existing = reduceJournal(journal.events).get(requestId);
       if (!existing || !new Set(["queued", "resumed", "reserved"]).has(existing.state)) {
         fail("Worker admission request changed during Host resume validation.", "WORKER_ADMISSION_STALE_REQUEST");
       }
@@ -876,6 +891,14 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         fail("Worker admission target changed during Host resume validation.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
       }
       requireRequestLeaseAvailable(state, journal, existing, resumedTarget);
+      if (!existing.deadlineAt || Date.parse(existing.deadlineAt) <= Date.now()) {
+        appendEventLocked(state, journal, {
+          ...existing,
+          eventType: "expired",
+          details: { outcomeCode: "max-wait-exceeded" },
+        });
+        fail("Worker admission expired before Host resume could open a new generation.", "WORKER_ADMISSION_EXPIRED");
+      }
       generation = existing.generation + 1;
       appendEventLocked(state, journal, {
         eventType: "resumed", requestId, authorizationId, dispatchId, capacityKey: key, generation,
@@ -928,16 +951,19 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         requireRequestLeaseAvailable(state, journal, request, current);
         if (mode === "detached") {
           const validation = await hostValidate(state, { phase: "queued", root: current.inspected.project.projectRoot, authorizationId, dispatchId, requestId, generation });
+          refreshJournalLocked(state, journal);
+          requests = expireQueuedLocked(state, journal, reduceJournal(journal.events));
+          request = requests.get(requestId);
+          if (request?.state === "expired" && request.generation === generation) {
+            fail("Worker admission expired during queued Host validation.", "WORKER_ADMISSION_EXPIRED");
+          }
+          if (!request || !queuedRequest(request) || request.generation !== generation) {
+            fail("Worker admission queue changed during Host validation.", "WORKER_ADMISSION_STALE_REQUEST");
+          }
           if (validation.status !== "current") {
             if (validation.status === "unavailable") return null;
             appendEventLocked(state, journal, { ...request, eventType: "cancelled", details: { outcomeCode: `host-${validation.status}` } });
             fail("Detached worker admission was cancelled by Host validation.", "WORKER_ADMISSION_CANCELLED");
-          }
-          refreshJournalLocked(state, journal);
-          requests = reduceJournal(journal.events);
-          request = requests.get(requestId);
-          if (!request || !queuedRequest(request) || request.generation !== generation) {
-            fail("Worker admission queue changed during Host validation.", "WORKER_ADMISSION_STALE_REQUEST");
           }
           current = currentTarget(root, authorizationId, dispatchId);
           if (current.authorization.authorizationHash !== target.authorization.authorizationHash
