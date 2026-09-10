@@ -194,3 +194,11 @@ read-only path discovery, bounded non-session version invocation, provider-speci
 6. Session request identity 또는 Run WholePlan/Capsule/ExecutionContract identity와 evidence lineage를 보존하는 failure behavior를 갖출 것
 
 point-in-time `RuntimeStateAdapter` export는 별도의 evidence-only facility로 남습니다. 이들은 이 control activation gate를 충족하지 않습니다.
+
+## 선택적 Host capacity admission
+
+Provider-neutral Host는 기존 bounded-worker dispatch를
+[worker-admission.md](worker-admission.md)의 선택적 P5 admission 계약 뒤에 둘
+수 있습니다. Admission capability는 execution JSON이 아니라 별도의 branded
+내부 인자로 runtime lease에 전달됩니다. Admission을 설정하지 않은 Host는
+기존 invocation 순서와 public surface를 정확히 유지합니다.

@@ -7,6 +7,7 @@ import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { inspectProject } from "./head-core.mjs";
 import { inspectRuntimeExecutionLease } from "./runtime-execution-lease.mjs";
+import { readWorkerAdmissionProjection } from "./worker-admission.mjs";
 import { readRuntimeInvocationResult } from "./runtime-run-result-application.mjs";
 import { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-record.mjs";
 
@@ -460,7 +461,7 @@ function readTerminal(root, wave) {
   fail("Bounded worker wave terminal record kind is invalid.", "INVALID_BOUNDED_WORKER_WAVE_TERMINAL");
 }
 
-function buildStatusProjection({ root, wave, seal = null, abandonment = null }) {
+function buildStatusProjection({ root, wave, seal = null, abandonment = null, admissionHost = null }) {
   const members = wave.members.map((member) => memberOperationalStatus(root, wave.projectId, member));
   const counts = {
     requested: members.length,
@@ -493,6 +494,17 @@ function buildStatusProjection({ root, wave, seal = null, abandonment = null }) 
     promotionAuthority: false,
     mutatesCanon: false,
   };
+  if (admissionHost !== null) {
+    const admissionMembers = wave.members.map((member) => readWorkerAdmissionProjection({
+      host: admissionHost,
+      root,
+      authorizationId: member.authorizationId,
+    }));
+    payload.admission = {
+      availability: admissionMembers.every((member) => member.availability === "available") ? "available" : "unavailable",
+      members: admissionMembers,
+    };
+  }
   return identify(payload, { prefix: "worker-wave-status", idKey: "statusProjectionId", hashKey: "statusProjectionHash" });
 }
 
@@ -503,9 +515,10 @@ export function readBoundedWorkerWave({ root = ".", waveId } = {}) {
   return { status: "verified", file, wave, seal, abandonment };
 }
 
-export function readBoundedWorkerWaveStatus({ root = ".", waveId } = {}) {
+export function readBoundedWorkerWaveStatus({ root = ".", waveId, admissionHost = null } = {}) {
   const read = readBoundedWorkerWave({ root, waveId });
-  return { status: "worker_wave_status_verified", projection: buildStatusProjection({ root: path.resolve(root), wave: read.wave, seal: read.seal, abandonment: read.abandonment }) };
+  const projection = buildStatusProjection({ root: path.resolve(root), wave: read.wave, seal: read.seal, abandonment: read.abandonment, admissionHost });
+  return { status: "worker_wave_status_verified", projection };
 }
 
 export function sealBoundedWorkerWave({ root = ".", waveId } = {}) {

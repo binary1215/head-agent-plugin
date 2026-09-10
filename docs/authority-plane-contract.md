@@ -211,3 +211,10 @@ parent, and includes the receipt. Same-snapshot inclusion fails with
   GraphSnapshot and TraversalResult identities;
 - a reply creates zero ReviewDecisions, and a provider summary cannot change a
   checkpoint digest or field.
+
+Optional Worker Admission is P5 Host operational state. Its queue, reservation,
+generation, capacity, expectation, and status records cannot create or mutate
+P1 review, P2 recovery direction, P3 result meaning, Product Canon, or wave
+completion. Missing admission state blocks only the affected admission domain;
+ordinary Core recovery and non-admission execution remain governed by their
+existing contracts.
