@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 
 export const LSP_HOST_PROTOCOL_VERSION = "0.1.0";
 export const LSP_HOST_NORMALIZER_VERSION = "0.1.0";
+export const LSP_HOST_REAL_NORMALIZER_VERSION = "0.2.0";
+export const LSP_HOST_REAL_PROFILE_KIND = "head-lsp-real-rq-profile-v1";
 
 export const LSP_HOST_LIMITS = Object.freeze({
   maxDocuments: 4,
@@ -19,6 +21,17 @@ export const LSP_HOST_LIMITS = Object.freeze({
   gracefulCleanupMs: 2_000,
   forceCleanupMs: 5_000,
   totalTimeoutMs: 20_000,
+});
+
+export const LSP_HOST_REAL_LIMITS = Object.freeze({
+  ...LSP_HOST_LIMITS,
+  maxStderrBytes: 2 * 1024 * 1024,
+  maxRawEvidenceWireBytes: 1024 * 1024,
+  requestTimeoutMs: 10_000,
+  workBudgetMs: 30_000,
+  gracefulCleanupMs: 3_000,
+  forceCleanupMs: 5_000,
+  totalTimeoutMs: 40_000,
 });
 
 export const LSP_HOST_REAL_GATE = Object.freeze({
@@ -222,6 +235,34 @@ export function relativePathFromUri(uri, collectionId, allowedPaths) {
   if (!allowedPaths.has(relative)) throw protocolError("uri-outside-snapshot", "LSP URI does not name an admitted snapshot document.");
   if (uri !== snapshotUri(collectionId, relative)) throw protocolError("uri-outside-snapshot", "LSP URI is a non-canonical alias of an admitted endpoint.");
   return relative;
+}
+
+function isWindowsReservedSegment(segment) {
+  const stem = segment.split(".", 1)[0].toUpperCase();
+  return new Set(["CON", "PRN", "AUX", "NUL"]).has(stem) || /^(COM|LPT)[1-9]$/.test(stem);
+}
+
+export function serializePinnedTlsWindowsFixtureUri(nativeRealPath) {
+  if (typeof nativeRealPath !== "string" || nativeRealPath.includes("/") || nativeRealPath.includes("\0")
+    || !/^[A-Z]:\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*$/.test(nativeRealPath)) {
+    throw protocolError("unsupported-profile", "Real LSP fixture path is outside the pinned Windows path grammar.");
+  }
+  const segments = nativeRealPath.slice(3).split("\\");
+  if (segments.some((segment) => segment === "." || segment === ".." || segment.endsWith(".") || segment.endsWith(" ")
+    || segment.includes(":") || isWindowsReservedSegment(segment))) {
+    throw protocolError("unsupported-profile", "Real LSP fixture path contains an unsupported Windows segment.");
+  }
+  return `file:///${nativeRealPath[0].toLowerCase()}%3A/${segments.join("/")}`;
+}
+
+export function admittedRealDocumentFromUri(uri, documents) {
+  if (typeof uri !== "string" || Buffer.byteLength(uri, "utf8") > 4096 || !Array.isArray(documents)) {
+    throw protocolError("uri-outside-snapshot", "Real LSP URI is not a bounded admitted endpoint.");
+  }
+  const matches = documents.filter((document) => document?.languageId === "typescript"
+    && Array.isArray(document.allowedUris) && document.allowedUris.length === 2 && document.allowedUris.includes(uri));
+  if (matches.length !== 1) throw protocolError("uri-outside-snapshot", "Real LSP URI is outside the finite admission manifest.");
+  return matches[0];
 }
 
 export function offsetAtPosition(text, position) {

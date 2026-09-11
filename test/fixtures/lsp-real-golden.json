@@ -1,0 +1,1306 @@
+{
+  "schemaVersion": 1,
+  "evaluatorVersion": "lsp-real-rq-evaluator-v1",
+  "fixtures": [
+    {
+      "fixtureId": "U01",
+      "exactSources": [
+        {
+          "path": "target.ts",
+          "languageId": "typescript",
+          "text": "export function target() {}\n",
+          "sha256": "e8aad05e7dc4b27ce757076d06867d3c87b3a4b908ac345eee8310dd3a65f1e6"
+        },
+        {
+          "path": "barrel.ts",
+          "languageId": "typescript",
+          "text": "export { target } from \"./target\";\n",
+          "sha256": "dd7fbba4831661b328c316eca552c232962b80ca627667bcea83605be78a30bd"
+        },
+        {
+          "path": "caller.ts",
+          "languageId": "typescript",
+          "text": "import { target } from \"./barrel\";\nexport function caller() {\n  target();\n}\n",
+          "sha256": "8b7498a44561cce3a4e9df6ad2571f2c3f7f4d7d82c63d670d91f6fc8487e1fe"
+        }
+      ],
+      "exactTsconfig": {
+        "text": "{\"compilerOptions\":{\"target\":\"ES2022\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"noEmit\":true,\"noLib\":true,\"types\":[],\"plugins\":[],\"allowJs\":false,\"skipLibCheck\":true},\"files\":[\"target.ts\",\"barrel.ts\",\"caller.ts\"]}",
+        "sha256": "2d4c3b08a4587541b8bd5191f35c42ec39a4bf3226f2c65726ca3ae2b9c52525"
+      },
+      "prepare": {
+        "path": "caller.ts",
+        "line": 1,
+        "character": 16,
+        "expectedCaller": {
+          "path": "caller.ts",
+          "name": "caller",
+          "kind": 12,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 0
+            },
+            "end": {
+              "line": 3,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 1,
+              "character": 16
+            },
+            "end": {
+              "line": 1,
+              "character": 22
+            }
+          }
+        }
+      },
+      "expectedPresent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 3,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 1,
+                "character": 16
+              },
+              "end": {
+                "line": 1,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "target.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 0,
+                "character": 16
+              },
+              "end": {
+                "line": 0,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 2,
+                "character": 2
+              },
+              "end": {
+                "line": 2,
+                "character": 8
+              }
+            }
+          ]
+        }
+      ],
+      "expectedAbsent": [],
+      "rawRelationPolicy": {
+        "relationClosure": "exact",
+        "allowUnlistedAdmittedRelations": false,
+        "allowedOptionalRelations": []
+      }
+    },
+    {
+      "fixtureId": "U02",
+      "exactSources": [
+        {
+          "path": "target.ts",
+          "languageId": "typescript",
+          "text": "export function target() {}\n",
+          "sha256": "e8aad05e7dc4b27ce757076d06867d3c87b3a4b908ac345eee8310dd3a65f1e6"
+        },
+        {
+          "path": "barrel.ts",
+          "languageId": "typescript",
+          "text": "export { target } from \"./target\";\n",
+          "sha256": "dd7fbba4831661b328c316eca552c232962b80ca627667bcea83605be78a30bd"
+        },
+        {
+          "path": "caller.ts",
+          "languageId": "typescript",
+          "text": "import { target } from \"./target\";\nexport function caller() {\n  target();\n}\n",
+          "sha256": "01ff210d109b1f2a98ab69609df1be89fb8e6c50e0e19db5892673be9884bf31"
+        }
+      ],
+      "exactTsconfig": {
+        "text": "{\"compilerOptions\":{\"target\":\"ES2022\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"noEmit\":true,\"noLib\":true,\"types\":[],\"plugins\":[],\"allowJs\":false,\"skipLibCheck\":true},\"files\":[\"target.ts\",\"barrel.ts\",\"caller.ts\"]}",
+        "sha256": "2d4c3b08a4587541b8bd5191f35c42ec39a4bf3226f2c65726ca3ae2b9c52525"
+      },
+      "prepare": {
+        "path": "caller.ts",
+        "line": 1,
+        "character": 16,
+        "expectedCaller": {
+          "path": "caller.ts",
+          "name": "caller",
+          "kind": 12,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 0
+            },
+            "end": {
+              "line": 3,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 1,
+              "character": 16
+            },
+            "end": {
+              "line": 1,
+              "character": 22
+            }
+          }
+        }
+      },
+      "expectedPresent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 3,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 1,
+                "character": 16
+              },
+              "end": {
+                "line": 1,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "target.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 0,
+                "character": 16
+              },
+              "end": {
+                "line": 0,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 2,
+                "character": 2
+              },
+              "end": {
+                "line": 2,
+                "character": 8
+              }
+            }
+          ]
+        }
+      ],
+      "expectedAbsent": [],
+      "rawRelationPolicy": {
+        "relationClosure": "exact",
+        "allowUnlistedAdmittedRelations": false,
+        "allowedOptionalRelations": []
+      }
+    },
+    {
+      "fixtureId": "U03",
+      "exactSources": [
+        {
+          "path": "target.ts",
+          "languageId": "typescript",
+          "text": "export function target() {}\n",
+          "sha256": "e8aad05e7dc4b27ce757076d06867d3c87b3a4b908ac345eee8310dd3a65f1e6"
+        },
+        {
+          "path": "barrel.ts",
+          "languageId": "typescript",
+          "text": "export { target } from \"./target\";\n",
+          "sha256": "dd7fbba4831661b328c316eca552c232962b80ca627667bcea83605be78a30bd"
+        },
+        {
+          "path": "caller.ts",
+          "languageId": "typescript",
+          "text": "import { target } from \"./target\";\r\nexport function caller() {\r\n  const emoji = \"😀\"; target();\r\n  target();\r\n}\r\n",
+          "sha256": "d6fc4680f95dc3e5939f36c5ad7a930044382ff7b3361446886e971575daf45d"
+        }
+      ],
+      "exactTsconfig": {
+        "text": "{\"compilerOptions\":{\"target\":\"ES2022\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"noEmit\":true,\"noLib\":true,\"types\":[],\"plugins\":[],\"allowJs\":false,\"skipLibCheck\":true},\"files\":[\"target.ts\",\"barrel.ts\",\"caller.ts\"]}",
+        "sha256": "2d4c3b08a4587541b8bd5191f35c42ec39a4bf3226f2c65726ca3ae2b9c52525"
+      },
+      "prepare": {
+        "path": "caller.ts",
+        "line": 1,
+        "character": 16,
+        "expectedCaller": {
+          "path": "caller.ts",
+          "name": "caller",
+          "kind": 12,
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 0
+            },
+            "end": {
+              "line": 4,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 1,
+              "character": 16
+            },
+            "end": {
+              "line": 1,
+              "character": 22
+            }
+          }
+        }
+      },
+      "expectedPresent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 4,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 1,
+                "character": 16
+              },
+              "end": {
+                "line": 1,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "target.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 0,
+                "character": 16
+              },
+              "end": {
+                "line": 0,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 2,
+                "character": 22
+              },
+              "end": {
+                "line": 2,
+                "character": 28
+              }
+            },
+            {
+              "start": {
+                "line": 3,
+                "character": 2
+              },
+              "end": {
+                "line": 3,
+                "character": 8
+              }
+            }
+          ]
+        }
+      ],
+      "expectedAbsent": [],
+      "rawRelationPolicy": {
+        "relationClosure": "exact",
+        "allowUnlistedAdmittedRelations": false,
+        "allowedOptionalRelations": []
+      }
+    },
+    {
+      "fixtureId": "U04",
+      "exactSources": [
+        {
+          "path": "target.ts",
+          "languageId": "typescript",
+          "text": "export function target() {}\n",
+          "sha256": "e8aad05e7dc4b27ce757076d06867d3c87b3a4b908ac345eee8310dd3a65f1e6"
+        },
+        {
+          "path": "barrel.ts",
+          "languageId": "typescript",
+          "text": "export { target } from \"./target\";\n",
+          "sha256": "dd7fbba4831661b328c316eca552c232962b80ca627667bcea83605be78a30bd"
+        },
+        {
+          "path": "caller.ts",
+          "languageId": "typescript",
+          "text": "import { target } from \"./target\";\nexport function helper() {}\nexport function caller() {\n  const ref = target;\n  const text = \"target()\";\n  helper();\n  return [ref, text];\n}\n",
+          "sha256": "918c4fc1b8100ab4839753320347542f7f520eeec4f2a6d5fd75f9e3b9d7bd3a"
+        }
+      ],
+      "exactTsconfig": {
+        "text": "{\"compilerOptions\":{\"target\":\"ES2022\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"noEmit\":true,\"noLib\":true,\"types\":[],\"plugins\":[],\"allowJs\":false,\"skipLibCheck\":true},\"files\":[\"target.ts\",\"barrel.ts\",\"caller.ts\"]}",
+        "sha256": "2d4c3b08a4587541b8bd5191f35c42ec39a4bf3226f2c65726ca3ae2b9c52525"
+      },
+      "prepare": {
+        "path": "caller.ts",
+        "line": 2,
+        "character": 16,
+        "expectedCaller": {
+          "path": "caller.ts",
+          "name": "caller",
+          "kind": 12,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 0
+            },
+            "end": {
+              "line": 7,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 2,
+              "character": 16
+            },
+            "end": {
+              "line": 2,
+              "character": 22
+            }
+          }
+        }
+      },
+      "expectedPresent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 7,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 2,
+                "character": 16
+              },
+              "end": {
+                "line": 2,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "caller.ts",
+            "name": "helper",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 1,
+                "character": 16
+              },
+              "end": {
+                "line": 1,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 5,
+                "character": 2
+              },
+              "end": {
+                "line": 5,
+                "character": 8
+              }
+            }
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 7,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 2,
+                "character": 16
+              },
+              "end": {
+                "line": 2,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "target.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 0,
+                "character": 16
+              },
+              "end": {
+                "line": 0,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 3,
+                "character": 14
+              },
+              "end": {
+                "line": 3,
+                "character": 20
+              }
+            }
+          ]
+        },
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 7,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 2,
+                "character": 16
+              },
+              "end": {
+                "line": 2,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "target.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 0,
+                "character": 16
+              },
+              "end": {
+                "line": 0,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 4,
+                "character": 16
+              },
+              "end": {
+                "line": 4,
+                "character": 22
+              }
+            }
+          ]
+        }
+      ],
+      "rawRelationPolicy": {
+        "relationClosure": "exact",
+        "allowUnlistedAdmittedRelations": false,
+        "allowedOptionalRelations": []
+      }
+    },
+    {
+      "fixtureId": "U05",
+      "exactSources": [
+        {
+          "path": "target.ts",
+          "languageId": "typescript",
+          "text": "export function target() {}\n",
+          "sha256": "e8aad05e7dc4b27ce757076d06867d3c87b3a4b908ac345eee8310dd3a65f1e6"
+        },
+        {
+          "path": "barrel.ts",
+          "languageId": "typescript",
+          "text": "export { target } from \"./target\";\n",
+          "sha256": "dd7fbba4831661b328c316eca552c232962b80ca627667bcea83605be78a30bd"
+        },
+        {
+          "path": "caller.ts",
+          "languageId": "typescript",
+          "text": "import { target as externalTarget } from \"./target\";\nexport function target() {}\nexport function caller() {\n  target();\n  externalTarget();\n}\n",
+          "sha256": "9432e6e5068b557350ebed01b363a9f1d80af028ba700904fa0e8febdd821846"
+        }
+      ],
+      "exactTsconfig": {
+        "text": "{\"compilerOptions\":{\"target\":\"ES2022\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"noEmit\":true,\"noLib\":true,\"types\":[],\"plugins\":[],\"allowJs\":false,\"skipLibCheck\":true},\"files\":[\"target.ts\",\"barrel.ts\",\"caller.ts\"]}",
+        "sha256": "2d4c3b08a4587541b8bd5191f35c42ec39a4bf3226f2c65726ca3ae2b9c52525"
+      },
+      "prepare": {
+        "path": "caller.ts",
+        "line": 2,
+        "character": 16,
+        "expectedCaller": {
+          "path": "caller.ts",
+          "name": "caller",
+          "kind": 12,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 0
+            },
+            "end": {
+              "line": 5,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 2,
+              "character": 16
+            },
+            "end": {
+              "line": 2,
+              "character": 22
+            }
+          }
+        }
+      },
+      "expectedPresent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 5,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 2,
+                "character": 16
+              },
+              "end": {
+                "line": 2,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "caller.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 1,
+                "character": 16
+              },
+              "end": {
+                "line": 1,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 3,
+                "character": 2
+              },
+              "end": {
+                "line": 3,
+                "character": 8
+              }
+            }
+          ]
+        },
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 5,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 2,
+                "character": 16
+              },
+              "end": {
+                "line": 2,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "target.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 0,
+                "character": 16
+              },
+              "end": {
+                "line": 0,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 4,
+                "character": 2
+              },
+              "end": {
+                "line": 4,
+                "character": 16
+              }
+            }
+          ]
+        }
+      ],
+      "expectedAbsent": [],
+      "rawRelationPolicy": {
+        "relationClosure": "exact",
+        "allowUnlistedAdmittedRelations": false,
+        "allowedOptionalRelations": []
+      }
+    },
+    {
+      "fixtureId": "U06",
+      "exactSources": [
+        {
+          "path": "target.ts",
+          "languageId": "typescript",
+          "text": "export function target() {}\n",
+          "sha256": "e8aad05e7dc4b27ce757076d06867d3c87b3a4b908ac345eee8310dd3a65f1e6"
+        },
+        {
+          "path": "barrel.ts",
+          "languageId": "typescript",
+          "text": "export { target } from \"./target\";\n",
+          "sha256": "dd7fbba4831661b328c316eca552c232962b80ca627667bcea83605be78a30bd"
+        },
+        {
+          "path": "caller.ts",
+          "languageId": "typescript",
+          "text": "import { target } from \"./target\";\nconst object = { target() {} };\nexport function helper() {}\nexport function caller() {\n  object.target();\n  helper();\n}\n",
+          "sha256": "0a57339ce743c894fe92233e37a2a864d708c829af676f18fadb81932dceb2b1"
+        }
+      ],
+      "exactTsconfig": {
+        "text": "{\"compilerOptions\":{\"target\":\"ES2022\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"noEmit\":true,\"noLib\":true,\"types\":[],\"plugins\":[],\"allowJs\":false,\"skipLibCheck\":true},\"files\":[\"target.ts\",\"barrel.ts\",\"caller.ts\"]}",
+        "sha256": "2d4c3b08a4587541b8bd5191f35c42ec39a4bf3226f2c65726ca3ae2b9c52525"
+      },
+      "prepare": {
+        "path": "caller.ts",
+        "line": 3,
+        "character": 16,
+        "expectedCaller": {
+          "path": "caller.ts",
+          "name": "caller",
+          "kind": 12,
+          "range": {
+            "start": {
+              "line": 3,
+              "character": 0
+            },
+            "end": {
+              "line": 6,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 3,
+              "character": 16
+            },
+            "end": {
+              "line": 3,
+              "character": 22
+            }
+          }
+        }
+      },
+      "expectedPresent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 3,
+                "character": 0
+              },
+              "end": {
+                "line": 6,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 3,
+                "character": 16
+              },
+              "end": {
+                "line": 3,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "caller.ts",
+            "name": "target",
+            "kind": 6,
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 17
+              },
+              "end": {
+                "line": 1,
+                "character": 28
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 1,
+                "character": 17
+              },
+              "end": {
+                "line": 1,
+                "character": 23
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 4,
+                "character": 2
+              },
+              "end": {
+                "line": 4,
+                "character": 15
+              }
+            }
+          ]
+        },
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 3,
+                "character": 0
+              },
+              "end": {
+                "line": 6,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 3,
+                "character": 16
+              },
+              "end": {
+                "line": 3,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "caller.ts",
+            "name": "helper",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 2,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 2,
+                "character": 16
+              },
+              "end": {
+                "line": 2,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 5,
+                "character": 2
+              },
+              "end": {
+                "line": 5,
+                "character": 8
+              }
+            }
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 3,
+                "character": 0
+              },
+              "end": {
+                "line": 6,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 3,
+                "character": 16
+              },
+              "end": {
+                "line": 3,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "target.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 0,
+                "character": 16
+              },
+              "end": {
+                "line": 0,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 4,
+                "character": 2
+              },
+              "end": {
+                "line": 4,
+                "character": 15
+              }
+            }
+          ]
+        }
+      ],
+      "rawRelationPolicy": {
+        "relationClosure": "exact",
+        "allowUnlistedAdmittedRelations": false,
+        "allowedOptionalRelations": []
+      }
+    },
+    {
+      "fixtureId": "U07",
+      "exactSources": [
+        {
+          "path": "target.ts",
+          "languageId": "typescript",
+          "text": "export function target() {}\n",
+          "sha256": "e8aad05e7dc4b27ce757076d06867d3c87b3a4b908ac345eee8310dd3a65f1e6"
+        },
+        {
+          "path": "barrel.ts",
+          "languageId": "typescript",
+          "text": "export { target } from \"./missing\";\n",
+          "sha256": "73231e9f6a12ad17b4c555f0b750e57f099eafa6c8d3347c9e0b042ba43fbed4"
+        },
+        {
+          "path": "caller.ts",
+          "languageId": "typescript",
+          "text": "import { target } from \"./barrel\";\nexport function helper() {}\nexport function caller() {\n  target();\n  helper();\n}\n",
+          "sha256": "3ede758b97ecbbb3893b16df85437af1a2a3907b3babc576eb9b10b6e4058268"
+        }
+      ],
+      "exactTsconfig": {
+        "text": "{\"compilerOptions\":{\"target\":\"ES2022\",\"module\":\"ESNext\",\"moduleResolution\":\"Bundler\",\"strict\":true,\"noEmit\":true,\"noLib\":true,\"types\":[],\"plugins\":[],\"allowJs\":false,\"skipLibCheck\":true},\"files\":[\"target.ts\",\"barrel.ts\",\"caller.ts\"]}",
+        "sha256": "2d4c3b08a4587541b8bd5191f35c42ec39a4bf3226f2c65726ca3ae2b9c52525"
+      },
+      "prepare": {
+        "path": "caller.ts",
+        "line": 2,
+        "character": 16,
+        "expectedCaller": {
+          "path": "caller.ts",
+          "name": "caller",
+          "kind": 12,
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 0
+            },
+            "end": {
+              "line": 5,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 2,
+              "character": 16
+            },
+            "end": {
+              "line": 2,
+              "character": 22
+            }
+          }
+        }
+      },
+      "expectedPresent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 5,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 2,
+                "character": 16
+              },
+              "end": {
+                "line": 2,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "caller.ts",
+            "name": "helper",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 1,
+                "character": 16
+              },
+              "end": {
+                "line": 1,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 4,
+                "character": 2
+              },
+              "end": {
+                "line": 4,
+                "character": 8
+              }
+            }
+          ]
+        }
+      ],
+      "expectedAbsent": [
+        {
+          "from": {
+            "path": "caller.ts",
+            "name": "caller",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 5,
+                "character": 1
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 2,
+                "character": 16
+              },
+              "end": {
+                "line": 2,
+                "character": 22
+              }
+            }
+          },
+          "to": {
+            "path": "target.ts",
+            "name": "target",
+            "kind": 12,
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 27
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 0,
+                "character": 16
+              },
+              "end": {
+                "line": 0,
+                "character": 22
+              }
+            }
+          },
+          "fromRanges": [
+            {
+              "start": {
+                "line": 3,
+                "character": 2
+              },
+              "end": {
+                "line": 3,
+                "character": 8
+              }
+            }
+          ]
+        }
+      ],
+      "rawRelationPolicy": {
+        "relationClosure": "exact",
+        "allowUnlistedAdmittedRelations": false,
+        "allowedOptionalRelations": []
+      }
+    }
+  ]
+}
