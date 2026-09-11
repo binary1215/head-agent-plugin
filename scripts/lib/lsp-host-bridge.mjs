@@ -31,6 +31,28 @@ import {
 import { spawnSupervisedProcess } from "./runtime-process-supervisor.mjs";
 
 const moduleFile = fileURLToPath(import.meta.url);
+const REAL_PACKAGE_TRUST = Object.freeze({
+  "typescript-language-server": Object.freeze({
+    version: "5.3.0",
+    url: "https://registry.npmjs.org/typescript-language-server/-/typescript-language-server-5.3.0.tgz",
+    sri: "sha512-5puofxZHgFdAYtfNpmwCAvgtaYgg8wrUnH30m7Ze3QuguId5RNRadKASpOpyDxTyUdAF51FjhTdjntLw/EuWcQ==",
+    archiveSha256: "398cacc17fff2108652e7b4050e3182008d17063246b3fea7dcf5fae2ce1560e",
+    treeDigest: "801d0d901680ddc77afb3b0189b0efc46a8c7efbf19ce194ee4ea723481f92f6",
+    regularFileCount: 5,
+    unpackedSize: 2335451,
+    entrypoint: Object.freeze({ path: "lib/cli.mjs", sha256: "86ef128358dcd71d0c684d786d7751ee09fbbbbb2a521482b160007b8228be2e" }),
+  }),
+  typescript: Object.freeze({
+    version: "6.0.3",
+    url: "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
+    sri: "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+    archiveSha256: "33cd0ee1beaa8c9e9d15a9da836c62ddea4c34a42d7c2d349dbc80d94165d22a",
+    treeDigest: "b8d6ee2fb3839af771131c5d5261aabdbb16d54d1bb08112589c09537edf11cf",
+    regularFileCount: 140,
+    unpackedSize: 24346827,
+    entrypoint: Object.freeze({ path: "lib/tsserver.js", sha256: "e3ccfeec65ec5c470b8ffc5611878a31182650c7e8a062c38a719f83b523edcb" }),
+  }),
+});
 const ALLOWED_SCENARIOS = new Set([
   "barrel", "direct", "false-positive", "wrong-position", "prepare-null", "prepare-empty",
   "hierarchy-null", "hierarchy-empty", "notifications", "notification-flood", "frame-oversize",
@@ -397,11 +419,13 @@ function verifyNoUnlistedPackageEntries(root, filePaths) {
   if (canonicalJson(observed) !== canonicalJson(expected)) throw protocolError("profile-drift", "Real package contains missing or unlisted files.");
 }
 
-function verifyRealPackage(packageProfile, expectedName, expectedVersion, expectedCount, expectedSize) {
-  if (!packageProfile || packageProfile.name !== expectedName || packageProfile.version !== expectedVersion
-    || packageProfile.regularFileCount !== expectedCount || packageProfile.unpackedSize !== expectedSize
-    || !Array.isArray(packageProfile.files) || packageProfile.files.length !== expectedCount
-    || !/^[a-f0-9]{64}$/.test(packageProfile.treeDigest || "") || !path.isAbsolute(packageProfile.root || "")) {
+function verifyRealPackage(packageProfile, expectedName) {
+  const trust = REAL_PACKAGE_TRUST[expectedName];
+  if (!trust || !packageProfile || packageProfile.name !== expectedName || packageProfile.version !== trust.version
+    || packageProfile.url !== trust.url || packageProfile.sri !== trust.sri || packageProfile.archiveSha256 !== trust.archiveSha256
+    || packageProfile.treeDigest !== trust.treeDigest || packageProfile.regularFileCount !== trust.regularFileCount
+    || packageProfile.unpackedSize !== trust.unpackedSize || !Array.isArray(packageProfile.files)
+    || packageProfile.files.length !== trust.regularFileCount || !path.isAbsolute(packageProfile.root || "")) {
     throw protocolError("unsupported-profile", "Real package profile does not match the pinned identity.");
   }
   const rootStat = fs.lstatSync(packageProfile.root, { throwIfNoEntry: false });
@@ -425,11 +449,11 @@ function verifyRealPackage(packageProfile, expectedName, expectedVersion, expect
     total += record.size;
   }
   verifyNoUnlistedPackageEntries(root, packageProfile.files.map((record) => record.path));
-  if (total !== expectedSize || sha256(JSON.stringify(packageProfile.files)) !== packageProfile.treeDigest) {
+  if (total !== trust.unpackedSize || sha256(JSON.stringify(packageProfile.files)) !== trust.treeDigest) {
     throw protocolError("profile-drift", "Real package tree digest changed.");
   }
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-  if (packageJson.name !== expectedName || packageJson.version !== expectedVersion) throw protocolError("profile-drift", "Real package.json identity changed.");
+  if (packageJson.name !== expectedName || packageJson.version !== trust.version) throw protocolError("profile-drift", "Real package.json identity changed.");
   return { ...packageProfile, root };
 }
 
@@ -450,12 +474,14 @@ function verifyRealProfileManifest(manifestFile) {
     throw protocolError("unsupported-profile", "Real profile manifest does not match the pinned contract.");
   }
   const nodePath = verifiedRegularFile(profile.node.path, profile.node.sha256, profile.node.size);
-  const tls = verifyRealPackage(profile.packages?.["typescript-language-server"], "typescript-language-server", "5.3.0", 5, 2335451);
-  const typescript = verifyRealPackage(profile.packages?.typescript, "typescript", "6.0.3", 140, 24346827);
+  const tls = verifyRealPackage(profile.packages?.["typescript-language-server"], "typescript-language-server");
+  const typescript = verifyRealPackage(profile.packages?.typescript, "typescript");
   const tlsCli = verifiedRegularFile(profile.entrypoints?.tlsCli?.path, profile.entrypoints?.tlsCli?.sha256);
   const tsserver = verifiedRegularFile(profile.entrypoints?.tsserver?.path, profile.entrypoints?.tsserver?.sha256);
   if (tlsCli !== fs.realpathSync.native(path.join(tls.root, "lib", "cli.mjs"))
-    || tsserver !== fs.realpathSync.native(path.join(typescript.root, "lib", "tsserver.js"))) {
+    || tsserver !== fs.realpathSync.native(path.join(typescript.root, "lib", "tsserver.js"))
+    || profile.entrypoints?.tlsCli?.sha256 !== REAL_PACKAGE_TRUST["typescript-language-server"].entrypoint.sha256
+    || profile.entrypoints?.tsserver?.sha256 !== REAL_PACKAGE_TRUST.typescript.entrypoint.sha256) {
     throw protocolError("profile-drift", "Real profile entrypoint escaped its pinned package root.");
   }
   const tlsPackageJson = JSON.parse(fs.readFileSync(path.join(tls.root, "package.json"), "utf8"));
@@ -513,36 +539,40 @@ function createRealAdmission(snapshotRoot, descriptor) {
       const lstat = fs.lstatSync(file);
       if (!lstat.isFile() || lstat.isSymbolicLink()) throw protocolError("unsupported-profile", "Real snapshot file is not regular and non-reparse.");
       const nativeRealPath = fs.realpathSync.native(file);
-      const handle = fs.openSync(nativeRealPath, "r");
-      const handleStat = fs.fstatSync(handle, { bigint: true });
-      const pathStat = fs.statSync(nativeRealPath, { bigint: true });
-      if (handleStat.dev === 0n || handleStat.ino === 0n || handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino
-        || handleStat.size !== pathStat.size || handleStat.size !== BigInt(document.bytes)) {
-        fs.closeSync(handle);
-        throw protocolError("unsupported-profile", "Real snapshot file identity is unavailable or inconsistent.");
-      }
-      const handleDigest = sha256(readDescriptorBytes(handle, document.bytes));
-      const pathDigest = sha256(fs.readFileSync(nativeRealPath));
-      if (handleDigest !== document.digest || pathDigest !== document.digest) {
-        fs.closeSync(handle);
-        throw protocolError(document.path === "tsconfig.json" ? "config-drift" : "source-drift", "Real snapshot bytes changed before admission.");
-      }
       const pinnedServerUri = serializePinnedTlsWindowsFixtureUri(nativeRealPath);
       const nodeClientUri = pathToFileURL(nativeRealPath).href;
-      documents.push({
-        relativePath: document.path,
-        languageId: document.languageId,
-        text: document.text,
-        bytes: document.bytes,
-        digest: document.digest,
-        file: nativeRealPath,
-        handle,
-        nativeRealPathDigest: sha256(nativeRealPath),
-        observedFileIdentity: { dev: handleStat.dev.toString(), ino: handleStat.ino.toString(), size: handleStat.size.toString() },
-        allowedUris: [pinnedServerUri, nodeClientUri],
-        pinnedServerUri,
-        nodeClientUri,
-      });
+      const handle = fs.openSync(nativeRealPath, "r");
+      let owned = true;
+      try {
+        const handleStat = fs.fstatSync(handle, { bigint: true });
+        const pathStat = fs.statSync(nativeRealPath, { bigint: true });
+        if (handleStat.dev === 0n || handleStat.ino === 0n || handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino
+          || handleStat.size !== pathStat.size || handleStat.size !== BigInt(document.bytes)) {
+          throw protocolError("unsupported-profile", "Real snapshot file identity is unavailable or inconsistent.");
+        }
+        const handleDigest = sha256(readDescriptorBytes(handle, document.bytes));
+        const pathDigest = sha256(fs.readFileSync(nativeRealPath));
+        if (handleDigest !== document.digest || pathDigest !== document.digest) {
+          throw protocolError(document.path === "tsconfig.json" ? "config-drift" : "source-drift", "Real snapshot bytes changed before admission.");
+        }
+        documents.push({
+          relativePath: document.path,
+          languageId: document.languageId,
+          text: document.text,
+          bytes: document.bytes,
+          digest: document.digest,
+          file: nativeRealPath,
+          handle,
+          nativeRealPathDigest: sha256(nativeRealPath),
+          observedFileIdentity: { dev: handleStat.dev.toString(), ino: handleStat.ino.toString(), size: handleStat.size.toString() },
+          allowedUris: [pinnedServerUri, nodeClientUri],
+          pinnedServerUri,
+          nodeClientUri,
+        });
+        owned = false;
+      } finally {
+        if (owned) { try { fs.closeSync(handle); } catch {} }
+      }
     }
   } catch (error) {
     for (const document of documents) { try { fs.closeSync(document.handle); } catch {} }
@@ -658,6 +688,24 @@ function realServerRequestReply(message) {
   return { response: { jsonrpc: "2.0", id: message?.id, error: { code: -32601, message: "Method not supported" } }, unsupported: true, sideEffect: "none" };
 }
 
+function verifyExternalCancellationControl(request) {
+  const enabled = request?.fault?.type === "cancel-during-prepare";
+  const control = request?.externalCancellation;
+  if (!enabled) {
+    if (control !== null && control !== undefined) throw protocolError("mapping-mismatch", "Unexpected external cancellation control was supplied.", { stage: "launch" });
+    return null;
+  }
+  const runtimeRoot = path.resolve(request.runtimeRoot || "");
+  if (!control || !path.isAbsolute(control.readyFile || "") || !path.isAbsolute(control.signalFile || "")
+    || path.dirname(path.resolve(control.readyFile)) !== runtimeRoot || path.dirname(path.resolve(control.signalFile)) !== runtimeRoot
+    || path.basename(control.readyFile) !== "prepare-ready.json" || path.basename(control.signalFile) !== "external-cancel.json"
+    || control.readyFile === control.signalFile || !Number.isSafeInteger(control.signalBytes) || control.signalBytes < 1 || control.signalBytes > 4096
+    || !/^[a-f0-9]{64}$/.test(control.signalDigest || "") || fs.existsSync(control.readyFile) || fs.existsSync(control.signalFile)) {
+    throw protocolError("mapping-mismatch", "External cancellation control is not an empty bounded runtime channel.", { stage: "launch" });
+  }
+  return control;
+}
+
 async function runRealBridge(request) {
   const profile = verifyRealProfileManifest(request?.profileManifestFile);
   const documents = request?.documents;
@@ -669,6 +717,7 @@ async function runRealBridge(request) {
   verifyBridgeRealDocuments(documents, "launch");
   const runtimeRoot = request.runtimeRoot;
   assertNoReparseDirectory(runtimeRoot);
+  verifyExternalCancellationControl(request);
   const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows";
   const environment = {
     SystemRoot: systemRoot,
@@ -682,16 +731,25 @@ async function runRealBridge(request) {
   const argv = [profile.tlsCli, "--stdio", "--log-level", "3"];
   const child = spawn(profile.node.path, argv, { cwd: request.snapshotRoot, env: environment, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   const parser = new LspFrameParser(LSP_HOST_REAL_LIMITS);
+  const serverParser = new LspFrameParser(LSP_HOST_REAL_LIMITS);
   const pending = createPendingTable({ collectionId: request.collectionId, admissionManifestDigest: request.admissionManifestDigest, profileManifestDigest: profile.manifestDigest });
   const waiters = new Map();
   const transcript = [];
   let outboundWire = Buffer.alloc(0);
   let inboundWire = Buffer.alloc(0);
+  let serverWire = Buffer.alloc(0);
   let stderr = Buffer.alloc(0);
   let stage = "initialize";
   let notificationCount = 0;
   let firstFailure = null;
   let childClosed = false;
+  let cancelPoll = null;
+  const heldProxyMessages = [];
+  const proxyEvents = [];
+  const proxyEvent = (type, fields = {}) => {
+    if (proxyEvents.length >= LSP_HOST_REAL_LIMITS.maxFrames) throw protocolError("frame-limit", "Real LSP proxy evidence exceeded its bound.", { stage });
+    proxyEvents.push({ type, observedAtEpochMs: Date.now(), ...fields });
+  };
   const childExit = new Promise((resolve) => child.once("close", (code, signal) => {
     childClosed = true;
     if (waiters.size > 0) {
@@ -718,10 +776,39 @@ async function runRealBridge(request) {
       const timer = setTimeout(() => { waiters.delete(id); reject(protocolError("request-timeout", `Real LSP ${requestStage} timed out.`, { stage: requestStage })); }, remaining);
       waiters.set(id, { method, resolve: (value) => { clearTimeout(timer); resolve(value); }, reject: (error) => { clearTimeout(timer); reject(error); } });
       if (request.fault?.type === "kill-during-prepare" && requestStage === "prepare") setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 10).unref?.();
-      if (request.fault?.type === "cancel-during-prepare" && requestStage === "prepare") setTimeout(() => {
-        try { send({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id } }); } catch {}
-        const waiter = waiters.get(id); waiters.delete(id); waiter?.reject(protocolError("cancelled", "Real LSP prepare was cancelled.", { stage: requestStage }));
-      }, 10).unref?.();
+      if (request.fault?.type === "cancel-during-prepare" && requestStage === "prepare") {
+        const control = request.externalCancellation;
+        const readyBytes = Buffer.from(canonicalJson({ collectionId: request.collectionId, id, method }), "utf8");
+        fs.writeFileSync(control.readyFile, readyBytes, { flag: "wx" });
+        proxyEvent("external-cancel-ready", { requestId: id, method, readyDigest: sha256(readyBytes) });
+        cancelPoll = setInterval(() => {
+          if (!fs.existsSync(control.signalFile)) return;
+          try {
+            const signalStat = fs.lstatSync(control.signalFile);
+            if (!signalStat.isFile() || signalStat.isSymbolicLink() || signalStat.size !== control.signalBytes) {
+              throw protocolError("mapping-mismatch", "External cancellation signal is not a bounded regular file.", { stage: requestStage });
+            }
+            const signal = fs.readFileSync(control.signalFile);
+            if (signal.length !== control.signalBytes || sha256(signal) !== control.signalDigest) {
+              throw protocolError("mapping-mismatch", "External cancellation signal bytes changed.", { stage: requestStage });
+            }
+            proxyEvent("external-cancel-observed", { requestId: id, method, signalDigest: control.signalDigest });
+            send({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id } });
+            const waiter = waiters.get(id);
+            waiters.delete(id);
+            waiter?.reject(protocolError("cancelled", "Real LSP prepare was cancelled by external Host input.", { stage: requestStage }));
+          } catch (error) {
+            firstFailure ||= error;
+            const waiter = waiters.get(id);
+            waiters.delete(id);
+            waiter?.reject(error);
+          } finally {
+            clearInterval(cancelPoll);
+            cancelPoll = null;
+          }
+        }, 5);
+        cancelPoll.unref?.();
+      }
     });
   };
   const replyToServerRequest = (message) => {
@@ -730,7 +817,6 @@ async function runRealBridge(request) {
     if (reply.unsupported) throw protocolError("unsupported-server-request", "Real LSP requested an unsupported Host operation.", { stage });
   };
   const allowedNotifications = new Set(["window/logMessage", "window/showMessage", "$/progress", "$/typescriptVersion", "textDocument/publishDiagnostics", "telemetry/event"]);
-  const delayed = new Set();
   const handle = (message) => {
     validateMessageBase(message);
     transcript.push({ direction: "in", message });
@@ -743,18 +829,39 @@ async function runRealBridge(request) {
     const waiter = waiters.get(message.id);
     if (waiter?.method === "textDocument/prepareCallHierarchy" && prepareResponseBody === null) prepareResponseBody = structuredClone(message);
     if (waiter?.method === "callHierarchy/outgoingCalls" && outgoingResponseBody === null) outgoingResponseBody = structuredClone(message);
-    if (request.fault?.type === "delay-prepare-response" && waiter?.method === "textDocument/prepareCallHierarchy" && !delayed.has(message.id)) {
-      delayed.add(message.id);
-      setTimeout(() => { try { handle(message); } catch (error) { firstFailure ||= error; } }, LSP_HOST_REAL_LIMITS.requestTimeoutMs + 50).unref?.();
-      return;
-    }
     const entry = pending.consume(message, { collectionId: request.collectionId, admissionManifestDigest: request.admissionManifestDigest, profileManifestDigest: profile.manifestDigest });
     if (!waiter || waiter.method !== entry.method) throw protocolError("late-response", "Real LSP response has no active waiter.", { stage });
     waiters.delete(message.id);
     if ("error" in message) waiter.reject(protocolError("invalid-message", `Real LSP request ${entry.method} failed.`, { stage }));
     else waiter.resolve(message.result);
   };
-  child.stdout.on("data", (chunk) => { if (!firstFailure) { try { if (inboundWire.length + chunk.length > LSP_HOST_REAL_LIMITS.maxRawEvidenceWireBytes) throw protocolError("limit-exceeded", "Real LSP inbound raw evidence exceeded its bound.", { stage }); inboundWire = Buffer.concat([inboundWire, chunk]); for (const message of parser.feed(chunk)) handle(message); } catch (error) { firstFailure ||= error; for (const waiter of waiters.values()) waiter.reject(error); waiters.clear(); } } });
+  const deliverProxyMessage = (message) => {
+    const frame = encodeLspMessage(message, LSP_HOST_REAL_LIMITS);
+    if (inboundWire.length + frame.length > LSP_HOST_REAL_LIMITS.maxRawEvidenceWireBytes) throw protocolError("limit-exceeded", "Real LSP proxied inbound evidence exceeded its bound.", { stage });
+    inboundWire = Buffer.concat([inboundWire, frame]);
+    proxyEvent("bridge-received", { requestId: Object.hasOwn(message, "id") ? message.id : null, method: message.method || null, bytes: frame.length });
+    for (const delivered of parser.feed(frame)) handle(delivered);
+  };
+  const routeServerMessage = (message) => {
+    const frame = encodeLspMessage(message, LSP_HOST_REAL_LIMITS);
+    proxyEvent("server-frame-observed", { requestId: Object.hasOwn(message, "id") ? message.id : null, method: message.method || null, bytes: frame.length });
+    const waiter = !Object.hasOwn(message, "method") ? waiters.get(message.id) : null;
+    if (waiter?.method === "textDocument/prepareCallHierarchy" && prepareResponseBody === null) prepareResponseBody = structuredClone(message);
+    if (waiter?.method === "callHierarchy/outgoingCalls" && outgoingResponseBody === null) outgoingResponseBody = structuredClone(message);
+    const holdPrepare = ["cancel-during-prepare", "delay-prepare-response"].includes(request.fault?.type)
+      && waiter?.method === "textDocument/prepareCallHierarchy";
+    if (holdPrepare) {
+      heldProxyMessages.push({ message: structuredClone(message), frame });
+      proxyEvent("proxy-held", { requestId: message.id, method: waiter.method, bytes: frame.length, reason: request.fault.type });
+      return;
+    }
+    deliverProxyMessage(message);
+  };
+  child.stdout.on("data", (chunk) => { if (!firstFailure) { try {
+    if (serverWire.length + chunk.length > LSP_HOST_REAL_LIMITS.maxRawEvidenceWireBytes) throw protocolError("limit-exceeded", "Real LSP original server evidence exceeded its bound.", { stage });
+    serverWire = Buffer.concat([serverWire, chunk]);
+    for (const message of serverParser.feed(chunk)) routeServerMessage(message);
+  } catch (error) { firstFailure ||= error; for (const waiter of waiters.values()) waiter.reject(error); waiters.clear(); } } });
   child.stderr.on("data", (chunk) => { if (!firstFailure) { stderr = Buffer.concat([stderr, chunk]); if (stderr.length > LSP_HOST_REAL_LIMITS.maxStderrBytes) { firstFailure = protocolError("stderr-limit", "Real LSP stderr exceeded its bound.", { stage }); for (const waiter of waiters.values()) waiter.reject(firstFailure); waiters.clear(); } } });
   child.stdin.on("error", (error) => { firstFailure ||= protocolError("process-crash", `Real LSP stdin failed: ${error.message}`, { stage }); });
   let preparedItem = null;
@@ -810,6 +917,12 @@ async function runRealBridge(request) {
     ({ normalizedRelations, rangeCounts } = normalizeRealOutgoing(preparedItem, rawOutgoing, documents));
   } catch (error) { failure = firstFailure || error; }
   stage = "closing";
+  if (heldProxyMessages.length > 0) {
+    for (const held of heldProxyMessages) proxyEvent("proxy-dropped", { requestId: held.message.id, bytes: held.frame.length, reason: failure?.code || firstFailure?.code || "closing" });
+    heldProxyMessages.length = 0;
+  }
+  clearInterval(cancelPoll);
+  cancelPoll = null;
   for (const id of pending.outstanding()) { try { send({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id } }); } catch {} }
   for (const document of documents.filter((item) => item.languageId === "typescript")) { try { send({ jsonrpc: "2.0", method: "textDocument/didClose", params: { textDocument: { uri: document.nodeClientUri } } }); } catch {} }
   if (!childClosed && !firstFailure) {
@@ -818,19 +931,29 @@ async function runRealBridge(request) {
   } else if (!childClosed) { try { child.stdin.end(); child.kill("SIGTERM"); } catch {} }
   const closed = await waitForChildCleanup(childExit, child, LSP_HOST_REAL_LIMITS.gracefulCleanupMs);
   try { parser.end(); } catch (error) { failure ||= error; }
+  try { serverParser.end(); } catch (error) { failure ||= error; }
   failure ||= firstFailure;
   try { verifyBridgeRealDocuments(documents, "closing"); }
   catch (error) { failure ||= error; }
   const rawTranscriptDigest = sha256(canonicalJson(transcript));
   const rawOutgoingDigest = sha256(canonicalJson(rawOutgoingOriginal));
   const transformedOutgoingDigest = sha256(canonicalJson(rawOutgoing));
-  const rawWireDigest = sha256(canonicalJson({ outbound: sha256(outboundWire), inbound: sha256(inboundWire) }));
+  const rawWireDigest = sha256(canonicalJson({ outbound: sha256(outboundWire), server: sha256(serverWire), bridgeInbound: sha256(inboundWire) }));
   const rawEvidence = {
     schemaVersion: 1,
     kind: "lsp-real-rq-raw-evidence",
     completeness: failure || closed.code !== 0 ? "partial" : "complete",
     outboundWire: { encoding: "base64", bytes: outboundWire.length, sha256: sha256(outboundWire), body: outboundWire.toString("base64") },
     inboundWire: { encoding: "base64", bytes: inboundWire.length, sha256: sha256(inboundWire), body: inboundWire.toString("base64") },
+    serverOutboundWire: { encoding: "base64", bytes: serverWire.length, sha256: sha256(serverWire), body: serverWire.toString("base64") },
+    transportProxy: {
+      kind: "bounded-in-process-framed-pipe-proxy",
+      originalDirection: "server-to-bridge",
+      events: proxyEvents,
+      heldMessageCount: proxyEvents.filter((event) => event.type === "proxy-held").length,
+      droppedMessageCount: proxyEvents.filter((event) => event.type === "proxy-dropped").length,
+      heldMessageCountAtPublication: heldProxyMessages.length,
+    },
     rawWireDigest,
     transcript: { representation: "decoded-json-messages", sha256: rawTranscriptDigest, body: transcript },
     prepareResponse: prepareResponseBody === null ? null : { representation: "decoded-json-message", sha256: sha256(canonicalJson(prepareResponseBody)), body: prepareResponseBody },
@@ -934,6 +1057,8 @@ async function collectRealOutgoingCallObservation({
   let stderr = Buffer.alloc(0);
   let softTimer;
   let forceTimer;
+  let externalCancelTimer;
+  let externalCancellationHostEvidence = null;
   let forced = false;
   let catchForced = false;
   try {
@@ -948,6 +1073,16 @@ async function collectRealOutgoingCallObservation({
     const rootNative = fs.realpathSync.native(snapshotRoot);
     const rootUris = { pinnedServerUri: serializePinnedTlsWindowsFixtureUri(rootNative), nodeClientUri: pathToFileURL(rootNative).href };
     const documents = admission.documents.map(({ handle, ...document }) => document);
+    const externalCancellation = fault?.type === "cancel-during-prepare" ? (() => {
+      const signalBytes = Buffer.from(canonicalJson({ collectionId, action: "cancel-prepare" }), "utf8");
+      return {
+        readyFile: path.join(runtimeRoot, "prepare-ready.json"),
+        signalFile: path.join(runtimeRoot, "external-cancel.json"),
+        signalBytes: signalBytes.length,
+        signalDigest: sha256(signalBytes),
+        signalBodyBase64: signalBytes.toString("base64"),
+      };
+    })() : null;
     const request = {
       schemaVersion: 1,
       fixtureId,
@@ -963,6 +1098,7 @@ async function collectRealOutgoingCallObservation({
       documents,
       prepare,
       fault,
+      externalCancellation,
       replayTransform,
       deadlines: { workEpochMs: startedAt + LSP_HOST_REAL_LIMITS.workBudgetMs, closingEpochMs: startedAt + LSP_HOST_REAL_LIMITS.workBudgetMs + LSP_HOST_REAL_LIMITS.gracefulCleanupMs, totalEpochMs: startedAt + LSP_HOST_REAL_LIMITS.totalTimeoutMs },
     };
@@ -982,6 +1118,31 @@ async function collectRealOutgoingCallObservation({
       },
     });
     onProcessEvent({ type: "spawn", pid: supervised.child.pid, parentPid: process.pid, command: "head-agent-supervisor", cwd: path.dirname(supervisorSelection.binaryPath), ports: "none" });
+    if (externalCancellation) {
+      externalCancelTimer = setInterval(() => {
+        if (!fs.existsSync(externalCancellation.readyFile) || fs.existsSync(externalCancellation.signalFile)) return;
+        try {
+          const readyBytes = fs.readFileSync(externalCancellation.readyFile);
+          const signalBytes = Buffer.from(externalCancellation.signalBodyBase64, "base64");
+          fs.writeFileSync(externalCancellation.signalFile, signalBytes, { flag: "wx" });
+          externalCancellationHostEvidence = {
+            kind: "external-host-cancellation-signal",
+            readyDigest: sha256(readyBytes),
+            signalDigest: sha256(signalBytes),
+            signalBytes: signalBytes.length,
+            writtenAtEpochMs: Date.now(),
+          };
+          clearInterval(externalCancelTimer);
+          externalCancelTimer = null;
+        } catch (error) {
+          outerFailure ||= protocolError("mapping-mismatch", `External cancellation publication failed: ${error.message}`, { stage: "prepare" });
+          clearInterval(externalCancelTimer);
+          externalCancelTimer = null;
+          supervised.terminate(false);
+        }
+      }, 5);
+      externalCancelTimer.unref?.();
+    }
     const stop = (reason, force = false) => { outerFailure ||= protocolError(reason, `Real LSP Host ${reason}.`, { stage: "closing" }); forced ||= force; supervised.terminate(force); };
     softTimer = setTimeout(() => stop("request-timeout", false), Math.max(1, request.deadlines.closingEpochMs - Date.now()));
     forceTimer = setTimeout(() => stop("request-timeout", true), Math.max(1, request.deadlines.totalEpochMs - Date.now()));
@@ -1000,7 +1161,7 @@ async function collectRealOutgoingCallObservation({
     if (outerFailure) throw outerFailure;
     if (!supervision.ownershipEstablished || !supervision.treeCleanupVerified) throw protocolError("cleanup-failed", "Real LSP process tree cleanup was not verified.", { stage: "closing" });
     if (closed.code !== 0) throw protocolError("process-crash", `Real bridge exited ${closed.code}: ${stderr.toString("utf8").slice(0, 512)}`, { stage: "launch" });
-    result = Object.freeze({ ...result, cleanup: { attempted: true, verified: true, forced }, transport: { supervisorManifestDigest: supervision.supervisorManifestDigest, ownershipEstablished: supervision.ownershipEstablished, treeCleanupVerified: supervision.treeCleanupVerified } });
+    result = Object.freeze({ ...result, cleanup: { attempted: true, verified: true, forced }, transport: { supervisorManifestDigest: supervision.supervisorManifestDigest, ownershipEstablished: supervision.ownershipEstablished, treeCleanupVerified: supervision.treeCleanupVerified, externalCancellationHostEvidence } });
   } catch (error) {
     if (supervised?.child && supervised.child.exitCode === null && supervised.child.signalCode === null) { catchForced = true; supervised.terminate(true); try { await waitForClose(supervised.child); } catch {} }
     if (supervised && !supervision) { try { supervision = supervised.finalize({ exactSupervisorExitObserved: true, terminationRequested: true }); } catch {} }
@@ -1013,10 +1174,10 @@ async function collectRealOutgoingCallObservation({
       ...REAL_RESULT_GATE,
     };
     result = result?.evidenceKind === "lsp-real-rq-observation"
-      ? Object.freeze({ ...result, ...failureFields, transport: { supervisorManifestDigest: supervision?.supervisorManifestDigest || null, ownershipEstablished: supervision?.ownershipEstablished === true, treeCleanupVerified: supervision?.treeCleanupVerified === true } })
+      ? Object.freeze({ ...result, ...failureFields, transport: { supervisorManifestDigest: supervision?.supervisorManifestDigest || null, ownershipEstablished: supervision?.ownershipEstablished === true, treeCleanupVerified: supervision?.treeCleanupVerified === true, externalCancellationHostEvidence } })
       : realResult({ fixtureId, ...failureFields });
   } finally {
-    clearTimeout(softTimer); clearTimeout(forceTimer);
+    clearTimeout(softTimer); clearTimeout(forceTimer); clearInterval(externalCancelTimer);
     closeRealAdmission(admission);
     if (ownedRoot) { try { removeOwnedRoot(qaRoot, ownedRoot); } catch { result = realResult({ fixtureId, status: "failed", stage: "closed", reason: "cleanup-failed", cleanup: { attempted: true, verified: false, forced: true } }); } }
   }

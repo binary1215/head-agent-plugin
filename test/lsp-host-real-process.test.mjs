@@ -114,7 +114,7 @@ function verifyRawEvidence(result, expectedCompleteness) {
   const raw = result.rawEvidence;
   assert.equal(raw.kind, "lsp-real-rq-raw-evidence");
   assert.equal(raw.completeness, expectedCompleteness);
-  for (const direction of ["outboundWire", "inboundWire"]) {
+  for (const direction of ["outboundWire", "inboundWire", "serverOutboundWire"]) {
     const bytes = Buffer.from(raw[direction].body, "base64");
     assert.equal(bytes.length, raw[direction].bytes);
     assert.equal(sha256(bytes), raw[direction].sha256);
@@ -125,6 +125,31 @@ function verifyRawEvidence(result, expectedCompleteness) {
   assert.equal(sha256(canonicalJson(raw.outgoingOriginalResult.body)), raw.outgoingOriginalResult.sha256);
   assert.equal(sha256(canonicalJson(raw.outgoingTransformedResult.body)), raw.outgoingTransformedResult.sha256);
   assert.equal(sha256(canonicalJson(raw)), result.rawEvidenceDigest);
+}
+
+function decodeWire(record) {
+  return new LspFrameParser(LSP_HOST_REAL_LIMITS).feed(Buffer.from(record.body, "base64"));
+}
+
+function createEvidenceRecorder(file) {
+  if (!file) return { record() {}, finalize() {} };
+  const target = path.resolve(file);
+  const partsRoot = `${target}.parts`;
+  fs.mkdirSync(partsRoot, { recursive: false });
+  let sequence = 0;
+  let finalized = false;
+  return {
+    record(label, payload) {
+      const safe = String(label).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80);
+      const part = path.join(partsRoot, `${String(++sequence).padStart(3, "0")}--${safe}.json`);
+      fs.writeFileSync(part, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    },
+    finalize(payload) {
+      if (finalized) throw new Error("Evidence recorder was finalized twice.");
+      fs.writeFileSync(target, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      finalized = true;
+    },
+  };
 }
 
 test("RQ profile absence is blocked and never implies real support", async () => {
@@ -201,149 +226,321 @@ test("RQ real normalizer dedupes only exact ranges within one relation after val
   assert.throws(() => __private.normalizeRealOutgoing(prepared, [{ to: target, fromRanges: [null] }], documents), { code: "invalid-range" });
 });
 
+realTest("RQ fixed publisher trust and admission handles fail closed before launch", async () => {
+  const fixture = golden.fixtures[0];
+  const valid = JSON.parse(fs.readFileSync(profileManifestFile, "utf8"));
+  const alteredRoot = fs.mkdtempSync(path.join(qaRoot, "r1-altered-profile-"));
+  try {
+    const copiedTls = path.join(alteredRoot, "tls");
+    fs.cpSync(valid.packages["typescript-language-server"].root, copiedTls, { recursive: true, force: false, errorOnExist: true });
+    const cli = path.join(copiedTls, "lib", "cli.mjs");
+    const bytes = fs.readFileSync(cli);
+    const altered = Buffer.from(bytes);
+    const position = altered.indexOf(0x20);
+    assert.ok(position > 0 && position < 40);
+    altered[position] = 0x09;
+    fs.writeFileSync(cli, altered);
+    const forged = structuredClone(valid);
+    const tls = forged.packages["typescript-language-server"];
+    const cliRecord = tls.files.find((entry) => entry.path === "lib/cli.mjs");
+    cliRecord.sha256 = sha256(altered);
+    tls.treeDigest = sha256(JSON.stringify(tls.files));
+    tls.root = copiedTls;
+    forged.entrypoints.tlsCli = { path: cli, sha256: cliRecord.sha256 };
+    const forgedFile = path.join(alteredRoot, "profile-manifest.json");
+    fs.writeFileSync(forgedFile, `${JSON.stringify(forged, null, 2)}\n`, { flag: "wx" });
+    assert.throws(() => __private.verifyRealProfileManifest(forgedFile), { code: "unsupported-profile" });
+    const events = [];
+    const rejected = await __private.collectRealOutgoingCallObservation({
+      fixtureId: fixture.fixtureId,
+      projectId: "lsp-real-fixture-project",
+      generationDigest,
+      sources: fixture.exactSources.map(({ path: sourcePath, text }) => ({ path: sourcePath, text })),
+      tsconfigText: fixture.exactTsconfig.text,
+      prepare: { path: fixture.prepare.path, position: { line: fixture.prepare.line, character: fixture.prepare.character } },
+      profileManifestFile: forgedFile,
+      supervisorSelection,
+      qaRoot,
+      onProcessEvent: (event) => events.push(event),
+    });
+    assert.equal(rejected.status, "blocked");
+    assert.equal(rejected.reason, "unsupported-profile");
+    assert.equal(events.length, 0);
+  } finally {
+    fs.rmSync(alteredRoot, { recursive: true, force: true });
+  }
+
+  const unsupportedRoot = fs.mkdtempSync(path.join(qaRoot, "unsupported path-"));
+  const opened = new Map();
+  const actualOpen = fs.openSync;
+  const actualClose = fs.closeSync;
+  const events = [];
+  fs.openSync = function trackedOpen(file, ...args) {
+    const fd = actualOpen.call(fs, file, ...args);
+    if (typeof file === "string" && file.startsWith(`${unsupportedRoot}${path.sep}`)) opened.set(fd, file);
+    return fd;
+  };
+  fs.closeSync = function trackedClose(fd) {
+    const value = actualClose.call(fs, fd);
+    opened.delete(fd);
+    return value;
+  };
+  try {
+    const rejected = await __private.collectRealOutgoingCallObservation({
+      fixtureId: fixture.fixtureId,
+      projectId: "lsp-real-fixture-project",
+      generationDigest,
+      sources: fixture.exactSources.map(({ path: sourcePath, text }) => ({ path: sourcePath, text })),
+      tsconfigText: fixture.exactTsconfig.text,
+      prepare: { path: fixture.prepare.path, position: { line: fixture.prepare.line, character: fixture.prepare.character } },
+      profileManifestFile,
+      supervisorSelection,
+      qaRoot: unsupportedRoot,
+      onProcessEvent: (event) => events.push(event),
+    });
+    assert.equal(rejected.reason, "unsupported-profile");
+    assert.equal(events.length, 0);
+    assert.equal(opened.size, 0);
+  } finally {
+    fs.openSync = actualOpen;
+    fs.closeSync = actualClose;
+    for (const fd of opened.keys()) { try { actualClose.call(fs, fd); } catch {} }
+    fs.rmSync(unsupportedRoot, { recursive: true, force: true });
+  }
+});
+
+realTest("RQ create-only evidence retains collected raw data across an assertion failure", () => {
+  const owned = fs.mkdtempSync(path.join(qaRoot, "evidence-failure-"));
+  try {
+    const file = path.join(owned, "failure-evidence.json");
+    const recorder = createEvidenceRecorder(file);
+    const collected = { kind: "synthetic-raw-before-evaluation", body: { exact: true }, completeness: "partial" };
+    recorder.record("collected-before-evaluation", collected);
+    let observed;
+    try { assert.fail("controlled assertion failure"); }
+    catch (error) { observed = { name: error.name, message: error.message }; }
+    recorder.finalize({ status: "failed", unexpectedFailure: observed, collected: [collected] });
+    const artifact = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(artifact.status, "failed");
+    assert.equal(artifact.collected[0].body.exact, true);
+    assert.equal(fs.readdirSync(`${file}.parts`).length, 1);
+  } finally {
+    fs.rmSync(owned, { recursive: true, force: true });
+  }
+});
+
 realTest("RQ U01-U07 fresh A/B, E-GOLDEN, V05, and F01-F04 satisfy the closed real fixture contract", { timeout: 240_000 }, async () => {
-  assert.equal(golden.schemaVersion, 1);
-  assert.equal(golden.evaluatorVersion, evaluatorVersion);
-  assert.equal(sha256(goldenBytes), "4fe3a13b5c9b94d69528675ae61c2840e21d5de227714889d4bc76b487827e85");
-  const profile = __private.verifyRealProfileManifest(profileManifestFile);
   const rows = [];
   const byFixture = new Map();
-  for (const fixture of golden.fixtures) {
-    for (const source of fixture.exactSources) assert.equal(sha256(source.text), source.sha256, `${fixture.fixtureId}:${source.path}`);
-    assert.equal(sha256(fixture.exactTsconfig.text), fixture.exactTsconfig.sha256, `${fixture.fixtureId}:tsconfig`);
-    const first = await runFixture(fixture);
-    const second = await runFixture(fixture);
-    const firstEvaluation = evaluate(first.result, fixture);
-    const secondEvaluation = evaluate(second.result, fixture);
-    verifyRawEvidence(first.result, "complete");
-    verifyRawEvidence(second.result, "complete");
-    assert.equal(firstEvaluation.verdict, "passed", `${fixture.fixtureId}:A ${canonicalJson(firstEvaluation)}`);
-    assert.equal(secondEvaluation.verdict, "passed", `${fixture.fixtureId}:B ${canonicalJson(secondEvaluation)}`);
-    assert.deepEqual(first.result.normalizedRelations, second.result.normalizedRelations, `${fixture.fixtureId}:relations`);
-    assert.equal(first.result.normalizedObservationDigest, second.result.normalizedObservationDigest, `${fixture.fixtureId}:digest`);
-    if (fixture.fixtureId === "U06") {
-      assert.deepEqual(first.result.rangeCounts, { rawFromRangeCount: 3, uniqueFromRangeCount: 2, duplicateFromRangeCount: 1 });
-      const rawTarget = first.result.rawEvidence.outgoingOriginalResult.body.find((relation) => relation.to.name === "target");
-      assert.equal(rawTarget.fromRanges.length, 2);
-      assert.deepEqual(rawTarget.fromRanges[0], rawTarget.fromRanges[1]);
+  const recorder = createEvidenceRecorder(process.env.HEAD_LSP_REAL_EVIDENCE_FILE);
+  let profile = null;
+  let evidence = null;
+  let unexpectedFailure = null;
+  try {
+    assert.equal(golden.schemaVersion, 1);
+    assert.equal(golden.evaluatorVersion, evaluatorVersion);
+    assert.equal(sha256(goldenBytes), "4fe3a13b5c9b94d69528675ae61c2840e21d5de227714889d4bc76b487827e85");
+    profile = __private.verifyRealProfileManifest(profileManifestFile);
+    for (const fixture of golden.fixtures) {
+      for (const source of fixture.exactSources) assert.equal(sha256(source.text), source.sha256, `${fixture.fixtureId}:${source.path}`);
+      assert.equal(sha256(fixture.exactTsconfig.text), fixture.exactTsconfig.sha256, `${fixture.fixtureId}:tsconfig`);
+      const first = await runFixture(fixture);
+      const second = await runFixture(fixture);
+      const firstRow = { id: `${fixture.fixtureId}-A`, kind: "unmodified-real", status: "collected-unverified", observation: first.result, events: first.events };
+      const secondRow = { id: `${fixture.fixtureId}-B`, kind: "unmodified-real-rerun", status: "collected-unverified", observation: second.result, events: second.events };
+      rows.push(firstRow, secondRow);
+      recorder.record(`${fixture.fixtureId}-A-collected`, firstRow);
+      recorder.record(`${fixture.fixtureId}-B-collected`, secondRow);
+      const firstEvaluation = evaluate(first.result, fixture);
+      const secondEvaluation = evaluate(second.result, fixture);
+      verifyRawEvidence(first.result, "complete");
+      verifyRawEvidence(second.result, "complete");
+      assert.equal(firstEvaluation.verdict, "passed", `${fixture.fixtureId}:A ${canonicalJson(firstEvaluation)}`);
+      assert.equal(secondEvaluation.verdict, "passed", `${fixture.fixtureId}:B ${canonicalJson(secondEvaluation)}`);
+      assert.deepEqual(first.result.normalizedRelations, second.result.normalizedRelations, `${fixture.fixtureId}:relations`);
+      assert.equal(first.result.normalizedObservationDigest, second.result.normalizedObservationDigest, `${fixture.fixtureId}:digest`);
+      if (fixture.fixtureId === "U06") {
+        assert.deepEqual(first.result.rangeCounts, { rawFromRangeCount: 3, uniqueFromRangeCount: 2, duplicateFromRangeCount: 1 });
+        const rawTarget = first.result.rawEvidence.outgoingOriginalResult.body.find((relation) => relation.to.name === "target");
+        assert.equal(rawTarget.fromRanges.length, 2);
+        assert.deepEqual(rawTarget.fromRanges[0], rawTarget.fromRanges[1]);
+      }
+      Object.assign(firstRow, { status: "passed", evaluation: firstEvaluation });
+      Object.assign(secondRow, { status: "passed", evaluation: secondEvaluation });
+      byFixture.set(fixture.fixtureId, first.result);
     }
-    byFixture.set(fixture.fixtureId, first.result);
-    rows.push({ id: `${fixture.fixtureId}-A`, kind: "unmodified-real", status: "passed", observation: first.result, evaluation: firstEvaluation, events: first.events });
-    rows.push({ id: `${fixture.fixtureId}-B`, kind: "unmodified-real-rerun", status: "passed", observation: second.result, evaluation: secondEvaluation, events: second.events });
+
+    const fixture = golden.fixtures[0];
+    const sealed = byFixture.get("U01");
+    const sealedBytes = canonicalJson(sealed);
+    const capturedResponse = sealed.rawEvidence.outgoingOriginalResponse.body;
+    const capturedDigest = sha256(canonicalJson(capturedResponse));
+
+    const v01Transforms = [];
+    for (const [transformId, transformedId, expectedCode] of [["null-id", null, "unknown-response-id"], ["empty-id", "", "unknown-response-id"], ["late-id", 999, "unknown-response-id"]]) {
+      const pending = createPendingTable({ replay: "V01" });
+      pending.issue("outgoing");
+      const transformedResponse = { ...capturedResponse, id: transformedId };
+      const record = { transformId, originalBody: capturedResponse, originalDigest: capturedDigest, transformedBody: transformedResponse, transformedDigest: sha256(canonicalJson(transformedResponse)), expectedCode, completeness: "complete" };
+      v01Transforms.push(record);
+      recorder.record(`V01-${transformId}`, record);
+      assert.throws(() => pending.consume(transformedResponse, { replay: "V01" }), { code: expectedCode });
+    }
+    {
+      const pending = createPendingTable({ replay: "V01" });
+      const id = pending.issue("outgoing");
+      const transformedResponse = { ...capturedResponse, id };
+      const record = { transformId: "duplicate-id", originalBody: capturedResponse, originalDigest: capturedDigest, transformedBody: transformedResponse, transformedDigest: sha256(canonicalJson(transformedResponse)), expectedCode: "duplicate-response-id", completeness: "complete" };
+      v01Transforms.push(record);
+      recorder.record("V01-duplicate-id", record);
+      pending.consume(transformedResponse, { replay: "V01" });
+      assert.throws(() => pending.consume(transformedResponse, { replay: "V01" }), { code: "duplicate-response-id" });
+    }
+    rows.push({ id: "V01", kind: "pure-validator-helper-replay", status: "passed", provenance: { actualTransport: false, helper: "createPendingTable" }, transformVersion: "lsp-real-rq-replay-v1", transforms: v01Transforms });
+
+    const v02Transforms = [];
+    for (const method of ["workspace/applyEdit", "window/showMessageRequest", "head/unknown"]) {
+      const injected = { jsonrpc: "2.0", id: 91, method, params: method === "workspace/applyEdit" ? { edit: { changes: {} } } : {} };
+      const reply = __private.realServerRequestReply(injected);
+      const record = { method, injectedBody: injected, injectedDigest: sha256(canonicalJson(injected)), replyBody: reply, replyDigest: sha256(canonicalJson(reply)), sideEffect: reply.sideEffect, completeness: "complete" };
+      v02Transforms.push(record);
+      recorder.record(`V02-${method}`, record);
+      if (method === "workspace/applyEdit") { assert.equal(reply.sideEffect, "denied"); assert.equal(reply.response.result.applied, false); }
+      else { assert.equal(reply.unsupported, true); assert.equal(reply.response.error.code, -32601); }
+    }
+    rows.push({ id: "V02", kind: "pure-validator-helper-replay", status: "passed", provenance: { actualTransport: false, helper: "realServerRequestReply", fileSystemObserved: false, fileWriteClaim: null }, transformVersion: "lsp-real-rq-replay-v1", transforms: v02Transforms });
+
+    const preparedCaptured = sealed.rawEvidence.prepareResponse.body.result[0];
+    const rawRelationCaptured = sealed.rawEvidence.outgoingOriginalResult.body[0];
+    const pinnedCallerUri = preparedCaptured.uri;
+    const pinnedTargetUri = rawRelationCaptured.to.uri;
+    const nodeUri = (uri) => uri.replace("file:///c%3A/", "file:///C:/");
+    const replayDocuments = fixture.exactSources.map((source) => ({ relativePath: source.path, languageId: source.languageId, text: source.text, allowedUris: [source.path === "caller.ts" ? pinnedCallerUri : source.path === "target.ts" ? pinnedTargetUri : pinnedTargetUri.replace("target.ts", source.path), nodeUri(source.path === "caller.ts" ? pinnedCallerUri : source.path === "target.ts" ? pinnedTargetUri : pinnedTargetUri.replace("target.ts", source.path))] }));
+    const v03Transforms = [];
+    for (const uri of ["file:///d%3A/outside/target.ts", `${pinnedTargetUri}?query=1`, `${pinnedTargetUri}#fragment`, pinnedTargetUri.replace("/target.ts", "/../target.ts")]) {
+      const transformedRelation = { ...rawRelationCaptured, to: { ...rawRelationCaptured.to, uri } };
+      const record = { originalBody: rawRelationCaptured, originalDigest: sha256(canonicalJson(rawRelationCaptured)), transformedBody: transformedRelation, transformedDigest: sha256(canonicalJson(transformedRelation)), expectedCode: "uri-outside-snapshot", completeness: "complete" };
+      v03Transforms.push(record);
+      recorder.record("V03-uri-alias", record);
+      assert.throws(() => __private.normalizeRealOutgoing(preparedCaptured, [transformedRelation], replayDocuments), { code: "uri-outside-snapshot" });
+    }
+    rows.push({ id: "V03", kind: "pure-validator-helper-replay", status: "passed", provenance: { actualTransport: false, helper: "normalizeRealOutgoing" }, transformVersion: "lsp-real-rq-replay-v1", transforms: v03Transforms });
+
+    const originalFrame = encodeLspMessage(capturedResponse, LSP_HOST_REAL_LIMITS);
+    const v04Transforms = [
+      { id: "fatal-utf8", bytes: Buffer.concat([Buffer.from("Content-Length: 1\r\n\r\n"), Buffer.from([0xff])]), code: "invalid-json" },
+      { id: "junk-header", bytes: Buffer.from("junk\r\n\r\n{}"), code: "invalid-framing" },
+      { id: "oversize", bytes: Buffer.from(`Content-Length: ${LSP_HOST_REAL_LIMITS.maxFrameBytes + 1}\r\n\r\n`), code: "frame-oversize" },
+    ];
+    const v04Records = v04Transforms.map(({ id, bytes, code }) => ({ id, originalWire: { encoding: "base64", bytes: originalFrame.length, sha256: sha256(originalFrame), body: originalFrame.toString("base64") }, transformedWire: { encoding: "base64", bytes: bytes.length, sha256: sha256(bytes), body: bytes.toString("base64") }, expectedCode: code, completeness: "complete" }));
+    for (let index = 0; index < v04Transforms.length; index++) {
+      recorder.record(`V04-${v04Transforms[index].id}`, v04Records[index]);
+      assert.throws(() => new LspFrameParser(LSP_HOST_REAL_LIMITS).feed(v04Transforms[index].bytes), { code: v04Transforms[index].code });
+    }
+    rows.push({ id: "V04", kind: "pure-validator-helper-replay", status: "passed", provenance: { actualTransport: false, helper: "LspFrameParser" }, transformVersion: "lsp-real-rq-replay-v1", transforms: v04Records });
+
+    const changedGolden = structuredClone(golden);
+    const changed = changedGolden.fixtures[0];
+    changed.expectedPresent[0].to.name = "intentionally-wrong-target";
+    const changedGoldenBytes = Buffer.from(`${JSON.stringify(changedGolden, null, 2)}\n`, "utf8");
+    const changedGoldenDigest = sha256(changedGoldenBytes);
+    const originalEvaluation = evaluate(sealed, fixture, sha256(goldenBytes));
+    const changedEvaluation = evaluate(sealed, changed, changedGoldenDigest);
+    const goldenRow = { id: "E-GOLDEN", kind: "evaluator-unit", status: "collected-unverified", originalGolden: { encoding: "base64", bytes: goldenBytes.length, sha256: sha256(goldenBytes), body: goldenBytes.toString("base64") }, changedGolden: { encoding: "base64", bytes: changedGoldenBytes.length, sha256: changedGoldenDigest, body: changedGoldenBytes.toString("base64") }, originalEvaluation, changedEvaluation, observationDigest: sealed.normalizedObservationDigest };
+    rows.push(goldenRow);
+    recorder.record("E-GOLDEN-before-assertion", goldenRow);
+    assert.notEqual(originalEvaluation.goldenManifestDigest, changedEvaluation.goldenManifestDigest);
+    assert.equal(originalEvaluation.verdict, "passed");
+    assert.equal(changedEvaluation.verdict, "failed");
+    assert.ok(changedEvaluation.expectedPresentMissing > 0);
+    assert.ok(changedEvaluation.unlistedAdmittedCount > 0);
+    assert.equal(canonicalJson(sealed), sealedBytes);
+    goldenRow.status = "passed";
+
+    const transformed = await runFixture(fixture, { replayTransform: "add-admitted-self" });
+    const transformedRow = { id: "V05", kind: "actual-bridge-replay-transform", status: "collected-unverified", observation: transformed.result, events: transformed.events };
+    rows.push(transformedRow);
+    recorder.record("V05-collected", transformedRow);
+    const transformedEvaluation = evaluate(transformed.result, fixture);
+    verifyRawEvidence(transformed.result, "complete");
+    assert.equal(transformed.result.rawEvidence.outgoingTransformedResult.transformId, "add-admitted-self");
+    assert.equal(transformed.result.rawEvidence.outgoingTransformedResult.transformVersion, "lsp-real-rq-replay-v1");
+    assert.notEqual(transformed.result.rawOutgoingDigest, transformed.result.transformedOutgoingDigest);
+    assert.equal(transformed.result.normalizedRelations.length, 2);
+    assert.equal(transformedEvaluation.verdict, "failed");
+    assert.equal(transformedEvaluation.unlistedAdmittedCount, 1);
+    assert.ok(transformedEvaluation.reasonCodes.includes("unexpected-admitted-relation"));
+    Object.assign(transformedRow, { status: "passed", evaluation: transformedEvaluation });
+
+    const faultCases = [
+      ["F01", { type: "kill-during-prepare" }, ["process-crash"]],
+      ["F02", { type: "cancel-during-prepare" }, ["cancelled"]],
+      ["F03", { type: "delay-prepare-response" }, ["request-timeout"]],
+      ["F04", { type: "delete-before-outgoing", relativePath: "target.ts" }, ["source-drift"]],
+    ];
+    for (const [id, fault, reasons] of faultCases) {
+      const observed = await runFixture(fixture, { fault });
+      const row = { id, kind: "controlled-real-process-fault", status: "collected-unverified", observation: observed.result, events: observed.events };
+      rows.push(row);
+      recorder.record(`${id}-collected`, row);
+      assert.ok(["failed", "contaminated"].includes(observed.result.status), `${id}:${observed.result.status}`);
+      assert.ok(reasons.includes(observed.result.reason), `${id}:${observed.result.reason}`);
+      verifyRawEvidence(observed.result, "partial");
+      assert.equal(observed.result.publishedCandidateCount, 0);
+      assert.equal(observed.result.cleanup.verified, true);
+      if (id === "F03") {
+        const raw = observed.result.rawEvidence;
+        const prepareId = raw.prepareResponse.body.id;
+        assert.equal(decodeWire(raw.serverOutboundWire).some((message) => message.id === prepareId && Object.hasOwn(message, "result")), true);
+        assert.equal(decodeWire(raw.inboundWire).some((message) => message.id === prepareId && Object.hasOwn(message, "result")), false);
+        assert.ok(raw.transportProxy.events.some((event) => event.type === "proxy-held" && event.requestId === prepareId));
+        assert.ok(raw.transportProxy.events.some((event) => event.type === "proxy-dropped" && event.requestId === prepareId));
+        assert.ok(decodeWire(raw.outboundWire).some((message) => message.method === "$/cancelRequest" && message.params.id === prepareId));
+      }
+      if (id === "F02") {
+        assert.equal(observed.result.transport.externalCancellationHostEvidence.kind, "external-host-cancellation-signal");
+        assert.ok(observed.result.rawEvidence.transportProxy.events.some((event) => event.type === "external-cancel-observed"));
+        const cancelEvent = observed.result.rawEvidence.transportProxy.events.find((event) => event.type === "external-cancel-observed");
+        assert.ok(decodeWire(observed.result.rawEvidence.outboundWire).some((message) => message.method === "$/cancelRequest" && message.params.id === cancelEvent.requestId));
+      }
+      row.status = "passed";
+    }
+
+    evidence = {
+      schemaVersion: 2,
+      kind: "lsp-e1arq-real-suite-evidence",
+      goldenManifestDigest: sha256(goldenBytes),
+      profileManifestDigest: profile.manifestDigest,
+      semanticProfileDigest: profile.semanticProfileDigest,
+      required: { unmodified: 14, faults: 4, validators: 5, golden: 1 },
+      actual: { unmodifiedPassed: 14, faultsPassed: 4, validatorsPassed: 5, goldenPassed: 1 },
+      fixtureRelationQuality: "verified",
+      realServerConformance: true,
+      realSupport: false,
+      generalProjectSupport: false,
+      e1bEligible: false,
+      isolationLevel: "observational-synthetic-fixture-only",
+      authority: "ephemeral-host-evidence-only",
+      rows,
+    };
+  } catch (error) {
+    unexpectedFailure = { name: error.name, code: error.code || null, message: error.message };
+    throw error;
+  } finally {
+    recorder.finalize(evidence || {
+      schemaVersion: 2,
+      kind: "lsp-e1arq-real-suite-evidence",
+      status: "unexpected-failure",
+      goldenManifestDigest: sha256(goldenBytes),
+      profileManifestDigest: profile?.manifestDigest || null,
+      semanticProfileDigest: profile?.semanticProfileDigest || null,
+      realSupport: false,
+      generalProjectSupport: false,
+      e1bEligible: false,
+      isolationLevel: "observational-synthetic-fixture-only",
+      authority: "ephemeral-host-evidence-only",
+      unexpectedFailure,
+      rows,
+    });
   }
-
-  const fixture = golden.fixtures[0];
-  const sealed = byFixture.get("U01");
-  const sealedBytes = canonicalJson(sealed);
-  const capturedResponse = sealed.rawEvidence.outgoingOriginalResponse.body;
-  const capturedDigest = sha256(canonicalJson(capturedResponse));
-
-  const v01Transforms = [];
-  for (const [transformId, transformedId, expectedCode] of [["null-id", null, "unknown-response-id"], ["empty-id", "", "unknown-response-id"], ["late-id", 999, "unknown-response-id"]]) {
-    const pending = createPendingTable({ replay: "V01" });
-    pending.issue("outgoing");
-    const transformedResponse = { ...capturedResponse, id: transformedId };
-    assert.throws(() => pending.consume(transformedResponse, { replay: "V01" }), { code: expectedCode });
-    v01Transforms.push({ transformId, transformedDigest: sha256(canonicalJson(transformedResponse)), expectedCode });
-  }
-  {
-    const pending = createPendingTable({ replay: "V01" });
-    const id = pending.issue("outgoing");
-    const transformedResponse = { ...capturedResponse, id };
-    pending.consume(transformedResponse, { replay: "V01" });
-    assert.throws(() => pending.consume(transformedResponse, { replay: "V01" }), { code: "duplicate-response-id" });
-    v01Transforms.push({ transformId: "duplicate-id", transformedDigest: sha256(canonicalJson(transformedResponse)), expectedCode: "duplicate-response-id" });
-  }
-  rows.push({ id: "V01", kind: "replay-proxy-injection", status: "passed", originalDigest: capturedDigest, transformVersion: "lsp-real-rq-replay-v1", transforms: v01Transforms });
-
-  const v02Transforms = [];
-  for (const method of ["workspace/applyEdit", "window/showMessageRequest", "head/unknown"]) {
-    const injected = { jsonrpc: "2.0", id: 91, method, params: method === "workspace/applyEdit" ? { edit: { changes: {} } } : {} };
-    const reply = __private.realServerRequestReply(injected);
-    if (method === "workspace/applyEdit") { assert.equal(reply.sideEffect, "denied"); assert.equal(reply.response.result.applied, false); }
-    else { assert.equal(reply.unsupported, true); assert.equal(reply.response.error.code, -32601); }
-    v02Transforms.push({ method, injectedDigest: sha256(canonicalJson(injected)), replyDigest: sha256(canonicalJson(reply)), sideEffect: reply.sideEffect });
-  }
-  rows.push({ id: "V02", kind: "replay-proxy-injection", status: "passed", originalDigest: sealed.rawTranscriptDigest, transformVersion: "lsp-real-rq-replay-v1", transforms: v02Transforms, fileWrites: 0 });
-
-  const preparedCaptured = sealed.rawEvidence.prepareResponse.body.result[0];
-  const rawRelationCaptured = sealed.rawEvidence.outgoingOriginalResult.body[0];
-  const pinnedCallerUri = preparedCaptured.uri;
-  const pinnedTargetUri = rawRelationCaptured.to.uri;
-  const nodeUri = (uri) => uri.replace("file:///c%3A/", "file:///C:/");
-  const replayDocuments = fixture.exactSources.map((source) => ({ relativePath: source.path, languageId: source.languageId, text: source.text, allowedUris: [source.path === "caller.ts" ? pinnedCallerUri : source.path === "target.ts" ? pinnedTargetUri : pinnedTargetUri.replace("target.ts", source.path), nodeUri(source.path === "caller.ts" ? pinnedCallerUri : source.path === "target.ts" ? pinnedTargetUri : pinnedTargetUri.replace("target.ts", source.path))] }));
-  const v03Transforms = [];
-  for (const uri of ["file:///d%3A/outside/target.ts", `${pinnedTargetUri}?query=1`, `${pinnedTargetUri}#fragment`, pinnedTargetUri.replace("/target.ts", "/../target.ts")]) {
-    const transformedRelation = { ...rawRelationCaptured, to: { ...rawRelationCaptured.to, uri } };
-    assert.throws(() => __private.normalizeRealOutgoing(preparedCaptured, [transformedRelation], replayDocuments), { code: "uri-outside-snapshot" });
-    v03Transforms.push({ transformedDigest: sha256(canonicalJson(transformedRelation)), expectedCode: "uri-outside-snapshot" });
-  }
-  rows.push({ id: "V03", kind: "replay-proxy-injection", status: "passed", originalDigest: sha256(canonicalJson(rawRelationCaptured)), transformVersion: "lsp-real-rq-replay-v1", transforms: v03Transforms });
-
-  const originalFrame = encodeLspMessage(capturedResponse, LSP_HOST_REAL_LIMITS);
-  const v04Transforms = [
-    { id: "fatal-utf8", bytes: Buffer.concat([Buffer.from("Content-Length: 1\r\n\r\n"), Buffer.from([0xff])]), code: "invalid-json" },
-    { id: "junk-header", bytes: Buffer.from("junk\r\n\r\n{}"), code: "invalid-framing" },
-    { id: "oversize", bytes: Buffer.from(`Content-Length: ${LSP_HOST_REAL_LIMITS.maxFrameBytes + 1}\r\n\r\n`), code: "frame-oversize" },
-  ];
-  for (const transformedFrame of v04Transforms) assert.throws(() => new LspFrameParser(LSP_HOST_REAL_LIMITS).feed(transformedFrame.bytes), { code: transformedFrame.code });
-  rows.push({ id: "V04", kind: "replay-proxy-injection", status: "passed", originalWireDigest: sha256(originalFrame), transformVersion: "lsp-real-rq-replay-v1", transforms: v04Transforms.map(({ id, bytes, code }) => ({ id, transformedWireDigest: sha256(bytes), expectedCode: code })) });
-
-  const changed = structuredClone(fixture);
-  changed.expectedPresent[0].to.name = "intentionally-wrong-target";
-  const originalEvaluation = evaluate(sealed, fixture);
-  const changedEvaluation = evaluate(sealed, changed);
-  assert.equal(originalEvaluation.verdict, "passed");
-  assert.equal(changedEvaluation.verdict, "failed");
-  assert.ok(changedEvaluation.expectedPresentMissing > 0);
-  assert.ok(changedEvaluation.unlistedAdmittedCount > 0);
-  assert.equal(canonicalJson(sealed), sealedBytes);
-  rows.push({ id: "E-GOLDEN", kind: "evaluator-unit", status: "passed", originalEvaluation, changedEvaluation, observationDigest: sealed.normalizedObservationDigest });
-
-  const transformed = await runFixture(fixture, { replayTransform: "add-admitted-self" });
-  const transformedEvaluation = evaluate(transformed.result, fixture);
-  verifyRawEvidence(transformed.result, "complete");
-  assert.equal(transformed.result.rawEvidence.outgoingTransformedResult.transformId, "add-admitted-self");
-  assert.equal(transformed.result.rawEvidence.outgoingTransformedResult.transformVersion, "lsp-real-rq-replay-v1");
-  assert.notEqual(transformed.result.rawOutgoingDigest, transformed.result.transformedOutgoingDigest);
-  assert.equal(transformed.result.normalizedRelations.length, 2);
-  assert.equal(transformedEvaluation.verdict, "failed");
-  assert.equal(transformedEvaluation.unlistedAdmittedCount, 1);
-  assert.ok(transformedEvaluation.reasonCodes.includes("unexpected-admitted-relation"));
-  rows.push({ id: "V05", kind: "replay-proxy-injection", status: "passed", observation: transformed.result, evaluation: transformedEvaluation, events: transformed.events });
-
-  const faultCases = [
-    ["F01", { type: "kill-during-prepare" }, ["process-crash"]],
-    ["F02", { type: "cancel-during-prepare" }, ["cancelled"]],
-    ["F03", { type: "delay-prepare-response" }, ["request-timeout"]],
-    ["F04", { type: "delete-before-outgoing", relativePath: "target.ts" }, ["source-drift"]],
-  ];
-  for (const [id, fault, reasons] of faultCases) {
-    const observed = await runFixture(fixture, { fault });
-    assert.ok(["failed", "contaminated"].includes(observed.result.status), `${id}:${observed.result.status}`);
-    assert.ok(reasons.includes(observed.result.reason), `${id}:${observed.result.reason}`);
-    verifyRawEvidence(observed.result, "partial");
-    assert.equal(observed.result.publishedCandidateCount, 0);
-    assert.equal(observed.result.cleanup.verified, true);
-    rows.push({ id, kind: "controlled-real-process-fault", status: "passed", observation: observed.result, events: observed.events });
-  }
-
-  const evidence = {
-    schemaVersion: 1,
-    kind: "lsp-e1arq-real-suite-evidence",
-    goldenManifestDigest: sha256(goldenBytes),
-    profileManifestDigest: profile.manifestDigest,
-    semanticProfileDigest: profile.semanticProfileDigest,
-    required: { unmodified: 14, faults: 4, validators: 5, golden: 1 },
-    actual: { unmodifiedPassed: 14, faultsPassed: 4, validatorsPassed: 5, goldenPassed: 1 },
-    fixtureRelationQuality: "verified",
-    realServerConformance: true,
-    realSupport: false,
-    generalProjectSupport: false,
-    e1bEligible: false,
-    isolationLevel: "observational-synthetic-fixture-only",
-    authority: "ephemeral-host-evidence-only",
-    rows,
-  };
-  if (process.env.HEAD_LSP_REAL_EVIDENCE_FILE) fs.writeFileSync(process.env.HEAD_LSP_REAL_EVIDENCE_FILE, `${JSON.stringify(evidence, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
 });
