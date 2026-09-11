@@ -307,7 +307,7 @@ processTest("P12/P18 shared deadlines, stderr, final producer, and setup cleanup
   assert.equal(producer.status, "contaminated");
   assert.equal(producer.reason, "producer-mismatch");
   assert.equal(producer.candidates.length, 0);
-  if (fs.existsSync(deleteFile)) fs.unlinkSync(deleteFile);
+  removeCopiedFake(deleteFile);
 });
 
 test("P15/P16 absent profile and public integration remain explicit", async () => {
