@@ -156,6 +156,10 @@ processTest("P03/P04 semantic negatives and empty completion remain candidate-fr
   const stringExport = await run("barrel", baseSources.map((item) => item.path === "barrel.ts" ? { ...item, text: embeddedExport } : item));
   assert.equal(stringExport.status, "completed");
   assert.equal(stringExport.candidates.length, 0);
+  const regexBeforeEmbeddedExport = ["const marker = /\"/;", ...embeddedExport.split("\n"), "// \""].join("\n");
+  const regexStringExport = await run("barrel", baseSources.map((item) => item.path === "barrel.ts" ? { ...item, text: regexBeforeEmbeddedExport } : item));
+  assert.equal(regexStringExport.status, "completed");
+  assert.equal(regexStringExport.candidates.length, 0);
   for (const [scenario, reason] of [["prepare-null", "no-prepared-item"], ["prepare-empty", "no-prepared-item"], ["hierarchy-null", "empty"], ["hierarchy-empty", "empty"]]) {
     const result = await run(scenario);
     assert.equal(result.status, "completed");
@@ -296,10 +300,15 @@ processTest("P12/P18 shared deadlines, stderr, final producer, and setup cleanup
   assert.equal(stderrLimited.candidates.length, 0);
   assert.ok(Date.now() - stderrStarted < 4_000);
 
-  const foreignRoot = path.join(qaRoot, `lsp-host-000foreign-${process.pid}`);
+  const foreignRoot = fs.mkdtempSync(path.join(path.resolve(qaRoot), `lsp-host-000foreign-${process.pid}-`));
   const foreignSentinel = path.join(foreignRoot, "snapshot", "target.ts");
+  const collisionBoundary = fs.mkdtempSync(path.join(path.resolve(qaRoot), `foreign-collision-${process.pid}-`));
+  const legacyCollisionRoot = path.join(collisionBoundary, `lsp-host-000foreign-${process.pid}`);
+  const legacyCollisionSentinel = path.join(legacyCollisionRoot, "snapshot", "keep-existing.txt");
   fs.mkdirSync(path.dirname(foreignSentinel), { recursive: true });
   fs.writeFileSync(foreignSentinel, "foreign-sentinel", { encoding: "utf8", flag: "wx" });
+  fs.mkdirSync(path.dirname(legacyCollisionSentinel), { recursive: true });
+  fs.writeFileSync(legacyCollisionSentinel, "keep-existing", { encoding: "utf8", flag: "wx" });
   try {
     for (const [relativePath, reason] of [["target.ts", "source-drift"], ["tsconfig.json", "config-drift"]]) {
       let removed = false;
@@ -315,8 +324,11 @@ processTest("P12/P18 shared deadlines, stderr, final producer, and setup cleanup
       assert.equal(drift.candidates.length, 0);
     }
     assert.equal(fs.readFileSync(foreignSentinel, "utf8"), "foreign-sentinel");
+    assert.equal(fs.readFileSync(legacyCollisionSentinel, "utf8"), "keep-existing");
   } finally {
     fs.rmSync(foreignRoot, { recursive: true });
+    assert.equal(fs.readFileSync(legacyCollisionSentinel, "utf8"), "keep-existing");
+    fs.rmSync(collisionBoundary, { recursive: true });
   }
 
   const before = new Set(fs.readdirSync(qaRoot));

@@ -307,8 +307,38 @@ function commentMask(text) {
   return chars.join("");
 }
 
+function hasUnsupportedFixtureLexeme(text) {
+  if (text.includes("`")) return true;
+  let mode = "code";
+  let quote = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const current = text[index];
+    const next = text[index + 1];
+    if (mode === "line") {
+      if (current === "\n") mode = "code";
+    } else if (mode === "block") {
+      if (current === "*" && next === "/") { index += 1; mode = "code"; }
+    } else if (mode === "string") {
+      if (current === "\\") index += 1;
+      else if (current === quote) { mode = "code"; quote = null; }
+    } else if (current === "/" && next === "/") {
+      index += 1;
+      mode = "line";
+    } else if (current === "/" && next === "*") {
+      index += 1;
+      mode = "block";
+    } else if (current === "/") {
+      return true;
+    } else if (current === "\"" || current === "'") {
+      mode = "string";
+      quote = current;
+    }
+  }
+  return mode === "string" || mode === "block";
+}
+
 export function boundedFixtureModuleRoute(callerText, barrelText) {
-  if (callerText.includes("`") || barrelText.includes("`")) return null;
+  if (hasUnsupportedFixtureLexeme(callerText) || hasUnsupportedFixtureLexeme(barrelText)) return null;
   const caller = commentMask(callerText);
   const callerCode = codeMask(callerText);
   const imports = [...caller.matchAll(/^\s*import\s*\{\s*target\s*\}\s*from\s*["']\.\/(target|barrel)["']\s*;/gm)]
