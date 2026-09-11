@@ -11,32 +11,99 @@ const fail = (message, code = "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE"
 function canonicalJson(value) {
   if (value === null) return "null";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") return `{${Object.keys(value).sort(ascii).map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  if (Array.isArray(value)) {
+    const array = ordinaryArray(value, "Canonical array");
+    const parts = [];
+    for (let index = 0; index < array.length; index += 1) parts.push(canonicalJson(array[index]));
+    return `[${parts.join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = object(value, "Canonical object");
+    const parts = [];
+    for (const key of Object.keys(record).sort(ascii)) parts.push(`${JSON.stringify(key)}:${canonicalJson(record[key])}`);
+    return `{${parts.join(",")}}`;
+  }
   fail("Canonical value contains an unsupported type.", "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
 }
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const H = (value) => hash(canonicalJson(value));
 const id = (prefix, value) => `${prefix}-${H(value).slice(0, 24)}`;
-const object = (value, label) => { if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) fail(`${label} must be a plain object.`); return value; };
-const fields = (value, allowed, label) => { object(value, label); const extra = Object.keys(value).filter((key) => !allowed.includes(key)); if (extra.length) fail(`${label} contains unsupported fields: ${extra.join(", ")}.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_FIELD"); };
+const object = (value, label) => {
+  if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) fail(`${label} must be a plain object.`);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (typeof key !== "string" || !descriptor || !("value" in descriptor) || descriptor.enumerable !== true) fail(`${label} must contain enumerable own data properties only.`, "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
+  }
+  return value;
+};
+const fields = (value, allowed, label) => { const record = object(value, label); const extra = Object.keys(record).filter((key) => !allowed.includes(key)); if (extra.length) fail(`${label} contains unsupported fields: ${extra.join(", ")}.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_FIELD"); return record; };
 const text = (value, max, label, nullable = false) => { if (nullable && value === null) return null; if (typeof value !== "string" || !value || value.length > max) fail(`${label} is invalid.`); return value; };
 const safe = (value, max, label) => { if (!Number.isSafeInteger(value) || value < 0 || value > max) fail(`${label} is outside the supported numeric range.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); return value; };
 const hex = (value, label) => { if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) fail(`${label} must be a SHA-256 digest.`); return value; };
 const pathValue = (value, label) => { text(value, 512, label); if (value.includes("\\") || value.startsWith("/") || /^[A-Za-z]:/.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || value.split("/").some((part) => !part || part === "." || part === "..")) fail(`${label} must be a normalized relative path.`, "INVALID_STRUCTURAL_RELATION_SOURCE_PATH"); return value; };
 const unique = (values, label) => { if (new Set(values).size !== values.length) fail(`${label} contains duplicates.`, "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID"); };
 const exactOrder = (values, sorted, label) => { if (canonicalJson(values) !== canonicalJson(sorted)) fail(`${label} is not in canonical order.`, "NON_CANONICAL_STRUCTURAL_RELATION_OBSERVATION"); };
-const boundedArray = (value, min, max, label) => {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} count is unsupported.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
-  }
-  const keys = Object.keys(value);
-  if (keys.some((key) => !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length) || keys.length !== value.length) {
-    fail(`${label} must be a dense plain array.`, "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
+const ordinaryArray = (value, label) => {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) fail(`${label} must be a dense plain array.`, "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const lengthDescriptor = descriptors.length;
+  if (!lengthDescriptor || !("value" in lengthDescriptor) || !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0) fail(`${label} must be a dense plain array.`, "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
+  const length = lengthDescriptor.value;
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== length + 1 || ownKeys.some((key) => typeof key !== "string" || (key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key)))) fail(`${label} must be a dense plain array.`, "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) fail(`${label} must contain enumerable own data elements only.`, "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
   }
   return value;
 };
-const jsonSize = (value, label) => { let encoded; try { encoded = Buffer.byteLength(canonicalJson(value), "utf8"); } catch (error) { if (error?.code) throw error; fail(`${label} is cyclic or unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); } if (encoded > LIMITS.envelopeBytes) fail(`${label} exceeds the serialized envelope limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); return encoded; };
+const boundedArray = (value, min, max, label) => {
+  const array = ordinaryArray(value, label);
+  if (array.length < min || array.length > max) {
+    fail(`${label} count is unsupported.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+  }
+  return array;
+};
+function jsonSize(value, label) {
+  let encoded = 0;
+  const add = (bytes) => {
+    encoded += bytes;
+    if (encoded > LIMITS.envelopeBytes) fail(`${label} exceeds the serialized envelope limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+  };
+  const visit = (entry) => {
+    if (entry === null) { add(4); return; }
+    if (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean") {
+      const scalar = JSON.stringify(entry);
+      if (scalar === undefined) fail(`${label} is unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+      add(Buffer.byteLength(scalar, "utf8"));
+      return;
+    }
+    if (Array.isArray(entry)) {
+      const array = ordinaryArray(entry, label);
+      add(2);
+      for (let index = 0; index < array.length; index += 1) {
+        if (index) add(1);
+        visit(array[index]);
+      }
+      return;
+    }
+    if (entry && typeof entry === "object") {
+      const record = object(entry, label);
+      add(2);
+      let index = 0;
+      for (const key of Object.keys(record)) {
+        if (index) add(1);
+        add(Buffer.byteLength(JSON.stringify(key), "utf8") + 1);
+        visit(record[key]);
+        index += 1;
+      }
+      return;
+    }
+    fail(`${label} is unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+  };
+  visit(value);
+  return encoded;
+}
 function structuralRange(value,label){fields(value,["start","end"],label);for(const [name,pos] of [["start",value.start],["end",value.end]]){fields(pos,["line","character"],`${label}.${name}`);safe(pos.line,LIMITS.coordinate,`${label}.${name}.line`);safe(pos.character,LIMITS.coordinate,`${label}.${name}.character`);}if(comparePos(value.start,value.end)>0)fail(`${label} is reversed.`,"STRUCTURAL_RELATION_COORDINATE_MISMATCH");return value;}
 
 function observationPairs(value, label) {
@@ -334,15 +401,75 @@ function endpoint(entry, label, sourcesByPath, sourceTexts) {
   fields(entry, ["path", "digest", "name", "symbolKind", "declarationRange", "selectionRange"], label); const source = sourcesByPath.get(pathValue(entry.path, `${label}.path`)); if (!source || entry.digest !== source.sha256) fail(`${label} does not bind to sourceManifest.`, "STRUCTURAL_RELATION_SOURCE_MISMATCH"); const lines = sourceTexts.get(entry.path).lines; const declarationRange = range(lines, entry.declarationRange, `${label}.declarationRange`); const selectionRange = range(lines, entry.selectionRange, `${label}.selectionRange`); if (!contains(declarationRange, selectionRange)) fail(`${label} selectionRange is outside declarationRange.`, "STRUCTURAL_RELATION_COORDINATE_MISMATCH"); const name = text(entry.name, 256, `${label}.name`); if (sliceRange(lines, selectionRange) !== name) fail(`${label} selection lexeme does not equal name.`, "STRUCTURAL_RELATION_LEXEME_MISMATCH"); return { path: entry.path, digest: entry.digest, name, symbolKind: text(entry.symbolKind, 128, `${label}.symbolKind`), declarationRange, selectionRange };
 }
 
+const DIGEST_PLACEHOLDER = "0".repeat(64);
+const fixedId = (prefix) => `${prefix}-${"0".repeat(24)}`;
+
+function preflightCanonicalEnvelopeBudget(draft, sourceBytesByPath, rawBytesById) {
+  const producerClaimId = fixedId("structural-producer");
+  const rawRefId = fixedId("structural-raw");
+  const runId = fixedId("structural-run");
+  const pairId = fixedId("structural-pair");
+  const occurrenceId = fixedId("structural-occurrence");
+  const supportId = fixedId("structural-support");
+  const sourceManifest = draft.sourceManifest.map((entry) => ({ path: entry.path, sha256: DIGEST_PLACEHOLDER, language: entry.language, byteLength: sourceBytesByPath.get(entry.path).byteLength }));
+  const producerClaims = draft.producerClaims.map((entry) => ({ name: entry.name, version: entry.version, executableIdentity: entry.executableIdentity, profileIdentity: entry.profileIdentity, reportedTransport: entry.reportedTransport, reportedMethod: entry.reportedMethod, analysisMethodClaim: { reportedValue: entry.analysisMethodClaim.reportedValue, reportSource: entry.analysisMethodClaim.reportSource, truthStatus: "unknown" }, producerIdentityEvidenceStatus: entry.producerIdentityEvidenceStatus, producerClaimId }));
+  const rawRefs = draft.rawRefs.map((entry) => ({ kind: entry.kind, mediaType: entry.mediaType, sha256: DIGEST_PLACEHOLDER, byteLength: rawBytesById.get(entry.rawRefKey).byteLength, rawRefId }));
+  const runs = draft.runs.map((entry) => ({
+    producerClaimId,
+    inputBinding: { sourceManifestScope: entry.inputBinding.sourceManifestScope, sourceManifestDigest: DIGEST_PLACEHOLDER, configDigest: entry.inputBinding.configDigest, profileDigest: entry.inputBinding.profileDigest, normalizerVersion: entry.inputBinding.normalizerVersion, normalizerImplementationDigest: entry.inputBinding.normalizerImplementationDigest },
+    coverage: { admittedSources: entry.coverage.admittedSources.map((item) => ({ path: item.path, digest: item.digest })), queriedDirection: "outgoing", queriedSymbols: entry.coverage.queriedSymbols.map((item) => ({ path: item.path, digest: item.digest, name: item.name, symbolKind: item.symbolKind, line: item.line })), reportedResponseClosure: entry.coverage.reportedResponseClosure, programCoverage: "unknown", repositoryRelationCompleteness: "not-claimed" },
+    rawRefIds: entry.rawRefKeys.map(() => rawRefId),
+    runId,
+  }));
+  const pairs = draft.pairs.map((entry) => ({
+    type: "CALLS",
+    from: entry.from,
+    to: entry.to,
+    language: entry.language,
+    pairId,
+    occurrences: entry.occurrences.map((occurrence) => ({ pairId, evidence: occurrence.evidence, occurrenceId, supports: occurrence.supports.map(() => ({ occurrenceId, runId, rawRefId, supportId })) })),
+  }));
+  const candidateProjection = {
+    status: "candidate-only",
+    policy: "relation-pair-only-v0",
+    occurrenceDisposition: "preserved-in-envelope-not-in-pair",
+    repositoryCompleteness: "not-claimed",
+    entries: draft.pairs.map((entry) => ({ pairId, occurrenceIds: entry.occurrences.map(() => occurrenceId) })),
+    projectionDigest: DIGEST_PLACEHOLDER,
+  };
+  const payload = {
+    schemaVersion: 0,
+    kind: "StructuralRelationObservationEnvelope",
+    protocol: { name: "head-agent-core-structural-relation-observation-envelope", version: STRUCTURAL_RELATION_OBSERVATION_ENVELOPE_VERSION },
+    subject: { projectId: draft.projectId, sourceManifest, sourceManifestDigest: DIGEST_PLACEHOLDER },
+    producerClaims,
+    rawRefs,
+    runs,
+    pairs,
+    candidateProjection,
+    diagnosticLabels: draft.diagnosticLabels === undefined ? [] : draft.diagnosticLabels,
+    authority: "ephemeral-host-evidence-only",
+    instructionAuthority: false,
+    promotionAuthority: false,
+    recoveryAuthority: false,
+    graphAuthority: false,
+  };
+  return jsonSize({ ...payload, envelopeId: fixedId("structural-envelope"), envelopeHash: DIGEST_PLACEHOLDER }, "Canonical envelope");
+}
+
 /**
  * Builds the canonical, authority-free envelope from caller-owned descriptors.
  * Draft-only *Key fields bind references during construction and never enter
  * canonical identity. Source bytes and accepted decoded raw-record bytes remain
  * caller-owned; only their bounded descriptors and content identities persist.
+ * Schema objects and arrays must be ordinary JSON-style containers composed of
+ * enumerable own data properties/elements; accessors and collection overrides
+ * are rejected before any caller-provided value is read or hashed.
  */
 export function buildStructuralRelationObservationEnvelope(draft, { sourceBytesByPath, rawBytesById } = {}) {
   preflightDraft(draft, sourceBytesByPath, rawBytesById);
   jsonSize(draft, "Envelope draft");
+  preflightCanonicalEnvelopeBudget(draft, sourceBytesByPath, rawBytesById);
   const projectId = text(draft.projectId, 256, "projectId");
   const sources = normalizeSourceDescriptors(draft.sourceManifest, sourceBytesByPath); const sourcesByPath = new Map(sources.map((entry) => [entry.path, entry])); const sourceTexts = new Map(sources.map((entry) => [entry.path, sourceText(sourceBytesByPath.get(entry.path), entry.path)])); const sourceManifestDigest = sourceSubsetDigest(sources);
   const rawWithKeys = normalizeRawDescriptors(draft.rawRefs, rawBytesById); const rawByKey = new Map(rawWithKeys.map((entry) => [entry.rawRefKey, entry]));

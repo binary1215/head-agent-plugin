@@ -277,4 +277,75 @@ test("R5 aliases and empty observations are typed unsupported without hiding end
   const badEndpoint = fixture(); badEndpoint.draft.pairs[0].to.selectionRange = range(0, 16, 21); assert.throws(() => build(badEndpoint), { code: "STRUCTURAL_RELATION_LEXEME_MISMATCH" });
 });
 
+test("R3a ordinary-data preflight rejects getters, index accessors, subclasses, and own method overrides before execution", () => {
+  const attempts = [
+    () => {
+      const value = fixture(); let calls = 0; const original = value.draft.projectId;
+      Object.defineProperty(value.draft, "projectId", { enumerable: true, configurable: true, get() { calls += 1; return original; } });
+      return { invoke: () => build(value), calls: () => calls };
+    },
+    () => {
+      const { document } = build(); let calls = 0; const original = document.subject.projectId;
+      Object.defineProperty(document.subject, "projectId", { enumerable: true, configurable: true, get() { calls += 1; return original; } });
+      return { invoke: () => verifyStructuralRelationObservationEnvelope(document), calls: () => calls };
+    },
+    () => {
+      const value = fixture(); let calls = 0;
+      Object.defineProperty(value.draft.diagnosticLabels, "0", { enumerable: true, configurable: true, get() { calls += 1; return "fixture-only"; } });
+      return { invoke: () => build(value), calls: () => calls };
+    },
+    () => {
+      const value = fixture(); let calls = 0; const entries = value.draft.sourceManifest;
+      class HostArray extends Array { map(...args) { calls += 1; return super.map(...args); } }
+      value.draft.sourceManifest = HostArray.from(entries);
+      return { invoke: () => build(value), calls: () => calls };
+    },
+    () => {
+      const { document } = build(); let calls = 0;
+      Object.defineProperty(document.diagnosticLabels, "map", { enumerable: false, configurable: true, value(...args) { calls += 1; return Array.prototype.map.apply(this, args); } });
+      return { invoke: () => verifyStructuralRelationObservationEnvelope(document), calls: () => calls };
+    },
+  ];
+  for (const make of attempts) {
+    const attempt = make(); let hashCalls = 0; const originalHash = crypto.createHash; crypto.createHash = (...args) => { hashCalls += 1; return originalHash(...args); };
+    try { assert.throws(attempt.invoke, { code: "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE" }); } finally { crypto.createHash = originalHash; }
+    assert.equal(attempt.calls(), 0);
+    assert.equal(hashCalls, 0);
+  }
+});
+
+test("R3b final canonical byte budget rejects output overflow before hashing with exact UTF-8 and escape accounting", () => {
+  const limit = 8_388_608;
+  const baseline = fixture(); baseline.draft.diagnosticLabels = [];
+  const baselineDocument = build(baseline).document;
+  const baselineBytes = Buffer.byteLength(canonicalJson(baselineDocument), "utf8");
+
+  for (const label of ["x".repeat(512), "é\"\\\n".repeat(128)]) {
+    const itemBytes = Buffer.byteLength(JSON.stringify(label), "utf8");
+    let insideCount = Math.floor((limit - baselineBytes + 1) / (itemBytes + 1));
+    while (baselineBytes + insideCount * (itemBytes + 1) - 1 > limit) insideCount -= 1;
+    const insideExpected = baselineBytes + insideCount * (itemBytes + 1) - 1;
+    const inside = fixture(); inside.draft.diagnosticLabels = Array(insideCount).fill(label);
+    const insideDocument = build(inside).document;
+    assert.equal(Buffer.byteLength(canonicalJson(insideDocument), "utf8"), insideExpected);
+    assert.ok(insideExpected <= limit);
+
+    const outside = fixture(); outside.draft.diagnosticLabels = Array(insideCount + 1).fill(label);
+    assert.ok(Buffer.byteLength(canonicalJson(outside.draft), "utf8") <= limit, "counterexample must fit the draft budget");
+    let hashCalls = 0; const originalHash = crypto.createHash; crypto.createHash = (...args) => { hashCalls += 1; return originalHash(...args); };
+    let error; try { build(outside); } catch (caught) { error = caught; } finally { crypto.createHash = originalHash; }
+    assert.equal(error?.code, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+    assert.match(error.message, /Canonical envelope exceeds/);
+    assert.equal(hashCalls, 0);
+  }
+
+  const oversizedDocument = clone(baselineDocument);
+  const itemBytes = Buffer.byteLength(JSON.stringify("x".repeat(512)), "utf8");
+  const outsideCount = Math.floor((limit - baselineBytes + 1) / (itemBytes + 1)) + 1;
+  oversizedDocument.diagnosticLabels = Array(outsideCount).fill("x".repeat(512));
+  let hashCalls = 0; const originalHash = crypto.createHash; crypto.createHash = (...args) => { hashCalls += 1; return originalHash(...args); };
+  try { assert.throws(() => verifyStructuralRelationObservationEnvelope(oversizedDocument), { code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" }); } finally { crypto.createHash = originalHash; }
+  assert.equal(hashCalls, 0);
+});
+
 export { fixture, verifierRawMap };
