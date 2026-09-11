@@ -83,7 +83,8 @@ async function waitGone(pid) {
   return !processExists(pid);
 }
 
-async function runFixture(fixture, options = {}) {
+async function runFixture(fixture, options = {}, capture = null) {
+  const { wrapperAssertionFailure = false, ...collectorOptions } = options;
   const events = [];
   const result = await __private.collectRealOutgoingCallObservation({
     fixtureId: fixture.fixtureId,
@@ -96,8 +97,10 @@ async function runFixture(fixture, options = {}) {
     supervisorSelection,
     qaRoot,
     onProcessEvent: (event) => events.push(event),
-    ...options,
+    ...collectorOptions,
   });
+  capture?.({ result, events });
+  if (wrapperAssertionFailure) assert.fail("controlled post-collection wrapper assertion failure");
   assert.equal(result.realSupport, false);
   assert.equal(result.generalProjectSupport, false);
   assert.equal(result.e1bEligible, false);
@@ -309,21 +312,46 @@ realTest("RQ fixed publisher trust and admission handles fail closed before laun
   }
 });
 
-realTest("RQ create-only evidence retains collected raw data across an assertion failure", () => {
+realTest("RQ create-only evidence retains actual A/B raw data across a B wrapper assertion failure", { timeout: 60_000 }, async () => {
   const owned = fs.mkdtempSync(path.join(qaRoot, "evidence-failure-"));
   try {
     const file = path.join(owned, "failure-evidence.json");
     const recorder = createEvidenceRecorder(file);
-    const collected = { kind: "synthetic-raw-before-evaluation", body: { exact: true }, completeness: "partial" };
-    recorder.record("collected-before-evaluation", collected);
-    let observed;
-    try { assert.fail("controlled assertion failure"); }
-    catch (error) { observed = { name: error.name, message: error.message }; }
-    recorder.finalize({ status: "failed", unexpectedFailure: observed, collected: [collected] });
+    const fixture = golden.fixtures[0];
+    const rows = [];
+    let firstRow = null;
+    await runFixture(fixture, {}, ({ result, events }) => {
+      firstRow = { id: `${fixture.fixtureId}-A`, kind: "actual-real-collection-before-wrapper-validation", status: "collected-unverified", observation: result, events };
+      rows.push(firstRow);
+      recorder.record(`${fixture.fixtureId}-A-collected`, firstRow);
+    });
+    const firstEvaluation = evaluate(firstRow.observation, fixture);
+    assert.equal(firstEvaluation.verdict, "passed");
+    Object.assign(firstRow, { status: "passed", evaluation: firstEvaluation });
+
+    let secondRow = null;
+    let observed = null;
+    try {
+      await runFixture(fixture, { wrapperAssertionFailure: true }, ({ result, events }) => {
+        secondRow = { id: `${fixture.fixtureId}-B`, kind: "actual-real-collection-before-wrapper-validation", status: "collected-unverified", observation: result, events };
+        rows.push(secondRow);
+        recorder.record(`${fixture.fixtureId}-B-collected`, secondRow);
+      });
+    } catch (error) {
+      observed = { name: error.name, code: error.code || null, message: error.message };
+    }
+    recorder.finalize({ status: "unexpected-failure", unexpectedFailure: observed, rows });
     const artifact = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(artifact.status, "failed");
-    assert.equal(artifact.collected[0].body.exact, true);
-    assert.equal(fs.readdirSync(`${file}.parts`).length, 1);
+    assert.equal(artifact.status, "unexpected-failure");
+    assert.equal(artifact.unexpectedFailure.message, "controlled post-collection wrapper assertion failure");
+    assert.equal(artifact.rows.length, 2);
+    assert.equal(fs.readdirSync(`${file}.parts`).length, 2);
+    assert.equal(artifact.rows[0].status, "passed");
+    assert.equal(artifact.rows[1].status, "collected-unverified");
+    for (const row of artifact.rows) {
+      assert.equal(row.observation.status, "completed");
+      verifyRawEvidence(row.observation, "complete");
+    }
   } finally {
     fs.rmSync(owned, { recursive: true, force: true });
   }
@@ -344,13 +372,18 @@ realTest("RQ U01-U07 fresh A/B, E-GOLDEN, V05, and F01-F04 satisfy the closed re
     for (const fixture of golden.fixtures) {
       for (const source of fixture.exactSources) assert.equal(sha256(source.text), source.sha256, `${fixture.fixtureId}:${source.path}`);
       assert.equal(sha256(fixture.exactTsconfig.text), fixture.exactTsconfig.sha256, `${fixture.fixtureId}:tsconfig`);
-      const first = await runFixture(fixture);
-      const second = await runFixture(fixture);
-      const firstRow = { id: `${fixture.fixtureId}-A`, kind: "unmodified-real", status: "collected-unverified", observation: first.result, events: first.events };
-      const secondRow = { id: `${fixture.fixtureId}-B`, kind: "unmodified-real-rerun", status: "collected-unverified", observation: second.result, events: second.events };
-      rows.push(firstRow, secondRow);
-      recorder.record(`${fixture.fixtureId}-A-collected`, firstRow);
-      recorder.record(`${fixture.fixtureId}-B-collected`, secondRow);
+      let firstRow = null;
+      const first = await runFixture(fixture, {}, ({ result, events }) => {
+        firstRow = { id: `${fixture.fixtureId}-A`, kind: "unmodified-real", status: "collected-unverified", observation: result, events };
+        rows.push(firstRow);
+        recorder.record(`${fixture.fixtureId}-A-collected`, firstRow);
+      });
+      let secondRow = null;
+      const second = await runFixture(fixture, {}, ({ result, events }) => {
+        secondRow = { id: `${fixture.fixtureId}-B`, kind: "unmodified-real-rerun", status: "collected-unverified", observation: result, events };
+        rows.push(secondRow);
+        recorder.record(`${fixture.fixtureId}-B-collected`, secondRow);
+      });
       const firstEvaluation = evaluate(first.result, fixture);
       const secondEvaluation = evaluate(second.result, fixture);
       verifyRawEvidence(first.result, "complete");
@@ -457,10 +490,12 @@ realTest("RQ U01-U07 fresh A/B, E-GOLDEN, V05, and F01-F04 satisfy the closed re
     assert.equal(canonicalJson(sealed), sealedBytes);
     goldenRow.status = "passed";
 
-    const transformed = await runFixture(fixture, { replayTransform: "add-admitted-self" });
-    const transformedRow = { id: "V05", kind: "actual-bridge-replay-transform", status: "collected-unverified", observation: transformed.result, events: transformed.events };
-    rows.push(transformedRow);
-    recorder.record("V05-collected", transformedRow);
+    let transformedRow = null;
+    const transformed = await runFixture(fixture, { replayTransform: "add-admitted-self" }, ({ result, events }) => {
+      transformedRow = { id: "V05", kind: "actual-bridge-replay-transform", status: "collected-unverified", observation: result, events };
+      rows.push(transformedRow);
+      recorder.record("V05-collected", transformedRow);
+    });
     const transformedEvaluation = evaluate(transformed.result, fixture);
     verifyRawEvidence(transformed.result, "complete");
     assert.equal(transformed.result.rawEvidence.outgoingTransformedResult.transformId, "add-admitted-self");
@@ -479,10 +514,12 @@ realTest("RQ U01-U07 fresh A/B, E-GOLDEN, V05, and F01-F04 satisfy the closed re
       ["F04", { type: "delete-before-outgoing", relativePath: "target.ts" }, ["source-drift"]],
     ];
     for (const [id, fault, reasons] of faultCases) {
-      const observed = await runFixture(fixture, { fault });
-      const row = { id, kind: "controlled-real-process-fault", status: "collected-unverified", observation: observed.result, events: observed.events };
-      rows.push(row);
-      recorder.record(`${id}-collected`, row);
+      let row = null;
+      const observed = await runFixture(fixture, { fault }, ({ result, events }) => {
+        row = { id, kind: "controlled-real-process-fault", status: "collected-unverified", observation: result, events };
+        rows.push(row);
+        recorder.record(`${id}-collected`, row);
+      });
       assert.ok(["failed", "contaminated"].includes(observed.result.status), `${id}:${observed.result.status}`);
       assert.ok(reasons.includes(observed.result.reason), `${id}:${observed.result.reason}`);
       verifyRawEvidence(observed.result, "partial");
