@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { __private } from "../scripts/lib/lsp-host-bridge.mjs";
 import {
   LSP_HOST_REAL_LIMITS,
+  LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND,
   LspFrameParser,
   admittedRealDocumentFromUri,
   canonicalJson,
@@ -21,6 +23,9 @@ const goldenBytes = fs.readFileSync(goldenFile);
 const golden = JSON.parse(goldenBytes);
 const ready = Boolean(process.env.HEAD_LSP_REAL_PROFILE_MANIFEST && process.env.HEAD_LSP_QA_ROOT && process.env.HEAD_LSP_SUPERVISOR_ROOT);
 const realTest = ready ? test : test.skip;
+const rwReady = ready && Boolean(process.env.HEAD_LSP_RW_PROFILE_MANIFEST && process.env.HEAD_LSP_RW_SOURCE_ROOT
+  && process.env.HEAD_LSP_RW_GOLDEN_FILE && process.env.HEAD_LSP_RW_HEURISTIC_RESULTS && process.env.HEAD_LSP_RW_EVIDENCE_FILE);
+const rwTest = rwReady ? test : test.skip;
 const qaRoot = ready ? path.resolve(process.env.HEAD_LSP_QA_ROOT) : null;
 const profileManifestFile = ready ? path.resolve(process.env.HEAD_LSP_REAL_PROFILE_MANIFEST) : null;
 const supervisorSelection = ready ? resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_LSP_SUPERVISOR_ROOT }) : null;
@@ -115,7 +120,7 @@ async function runFixture(fixture, options = {}, capture = null) {
 
 function verifyRawEvidence(result, expectedCompleteness) {
   const raw = result.rawEvidence;
-  assert.equal(raw.kind, "lsp-real-rq-raw-evidence");
+  assert.equal(raw.kind, result.profileKind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? "lsp-real-rw-o-raw-evidence" : "lsp-real-rq-raw-evidence");
   assert.equal(raw.completeness, expectedCompleteness);
   for (const direction of ["outboundWire", "inboundWire", "serverOutboundWire"]) {
     const bytes = Buffer.from(raw[direction].body, "base64");
@@ -155,6 +160,98 @@ function createEvidenceRecorder(file) {
   };
 }
 
+async function runReferenceWitness({ fixtureId, sources, configText, prepare, profileManifestFile: rwProfile, fault = null, referenceWitnessControl = null, capture = null }) {
+  const events = [];
+  const result = await __private.collectRealOutgoingCallObservation({
+    fixtureId,
+    projectId: "lsp-rw-o-witness-project",
+    generationDigest: sha256("lsp-rw-o-generation-v1"),
+    sources,
+    tsconfigText: configText,
+    prepare: { path: prepare.path, position: { line: prepare.line, character: prepare.character } },
+    profileManifestFile: rwProfile,
+    supervisorSelection,
+    qaRoot,
+    fault,
+    referenceWitnessControl,
+    onProcessEvent: (event) => events.push(event),
+  });
+  capture?.({ result, events });
+  assert.equal(result.profileKind, LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND);
+  assert.equal(result.realSupport, false);
+  assert.equal(result.generalProjectSupport, false);
+  assert.equal(result.e1bEligible, false);
+  assert.equal(result.authority, "ephemeral-host-evidence-only");
+  assert.equal(result.copiedInputCoverage, "exact-four-files");
+  assert.equal(result.actualTlsProgramCoverage, "not-observable-through-standard-lsp");
+  assert.equal(result.actualTlsConfigSelection, "bounded-profile-requested-not-mechanically-proven");
+  assert.equal(result.resolutionMetadataCoverage, "compiler-api-probe-only");
+  assert.equal(result.dependencyCoverage, "partial-unresolved-external-imports");
+  assert.equal(result.filesystemReadIsolation, "not-enforced-unknown");
+  assert.equal(result.provenanceClass, "local-download-unverified");
+  assert.equal(events.filter((event) => event.type === "spawn").length, events.filter((event) => event.type === "exit").length);
+  for (const event of events.filter((item) => item.type === "spawn")) assert.equal(await waitGone(event.pid), true, `Owned RW process ${event.pid} remained alive.`);
+  if (result.executionProvenance?.pid) assert.equal(await waitGone(result.executionProvenance.pid), true, `Pinned RW TLS process ${result.executionProvenance.pid} remained alive.`);
+  return { result, events };
+}
+
+async function compilerApiBoundaryProbe(profile, sources) {
+  const typescriptModule = await import(pathToFileURL(path.join(profile.typescript.root, "lib", "typescript.js")).href);
+  const ts = typescriptModule.default || typescriptModule;
+  const root = "C:/head-rw-o-virtual";
+  const sourceMap = new Map(sources.map((source) => [`${root}/${source.path}`, source.text]));
+  const options = {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    strict: true,
+    noEmit: true,
+    noLib: true,
+    noResolve: true,
+    types: [],
+    plugins: [],
+    allowJs: false,
+    skipLibCheck: true,
+  };
+  const observed = [];
+  const makeHost = (map) => ({
+    getSourceFile(fileName, languageVersion) {
+      observed.push({ api: "getSourceFile", fileName, admitted: map.has(fileName) });
+      const text = map.get(fileName);
+      return text === undefined ? undefined : ts.createSourceFile(fileName, text, languageVersion, true);
+    },
+    getDefaultLibFileName: () => `${root}/lib.d.ts`,
+    writeFile: () => { throw new Error("compiler probe attempted a write"); },
+    getCurrentDirectory: () => root,
+    getDirectories: () => [],
+    fileExists(fileName) { observed.push({ api: "fileExists", fileName, admitted: map.has(fileName) }); return map.has(fileName); },
+    readFile(fileName) { observed.push({ api: "readFile", fileName, admitted: map.has(fileName) }); return map.get(fileName); },
+    directoryExists: (directory) => directory === root || directory.startsWith(`${root}/`),
+    getCanonicalFileName: (fileName) => fileName.toLowerCase(),
+    useCaseSensitiveFileNames: () => false,
+    getNewLine: () => "\n",
+    realpath: (fileName) => fileName,
+  });
+  const rootNames = [...sourceMap.keys()];
+  const program = ts.createProgram({ rootNames, options, host: makeHost(sourceMap) });
+  const exact = program.getSourceFiles().map((source) => source.fileName).sort();
+  const ambientMap = new Map(sourceMap).set(`${root}/ambient.ts`, "export const ambient = true;\n");
+  const ambientProgram = ts.createProgram({ rootNames: [...ambientMap.keys()], options, host: makeHost(ambientMap) });
+  const withAmbient = ambientProgram.getSourceFiles().map((source) => source.fileName).sort();
+  return {
+    kind: "rw-o-compiler-api-boundary-probe",
+    options: { ...options, target: "ES2022", module: "ESNext", moduleResolution: "Bundler" },
+    exactGetSourceFiles: exact,
+    exactCount: exact.length,
+    ambientContrastGetSourceFiles: withAmbient,
+    ambientContrastCount: withAmbient.length,
+    recordedApis: observed,
+    actualTlsProgramCoverage: "not-observable-through-standard-lsp",
+    actualTlsConfigSelection: "bounded-profile-requested-not-mechanically-proven",
+    filesystemReadIsolation: "not-enforced-unknown",
+  };
+}
+
 test("RQ profile absence is blocked and never implies real support", async () => {
   const fixture = golden.fixtures[0];
   const result = await __private.collectRealOutgoingCallObservation({ fixtureId: fixture.fixtureId });
@@ -174,6 +271,9 @@ test("RQ V01-V04 replay validators fail closed without invoking a provider", () 
 
   const apply = __private.realServerRequestReply({ jsonrpc: "2.0", id: 1, method: "workspace/applyEdit", params: { edit: { changes: {} } } });
   assert.deepEqual(apply, { response: { jsonrpc: "2.0", id: 1, result: { applied: false, failureReason: "HEAD real LSP fixture is read-only" } }, unsupported: false, sideEffect: "denied" });
+  const formatting = __private.realServerRequestReply({ jsonrpc: "2.0", id: 3, method: "workspace/configuration", params: { items: [{ section: "formattingOptions" }, { section: "typescript" }] } });
+  assert.deepEqual(formatting.response.result, [{ tabSize: 4, insertSpaces: true }, null]);
+  assert.equal(formatting.sideEffect, "none");
   for (const method of ["window/showMessageRequest", "head/unknown"]) {
     const reply = __private.realServerRequestReply({ jsonrpc: "2.0", id: 2, method, params: {} });
     assert.equal(reply.unsupported, true);
@@ -354,6 +454,238 @@ realTest("RQ create-only evidence retains actual A/B raw data across a B wrapper
     }
   } finally {
     fs.rmSync(owned, { recursive: true, force: true });
+  }
+});
+
+rwTest("RW-O exact OMO source4 outgoing witness preserves UNKNOWN boundaries and raw controls", { timeout: 120_000 }, async () => {
+  const rwProfileFile = path.resolve(process.env.HEAD_LSP_RW_PROFILE_MANIFEST);
+  const sourceRoot = path.resolve(process.env.HEAD_LSP_RW_SOURCE_ROOT);
+  const rwGoldenFile = path.resolve(process.env.HEAD_LSP_RW_GOLDEN_FILE);
+  const heuristicFile = path.resolve(process.env.HEAD_LSP_RW_HEURISTIC_RESULTS);
+  const recorder = createEvidenceRecorder(path.resolve(process.env.HEAD_LSP_RW_EVIDENCE_FILE));
+  const rows = [];
+  let evidence = null;
+  let unexpectedFailure = null;
+  try {
+    const goldenBytes = fs.readFileSync(rwGoldenFile);
+    const rwGolden = JSON.parse(goldenBytes);
+    const heuristicBytes = fs.readFileSync(heuristicFile);
+    const heuristic = JSON.parse(heuristicBytes);
+    assert.equal(rwGolden.kind, "head.lsp.reference-witness.omo-lsp-core-outgoing-golden");
+    assert.equal(rwGolden.profileVersion, "rw-o-1");
+    assert.equal(rwGolden.normalizerVersion, "0.3.0");
+    assert.equal(rwGolden.direction, "outgoing");
+    assert.equal(rwGolden.sourcePaths.length, 4);
+    assert.equal(rwGolden.expectedRelations.length, 2);
+    assert.equal(JSON.parse(rwGolden.configText).compilerOptions.noResolve, true);
+    const sources = rwGolden.sourcePaths.map((relativePath) => {
+      const file = path.join(sourceRoot, ...relativePath.split("/"));
+      const text = fs.readFileSync(file, "utf8");
+      return { path: relativePath, text, file, bytes: Buffer.byteLength(text), sha256: sha256(Buffer.from(text)) };
+    });
+    const sourceBefore = sources.map(({ path: relativePath, file, bytes, sha256: digest }) => ({ path: relativePath, file, bytes, sha256: digest }));
+    assert.deepEqual(heuristic.sourceManifest.map(({ path: relativePath, bytes, sha256: digest }) => ({ path: relativePath, bytes, sha256: digest })), sourceBefore.map(({ path: relativePath, bytes, sha256: digest }) => ({ path: relativePath, bytes, sha256: digest })));
+    const profile = __private.verifyRealProfileManifest(rwProfileFile);
+    assert.equal(profile.kind, LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND);
+    assert.equal(profile.profileVersion, "rw-o-1");
+    assert.equal(profile.direction, "outgoing");
+    assert.equal(profile.normalizerVersion, "0.3.0");
+
+    const compilerProbe = await compilerApiBoundaryProbe(profile, sources);
+    assert.equal(compilerProbe.exactCount, 4);
+    assert.equal(compilerProbe.ambientContrastCount, 5);
+    assert.deepEqual(compilerProbe.exactGetSourceFiles.map((file) => file.slice("C:/head-rw-o-virtual/".length)), [...rwGolden.sourcePaths].sort());
+    assert.ok(compilerProbe.ambientContrastGetSourceFiles.some((file) => file.endsWith("/ambient.ts")));
+    const heuristicCases = Object.fromEntries(heuristic.cases.map((item) => [item.id, item.counts]));
+    assert.deepEqual(heuristicCases["unmodified-four-files"], { executeLspTool: 0, coerceToolArguments: 0 });
+    assert.deepEqual(heuristicCases["direct-execute-runtime-ts"], { executeLspTool: 1, coerceToolArguments: 0 });
+    assert.deepEqual(heuristicCases["direct-both-runtime-ts"], { executeLspTool: 1, coerceToolArguments: 1 });
+
+    const collectorBase = {
+      projectId: "lsp-rw-o-witness-project",
+      generationDigest: sha256("lsp-rw-o-generation-v1"),
+      tsconfigText: rwGolden.configText,
+      prepare: { path: rwGolden.prepare.path, position: { line: rwGolden.prepare.line, character: rwGolden.prepare.character } },
+      profileManifestFile: rwProfileFile,
+      supervisorSelection,
+      qaRoot,
+    };
+    const invalidCountEvents = [];
+    const invalidCount = await __private.collectRealOutgoingCallObservation({
+      ...collectorBase,
+      fixtureId: "RW-O-A",
+      sources: sources.slice(0, 3),
+      onProcessEvent: (event) => invalidCountEvents.push(event),
+      maxDocuments: 99,
+    });
+    assert.equal(invalidCount.status, "blocked");
+    assert.equal(invalidCount.reason, "invalid-input");
+    assert.equal(invalidCountEvents.length, 0);
+    const invalidPathEvents = [];
+    const invalidPath = await __private.collectRealOutgoingCallObservation({
+      ...collectorBase,
+      fixtureId: "RW-O-A",
+      sources: sources.map(({ path: relativePath, text }, index) => ({ path: index === 3 ? "packages/lsp-core/src/tools/other.ts" : relativePath, text })),
+      onProcessEvent: (event) => invalidPathEvents.push(event),
+    });
+    assert.equal(invalidPath.status, "blocked");
+    assert.equal(invalidPath.reason, "invalid-input");
+    assert.equal(invalidPathEvents.length, 0);
+    const sourceDriftEvents = [];
+    const sourceDrift = await __private.collectRealOutgoingCallObservation({
+      ...collectorBase,
+      fixtureId: "RW-O-A",
+      sources: sources.map(({ path: relativePath, text }, index) => ({ path: relativePath, text: index === 0 ? `${text}\n` : text })),
+      onProcessEvent: (event) => sourceDriftEvents.push(event),
+    });
+    assert.equal(sourceDrift.status, "contaminated");
+    assert.equal(sourceDrift.reason, "source-drift");
+    assert.equal(sourceDriftEvents.length, 0);
+    const configDriftEvents = [];
+    const configDrift = await __private.collectRealOutgoingCallObservation({
+      ...collectorBase,
+      fixtureId: "RW-O-A",
+      sources,
+      tsconfigText: `${rwGolden.configText}\n`,
+      onProcessEvent: (event) => configDriftEvents.push(event),
+    });
+    assert.equal(configDrift.status, "contaminated");
+    assert.equal(configDrift.reason, "config-drift");
+    assert.equal(configDriftEvents.length, 0);
+    const forgedProfileFile = path.join(qaRoot, `rw-forged-${process.pid}-${crypto.randomUUID()}.json`);
+    const forgedProfile = { ...JSON.parse(fs.readFileSync(rwProfileFile, "utf8")), kind: "head.lsp.reference-witness.unreviewed" };
+    fs.writeFileSync(forgedProfileFile, `${JSON.stringify(forgedProfile)}\n`, { flag: "wx" });
+    try {
+      const forgedEvents = [];
+      const forged = await __private.collectRealOutgoingCallObservation({ ...collectorBase, fixtureId: "RW-O-A", sources, profileManifestFile: forgedProfileFile, onProcessEvent: (event) => forgedEvents.push(event) });
+      assert.equal(forged.status, "blocked");
+      assert.equal(forged.reason, "unsupported-profile");
+      assert.equal(forgedEvents.length, 0);
+    } finally { fs.rmSync(forgedProfileFile, { force: false }); }
+    for (const [label, mutate] of [
+      ["source", (value) => ({ ...value, sourceManifest: value.sourceManifest.map((record, index) => index === 0 ? { ...record, sha256: sha256("caller-selected-source") } : record) })],
+      ["config", (value) => ({ ...value, configDigest: sha256("caller-selected-config") })],
+    ]) {
+      const file = path.join(qaRoot, `rw-forged-${label}-${process.pid}-${crypto.randomUUID()}.json`);
+      fs.writeFileSync(file, `${JSON.stringify(mutate(JSON.parse(fs.readFileSync(rwProfileFile, "utf8"))))}\n`, { flag: "wx" });
+      try {
+        const events = [];
+        const forged = await __private.collectRealOutgoingCallObservation({ ...collectorBase, fixtureId: "RW-O-A", sources, profileManifestFile: file, onProcessEvent: (event) => events.push(event) });
+        assert.equal(forged.status, "blocked");
+        assert.equal(forged.reason, "unsupported-profile");
+        assert.equal(events.length, 0);
+      } finally { fs.rmSync(file, { force: false }); }
+    }
+
+    const runInput = { sources: sources.map(({ path: relativePath, text }) => ({ path: relativePath, text })), configText: rwGolden.configText, prepare: rwGolden.prepare, profileManifestFile: rwProfileFile };
+    let firstRow = null;
+    const first = await runReferenceWitness({ ...runInput, fixtureId: "RW-O-A", capture: ({ result, events }) => {
+      firstRow = { id: "unmodifiedRealA", status: "collected-unverified", observation: result, events };
+      rows.push(firstRow); recorder.record("RW-O-A-collected", firstRow);
+    } });
+    let secondRow = null;
+    const second = await runReferenceWitness({ ...runInput, fixtureId: "RW-O-B", capture: ({ result, events }) => {
+      secondRow = { id: "unmodifiedRealB", status: "collected-unverified", observation: result, events };
+      rows.push(secondRow); recorder.record("RW-O-B-collected", secondRow);
+    } });
+    for (const observed of [first.result, second.result]) {
+      assert.equal(observed.status, "completed");
+      assert.equal(observed.reason, "observed");
+      assert.equal(observed.normalizedRelations.length, 2);
+      assert.deepEqual(observed.normalizedRelations, rwGolden.expectedRelations);
+      assert.equal(observed.rawOutgoingCount, 2);
+      verifyRawEvidence(observed, "complete");
+      const prepareData = observed.rawEvidence.prepareResponse.body.result[0].data;
+      const outgoingRequest = observed.rawEvidence.transcript.body.find((item) => item.direction === "out" && item.message.method === "callHierarchy/outgoingCalls");
+      assert.ok(outgoingRequest);
+      assert.deepEqual(outgoingRequest.message.params.item.data, prepareData);
+      assert.equal(observed.executionProvenance.referenceWitnessControl, null);
+    }
+    assert.equal(first.result.normalizedObservationDigest, second.result.normalizedObservationDigest);
+    Object.assign(firstRow, { status: "passed" });
+    Object.assign(secondRow, { status: "passed" });
+
+    let controlRow = null;
+    const control = await runReferenceWitness({ ...runInput, fixtureId: "RW-O-CONTROL", referenceWitnessControl: "break-tools-barrel-v1", capture: ({ result, events }) => {
+      controlRow = { id: "controlledBrokenBarrel", status: "collected-unverified", observation: result, events, changedCopyOnly: "packages/lsp-core/src/tools.ts" };
+      rows.push(controlRow); recorder.record("RW-O-CONTROL-collected", controlRow);
+    } });
+    assert.equal(control.result.status, "completed");
+    assert.equal(control.result.reason, "empty");
+    assert.equal(control.result.rawOutgoingCount, 0);
+    assert.deepEqual(control.result.normalizedRelations, []);
+    assert.equal(control.result.executionProvenance.referenceWitnessControl, "break-tools-barrel-v1");
+    verifyRawEvidence(control.result, "complete");
+    controlRow.status = "passed";
+
+    let failureRow = null;
+    const failure = await runReferenceWitness({ ...runInput, fixtureId: "RW-O-FAILURE", fault: { type: "delete-before-outgoing", relativePath: "packages/lsp-core/src/tools/runtime.ts" }, capture: ({ result, events }) => {
+      failureRow = { id: "rawFailurePreservation", status: "collected-unverified", observation: result, events };
+      rows.push(failureRow); recorder.record("RW-O-FAILURE-collected", failureRow);
+    } });
+    assert.equal(failure.result.status, "contaminated");
+    assert.equal(failure.result.reason, "source-drift");
+    assert.equal(failure.result.publishedCandidateCount, 0);
+    verifyRawEvidence(failure.result, "partial");
+    failureRow.status = "passed";
+
+    const sourceAfter = sources.map(({ path: relativePath, file }) => {
+      const bytes = fs.readFileSync(file);
+      return { path: relativePath, file, bytes: bytes.length, sha256: sha256(bytes) };
+    });
+    assert.deepEqual(sourceAfter, sourceBefore);
+    const checks = {
+      sourcePreflight: "passed",
+      packageProfile: "passed",
+      compilerApiBoundaryProbe: "passed",
+      heuristicBaseline: "passed",
+      unmodifiedRealA: "passed",
+      unmodifiedRealB: "passed",
+      exactGoldenClosure: "passed",
+      rawPreservation: "passed",
+      controlledBrokenBarrel: "passed",
+      validatorRegression: "passed",
+      processCleanup: "passed",
+      sourcePreservation: "passed",
+      productGitPreservation: "pending-final-qa",
+    };
+    evidence = {
+      schemaVersion: 1,
+      kind: "lsp-e1arw-o-runtime-evidence",
+      profileManifestDigest: profile.manifestDigest,
+      semanticProfileDigest: profile.semanticProfileDigest,
+      goldenDigest: sha256(goldenBytes),
+      heuristicEvidenceDigest: sha256(heuristicBytes),
+      compilerProbe,
+      sourceBefore,
+      sourceAfter,
+      checks,
+      finalWitnessVerified: false,
+      heuristicGapConfirmed: false,
+      pending: ["productGitPreservation", "independent-review"],
+      realSupport: false,
+      generalProjectSupport: false,
+      e1bEligible: false,
+      authority: "ephemeral-host-evidence-only",
+      rows,
+    };
+  } catch (error) {
+    unexpectedFailure = { name: error.name, code: error.code || null, message: error.message };
+    throw error;
+  } finally {
+    recorder.finalize(evidence || {
+      schemaVersion: 1,
+      kind: "lsp-e1arw-o-runtime-evidence",
+      status: "unexpected-failure",
+      finalWitnessVerified: false,
+      heuristicGapConfirmed: false,
+      realSupport: false,
+      generalProjectSupport: false,
+      e1bEligible: false,
+      authority: "ephemeral-host-evidence-only",
+      unexpectedFailure,
+      rows,
+    });
   }
 });
 
