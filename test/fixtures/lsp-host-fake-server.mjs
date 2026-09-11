@@ -87,10 +87,16 @@ function commentMask(text) {
 
 function moduleRoute(callerText, barrelText) {
   if (callerText.includes("`") || barrelText.includes("`")) return null;
-  const imports = [...commentMask(callerText).matchAll(/^\s*import\s*\{\s*target\s*\}\s*from\s*["']\.\/(target|barrel)["']\s*;/gm)];
+  const caller = commentMask(callerText);
+  const callerCode = codeMask(callerText);
+  const imports = [...caller.matchAll(/^\s*import\s*\{\s*target\s*\}\s*from\s*["']\.\/(target|barrel)["']\s*;/gm)]
+    .filter((match) => callerCode.slice(match.index + match[0].indexOf("import"), match.index + match[0].indexOf("import") + 6) === "import");
   if (imports.length !== 1) return null;
   if (imports[0][1] === "target") return "direct";
-  const exports = [...commentMask(barrelText).matchAll(/^\s*export\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/gm)];
+  const barrel = commentMask(barrelText);
+  const barrelCode = codeMask(barrelText);
+  const exports = [...barrel.matchAll(/^\s*export\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/gm)]
+    .filter((match) => barrelCode.slice(match.index + match[0].indexOf("export"), match.index + match[0].indexOf("export") + 6) === "export");
   return exports.length === 1 ? "barrel" : null;
 }
 

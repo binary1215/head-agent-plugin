@@ -310,12 +310,16 @@ function commentMask(text) {
 export function boundedFixtureModuleRoute(callerText, barrelText) {
   if (callerText.includes("`") || barrelText.includes("`")) return null;
   const caller = commentMask(callerText);
-  const imports = [...caller.matchAll(/^\s*import\s*\{\s*target\s*\}\s*from\s*["']\.\/(target|barrel)["']\s*;/gm)];
+  const callerCode = codeMask(callerText);
+  const imports = [...caller.matchAll(/^\s*import\s*\{\s*target\s*\}\s*from\s*["']\.\/(target|barrel)["']\s*;/gm)]
+    .filter((match) => callerCode.slice(match.index + match[0].indexOf("import"), match.index + match[0].indexOf("import") + 6) === "import");
   if (imports.length !== 1) return null;
   const route = imports[0][1];
   if (route === "target") return "direct";
   const barrel = commentMask(barrelText);
-  const exports = [...barrel.matchAll(/^\s*export\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/gm)];
+  const barrelCode = codeMask(barrelText);
+  const exports = [...barrel.matchAll(/^\s*export\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/gm)]
+    .filter((match) => barrelCode.slice(match.index + match[0].indexOf("export"), match.index + match[0].indexOf("export") + 6) === "export");
   return exports.length === 1 ? "barrel" : null;
 }
 

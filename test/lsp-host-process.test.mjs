@@ -29,34 +29,41 @@ function profile(scenario, serverFile = fakeServer) {
 async function run(scenario, sources = baseSources, options = {}) {
   const events = [];
   const externalProcessEvent = options.onProcessEvent;
-  const result = await collectOutgoingCallEvidence({
-    projectId: "fixture-project",
-    generationDigest,
-    sources,
-    profile: profile(scenario, options.serverFile || fakeServer),
-    supervisorSelection: selection,
-    qaRoot,
-    onProcessEvent: (event) => { events.push(event); externalProcessEvent?.(event); },
-    ...Object.fromEntries(Object.entries(options).filter(([key]) => !["serverFile", "onProcessEvent"].includes(key))),
-  });
-  assert.equal(result.realSupport, false);
-  assert.equal(result.relationQuality, "unknown");
-  assert.deepEqual(result.realGate, { id: "A03", status: "not-run", reason: "no-reviewed-pinned-real-profile-and-isolation" });
-  assert.equal(result.e1bEligible, false);
-  assert.equal(result.authority, "ephemeral-host-evidence-only");
-  if (result.transport) {
-    assert.equal(result.transport.ownershipEstablished, true);
-    assert.equal(result.transport.treeCleanupVerified, true);
+  const runQaRoot = fs.mkdtempSync(path.join(path.resolve(qaRoot), `collection-${process.pid}-`));
+  try {
+    const result = await collectOutgoingCallEvidence({
+      projectId: "fixture-project",
+      generationDigest,
+      sources,
+      profile: profile(scenario, options.serverFile || fakeServer),
+      supervisorSelection: selection,
+      qaRoot: runQaRoot,
+      onProcessEvent: (event) => { events.push(event); externalProcessEvent?.(event, runQaRoot); },
+      ...Object.fromEntries(Object.entries(options).filter(([key]) => !["serverFile", "onProcessEvent"].includes(key))),
+    });
+    assert.equal(result.realSupport, false);
+    assert.equal(result.relationQuality, "unknown");
+    assert.deepEqual(result.realGate, { id: "A03", status: "not-run", reason: "no-reviewed-pinned-real-profile-and-isolation" });
+    assert.equal(result.e1bEligible, false);
+    assert.equal(result.authority, "ephemeral-host-evidence-only");
+    if (result.transport) {
+      assert.equal(result.transport.ownershipEstablished, true);
+      assert.equal(result.transport.treeCleanupVerified, true);
+    }
+    assert.equal(events.filter((event) => event.type === "spawn").length, events.filter((event) => event.type === "exit").length);
+    for (const owned of result.fixtureTransport?.ownedProcesses || []) {
+      assert.ok(Number.isSafeInteger(owned.pid) && owned.pid > 0);
+      assert.ok(Number.isSafeInteger(owned.parentPid) && owned.parentPid > 0);
+      assert.ok(Number.isFinite(Date.parse(owned.observedAt)));
+      assert.equal(owned.ports, "none");
+      assert.equal(await waitGone(owned.pid), true, `Owned LSP process ${owned.pid} remained alive.`);
+    }
+    return result;
+  } finally {
+    const entries = fs.readdirSync(runQaRoot);
+    assert.deepEqual(entries, [], `Run QA root retained entries: ${entries.join(", ")}`);
+    fs.rmdirSync(runQaRoot);
   }
-  assert.equal(events.filter((event) => event.type === "spawn").length, events.filter((event) => event.type === "exit").length);
-  for (const owned of result.fixtureTransport?.ownedProcesses || []) {
-    assert.ok(Number.isSafeInteger(owned.pid) && owned.pid > 0);
-    assert.ok(Number.isSafeInteger(owned.parentPid) && owned.parentPid > 0);
-    assert.ok(Number.isFinite(Date.parse(owned.observedAt)));
-    assert.equal(owned.ports, "none");
-    assert.equal(await waitGone(owned.pid), true, `Owned LSP process ${owned.pid} remained alive.`);
-  }
-  return result;
 }
 
 function copyFake(name) {
@@ -79,13 +86,16 @@ function removeCopiedFake(file) {
   fs.rmSync(owned, { recursive: true });
 }
 
-function removeCurrentSnapshot(relativePath) {
-  for (const name of fs.readdirSync(qaRoot)) {
+function removeCurrentSnapshot(runQaRoot, relativePath) {
+  const matches = [];
+  for (const name of fs.readdirSync(runQaRoot)) {
     if (!name.startsWith("lsp-host-")) continue;
-    const candidate = path.join(qaRoot, name, "snapshot", relativePath);
-    if (fs.existsSync(candidate)) { fs.unlinkSync(candidate); return true; }
+    const candidate = path.join(runQaRoot, name, "snapshot", relativePath);
+    if (fs.existsSync(candidate)) matches.push(candidate);
   }
-  return false;
+  if (matches.length !== 1) return false;
+  fs.unlinkSync(matches[0]);
+  return true;
 }
 
 async function waitForFile(file, timeoutMs = 2_000) {
@@ -138,6 +148,14 @@ processTest("P03/P04 semantic negatives and empty completion remain candidate-fr
   const commentedBarrel = await run("barrel", baseSources.map((item) => item.path === "barrel.ts" ? { ...item, text: `// ${item.text}` } : item));
   assert.equal(commentedBarrel.status, "completed");
   assert.equal(commentedBarrel.candidates.length, 0);
+  const embeddedImport = ["const text = \"prefix" + "\\", "import { target } from './barrel';" + "\\", "\";", "function target() {}", "export function caller(){ target(); }"].join("\n");
+  const stringImport = await run("barrel", baseSources.map((item) => item.path === "caller.ts" ? { ...item, text: embeddedImport } : item));
+  assert.equal(stringImport.status, "completed");
+  assert.equal(stringImport.candidates.length, 0);
+  const embeddedExport = ["const text = \"prefix" + "\\", "export { target } from './target';" + "\\", "\";", "export const unrelated = 1;"].join("\n");
+  const stringExport = await run("barrel", baseSources.map((item) => item.path === "barrel.ts" ? { ...item, text: embeddedExport } : item));
+  assert.equal(stringExport.status, "completed");
+  assert.equal(stringExport.candidates.length, 0);
   for (const [scenario, reason] of [["prepare-null", "no-prepared-item"], ["prepare-empty", "no-prepared-item"], ["hierarchy-null", "empty"], ["hierarchy-empty", "empty"]]) {
     const result = await run(scenario);
     assert.equal(result.status, "completed");
@@ -278,18 +296,27 @@ processTest("P12/P18 shared deadlines, stderr, final producer, and setup cleanup
   assert.equal(stderrLimited.candidates.length, 0);
   assert.ok(Date.now() - stderrStarted < 4_000);
 
-  for (const [relativePath, reason] of [["target.ts", "source-drift"], ["tsconfig.json", "config-drift"]]) {
-    let removed = false;
-    const drift = await run("barrel", baseSources, { onProcessEvent: (event) => {
-      if (!removed && event.type === "exit") removed = removeCurrentSnapshot(relativePath);
-    } });
-    assert.equal(removed, true, `${relativePath} was not removed at the final validation boundary.`);
-    assert.equal(drift.status, "contaminated");
-    assert.equal(drift.reason, reason);
-    assert.equal(drift.failureStage, "closing");
-    assert.deepEqual(drift.cleanup, { attempted: true, verified: true, forced: false });
-    assert.equal(drift.transport.treeCleanupVerified, true);
-    assert.equal(drift.candidates.length, 0);
+  const foreignRoot = path.join(qaRoot, `lsp-host-000foreign-${process.pid}`);
+  const foreignSentinel = path.join(foreignRoot, "snapshot", "target.ts");
+  fs.mkdirSync(path.dirname(foreignSentinel), { recursive: true });
+  fs.writeFileSync(foreignSentinel, "foreign-sentinel", { encoding: "utf8", flag: "wx" });
+  try {
+    for (const [relativePath, reason] of [["target.ts", "source-drift"], ["tsconfig.json", "config-drift"]]) {
+      let removed = false;
+      const drift = await run("barrel", baseSources, { onProcessEvent: (event, runQaRoot) => {
+        if (!removed && event.type === "exit") removed = removeCurrentSnapshot(runQaRoot, relativePath);
+      } });
+      assert.equal(removed, true, `${relativePath} was not removed at the final validation boundary.`);
+      assert.equal(drift.status, "contaminated");
+      assert.equal(drift.reason, reason);
+      assert.equal(drift.failureStage, "closing");
+      assert.deepEqual(drift.cleanup, { attempted: true, verified: true, forced: false });
+      assert.equal(drift.transport.treeCleanupVerified, true);
+      assert.equal(drift.candidates.length, 0);
+    }
+    assert.equal(fs.readFileSync(foreignSentinel, "utf8"), "foreign-sentinel");
+  } finally {
+    fs.rmSync(foreignRoot, { recursive: true });
   }
 
   const before = new Set(fs.readdirSync(qaRoot));

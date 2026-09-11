@@ -36,6 +36,10 @@ test("P03 bounded fixture semantics require a real route and direct unshadowed c
   assert.equal(boundedFixtureCallRanges(caller, identity, "target").length, 1);
   assert.equal(boundedFixtureModuleRoute(`// ${caller}`, sources[1].text), null);
   assert.equal(boundedFixtureModuleRoute(caller, `// ${sources[1].text}`), null);
+  const embeddedImport = ["const text = \"prefix" + "\\", "import { target } from './barrel';" + "\\", "\";", "function target() {}", "export function caller(){ target(); }"].join("\n");
+  const embeddedExport = ["const text = \"prefix" + "\\", "export { target } from './target';" + "\\", "\";", "export const unrelated = 1;"].join("\n");
+  assert.equal(boundedFixtureModuleRoute(embeddedImport, sources[1].text), null);
+  assert.equal(boundedFixtureModuleRoute(caller, embeddedExport), null);
   for (const body of ["const target = () => {}; target();", "const obj = { target() {} }; obj.target();", "function nested(){ target(); }"]) {
     const text = `import { target } from \"./barrel\";\nexport function caller(){ ${body} }`;
     assert.deepEqual(boundedFixtureCallRanges(text, boundedFixtureFunctionIdentity(text, "caller"), "target"), []);
