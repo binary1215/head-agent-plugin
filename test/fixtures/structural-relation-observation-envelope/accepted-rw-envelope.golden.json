@@ -1,0 +1,434 @@
+{
+  "kind": "lsp-e1aseo-r1-accepted-rw-fixture",
+  "fixtureProvenance": {
+    "rwPath": "review-artifact:rw-independent.json",
+    "rwSha256": "a73782e1f98e92dfae339c995d69724a545ec5e300db99f03d0afed42fcb639f",
+    "selectedRows": [
+      "unmodifiedRealA",
+      "unmodifiedRealB"
+    ],
+    "sourceRoot": "accepted-rw-source-corpus",
+    "sourceTotalBytes": 4880,
+    "rawRepresentation": "canonical JSON bytes of accepted decoded rawEvidence record, not original wire stream",
+    "rawTotalBytes": 96732,
+    "provenanceClass": "local-download-unverified"
+  },
+  "counts": {
+    "sources": 4,
+    "producerClaims": 1,
+    "rawRefs": 2,
+    "runs": 2,
+    "pairs": 2,
+    "occurrences": 2,
+    "supports": 4
+  },
+  "envelope": {
+    "schemaVersion": 0,
+    "kind": "StructuralRelationObservationEnvelope",
+    "protocol": {
+      "name": "head-agent-core-structural-relation-observation-envelope",
+      "version": "0.1.0"
+    },
+    "subject": {
+      "projectId": "accepted-rw-o-seo-r1",
+      "sourceManifest": [
+        {
+          "path": "packages/lsp-core/src/mcp.ts",
+          "sha256": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83",
+          "language": "typescript",
+          "byteLength": 3520
+        },
+        {
+          "path": "packages/lsp-core/src/tools.ts",
+          "sha256": "10450f11ea6a25431f85e72cda7d5c280e8a7bb9f612cb5f68bc2b516e380a4b",
+          "language": "typescript",
+          "byteLength": 34
+        },
+        {
+          "path": "packages/lsp-core/src/tools/index.ts",
+          "sha256": "2bc0b412cbab282dbb6523c013afef68c9a7face2c103fdcb5ef9106d117435d",
+          "language": "typescript",
+          "byteLength": 577
+        },
+        {
+          "path": "packages/lsp-core/src/tools/runtime.ts",
+          "sha256": "5c5857d986659dfef442d687c0e87dfe6cbffe25821ffbaf61bbaf62e92bd4bd",
+          "language": "typescript",
+          "byteLength": 749
+        }
+      ],
+      "sourceManifestDigest": "c27c63e10b6ccdd7d37bb2947d3c20829dc8db2859e6717c67c8a26384c1f72d"
+    },
+    "producerClaims": [
+      {
+        "name": "accepted-rw-lsp-observer",
+        "version": "1",
+        "executableIdentity": "sha256:9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de",
+        "profileIdentity": "sha256:4181801d74437627eeba7da671f8e503cd6681463ebb90b7e2c71925dc99d5dc",
+        "reportedTransport": "lsp-stdio",
+        "reportedMethod": "callHierarchy/outgoingCalls",
+        "analysisMethodClaim": {
+          "reportedValue": null,
+          "reportSource": "absent",
+          "truthStatus": "unknown"
+        },
+        "producerIdentityEvidenceStatus": "partial",
+        "producerClaimId": "structural-producer-4ef9c2e205caf32c5ee651b4"
+      }
+    ],
+    "rawRefs": [
+      {
+        "kind": "accepted-decoded-raw-evidence-b",
+        "mediaType": "application/json",
+        "sha256": "7552973d7215062b5f33aa92e0b951659185e8829cda8cf217abffdb1c769a22",
+        "byteLength": 48366,
+        "rawRefId": "structural-raw-6dbe1bd71181e088905149c2"
+      },
+      {
+        "kind": "accepted-decoded-raw-evidence-a",
+        "mediaType": "application/json",
+        "sha256": "b912c99757593e2cd155a07a746dbeb51d36b73ef6a731fd90c80ecbd454af77",
+        "byteLength": 48366,
+        "rawRefId": "structural-raw-c25b3344acc1563c990bbb51"
+      }
+    ],
+    "runs": [
+      {
+        "producerClaimId": "structural-producer-4ef9c2e205caf32c5ee651b4",
+        "inputBinding": {
+          "sourceManifestScope": "full",
+          "sourceManifestDigest": "c27c63e10b6ccdd7d37bb2947d3c20829dc8db2859e6717c67c8a26384c1f72d",
+          "configDigest": "e24c379b997642460166073adae173796b7ba7144912deaf9c18bb74fb620161",
+          "profileDigest": "4181801d74437627eeba7da671f8e503cd6681463ebb90b7e2c71925dc99d5dc",
+          "normalizerVersion": "0.3.0",
+          "normalizerImplementationDigest": "5e60d5606b906595d26ab7ba4f16fbd619cb08723d2e19dca304eb0a5d7b6ac3"
+        },
+        "coverage": {
+          "admittedSources": [
+            {
+              "path": "packages/lsp-core/src/mcp.ts",
+              "digest": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83"
+            },
+            {
+              "path": "packages/lsp-core/src/tools.ts",
+              "digest": "10450f11ea6a25431f85e72cda7d5c280e8a7bb9f612cb5f68bc2b516e380a4b"
+            },
+            {
+              "path": "packages/lsp-core/src/tools/index.ts",
+              "digest": "2bc0b412cbab282dbb6523c013afef68c9a7face2c103fdcb5ef9106d117435d"
+            },
+            {
+              "path": "packages/lsp-core/src/tools/runtime.ts",
+              "digest": "5c5857d986659dfef442d687c0e87dfe6cbffe25821ffbaf61bbaf62e92bd4bd"
+            }
+          ],
+          "queriedDirection": "outgoing",
+          "queriedSymbols": [
+            {
+              "path": "packages/lsp-core/src/mcp.ts",
+              "digest": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83",
+              "name": "handleToolCall",
+              "symbolKind": "function",
+              "line": 80
+            }
+          ],
+          "reportedResponseClosure": "complete-frame-observed",
+          "programCoverage": "unknown",
+          "repositoryRelationCompleteness": "not-claimed"
+        },
+        "rawRefIds": [
+          "structural-raw-c25b3344acc1563c990bbb51"
+        ],
+        "runId": "structural-run-0e49bf21385faffe74de9cd9"
+      },
+      {
+        "producerClaimId": "structural-producer-4ef9c2e205caf32c5ee651b4",
+        "inputBinding": {
+          "sourceManifestScope": "full",
+          "sourceManifestDigest": "c27c63e10b6ccdd7d37bb2947d3c20829dc8db2859e6717c67c8a26384c1f72d",
+          "configDigest": "e24c379b997642460166073adae173796b7ba7144912deaf9c18bb74fb620161",
+          "profileDigest": "4181801d74437627eeba7da671f8e503cd6681463ebb90b7e2c71925dc99d5dc",
+          "normalizerVersion": "0.3.0",
+          "normalizerImplementationDigest": "5e60d5606b906595d26ab7ba4f16fbd619cb08723d2e19dca304eb0a5d7b6ac3"
+        },
+        "coverage": {
+          "admittedSources": [
+            {
+              "path": "packages/lsp-core/src/mcp.ts",
+              "digest": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83"
+            },
+            {
+              "path": "packages/lsp-core/src/tools.ts",
+              "digest": "10450f11ea6a25431f85e72cda7d5c280e8a7bb9f612cb5f68bc2b516e380a4b"
+            },
+            {
+              "path": "packages/lsp-core/src/tools/index.ts",
+              "digest": "2bc0b412cbab282dbb6523c013afef68c9a7face2c103fdcb5ef9106d117435d"
+            },
+            {
+              "path": "packages/lsp-core/src/tools/runtime.ts",
+              "digest": "5c5857d986659dfef442d687c0e87dfe6cbffe25821ffbaf61bbaf62e92bd4bd"
+            }
+          ],
+          "queriedDirection": "outgoing",
+          "queriedSymbols": [
+            {
+              "path": "packages/lsp-core/src/mcp.ts",
+              "digest": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83",
+              "name": "handleToolCall",
+              "symbolKind": "function",
+              "line": 80
+            }
+          ],
+          "reportedResponseClosure": "complete-frame-observed",
+          "programCoverage": "unknown",
+          "repositoryRelationCompleteness": "not-claimed"
+        },
+        "rawRefIds": [
+          "structural-raw-6dbe1bd71181e088905149c2"
+        ],
+        "runId": "structural-run-5c3377d0010e6ea1d891d751"
+      }
+    ],
+    "pairs": [
+      {
+        "type": "CALLS",
+        "from": {
+          "path": "packages/lsp-core/src/mcp.ts",
+          "digest": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83",
+          "name": "handleToolCall",
+          "symbolKind": "function",
+          "declarationRange": {
+            "start": {
+              "line": 80,
+              "character": 0
+            },
+            "end": {
+              "line": 101,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 80,
+              "character": 15
+            },
+            "end": {
+              "line": 80,
+              "character": 29
+            }
+          }
+        },
+        "to": {
+          "path": "packages/lsp-core/src/tools/runtime.ts",
+          "digest": "5c5857d986659dfef442d687c0e87dfe6cbffe25821ffbaf61bbaf62e92bd4bd",
+          "name": "coerceToolArguments",
+          "symbolKind": "function",
+          "declarationRange": {
+            "start": {
+              "line": 18,
+              "character": 0
+            },
+            "end": {
+              "line": 20,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 18,
+              "character": 16
+            },
+            "end": {
+              "line": 18,
+              "character": 35
+            }
+          }
+        },
+        "language": "typescript",
+        "pairId": "structural-pair-06053f34522c08a8c42dd8e3",
+        "occurrences": [
+          {
+            "pairId": "structural-pair-06053f34522c08a8c42dd8e3",
+            "evidence": {
+              "path": "packages/lsp-core/src/mcp.ts",
+              "digest": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83",
+              "range": {
+                "start": {
+                  "line": 86,
+                  "character": 54
+                },
+                "end": {
+                  "line": 86,
+                  "character": 73
+                }
+              }
+            },
+            "occurrenceId": "structural-occurrence-754f69d8bf17e2c77d28756d",
+            "supports": [
+              {
+                "occurrenceId": "structural-occurrence-754f69d8bf17e2c77d28756d",
+                "runId": "structural-run-5c3377d0010e6ea1d891d751",
+                "rawRefId": "structural-raw-6dbe1bd71181e088905149c2",
+                "supportId": "structural-support-3f5ef4faef81a81fc3ddd2d1"
+              },
+              {
+                "occurrenceId": "structural-occurrence-754f69d8bf17e2c77d28756d",
+                "runId": "structural-run-0e49bf21385faffe74de9cd9",
+                "rawRefId": "structural-raw-c25b3344acc1563c990bbb51",
+                "supportId": "structural-support-9a522529a607f659ed954ed8"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "CALLS",
+        "from": {
+          "path": "packages/lsp-core/src/mcp.ts",
+          "digest": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83",
+          "name": "handleToolCall",
+          "symbolKind": "function",
+          "declarationRange": {
+            "start": {
+              "line": 80,
+              "character": 0
+            },
+            "end": {
+              "line": 101,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 80,
+              "character": 15
+            },
+            "end": {
+              "line": 80,
+              "character": 29
+            }
+          }
+        },
+        "to": {
+          "path": "packages/lsp-core/src/tools/runtime.ts",
+          "digest": "5c5857d986659dfef442d687c0e87dfe6cbffe25821ffbaf61bbaf62e92bd4bd",
+          "name": "executeLspTool",
+          "symbolKind": "function",
+          "declarationRange": {
+            "start": {
+              "line": 4,
+              "character": 0
+            },
+            "end": {
+              "line": 12,
+              "character": 1
+            }
+          },
+          "selectionRange": {
+            "start": {
+              "line": 4,
+              "character": 22
+            },
+            "end": {
+              "line": 4,
+              "character": 36
+            }
+          }
+        },
+        "language": "typescript",
+        "pairId": "structural-pair-8f97dfc2c4ad3087def8314c",
+        "occurrences": [
+          {
+            "pairId": "structural-pair-8f97dfc2c4ad3087def8314c",
+            "evidence": {
+              "path": "packages/lsp-core/src/mcp.ts",
+              "digest": "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83",
+              "range": {
+                "start": {
+                  "line": 86,
+                  "character": 23
+                },
+                "end": {
+                  "line": 86,
+                  "character": 37
+                }
+              }
+            },
+            "occurrenceId": "structural-occurrence-6717509745a8219858b6952e",
+            "supports": [
+              {
+                "occurrenceId": "structural-occurrence-6717509745a8219858b6952e",
+                "runId": "structural-run-5c3377d0010e6ea1d891d751",
+                "rawRefId": "structural-raw-6dbe1bd71181e088905149c2",
+                "supportId": "structural-support-9f299e1ecb0aec755a87b2a6"
+              },
+              {
+                "occurrenceId": "structural-occurrence-6717509745a8219858b6952e",
+                "runId": "structural-run-0e49bf21385faffe74de9cd9",
+                "rawRefId": "structural-raw-c25b3344acc1563c990bbb51",
+                "supportId": "structural-support-e4a3e2fac259742df85f921f"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "candidateProjection": {
+      "status": "candidate-only",
+      "policy": "relation-pair-only-v0",
+      "occurrenceDisposition": "preserved-in-envelope-not-in-pair",
+      "repositoryCompleteness": "not-claimed",
+      "entries": [
+        {
+          "pairId": "structural-pair-06053f34522c08a8c42dd8e3",
+          "occurrenceIds": [
+            "structural-occurrence-754f69d8bf17e2c77d28756d"
+          ]
+        },
+        {
+          "pairId": "structural-pair-8f97dfc2c4ad3087def8314c",
+          "occurrenceIds": [
+            "structural-occurrence-6717509745a8219858b6952e"
+          ]
+        }
+      ],
+      "projectionDigest": "a577187cfab6cde61d21ecaed46606eaabd8e94d1e975136c36e1974d569ddaa"
+    },
+    "diagnosticLabels": [
+      "accepted-rw-o-read-only-fixture",
+      "decoded-raw-record-not-wire-stream"
+    ],
+    "authority": "ephemeral-host-evidence-only",
+    "instructionAuthority": false,
+    "promotionAuthority": false,
+    "recoveryAuthority": false,
+    "graphAuthority": false,
+    "envelopeId": "structural-envelope-c0ae50aacd67101b3bca6dc8",
+    "envelopeHash": "c0ae50aacd67101b3bca6dc8900ba4f3774fede8a6d5654570bbe9c2278f520c"
+  },
+  "strongReport": {
+    "structuralContractVerification": "passed",
+    "sourceByteIntegrity": "passed",
+    "sourceCoordinateValidation": "passed",
+    "rawByteIntegrity": "passed",
+    "claimTruthVerification": "not-supported",
+    "rawSemanticSupportVerification": "not-evaluated",
+    "responseCompletenessVerification": "not-evaluated",
+    "finalStrongVerification": true
+  },
+  "structuralReport": {
+    "structuralContractVerification": "passed",
+    "sourceByteIntegrity": "not-run",
+    "sourceCoordinateValidation": "not-run",
+    "rawByteIntegrity": "not-run",
+    "claimTruthVerification": "not-supported",
+    "rawSemanticSupportVerification": "not-evaluated",
+    "responseCompletenessVerification": "not-evaluated",
+    "finalStrongVerification": false
+  },
+  "realSupport": false,
+  "generalProjectSupport": false,
+  "e1bEligible": false,
+  "authority": "ephemeral-host-evidence-only"
+}
