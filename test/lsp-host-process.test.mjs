@@ -28,6 +28,7 @@ function profile(scenario, serverFile = fakeServer) {
 
 async function run(scenario, sources = baseSources, options = {}) {
   const events = [];
+  const externalProcessEvent = options.onProcessEvent;
   const result = await collectOutgoingCallEvidence({
     projectId: "fixture-project",
     generationDigest,
@@ -35,8 +36,8 @@ async function run(scenario, sources = baseSources, options = {}) {
     profile: profile(scenario, options.serverFile || fakeServer),
     supervisorSelection: selection,
     qaRoot,
-    onProcessEvent: (event) => events.push(event),
-    ...Object.fromEntries(Object.entries(options).filter(([key]) => key !== "serverFile")),
+    onProcessEvent: (event) => { events.push(event); externalProcessEvent?.(event); },
+    ...Object.fromEntries(Object.entries(options).filter(([key]) => !["serverFile", "onProcessEvent"].includes(key))),
   });
   assert.equal(result.realSupport, false);
   assert.equal(result.relationQuality, "unknown");
@@ -59,9 +60,32 @@ async function run(scenario, sources = baseSources, options = {}) {
 }
 
 function copyFake(name) {
-  const file = path.join(qaRoot, `owned-${process.pid}-${name}.mjs`);
-  fs.copyFileSync(fakeServer, file, fs.constants.COPYFILE_EXCL);
+  const fixtureRoot = fs.mkdtempSync(path.join(path.resolve(qaRoot), `owned-${process.pid}-${name}-`));
+  const file = path.join(fixtureRoot, "lsp-host-fake-server.mjs");
+  try {
+    fs.copyFileSync(fakeServer, file, fs.constants.COPYFILE_EXCL);
+    fs.copyFileSync(path.join(root, "test", "fixtures", "lsp-host-child.mjs"), path.join(fixtureRoot, "lsp-host-child.mjs"), fs.constants.COPYFILE_EXCL);
+  } catch (error) {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    throw error;
+  }
   return file;
+}
+
+function removeCopiedFake(file) {
+  const qa = path.resolve(qaRoot);
+  const owned = path.resolve(path.dirname(file));
+  if (owned === qa || !owned.startsWith(`${qa}${path.sep}`) || !path.basename(owned).startsWith(`owned-${process.pid}-`)) throw new Error("Copied fake root escaped its QA root.");
+  fs.rmSync(owned, { recursive: true });
+}
+
+function removeCurrentSnapshot(relativePath) {
+  for (const name of fs.readdirSync(qaRoot)) {
+    if (!name.startsWith("lsp-host-")) continue;
+    const candidate = path.join(qaRoot, name, "snapshot", relativePath);
+    if (fs.existsSync(candidate)) { fs.unlinkSync(candidate); return true; }
+  }
+  return false;
 }
 
 async function waitForFile(file, timeoutMs = 2_000) {
@@ -101,6 +125,19 @@ processTest("P03/P04 semantic negatives and empty completion remain candidate-fr
   const brokenBarrel = await run("barrel", brokenBarrelSources);
   assert.equal(brokenBarrel.status, "completed");
   assert.equal(brokenBarrel.candidates.length, 0);
+  for (const callerText of [
+    "import { target } from \"./barrel\";\nexport function caller(){ const target = () => {}; target(); }",
+    "import { target } from \"./barrel\";\nexport function caller(){ const obj = { target() {} }; obj.target(); }",
+    "import { target } from \"./barrel\";\nexport function caller(){ function nested() { target(); } }",
+    "// import { target } from \"./barrel\";\nexport function caller(){ target(); }",
+  ]) {
+    const negative = await run("barrel", baseSources.map((item) => item.path === "caller.ts" ? { ...item, text: callerText } : item));
+    assert.equal(negative.status, "completed");
+    assert.equal(negative.candidates.length, 0);
+  }
+  const commentedBarrel = await run("barrel", baseSources.map((item) => item.path === "barrel.ts" ? { ...item, text: `// ${item.text}` } : item));
+  assert.equal(commentedBarrel.status, "completed");
+  assert.equal(commentedBarrel.candidates.length, 0);
   for (const [scenario, reason] of [["prepare-null", "no-prepared-item"], ["prepare-empty", "no-prepared-item"], ["hierarchy-null", "empty"], ["hierarchy-empty", "empty"]]) {
     const result = await run(scenario);
     assert.equal(result.status, "completed");
@@ -110,6 +147,10 @@ processTest("P03/P04 semantic negatives and empty completion remain candidate-fr
   const wrongMapping = await run("wrong-position");
   assert.equal(wrongMapping.status, "contaminated");
   assert.equal(wrongMapping.reason, "mapping-mismatch");
+  const duplicateCallerSources = baseSources.map((item) => item.path === "barrel.ts" ? { ...item, text: `${item.text}\nexport function caller(){ target(); }` } : item);
+  const wrongCallerDocument = await run("wrong-caller-document", duplicateCallerSources);
+  assert.equal(wrongCallerDocument.status, "contaminated");
+  assert.equal(wrongCallerDocument.reason, "mapping-mismatch");
 });
 
 processTest("P05/P06 allowed notifications and server requests do not create authority or side effects", async () => {
@@ -118,7 +159,7 @@ processTest("P05/P06 allowed notifications and server requests do not create aut
     assert.equal(result.status, "completed");
     assert.equal(result.candidates.length, 1);
   }
-  for (const [scenario, reason] of [["notification-flood", "notification-limit"], ["unknown-notification", "unsupported-server-notification"], ["unknown-server-request", "unsupported-server-request"], ["frame-oversize", "frame-oversize"]]) {
+  for (const [scenario, reason] of [["notification-flood", "notification-limit"], ["unknown-notification", "unsupported-server-notification"], ["unknown-server-request", "unsupported-server-request"], ["invalid-show-message", "invalid-message"], ["frame-oversize", "frame-oversize"]]) {
     const result = await run(scenario);
     assert.equal(result.status, "failed");
     assert.equal(result.reason, reason);
@@ -153,8 +194,7 @@ processTest("P07/P09 protocol corruption, ambiguity, timeout, cancellation, and 
     const methods = cancelled.fixtureTransport.transcript.filter((item) => item.direction === "out").map((item) => item.method);
     for (const method of ["$/cancelRequest", "textDocument/didClose", "shutdown", "exit"]) assert.ok(methods.includes(method), `Missing external cancel cleanup message ${method}.`);
   } finally {
-    if (fs.existsSync(trace)) fs.unlinkSync(trace);
-    if (fs.existsSync(abortFile)) fs.unlinkSync(abortFile);
+    removeCopiedFake(abortFile);
   }
 });
 
@@ -195,6 +235,7 @@ processTest("P13/P17 ready profile exercises owned bridge, fake server, and inte
   assert.equal(negative.provenance.publishedCandidateCount, 0);
   const flood = await run("grandchild-flood");
   assert.equal(flood.status, "failed");
+  assert.ok(flood.fixtureTransport.ownedPids.length >= 2);
   for (const pid of flood.fixtureTransport.ownedPids) assert.equal(await waitGone(pid), true, `Flood grandchild ${pid} remained alive.`);
   const cancelFile = copyFake("grandchild-cancel");
   const trace = `${cancelFile}.trace`;
@@ -202,13 +243,16 @@ processTest("P13/P17 ready profile exercises owned bridge, fake server, and inte
   try {
     const running = run("grandchild-cancel", baseSources, { serverFile: cancelFile, signal: controller.signal });
     assert.equal(await waitForFile(trace), true);
+    const traceMatch = fs.readFileSync(trace, "utf8").match(/:(\d+):ready/);
+    assert.ok(traceMatch, "Grandchild cancel trace did not contain a ready PID.");
+    const readyPid = Number(traceMatch[1]);
+    assert.equal(processExists(readyPid), true, "Grandchild exited before cancellation.");
     controller.abort();
     const cancelled = await running;
     assert.equal(cancelled.reason, "cancelled");
     for (const pid of cancelled.fixtureTransport.ownedPids) assert.equal(await waitGone(pid), true, `Cancelled grandchild ${pid} remained alive.`);
   } finally {
-    if (fs.existsSync(trace)) fs.unlinkSync(trace);
-    if (fs.existsSync(cancelFile)) fs.unlinkSync(cancelFile);
+    removeCopiedFake(cancelFile);
   }
 });
 
@@ -233,6 +277,20 @@ processTest("P12/P18 shared deadlines, stderr, final producer, and setup cleanup
   assert.equal(stderrLimited.failureStage, "prepare");
   assert.equal(stderrLimited.candidates.length, 0);
   assert.ok(Date.now() - stderrStarted < 4_000);
+
+  for (const [relativePath, reason] of [["target.ts", "source-drift"], ["tsconfig.json", "config-drift"]]) {
+    let removed = false;
+    const drift = await run("barrel", baseSources, { onProcessEvent: (event) => {
+      if (!removed && event.type === "exit") removed = removeCurrentSnapshot(relativePath);
+    } });
+    assert.equal(removed, true, `${relativePath} was not removed at the final validation boundary.`);
+    assert.equal(drift.status, "contaminated");
+    assert.equal(drift.reason, reason);
+    assert.equal(drift.failureStage, "closing");
+    assert.deepEqual(drift.cleanup, { attempted: true, verified: true, forced: false });
+    assert.equal(drift.transport.treeCleanupVerified, true);
+    assert.equal(drift.candidates.length, 0);
+  }
 
   const before = new Set(fs.readdirSync(qaRoot));
   const collision = await collectOutgoingCallEvidence({

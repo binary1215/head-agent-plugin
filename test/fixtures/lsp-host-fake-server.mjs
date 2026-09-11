@@ -7,10 +7,13 @@ const opened = new Map();
 let buffer = Buffer.alloc(0);
 let expected = null;
 let descendant = null;
+let descendantReady = false;
+let pendingCancelledPrepareId = null;
+let pendingGrandchildPrepare = null;
 let configurationChecked = false;
 let applyEditChecked = false;
 let progressChecked = false;
-let messageChecked = false;
+const messageResponses = new Set();
 
 function encode(message) {
   const payload = Buffer.from(JSON.stringify(message), "utf8");
@@ -60,6 +63,37 @@ function codeMask(text) {
   return chars.join("");
 }
 
+function commentMask(text) {
+  const chars = text.split("");
+  let mode = "code";
+  let quote = null;
+  for (let index = 0; index < chars.length; index += 1) {
+    const current = chars[index];
+    const next = chars[index + 1];
+    if (mode === "line") {
+      if (current === "\n") mode = "code"; else chars[index] = " ";
+    } else if (mode === "block") {
+      if (current === "*" && next === "/") { chars[index] = chars[index + 1] = " "; index += 1; mode = "code"; }
+      else if (current !== "\n" && current !== "\r") chars[index] = " ";
+    } else if (mode === "string") {
+      if (current === "\\") index += 1;
+      else if (current === quote) { mode = "code"; quote = null; }
+    } else if (current === "/" && next === "/") { chars[index] = chars[index + 1] = " "; index += 1; mode = "line"; }
+    else if (current === "/" && next === "*") { chars[index] = chars[index + 1] = " "; index += 1; mode = "block"; }
+    else if (current === "\"" || current === "'") { mode = "string"; quote = current; }
+  }
+  return chars.join("");
+}
+
+function moduleRoute(callerText, barrelText) {
+  if (callerText.includes("`") || barrelText.includes("`")) return null;
+  const imports = [...commentMask(callerText).matchAll(/^\s*import\s*\{\s*target\s*\}\s*from\s*["']\.\/(target|barrel)["']\s*;/gm)];
+  if (imports.length !== 1) return null;
+  if (imports[0][1] === "target") return "direct";
+  const exports = [...commentMask(barrelText).matchAll(/^\s*export\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/gm)];
+  return exports.length === 1 ? "barrel" : null;
+}
+
 function functionIdentity(text, name) {
   const masked = codeMask(text);
   const matches = [...masked.matchAll(new RegExp(`\\bexport\\s+function\\s+${name}\\s*\\(\\s*\\)\\s*\\{`, "g"))];
@@ -80,15 +114,19 @@ function functionIdentity(text, name) {
 function callRanges(text, identity, name) {
   if (!identity) return [];
   const body = codeMask(text).slice(identity.bodyStart, identity.end - 1);
-  return [...body.matchAll(new RegExp(`\\b${name}\\s*\\(\\s*\\)\\s*;`, "g"))].map((match) => range(text, identity.bodyStart + match.index + match[0].indexOf(name), name.length));
+  const matches = [...body.matchAll(new RegExp(`\\b${name}\\s*\\(\\s*\\)\\s*;`, "g"))];
+  const remainder = body.split("");
+  for (const match of matches) remainder.fill(" ", match.index, match.index + match[0].length);
+  if (remainder.join("").trim() !== "") return [];
+  return matches.map((match) => range(text, identity.bodyStart + match.index + match[0].indexOf(name), name.length));
 }
 
 function documentBySuffix(suffix) {
   return [...opened.entries()].find(([uri]) => uri.endsWith(`/${suffix}`));
 }
 
-function callerItem() {
-  const [uri, text] = documentBySuffix("caller.ts") || [];
+function callerItem(suffix = "caller.ts") {
+  const [uri, text] = documentBySuffix(suffix) || [];
   if (!uri) return null;
   const identity = functionIdentity(text, "caller");
   return identity ? { name: "caller", kind: 12, uri, range: identity.range, selectionRange: identity.selectionRange } : null;
@@ -109,7 +147,31 @@ function verifyServerResponse(message) {
   if (message.id === "server-config") configurationChecked = Array.isArray(message.result) && message.result.length === 2 && message.result.every((item) => item === null);
   if (message.id === "server-edit") applyEditChecked = message.result?.applied === false && message.result?.failureReason === "HEAD LSP Host profile is read-only";
   if (message.id === "server-progress") progressChecked = message.result === null;
-  if (message.id === "server-message") messageChecked = message.result === null;
+  if (["server-message-no-actions", "server-message-empty-actions", "server-message-action"].includes(message.id) && message.result === null) messageResponses.add(message.id);
+}
+
+function writeCancelledPrepareTrace() {
+  if (!pendingCancelledPrepareId || scenario !== "grandchild-cancel" || !descendantReady) return;
+  try { process.getBuiltinModule("fs").appendFileSync(`${fileURLToPath(import.meta.url)}.trace`, `${pendingCancelledPrepareId}:${descendant.pid}:ready\n`); } catch {}
+  pendingCancelledPrepareId = null;
+}
+
+function startDescendant() {
+  const childFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "lsp-host-child.mjs");
+  descendant = spawn(process.execPath, [childFile], { shell: false, windowsHide: true, stdio: ["ignore", "ignore", "ignore", "ipc"] });
+  descendant.once("message", (message) => {
+    if (message?.type !== "ready" || message.pid !== descendant.pid) return;
+    descendantReady = true;
+    write({ jsonrpc: "2.0", method: "telemetry/event", params: { headTestDescendantPid: descendant.pid, headTestDescendantReady: true } });
+    writeCancelledPrepareTrace();
+    if (scenario === "grandchild-flood") for (let index = 0; index < 129; index += 1) write({ jsonrpc: "2.0", method: "window/logMessage", params: { type: 3, message: String(index) } });
+    if (pendingGrandchildPrepare) {
+      const pending = pendingGrandchildPrepare;
+      pendingGrandchildPrepare = null;
+      respond(pending);
+    }
+    descendant.unref();
+  });
 }
 
 function respond(message) {
@@ -135,21 +197,19 @@ function respond(message) {
       write({ jsonrpc: "2.0", method: "_typescript.version", params: { version: "fixture" } });
       write({ jsonrpc: "2.0", method: "$/progress", params: { token: "fixture", value: { kind: "report" } } });
     }
-    if (["notification-flood", "grandchild-flood"].includes(scenario)) for (let index = 0; index < 129; index += 1) write({ jsonrpc: "2.0", method: "window/logMessage", params: { type: 3, message: String(index) } });
+    if (scenario === "notification-flood") for (let index = 0; index < 129; index += 1) write({ jsonrpc: "2.0", method: "window/logMessage", params: { type: 3, message: String(index) } });
     if (scenario === "unknown-notification") write({ jsonrpc: "2.0", method: "head/unknown", params: {} });
     if (scenario === "unknown-server-request") write({ jsonrpc: "2.0", id: "server-unknown", method: "workspace/executeCommand", params: {} });
     if (scenario === "server-requests") {
       write({ jsonrpc: "2.0", id: "server-config", method: "workspace/configuration", params: { items: [{ section: "a" }, { section: "b" }] } });
       write({ jsonrpc: "2.0", id: "server-edit", method: "workspace/applyEdit", params: { edit: { changes: { "file:///must-not-be-read": [] } } } });
       write({ jsonrpc: "2.0", id: "server-progress", method: "window/workDoneProgress/create", params: { token: "fixture" } });
-      write({ jsonrpc: "2.0", id: "server-message", method: "window/showMessageRequest", params: { message: "fixture", actions: [] } });
+      write({ jsonrpc: "2.0", id: "server-message-no-actions", method: "window/showMessageRequest", params: { type: 3, message: "fixture" } });
+      write({ jsonrpc: "2.0", id: "server-message-empty-actions", method: "window/showMessageRequest", params: { type: 3, message: "fixture", actions: [] } });
+      write({ jsonrpc: "2.0", id: "server-message-action", method: "window/showMessageRequest", params: { type: 3, message: "fixture", actions: [{ title: "Continue" }] } });
     }
-    if (["grandchild", "grandchild-flood", "grandchild-cancel"].includes(scenario)) {
-      const childFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "lsp-host-child.mjs");
-      descendant = spawn(process.execPath, [childFile], { shell: false, windowsHide: true, stdio: "ignore" });
-      descendant.unref();
-      write({ jsonrpc: "2.0", method: "telemetry/event", params: { headTestDescendantPid: descendant.pid } });
-    }
+    if (scenario === "invalid-show-message") write({ jsonrpc: "2.0", id: "server-message-invalid", method: "window/showMessageRequest", params: { type: 5, message: "fixture" } });
+    if (["grandchild", "grandchild-flood", "grandchild-cancel"].includes(scenario)) startDescendant();
     return;
   }
   if (message.method === "textDocument/didOpen") {
@@ -158,8 +218,14 @@ function respond(message) {
   }
   if (message.method === "textDocument/prepareCallHierarchy") {
     if (scenario === "crash") process.exit(31);
-    if (["external-abort", "grandchild-cancel"].includes(scenario)) {
-      try { process.getBuiltinModule("fs").appendFileSync(`${fileURLToPath(import.meta.url)}.trace`, `${message.id}\n`); } catch {}
+    if (["grandchild", "grandchild-flood"].includes(scenario) && !descendantReady) { pendingGrandchildPrepare = message; return; }
+    if (scenario === "external-abort") {
+      try { process.getBuiltinModule("fs").appendFileSync(`${fileURLToPath(import.meta.url)}.trace`, `${message.id}:ready\n`); } catch {}
+      return;
+    }
+    if (scenario === "grandchild-cancel") {
+      pendingCancelledPrepareId = message.id;
+      writeCancelledPrepareTrace();
       return;
     }
     if (["timeout", "cancel"].includes(scenario)) return;
@@ -173,6 +239,7 @@ function respond(message) {
     if (message.params?.textDocument?.uri !== item.uri || JSON.stringify(message.params?.position) !== JSON.stringify(expectedPosition)) { write({ jsonrpc: "2.0", id: message.id, result: [] }); return; }
     if (scenario === "ambiguous") { write({ jsonrpc: "2.0", id: message.id, result: [item, { ...item, name: "caller2" }] }); return; }
     if (scenario === "wrong-position") { write({ jsonrpc: "2.0", id: message.id, result: [{ ...item, selectionRange: { start: { ...item.selectionRange.start, character: item.selectionRange.start.character + 1 }, end: item.selectionRange.end } }] }); return; }
+    if (scenario === "wrong-caller-document") { write({ jsonrpc: "2.0", id: message.id, result: [callerItem("barrel.ts")] }); return; }
     write({ jsonrpc: "2.0", id: message.id, result: [item] });
     if (scenario === "duplicate-id") write({ jsonrpc: "2.0", id: message.id, result: [item] });
     return;
@@ -185,19 +252,17 @@ function respond(message) {
     const caller = callerItem();
     const target = targetItem();
     if (!caller || JSON.stringify(message.params?.item) !== JSON.stringify(caller)) { write({ jsonrpc: "2.0", id: message.id, result: [] }); return; }
-    const direct = /import\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/.test(callerText || "");
-    const throughBarrel = /import\s*\{\s*target\s*\}\s*from\s*["']\.\/barrel["']\s*;/.test(callerText || "")
-      && /export\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/.test(barrelText || "");
+    const route = moduleRoute(callerText || "", barrelText || "");
     const ranges = callRanges(callerText || "", functionIdentity(callerText || "", "caller"), "target");
     if (scenario === "reordered") ranges.reverse();
-    const validCall = (direct || throughBarrel) && ranges.length > 0 && target;
+    const validCall = route && ranges.length > 0 && target;
     const result = validCall ? [{ to: target, fromRanges: ranges }] : [];
     if (scenario === "late-response") {
       write({ jsonrpc: "2.0", id: message.id, result });
       write({ jsonrpc: "2.0", id: message.id, result });
       return;
     }
-    if (scenario === "server-requests" && !(configurationChecked && applyEditChecked && progressChecked && messageChecked)) {
+    if (scenario === "server-requests" && !(configurationChecked && applyEditChecked && progressChecked && messageResponses.size === 3)) {
       write({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "Host server-request responses were incorrect" } });
       return;
     }

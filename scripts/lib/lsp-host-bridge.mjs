@@ -8,6 +8,7 @@ import {
   LspFrameParser,
   boundedFixtureCallRanges,
   boundedFixtureFunctionIdentity,
+  boundedFixtureModuleRoute,
   canonicalJson,
   createPendingTable,
   createSnapshotDescriptor,
@@ -31,7 +32,7 @@ const ALLOWED_SCENARIOS = new Set([
   "invalid-json", "unknown-id", "duplicate-id", "late-response", "timeout", "cancel", "crash",
   "ambiguous", "external-uri", "invalid-range", "grandchild", "reordered", "emoji-crlf",
   "slow-work", "slow-shutdown", "stderr-limit", "external-abort", "grandchild-cancel",
-  "grandchild-flood", "delete-self",
+  "grandchild-flood", "delete-self", "wrong-caller-document", "invalid-show-message",
 ]);
 
 function safeOwnedRoot(qaRoot, ownedRoot) {
@@ -127,9 +128,13 @@ function writeImmutableSnapshot(root, descriptor, collectionId) {
 
 function assertSnapshotUnchanged(documents) {
   for (const document of documents) {
-    const bytes = fs.readFileSync(document.file);
+    let bytes;
+    try { bytes = fs.readFileSync(document.file); }
+    catch {
+      throw protocolError(document.path === "tsconfig.json" ? "config-drift" : "source-drift", "Owned LSP snapshot disappeared during collection.", { stage: "closing" });
+    }
     if (bytes.length !== document.bytes || sha256(bytes) !== document.digest) {
-      throw protocolError(document.path === "tsconfig.json" ? "config-drift" : "source-drift", "Owned LSP snapshot changed during collection.");
+      throw protocolError(document.path === "tsconfig.json" ? "config-drift" : "source-drift", "Owned LSP snapshot changed during collection.", { stage: "closing" });
     }
   }
 }
@@ -197,6 +202,8 @@ export async function collectOutgoingCallEvidence({
   let forceTimer;
   let abortHandler;
   let result;
+  let supervision = null;
+  let cleanup = { attempted: false, verified: false, forced: false };
   try {
     ownedRoot = fs.mkdtempSync(path.join(fs.realpathSync(qaRoot), "lsp-host-"));
     safeOwnedRoot(qaRoot, ownedRoot);
@@ -270,13 +277,13 @@ export async function collectOutgoingCallEvidence({
     clearTimeout(softTimer);
     clearTimeout(forceTimer);
     if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
+    supervision = supervised.finalize({ exactSupervisorExitObserved: true, terminationRequested: Boolean(outerFailure) });
+    cleanup = { attempted: true, verified: supervision.treeCleanupVerified, forced };
     assertSnapshotUnchanged(snapshotDocuments);
     let finalProducer;
     try { finalProducer = profileProvenance(profile); }
     catch { throw protocolError("producer-mismatch", "Fake LSP producer disappeared or changed before result publication.", { stage: "closing" }); }
     if (finalProducer.producerDigest !== producer.producerDigest) throw protocolError("producer-mismatch", "Fake LSP producer changed before result publication.", { stage: "closing" });
-    const supervision = supervised.finalize({ exactSupervisorExitObserved: true, terminationRequested: Boolean(outerFailure) });
-    const cleanup = { attempted: true, verified: supervision.treeCleanupVerified, forced };
     if (outerFailure) result = terminalFromError(outerFailure, provenance, cleanup);
     else if (!supervision.ownershipEstablished || !supervision.treeCleanupVerified) result = terminalFromError(protocolError("cleanup-failed", "Owned LSP process tree cleanup was not verified.", { stage: "closing" }), provenance, cleanup);
     else if (closed.code !== 0) result = terminalFromError(protocolError("process-crash", `LSP bridge exited ${closed.code}: ${stderr.toString("utf8").slice(0, 512)}`, { stage: "launch" }), provenance, cleanup);
@@ -294,11 +301,21 @@ export async function collectOutgoingCallEvidence({
     }
     result = Object.freeze({ ...result, cleanup, transport: { supervisorManifestDigest: supervision.supervisorManifestDigest, ownershipEstablished: supervision.ownershipEstablished, treeCleanupVerified: supervision.treeCleanupVerified } });
   } catch (error) {
+    let catchForced = false;
     if (supervised?.child && supervised.child.exitCode === null && supervised.child.signalCode === null) {
       supervised.terminate(true);
+      catchForced = true;
       try { await waitForClose(supervised.child); } catch {}
     }
-    result = terminalFromError(error, provenance, { attempted: Boolean(supervised), verified: false, forced: true }, error?.details?.stage || "launch");
+    if (supervised && !supervision) {
+      try { supervision = supervised.finalize({ exactSupervisorExitObserved: true, terminationRequested: catchForced || Boolean(outerFailure) }); } catch {}
+    }
+    cleanup = {
+      attempted: Boolean(supervised),
+      verified: supervision?.treeCleanupVerified === true,
+      forced: forced || catchForced,
+    };
+    result = terminalFromError(error, provenance, cleanup, error?.details?.stage || "launch");
   } finally {
     clearTimeout(softTimer);
     clearTimeout(forceTimer);
@@ -307,6 +324,9 @@ export async function collectOutgoingCallEvidence({
       try { removeOwnedRoot(qaRoot, ownedRoot); }
       catch (error) { result = terminalFromError(protocolError("cleanup-failed", `Owned LSP temporary root cleanup failed: ${error.message}`, { stage: "closing" }), provenance, { attempted: true, verified: false, forced }, "closing"); }
     }
+  }
+  if (supervision && !result.transport) {
+    result = Object.freeze({ ...result, transport: { supervisorManifestDigest: supervision.supervisorManifestDigest, ownershipEstablished: supervision.ownershipEstablished, treeCleanupVerified: supervision.treeCleanupVerified } });
   }
   return result;
 }
@@ -332,6 +352,7 @@ function validateItem(item, documents, collectionId, expected = null) {
   const selectionRange = validateRange(document.text, item.selectionRange);
   if (selectionRange.start < itemRange.start || selectionRange.end > itemRange.end) throw protocolError("invalid-range", "Call hierarchy selectionRange escaped its symbol range.");
   if (expected && (item.name !== expected.name || item.kind !== 12 || item.uri !== document.uri
+    || expected.uri && item.uri !== expected.uri
     || canonicalJson(item.range) !== canonicalJson(expected.range)
     || canonicalJson(item.selectionRange) !== canonicalJson(expected.selectionRange))) {
     throw protocolError("mapping-mismatch", "Call hierarchy item does not match the requested fixture declaration.");
@@ -420,7 +441,14 @@ async function runBridge(request) {
       if (!(typeof token === "string" || typeof token === "number") || String(token).length > 256) throw protocolError("invalid-message", "Progress token is invalid.", { stage });
       send({ jsonrpc: "2.0", id, result: null });
     } else if (message.method === "window/showMessageRequest") {
-      if (typeof message.params?.message !== "string" || message.params.message.length > 4096 || !Array.isArray(message.params.actions) || message.params.actions.length > 16) throw protocolError("invalid-message", "showMessageRequest is invalid.", { stage });
+      const params = message.params;
+      const actions = params?.actions;
+      if (!params || !Number.isSafeInteger(params.type) || params.type < 1 || params.type > 4
+        || typeof params.message !== "string" || params.message.length > 4096
+        || actions !== undefined && (!Array.isArray(actions) || actions.length > 16
+          || actions.some((item) => !item || typeof item !== "object" || typeof item.title !== "string" || item.title.length < 1 || item.title.length > 256))) {
+        throw protocolError("invalid-message", "showMessageRequest is invalid.", { stage });
+      }
       send({ jsonrpc: "2.0", id, result: null });
     } else {
       send({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not supported" } });
@@ -481,6 +509,7 @@ async function runBridge(request) {
   let reason = "empty";
   let failure = null;
   const caller = documents.find((item) => item.relativePath === "caller.ts");
+  const barrelDocument = documents.find((item) => item.relativePath === "barrel.ts");
   const targetDocument = documents.find((item) => item.relativePath === "target.ts");
   const callerIdentity = caller ? boundedFixtureFunctionIdentity(caller.text, "caller") : null;
   const targetIdentity = targetDocument ? boundedFixtureFunctionIdentity(targetDocument.text, "target") : null;
@@ -501,14 +530,16 @@ async function runBridge(request) {
       else {
         if (!Array.isArray(prepared)) throw protocolError("invalid-prepare-result", "prepareCallHierarchy did not return an array or null.", { stage });
         if (prepared.length !== 1) throw protocolError("ambiguous-prepared-item", "prepareCallHierarchy returned more than one item.", { stage });
-        validateItem(prepared[0], documents, binding.collectionId, callerIdentity);
+        const preparedCaller = validateItem(prepared[0], documents, binding.collectionId, { ...callerIdentity, uri: caller.uri });
+        if (preparedCaller.relativePath !== "caller.ts") throw protocolError("mapping-mismatch", "Prepared item changed the fixture caller document.", { stage });
         stage = "hierarchy";
         const outgoing = await requestWithDeadline("callHierarchy/outgoingCalls", { item: prepared[0] }, "hierarchy", request.deadlines.workEpochMs);
         if (outgoing === null || Array.isArray(outgoing) && outgoing.length === 0) reason = "empty";
         else {
           if (!Array.isArray(outgoing) || outgoing.length > 256) throw protocolError("invalid-hierarchy-result", "outgoingCalls did not return a bounded array or null.", { stage });
           if (!targetIdentity) throw protocolError("mapping-mismatch", "Outgoing target fixture declaration is missing.", { stage });
-          const allowedRanges = boundedFixtureCallRanges(caller.text, callerIdentity, "target");
+          const route = boundedFixtureModuleRoute(caller.text, barrelDocument?.text || "");
+          const allowedRanges = route ? boundedFixtureCallRanges(caller.text, callerIdentity, "target") : [];
           const allowedKeys = new Set(allowedRanges.map(canonicalJson));
           const observedKeys = new Set();
           for (const relation of outgoing) {

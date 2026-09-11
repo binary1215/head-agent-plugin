@@ -280,6 +280,45 @@ function codeMask(text) {
   return chars.join("");
 }
 
+function commentMask(text) {
+  const chars = text.split("");
+  let mode = "code";
+  let quote = null;
+  for (let index = 0; index < chars.length; index += 1) {
+    const current = chars[index];
+    const next = chars[index + 1];
+    if (mode === "line") {
+      if (current === "\n") mode = "code";
+      else chars[index] = " ";
+    } else if (mode === "block") {
+      if (current === "*" && next === "/") { chars[index] = chars[index + 1] = " "; index += 1; mode = "code"; }
+      else if (current !== "\n" && current !== "\r") chars[index] = " ";
+    } else if (mode === "string") {
+      if (current === "\\") index += 1;
+      else if (current === quote) { mode = "code"; quote = null; }
+    } else if (current === "/" && next === "/") {
+      chars[index] = chars[index + 1] = " "; index += 1; mode = "line";
+    } else if (current === "/" && next === "*") {
+      chars[index] = chars[index + 1] = " "; index += 1; mode = "block";
+    } else if (current === "\"" || current === "'") {
+      mode = "string"; quote = current;
+    }
+  }
+  return chars.join("");
+}
+
+export function boundedFixtureModuleRoute(callerText, barrelText) {
+  if (callerText.includes("`") || barrelText.includes("`")) return null;
+  const caller = commentMask(callerText);
+  const imports = [...caller.matchAll(/^\s*import\s*\{\s*target\s*\}\s*from\s*["']\.\/(target|barrel)["']\s*;/gm)];
+  if (imports.length !== 1) return null;
+  const route = imports[0][1];
+  if (route === "target") return "direct";
+  const barrel = commentMask(barrelText);
+  const exports = [...barrel.matchAll(/^\s*export\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/gm)];
+  return exports.length === 1 ? "barrel" : null;
+}
+
 export function boundedFixtureFunctionIdentity(text, name) {
   if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name || "")) throw protocolError("invalid-input", "Fixture function name is invalid.");
   const masked = codeMask(text);
@@ -311,7 +350,11 @@ export function boundedFixtureCallRanges(text, functionIdentity, targetName) {
   const masked = codeMask(text);
   const body = masked.slice(functionIdentity.bodyStartOffset, functionIdentity.endOffset - 1);
   const call = new RegExp(`\\b${targetName}\\s*\\(\\s*\\)\\s*;`, "g");
-  return [...body.matchAll(call)].map((match) => {
+  const matches = [...body.matchAll(call)];
+  const remainder = body.split("");
+  for (const match of matches) remainder.fill(" ", match.index, match.index + match[0].length);
+  if (remainder.join("").trim() !== "") return [];
+  return matches.map((match) => {
     const start = functionIdentity.bodyStartOffset + match.index + match[0].indexOf(targetName);
     return { start: positionAtOffset(text, start), end: positionAtOffset(text, start + targetName.length) };
   });

@@ -6,6 +6,9 @@ import {
   LSP_HOST_STAGES,
   LSP_HOST_STATUSES,
   LspFrameParser,
+  boundedFixtureCallRanges,
+  boundedFixtureFunctionIdentity,
+  boundedFixtureModuleRoute,
   createPendingTable,
   createSnapshotDescriptor,
   encodeLspMessage,
@@ -25,6 +28,19 @@ const sources = [
   { path: "barrel.ts", text: "export { target } from \"./target\";" },
   { path: "caller.ts", text: "import { target } from \"./barrel\";\nexport function caller(){ target(); }" },
 ];
+
+test("P03 bounded fixture semantics require a real route and direct unshadowed calls", () => {
+  const caller = sources[2].text;
+  const identity = boundedFixtureFunctionIdentity(caller, "caller");
+  assert.equal(boundedFixtureModuleRoute(caller, sources[1].text), "barrel");
+  assert.equal(boundedFixtureCallRanges(caller, identity, "target").length, 1);
+  assert.equal(boundedFixtureModuleRoute(`// ${caller}`, sources[1].text), null);
+  assert.equal(boundedFixtureModuleRoute(caller, `// ${sources[1].text}`), null);
+  for (const body of ["const target = () => {}; target();", "const obj = { target() {} }; obj.target();", "function nested(){ target(); }"]) {
+    const text = `import { target } from \"./barrel\";\nexport function caller(){ ${body} }`;
+    assert.deepEqual(boundedFixtureCallRanges(text, boundedFixtureFunctionIdentity(text, "caller"), "target"), []);
+  }
+});
 
 test("P07 framing is byte-safe, fragmented, bounded, and fail-closed", () => {
   const message = { jsonrpc: "2.0", id: 1, result: { emoji: "😀" } };
