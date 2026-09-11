@@ -9,6 +9,15 @@ import {
 
 const enc = new TextEncoder();
 const digest = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
+const ascii = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+function canonicalJson(value) {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.keys(value).sort(ascii).map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+}
+const H = (value) => digest(Buffer.from(canonicalJson(value)));
+const contentId = (prefix, value) => `${prefix}-${H(value).slice(0, 24)}`;
 const range = (line, start, end) => ({ start: { line, character: start }, end: { line, character: end } });
 const ids = (document) => new Map(document.rawRefs.map((entry) => [entry.kind, entry.rawRefId]));
 
@@ -39,6 +48,46 @@ function fixture({ lineEnding = "\n", callerText = null } = {}) {
 function build(value = fixture()) { return { value, document: buildStructuralRelationObservationEnvelope(value.draft, { sourceBytesByPath: value.sourceBytesByPath, rawBytesById: value.rawBytesById }) }; }
 function verifierRawMap(value, document) { const map = ids(document); return new Map([[map.get("accepted-decoded-record-a"), value.rawBytesById.get("raw-a")], [map.get("accepted-decoded-record-b"), value.rawBytesById.get("raw-b")]]); }
 function clone(value) { return structuredClone(value); }
+function reseal(document) {
+  const payload = { ...document }; delete payload.envelopeId; delete payload.envelopeHash;
+  document.envelopeHash = H(payload); document.envelopeId = `structural-envelope-${document.envelopeHash.slice(0, 24)}`;
+  return document;
+}
+function recomputeLineage(document) {
+  document.subject.sourceManifest.sort((a, b) => ascii(a.path, b.path));
+  document.subject.sourceManifestDigest = H(document.subject.sourceManifest.map(({ path, sha256, language, byteLength }) => ({ path, sha256, language, byteLength })));
+  const sources = new Map(document.subject.sourceManifest.map((entry) => [entry.path, entry]));
+  const runMap = new Map();
+  for (const run of document.runs) {
+    const oldRunId = run.runId;
+    {
+      const descriptors = run.coverage.admittedSources.map((entry) => sources.get(entry.path)).sort((a, b) => ascii(a.path, b.path));
+      run.inputBinding.sourceManifestDigest = H(descriptors.map(({ path, sha256, language, byteLength }) => ({ path, sha256, language, byteLength })));
+    }
+    const payload = { producerClaimId: run.producerClaimId, inputBinding: run.inputBinding, coverage: run.coverage, rawRefIds: run.rawRefIds };
+    run.runId = contentId("structural-run", payload); runMap.set(oldRunId, run.runId);
+  }
+  document.runs.sort((a, b) => ascii(a.runId, b.runId));
+  for (const pair of document.pairs) {
+    const pairPayload = { type: pair.type, from: pair.from, to: pair.to, language: pair.language };
+    pair.pairId = contentId("structural-pair", pairPayload);
+    for (const occurrence of pair.occurrences) {
+      occurrence.pairId = pair.pairId;
+      occurrence.occurrenceId = contentId("structural-occurrence", { pairId: pair.pairId, evidence: occurrence.evidence });
+      for (const support of occurrence.supports) {
+        support.occurrenceId = occurrence.occurrenceId;
+        support.runId = runMap.get(support.runId) ?? support.runId;
+        support.supportId = contentId("structural-support", { occurrenceId: support.occurrenceId, runId: support.runId, rawRefId: support.rawRefId });
+      }
+      occurrence.supports.sort((a, b) => ascii(a.supportId, b.supportId));
+    }
+    pair.occurrences.sort((a, b) => ascii(a.occurrenceId, b.occurrenceId));
+  }
+  document.pairs.sort((a, b) => ascii(a.pairId, b.pairId));
+  document.candidateProjection.entries = document.pairs.map((pair) => ({ pairId: pair.pairId, occurrenceIds: pair.occurrences.map((entry) => entry.occurrenceId).sort(ascii) }));
+  document.candidateProjection.projectionDigest = H({ policy: "relation-pair-only-v0", entries: document.candidateProjection.entries });
+  return reseal(document);
+}
 
 test("SEO01 unknown claim survives strong integrity verification without truth promotion", () => {
   const { value, document } = build();
@@ -154,12 +203,78 @@ test("SEO11 envelope is isolated and rejects legacy kind", async () => {
 
 test("SEO12 caps, exact fields, canonical order, cycles, duplicate occurrence and support reject", () => {
   const value = fixture(); value.draft.extra = true; assert.throws(() => build(value), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_FIELD" });
-  const cyclic = fixture(); cyclic.draft.self = cyclic.draft; assert.throws(() => build(cyclic), { code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" });
+  const cyclic = fixture(); cyclic.draft.self = cyclic.draft; assert.throws(() => build(cyclic), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_FIELD" });
   const duplicateOccurrence = fixture(); duplicateOccurrence.draft.pairs[0].occurrences.push(clone(duplicateOccurrence.draft.pairs[0].occurrences[0])); assert.throws(() => build(duplicateOccurrence), { code: "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID" });
   const duplicateSupport = fixture(); duplicateSupport.draft.pairs[0].occurrences[0].supports.push(clone(duplicateSupport.draft.pairs[0].occurrences[0].supports[0])); assert.throws(() => build(duplicateSupport), { code: "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID" });
   const { document } = build(); const reordered = clone(document); reordered.rawRefs.reverse(); assert.throws(() => verifyStructuralRelationObservationEnvelope(reordered), { code: "NON_CANONICAL_STRUCTURAL_RELATION_OBSERVATION" });
-  const malformed = clone(document); malformed.pairs = {}; assert.throws(() => verifyStructuralRelationObservationEnvelope(malformed), { code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" });
+  const malformed = clone(document); malformed.pairs = {}; assert.throws(() => verifyStructuralRelationObservationEnvelope(malformed), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE" });
   const unsupported = clone(document); unsupported.pairs[0].from.selectionRange = range(3, 0, 1); assert.throws(() => verifyStructuralRelationObservationEnvelope(unsupported), { code: "STRUCTURAL_RELATION_COORDINATE_MISMATCH" });
+});
+
+test("R1 occurrence coordinates are bound to the caller file in builder and both verifier modes", () => {
+  const value = fixture(); const occurrence = value.draft.pairs[0].occurrences[0]; const target = value.draft.pairs[0].to;
+  occurrence.evidence = { path: target.path, digest: target.digest, range: clone(target.selectionRange) };
+  assert.throws(() => build(value), { code: "STRUCTURAL_RELATION_SOURCE_MISMATCH" });
+  const valid = build(); const invalid = clone(valid.document); invalid.pairs[0].occurrences[0].evidence = { path: invalid.pairs[0].to.path, digest: invalid.pairs[0].to.digest, range: clone(invalid.pairs[0].to.selectionRange) };
+  assert.throws(() => verifyStructuralRelationObservationEnvelope(invalid), { code: "STRUCTURAL_RELATION_SOURCE_MISMATCH" });
+  assert.throws(() => verifyStructuralRelationObservationEnvelope(invalid, { sourceBytesByPath: valid.value.sourceBytesByPath, rawBytesById: verifierRawMap(valid.value, valid.document) }), { code: "STRUCTURAL_RELATION_SOURCE_MISMATCH" });
+  assert.equal(valid.document.pairs[0].occurrences.length, 2);
+});
+
+test("R2 producer claims reject duplicates and orphans while shared claims and input reordering remain stable", () => {
+  const value = fixture(); const orphan = clone(value.draft.producerClaims[0]); orphan.producerClaimKey = "orphan"; orphan.name = "unused-producer"; value.draft.producerClaims.push(orphan);
+  assert.throws(() => build(value), { code: "STRUCTURAL_RELATION_CLOSURE_MISMATCH" });
+  const valid = build(); assert.equal(new Set(valid.document.runs.map((run) => run.producerClaimId)).size, 1);
+  const duplicate = clone(valid.document); duplicate.producerClaims.push(clone(duplicate.producerClaims[0])); assert.throws(() => verifyStructuralRelationObservationEnvelope(duplicate), { code: "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID" });
+  const canonicalOrphan = clone(valid.document); const orphanPayload = { ...clone(canonicalOrphan.producerClaims[0]), name: "unused-producer" }; delete orphanPayload.producerClaimId; canonicalOrphan.producerClaims.push({ ...orphanPayload, producerClaimId: contentId("structural-producer", orphanPayload) }); canonicalOrphan.producerClaims.sort((a, b) => ascii(a.producerClaimId, b.producerClaimId)); reseal(canonicalOrphan);
+  assert.throws(() => verifyStructuralRelationObservationEnvelope(canonicalOrphan), { code: "STRUCTURAL_RELATION_CLOSURE_MISMATCH" });
+  assert.throws(() => verifyStructuralRelationObservationEnvelope(canonicalOrphan, { sourceBytesByPath: valid.value.sourceBytesByPath, rawBytesById: verifierRawMap(valid.value, valid.document) }), { code: "STRUCTURAL_RELATION_CLOSURE_MISMATCH" });
+  const reordered = fixture(); reordered.draft.sourceManifest.reverse(); reordered.draft.rawRefs.reverse(); reordered.draft.runs.reverse(); assert.deepEqual(build(reordered).document, valid.document);
+});
+
+test("R3 fixed-shape preflight rejects callbacks, malformed collections and caps before hashing", () => {
+  const callback = fixture(); let callbackInvocations = 0; callback.draft.unapproved = { toJSON() { callbackInvocations += 1; return "x"; } };
+  assert.throws(() => build(callback), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_FIELD" }); assert.equal(callbackInvocations, 0);
+  const cases = [
+    () => { const value = fixture(); value.draft.diagnosticLabels = {}; return () => build(value); },
+    () => { const value = fixture(); value.draft.pairs = Array(1); return () => build(value); },
+    () => { const { document } = build(); document.subject.sourceManifest = [null, null]; return () => verifyStructuralRelationObservationEnvelope(document); },
+  ];
+  for (const make of cases) { let error; try { make()(); } catch (caught) { error = caught; } assert.ok(error); assert.equal(typeof error.code, "string"); }
+  for (const { mutate, code } of [
+    { mutate: (value) => { value.draft.diagnosticLabels = ["x".repeat(513)]; }, code: "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE" },
+    { mutate: (value) => { value.draft.pairs = Array(10_001).fill(null); }, code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" },
+    { mutate: (value) => { value.sourceBytesByPath.set("src/caller.ts", new Uint8Array(1_048_577)); }, code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" },
+  ]) {
+    const value = fixture(); mutate(value); let hashCalls = 0; const original = crypto.createHash; crypto.createHash = (...args) => { hashCalls += 1; return original(...args); };
+    try { assert.throws(() => build(value), { code }); } finally { crypto.createHash = original; }
+    assert.equal(hashCalls, 0);
+  }
+  const boundary = fixture(); const prefix = "export function target() {}\n"; boundary.sourceBytesByPath.set("src/target.ts", enc.encode(prefix + " ".repeat(1_048_576 - Buffer.byteLength(prefix)))); assert.equal(boundary.sourceBytesByPath.get("src/target.ts").byteLength, 1_048_576); const targetDigest = digest(boundary.sourceBytesByPath.get("src/target.ts")); boundary.draft.pairs[0].to.digest = targetDigest; boundary.draft.runs.forEach((run) => { run.coverage.admittedSources.find((entry) => entry.path === "src/target.ts").digest = targetDigest; }); assert.equal(build(boundary).document.subject.sourceManifest.find((entry) => entry.path === "src/target.ts").byteLength, 1_048_576);
+});
+
+test("R4 source paths reject drive, URI, slash, backslash and dot forms while raw URI text stays opaque", () => {
+  for (const invalidPath of ["C:/repo/caller.ts", "C:relative.ts", "file:repo/caller.ts", "/src/caller.ts", "src\\caller.ts", "src/../caller.ts", "./src/caller.ts"]) {
+    const value = fixture(); value.draft.sourceManifest[0].path = invalidPath;
+    assert.throws(() => build(value), { code: "INVALID_STRUCTURAL_RELATION_SOURCE_PATH" });
+  }
+  const valid = build();
+  for (const mutate of [
+    (document) => { document.pairs[0].from.path = "C:/repo/caller.ts"; },
+    (document) => { document.pairs[0].occurrences[0].evidence.path = "file:repo/caller.ts"; },
+    (document) => { document.runs[0].coverage.queriedSymbols[0].path = "src\\caller.ts"; },
+  ]) { const document = clone(valid.document); mutate(document); assert.throws(() => verifyStructuralRelationObservationEnvelope(document), { code: "INVALID_STRUCTURAL_RELATION_SOURCE_PATH" }); }
+  const opaque = fixture(); opaque.rawBytesById.set("raw-a", enc.encode("file:///C:/snapshot/caller.ts")); assert.equal(build(opaque).document.instructionAuthority, false);
+});
+
+test("R5 aliases and empty observations are typed unsupported without hiding endpoint defects", () => {
+  const alias = fixture(); const aliasSource = "import { target as aliasX } from './target.js';\nexport function caller() {\n  aliasX();\n}\n"; alias.sourceBytesByPath.set("src/caller.ts", enc.encode(aliasSource)); const callerDigest = digest(alias.sourceBytesByPath.get("src/caller.ts")); const pair = alias.draft.pairs[0]; pair.from.digest = callerDigest; pair.from.declarationRange = { start: { line: 1, character: 0 }, end: { line: 3, character: 1 } }; pair.from.selectionRange = range(1, 16, 22); pair.occurrences = [{ occurrenceKey: "alias", evidence: { path: "src/caller.ts", digest: callerDigest, range: range(2, 2, 8) }, supports: [{ runKey: "run-a", rawRefKey: "raw-a" }, { runKey: "run-b", rawRefKey: "raw-b" }] }]; alias.draft.runs.forEach((run) => { run.coverage.admittedSources.find((entry) => entry.path === "src/caller.ts").digest = callerDigest; run.coverage.queriedSymbols[0].digest = callerDigest; run.coverage.queriedSymbols[0].line = 1; });
+  assert.throws(() => build(alias), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE" });
+  const valid = build(); const aliasDocument = clone(valid.document); const callerDescriptor = aliasDocument.subject.sourceManifest.find((entry) => entry.path === "src/caller.ts"); callerDescriptor.sha256 = callerDigest; callerDescriptor.byteLength = alias.sourceBytesByPath.get("src/caller.ts").byteLength; const aliasPair = aliasDocument.pairs[0]; aliasPair.from.digest = callerDigest; aliasPair.from.declarationRange = clone(pair.from.declarationRange); aliasPair.from.selectionRange = clone(pair.from.selectionRange); aliasPair.occurrences = [clone(valid.document.pairs[0].occurrences[0])]; aliasPair.occurrences[0].evidence.digest = callerDigest; aliasPair.occurrences[0].evidence.range = range(2, 2, 8); aliasDocument.runs.forEach((run) => { run.coverage.admittedSources.find((entry) => entry.path === "src/caller.ts").digest = callerDigest; run.coverage.queriedSymbols[0].digest = callerDigest; run.coverage.queriedSymbols[0].line = 1; }); recomputeLineage(aliasDocument);
+  assert.throws(() => verifyStructuralRelationObservationEnvelope(aliasDocument, { sourceBytesByPath: alias.sourceBytesByPath, rawBytesById: verifierRawMap(alias, aliasDocument) }), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE" });
+  const emptyDraft = fixture(); emptyDraft.draft.pairs = []; assert.throws(() => build(emptyDraft), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE" });
+  const emptyDocument = clone(valid.document); emptyDocument.pairs = []; assert.throws(() => verifyStructuralRelationObservationEnvelope(emptyDocument), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE" });
+  const badEndpoint = fixture(); badEndpoint.draft.pairs[0].to.selectionRange = range(0, 16, 21); assert.throws(() => build(badEndpoint), { code: "STRUCTURAL_RELATION_LEXEME_MISMATCH" });
 });
 
 export { fixture, verifierRawMap };

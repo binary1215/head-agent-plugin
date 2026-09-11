@@ -8,27 +8,268 @@ const EVIDENCE_STATUS = new Set(["partial", "unknown"]);
 const RESPONSE_CLOSURE = new Set(["complete-frame-observed", "partial", "unknown"]);
 const ascii = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const fail = (message, code = "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE") => { const error = new Error(message); error.code = code; throw error; };
-const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort(ascii).map((key) => [key, canonical(value[key])])) : value;
-const canonicalJson = (value) => JSON.stringify(canonical(value));
+function canonicalJson(value) {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort(ascii).map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  fail("Canonical value contains an unsupported type.", "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
+}
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const H = (value) => hash(canonicalJson(value));
 const id = (prefix, value) => `${prefix}-${H(value).slice(0, 24)}`;
-const object = (value, label) => { if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object.`); return value; };
-const fields = (value, allowed, label) => { object(value, label); const extra = Object.keys(value).filter((key) => !allowed.includes(key)); if (extra.length) fail(`${label} contains unsupported fields: ${extra.sort(ascii).join(", ")}.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_FIELD"); };
+const object = (value, label) => { if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) fail(`${label} must be a plain object.`); return value; };
+const fields = (value, allowed, label) => { object(value, label); const extra = Object.keys(value).filter((key) => !allowed.includes(key)); if (extra.length) fail(`${label} contains unsupported fields: ${extra.join(", ")}.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_FIELD"); };
 const text = (value, max, label, nullable = false) => { if (nullable && value === null) return null; if (typeof value !== "string" || !value || value.length > max) fail(`${label} is invalid.`); return value; };
 const safe = (value, max, label) => { if (!Number.isSafeInteger(value) || value < 0 || value > max) fail(`${label} is outside the supported numeric range.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); return value; };
 const hex = (value, label) => { if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) fail(`${label} must be a SHA-256 digest.`); return value; };
-const pathValue = (value, label) => { text(value, 512, label); if (value.includes("\\") || value.startsWith("/") || value.split("/").some((part) => !part || part === "." || part === "..")) fail(`${label} must be a normalized relative path.`); return value; };
+const pathValue = (value, label) => { text(value, 512, label); if (value.includes("\\") || value.startsWith("/") || /^[A-Za-z]:/.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || value.split("/").some((part) => !part || part === "." || part === "..")) fail(`${label} must be a normalized relative path.`, "INVALID_STRUCTURAL_RELATION_SOURCE_PATH"); return value; };
 const unique = (values, label) => { if (new Set(values).size !== values.length) fail(`${label} contains duplicates.`, "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID"); };
 const exactOrder = (values, sorted, label) => { if (canonicalJson(values) !== canonicalJson(sorted)) fail(`${label} is not in canonical order.`, "NON_CANONICAL_STRUCTURAL_RELATION_OBSERVATION"); };
 const boundedArray = (value, min, max, label) => {
   if (!Array.isArray(value) || value.length < min || value.length > max) {
     fail(`${label} count is unsupported.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
   }
+  const keys = Object.keys(value);
+  if (keys.some((key) => !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length) || keys.length !== value.length) {
+    fail(`${label} must be a dense plain array.`, "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE");
+  }
   return value;
 };
-const jsonSize = (value, label) => { let encoded; try { encoded = Buffer.byteLength(JSON.stringify(value), "utf8"); } catch { fail(`${label} is cyclic or unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); } if (encoded > LIMITS.envelopeBytes) fail(`${label} exceeds the serialized envelope limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); return encoded; };
+const jsonSize = (value, label) => { let encoded; try { encoded = Buffer.byteLength(canonicalJson(value), "utf8"); } catch (error) { if (error?.code) throw error; fail(`${label} is cyclic or unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); } if (encoded > LIMITS.envelopeBytes) fail(`${label} exceeds the serialized envelope limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); return encoded; };
 function structuralRange(value,label){fields(value,["start","end"],label);for(const [name,pos] of [["start",value.start],["end",value.end]]){fields(pos,["line","character"],`${label}.${name}`);safe(pos.line,LIMITS.coordinate,`${label}.${name}.line`);safe(pos.character,LIMITS.coordinate,`${label}.${name}.character`);}if(comparePos(value.start,value.end)>0)fail(`${label} is reversed.`,"STRUCTURAL_RELATION_COORDINATE_MISMATCH");return value;}
+
+function observationPairs(value, label) {
+  if (!Array.isArray(value) || value.length === 0) fail(`${label} is outside the positive direct-name CALLS shape supported by v0.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE");
+  if (value.length > LIMITS.pairs) fail(`${label} exceeds the pair count limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+  return boundedArray(value, 1, LIMITS.pairs, label);
+}
+function preflightByteMap(map, expectedKeys, label) {
+  validateMap(map, label);
+  unique(expectedKeys, `${label} expected keys`);
+  if (map.size !== expectedKeys.length || expectedKeys.some((key) => !map.has(key))) fail(`${label} keys do not exactly match descriptors.`, "STRUCTURAL_RELATION_BYTE_MAP_MISMATCH");
+  let total = 0;
+  for (const [key, bytes] of map) {
+    if (typeof key !== "string" || !expectedKeys.includes(key)) fail(`${label} contains an invalid key.`, "STRUCTURAL_RELATION_BYTE_MAP_MISMATCH");
+    if (!(bytes instanceof Uint8Array)) fail(`${label}[${key}] must be Uint8Array.`, "INVALID_STRUCTURAL_RELATION_BYTE_MAP");
+    if (bytes.byteLength > LIMITS.itemBytes) fail(`${label}[${key}] exceeds the per-item byte limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+    total += bytes.byteLength;
+    if (total > LIMITS.totalBytes) fail(`${label} exceeds the total byte limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+  }
+}
+function preflightEndpoint(value, label) {
+  fields(value, ["path", "digest", "name", "symbolKind", "declarationRange", "selectionRange"], label);
+  pathValue(value.path, `${label}.path`);
+  hex(value.digest, `${label}.digest`);
+  text(value.name, 256, `${label}.name`);
+  text(value.symbolKind, 128, `${label}.symbolKind`);
+  structuralRange(value.declarationRange, `${label}.declarationRange`);
+  structuralRange(value.selectionRange, `${label}.selectionRange`);
+}
+function preflightClaim(value, label, canonical) {
+  fields(value, canonical
+    ? ["name", "version", "executableIdentity", "profileIdentity", "reportedTransport", "reportedMethod", "analysisMethodClaim", "producerIdentityEvidenceStatus", "producerClaimId"]
+    : ["producerClaimKey", "name", "version", "executableIdentity", "profileIdentity", "reportedTransport", "reportedMethod", "analysisMethodClaim", "producerIdentityEvidenceStatus"], label);
+  if (!canonical) text(value.producerClaimKey, 128, `${label}.producerClaimKey`);
+  text(value.name, 128, `${label}.name`);
+  text(value.version, 128, `${label}.version`);
+  text(value.executableIdentity, 128, `${label}.executableIdentity`);
+  text(value.profileIdentity, 128, `${label}.profileIdentity`);
+  text(value.reportedTransport, 128, `${label}.reportedTransport`);
+  text(value.reportedMethod, 128, `${label}.reportedMethod`);
+  fields(value.analysisMethodClaim, ["reportedValue", "reportSource", "truthStatus"], `${label}.analysisMethodClaim`);
+  text(value.analysisMethodClaim.reportedValue, 128, `${label}.analysisMethodClaim.reportedValue`, true);
+  if (!CLAIM_SOURCES.has(value.analysisMethodClaim.reportSource) || value.analysisMethodClaim.truthStatus !== "unknown") fail("Analysis method truth values other than unknown are unsupported.", "UNSUPPORTED_STRUCTURAL_RELATION_TRUTH_STATUS");
+  if ((value.analysisMethodClaim.reportSource === "absent") !== (value.analysisMethodClaim.reportedValue === null)) fail("Absent analysis method claim must have null reportedValue.");
+  if (!EVIDENCE_STATUS.has(value.producerIdentityEvidenceStatus)) fail("producerIdentityEvidenceStatus is unsupported.");
+  if (canonical) text(value.producerClaimId, 128, `${label}.producerClaimId`);
+}
+function preflightRunCoverage(value, label) {
+  fields(value, ["admittedSources", "queriedDirection", "queriedSymbols", "reportedResponseClosure", "programCoverage", "repositoryRelationCompleteness"], label);
+  for (const [index, source] of boundedArray(value.admittedSources, 1, LIMITS.sources, `${label}.admittedSources`).entries()) {
+    fields(source, ["path", "digest"], `${label}.admittedSources[${index}]`);
+    pathValue(source.path, `${label}.admittedSources[${index}].path`);
+    hex(source.digest, `${label}.admittedSources[${index}].digest`);
+  }
+  for (const [index, symbol] of boundedArray(value.queriedSymbols, 0, LIMITS.occurrences, `${label}.queriedSymbols`).entries()) {
+    fields(symbol, ["path", "digest", "name", "symbolKind", "line"], `${label}.queriedSymbols[${index}]`);
+    pathValue(symbol.path, `${label}.queriedSymbols[${index}].path`);
+    hex(symbol.digest, `${label}.queriedSymbols[${index}].digest`);
+    text(symbol.name, 256, `${label}.queriedSymbols[${index}].name`);
+    text(symbol.symbolKind, 128, `${label}.queriedSymbols[${index}].symbolKind`);
+    safe(symbol.line, LIMITS.coordinate, `${label}.queriedSymbols[${index}].line`);
+  }
+  if (value.queriedDirection !== "outgoing" || value.programCoverage !== "unknown" || value.repositoryRelationCompleteness !== "not-claimed" || !RESPONSE_CLOSURE.has(value.reportedResponseClosure)) fail("Run coverage makes an unsupported claim.", "UNSUPPORTED_STRUCTURAL_RELATION_COVERAGE");
+}
+function preflightInputBinding(value, label, canonical) {
+  fields(value, canonical
+    ? ["sourceManifestScope", "sourceManifestDigest", "configDigest", "profileDigest", "normalizerVersion", "normalizerImplementationDigest"]
+    : ["sourceManifestScope", "configDigest", "profileDigest", "normalizerVersion", "normalizerImplementationDigest"], label);
+  if (!new Set(["full", "subset"]).has(value.sourceManifestScope)) fail(`${label}.sourceManifestScope is unsupported.`);
+  if (canonical) hex(value.sourceManifestDigest, `${label}.sourceManifestDigest`);
+  hex(value.configDigest, `${label}.configDigest`);
+  hex(value.profileDigest, `${label}.profileDigest`);
+  text(value.normalizerVersion, 128, `${label}.normalizerVersion`);
+  hex(value.normalizerImplementationDigest, `${label}.normalizerImplementationDigest`);
+}
+function preflightDraft(draft, sourceBytesByPath, rawBytesById) {
+  fields(draft, ["projectId", "sourceManifest", "producerClaims", "rawRefs", "runs", "pairs", "diagnosticLabels"], "Envelope draft");
+  text(draft.projectId, 256, "projectId");
+  const sourcePaths = boundedArray(draft.sourceManifest, 1, LIMITS.sources, "sourceManifest").map((entry, index) => {
+    fields(entry, ["path", "language"], `sourceManifest[${index}]`);
+    pathValue(entry.path, `sourceManifest[${index}].path`);
+    text(entry.language, 128, `sourceManifest[${index}].language`);
+    return entry.path;
+  });
+  unique(sourcePaths, "sourceManifest paths");
+  preflightByteMap(sourceBytesByPath, sourcePaths, "sourceBytesByPath");
+  const claimKeys = boundedArray(draft.producerClaims, 1, LIMITS.claims, "producerClaims").map((entry, index) => { preflightClaim(entry, `producerClaims[${index}]`, false); return entry.producerClaimKey; });
+  unique(claimKeys, "producerClaim keys");
+  const rawKeys = boundedArray(draft.rawRefs, 1, LIMITS.rawRefs, "rawRefs").map((entry, index) => {
+    fields(entry, ["rawRefKey", "kind", "mediaType"], `rawRefs[${index}]`);
+    text(entry.rawRefKey, 128, `rawRefs[${index}].rawRefKey`);
+    text(entry.kind, 128, `rawRefs[${index}].kind`);
+    text(entry.mediaType, 128, `rawRefs[${index}].mediaType`);
+    return entry.rawRefKey;
+  });
+  unique(rawKeys, "rawRef keys");
+  preflightByteMap(rawBytesById, rawKeys, "rawBytesById");
+  const runKeys = boundedArray(draft.runs, 1, LIMITS.runs, "runs").map((run, index) => {
+    fields(run, ["runKey", "producerClaimKey", "inputBinding", "coverage", "rawRefKeys"], `runs[${index}]`);
+    text(run.runKey, 128, `runs[${index}].runKey`);
+    text(run.producerClaimKey, 128, `runs[${index}].producerClaimKey`);
+    preflightInputBinding(run.inputBinding, `runs[${index}].inputBinding`, false);
+    preflightRunCoverage(run.coverage, `runs[${index}].coverage`);
+    for (const [rawIndex, rawKey] of boundedArray(run.rawRefKeys, 1, LIMITS.rawRefs, `runs[${index}].rawRefKeys`).entries()) text(rawKey, 128, `runs[${index}].rawRefKeys[${rawIndex}]`);
+    return run.runKey;
+  });
+  unique(runKeys, "run keys");
+  let occurrenceCount = 0;
+  let supportCount = 0;
+  const pairKeys = observationPairs(draft.pairs, "pairs").map((pair, pairIndex) => {
+    fields(pair, ["pairKey", "type", "from", "to", "language", "occurrences"], `pairs[${pairIndex}]`);
+    text(pair.pairKey, 128, `pairs[${pairIndex}].pairKey`);
+    if (pair.type !== "CALLS") fail("Only direct-name CALLS pairs are supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE");
+    preflightEndpoint(pair.from, `pairs[${pairIndex}].from`);
+    preflightEndpoint(pair.to, `pairs[${pairIndex}].to`);
+    text(pair.language, 128, `pairs[${pairIndex}].language`);
+    for (const [occurrenceIndex, occurrence] of boundedArray(pair.occurrences, 1, LIMITS.occurrences, `pairs[${pairIndex}].occurrences`).entries()) {
+      occurrenceCount += 1;
+      if (occurrenceCount > LIMITS.occurrences) fail("Occurrence limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+      fields(occurrence, ["occurrenceKey", "evidence", "supports"], `pairs[${pairIndex}].occurrences[${occurrenceIndex}]`);
+      text(occurrence.occurrenceKey, 128, `pairs[${pairIndex}].occurrences[${occurrenceIndex}].occurrenceKey`);
+      fields(occurrence.evidence, ["path", "digest", "range"], "occurrence.evidence");
+      pathValue(occurrence.evidence.path, "occurrence.evidence.path");
+      hex(occurrence.evidence.digest, "occurrence.evidence.digest");
+      structuralRange(occurrence.evidence.range, "occurrence.evidence.range");
+      for (const support of boundedArray(occurrence.supports, 1, LIMITS.supports, "occurrence.supports")) {
+        supportCount += 1;
+        if (supportCount > LIMITS.supports) fail("Support limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+        fields(support, ["runKey", "rawRefKey"], "support");
+        text(support.runKey, 128, "support.runKey");
+        text(support.rawRefKey, 128, "support.rawRefKey");
+      }
+    }
+    return pair.pairKey;
+  });
+  unique(pairKeys, "pair keys");
+  const diagnosticLabels = draft.diagnosticLabels === undefined ? [] : boundedArray(draft.diagnosticLabels, 0, LIMITS.occurrences, "diagnosticLabels");
+  for (const [index, label] of diagnosticLabels.entries()) text(label, 512, `diagnosticLabels[${index}]`);
+}
+function preflightDocument(document, sourceBytesByPath, rawBytesById) {
+  fields(document, ["schemaVersion", "kind", "protocol", "subject", "producerClaims", "rawRefs", "runs", "pairs", "candidateProjection", "diagnosticLabels", "authority", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "graphAuthority", "envelopeId", "envelopeHash"], "Envelope");
+  if (document.schemaVersion !== 0) fail("Envelope schemaVersion is unsupported.");
+  text(document.kind, 128, "kind");
+  fields(document.protocol, ["name", "version"], "protocol");
+  text(document.protocol.name, 128, "protocol.name");
+  text(document.protocol.version, 128, "protocol.version");
+  fields(document.subject, ["projectId", "sourceManifest", "sourceManifestDigest"], "subject");
+  text(document.subject.projectId, 256, "subject.projectId");
+  let sourceDeclaredTotal = 0;
+  const sourceKeys = boundedArray(document.subject.sourceManifest, 1, LIMITS.sources, "sourceManifest").map((entry, index) => {
+    fields(entry, ["path", "sha256", "language", "byteLength"], `sourceManifest[${index}]`);
+    pathValue(entry.path, `sourceManifest[${index}].path`);
+    hex(entry.sha256, `sourceManifest[${index}].sha256`);
+    text(entry.language, 128, `sourceManifest[${index}].language`);
+    sourceDeclaredTotal += safe(entry.byteLength, LIMITS.itemBytes, `sourceManifest[${index}].byteLength`);
+    if (sourceDeclaredTotal > LIMITS.totalBytes) fail("Source descriptor total exceeds limit.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+    return entry.path;
+  });
+  unique(sourceKeys, "sourceManifest paths");
+  hex(document.subject.sourceManifestDigest, "subject.sourceManifestDigest");
+  let rawDeclaredTotal = 0;
+  const rawKeys = boundedArray(document.rawRefs, 1, LIMITS.rawRefs, "rawRefs").map((entry, index) => {
+    fields(entry, ["kind", "mediaType", "sha256", "byteLength", "rawRefId"], `rawRefs[${index}]`);
+    text(entry.kind, 128, `rawRefs[${index}].kind`);
+    text(entry.mediaType, 128, `rawRefs[${index}].mediaType`);
+    hex(entry.sha256, `rawRefs[${index}].sha256`);
+    rawDeclaredTotal += safe(entry.byteLength, LIMITS.itemBytes, `rawRefs[${index}].byteLength`);
+    if (rawDeclaredTotal > LIMITS.totalBytes) fail("Raw descriptor total exceeds limit.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+    return text(entry.rawRefId, 128, `rawRefs[${index}].rawRefId`);
+  });
+  unique(rawKeys, "rawRef IDs");
+  const claimIds = boundedArray(document.producerClaims, 1, LIMITS.claims, "producerClaims").map((entry, index) => { preflightClaim(entry, `producerClaims[${index}]`, true); return entry.producerClaimId; });
+  unique(claimIds, "producerClaim IDs");
+  const runIds = boundedArray(document.runs, 1, LIMITS.runs, "runs").map((run, index) => {
+    fields(run, ["producerClaimId", "inputBinding", "coverage", "rawRefIds", "runId"], `runs[${index}]`);
+    text(run.producerClaimId, 128, `runs[${index}].producerClaimId`);
+    preflightInputBinding(run.inputBinding, `runs[${index}].inputBinding`, true);
+    preflightRunCoverage(run.coverage, `runs[${index}].coverage`);
+    for (const [rawIndex, rawId] of boundedArray(run.rawRefIds, 1, LIMITS.rawRefs, `runs[${index}].rawRefIds`).entries()) text(rawId, 128, `runs[${index}].rawRefIds[${rawIndex}]`);
+    return text(run.runId, 128, `runs[${index}].runId`);
+  });
+  unique(runIds, "run IDs");
+  let occurrenceCount = 0;
+  let supportCount = 0;
+  const pairIds = observationPairs(document.pairs, "pairs").map((pair, pairIndex) => {
+    fields(pair, ["type", "from", "to", "language", "pairId", "occurrences"], `pairs[${pairIndex}]`);
+    if (pair.type !== "CALLS") fail("Only direct-name CALLS pairs are supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE");
+    preflightEndpoint(pair.from, `pairs[${pairIndex}].from`);
+    preflightEndpoint(pair.to, `pairs[${pairIndex}].to`);
+    text(pair.language, 128, `pairs[${pairIndex}].language`);
+    text(pair.pairId, 128, `pairs[${pairIndex}].pairId`);
+    for (const occurrence of boundedArray(pair.occurrences, 1, LIMITS.occurrences, `pairs[${pairIndex}].occurrences`)) {
+      occurrenceCount += 1;
+      if (occurrenceCount > LIMITS.occurrences) fail("Occurrence limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+      fields(occurrence, ["pairId", "evidence", "occurrenceId", "supports"], "occurrence");
+      text(occurrence.pairId, 128, "occurrence.pairId");
+      fields(occurrence.evidence, ["path", "digest", "range"], "occurrence.evidence");
+      pathValue(occurrence.evidence.path, "occurrence.evidence.path");
+      hex(occurrence.evidence.digest, "occurrence.evidence.digest");
+      structuralRange(occurrence.evidence.range, "occurrence.evidence.range");
+      text(occurrence.occurrenceId, 128, "occurrence.occurrenceId");
+      for (const support of boundedArray(occurrence.supports, 1, LIMITS.supports, "occurrence.supports")) {
+        supportCount += 1;
+        if (supportCount > LIMITS.supports) fail("Support limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+        fields(support, ["occurrenceId", "runId", "rawRefId", "supportId"], "support");
+        text(support.occurrenceId, 128, "support.occurrenceId");
+        text(support.runId, 128, "support.runId");
+        text(support.rawRefId, 128, "support.rawRefId");
+        text(support.supportId, 128, "support.supportId");
+      }
+    }
+    return pair.pairId;
+  });
+  unique(pairIds, "pair IDs");
+  fields(document.candidateProjection, ["status", "policy", "occurrenceDisposition", "repositoryCompleteness", "entries", "projectionDigest"], "candidateProjection");
+  text(document.candidateProjection.status, 128, "candidateProjection.status");
+  text(document.candidateProjection.policy, 128, "candidateProjection.policy");
+  text(document.candidateProjection.occurrenceDisposition, 128, "candidateProjection.occurrenceDisposition");
+  text(document.candidateProjection.repositoryCompleteness, 128, "candidateProjection.repositoryCompleteness");
+  for (const entry of boundedArray(document.candidateProjection.entries, 1, LIMITS.pairs, "candidateProjection.entries")) {
+    fields(entry, ["pairId", "occurrenceIds"], "candidateProjection.entry");
+    text(entry.pairId, 128, "candidateProjection.entry.pairId");
+    for (const occurrenceId of boundedArray(entry.occurrenceIds, 1, LIMITS.occurrences, "candidateProjection.entry.occurrenceIds")) text(occurrenceId, 128, "candidateProjection occurrenceId");
+  }
+  hex(document.candidateProjection.projectionDigest, "candidateProjection.projectionDigest");
+  for (const [index, label] of boundedArray(document.diagnosticLabels, 0, LIMITS.occurrences, "diagnosticLabels").entries()) text(label, 512, `diagnosticLabels[${index}]`);
+  text(document.authority, 128, "authority");
+  for (const key of ["instructionAuthority", "promotionAuthority", "recoveryAuthority", "graphAuthority"]) if (typeof document[key] !== "boolean") fail(`${key} must be boolean.`);
+  text(document.envelopeId, 128, "envelopeId");
+  hex(document.envelopeHash, "envelopeHash");
+  if (sourceBytesByPath !== undefined) preflightByteMap(sourceBytesByPath, sourceKeys, "sourceBytesByPath");
+  if (rawBytesById !== undefined) preflightByteMap(rawBytesById, rawKeys, "rawBytesById");
+}
 
 function validateMap(map, label) { if (!(map instanceof Map)) fail(`${label} must be a Map.`, "INVALID_STRUCTURAL_RELATION_BYTE_MAP"); }
 function mapExact(map, descriptors, label) {
@@ -100,7 +341,8 @@ function endpoint(entry, label, sourcesByPath, sourceTexts) {
  * caller-owned; only their bounded descriptors and content identities persist.
  */
 export function buildStructuralRelationObservationEnvelope(draft, { sourceBytesByPath, rawBytesById } = {}) {
-  jsonSize(draft, "Envelope draft"); fields(draft, ["projectId", "sourceManifest", "producerClaims", "rawRefs", "runs", "pairs", "diagnosticLabels"], "Envelope draft");
+  preflightDraft(draft, sourceBytesByPath, rawBytesById);
+  jsonSize(draft, "Envelope draft");
   const projectId = text(draft.projectId, 256, "projectId");
   const sources = normalizeSourceDescriptors(draft.sourceManifest, sourceBytesByPath); const sourcesByPath = new Map(sources.map((entry) => [entry.path, entry])); const sourceTexts = new Map(sources.map((entry) => [entry.path, sourceText(sourceBytesByPath.get(entry.path), entry.path)])); const sourceManifestDigest = sourceSubsetDigest(sources);
   const rawWithKeys = normalizeRawDescriptors(draft.rawRefs, rawBytesById); const rawByKey = new Map(rawWithKeys.map((entry) => [entry.rawRefKey, entry]));
@@ -121,11 +363,11 @@ export function buildStructuralRelationObservationEnvelope(draft, { sourceBytesB
   const pairsWithKeys = draft.pairs.map((entry, index) => {
     fields(entry, ["pairKey", "type", "from", "to", "language", "occurrences"], `pairs[${index}]`); if (entry.type !== "CALLS") fail("Only direct-name CALLS pairs are supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE"); const from = endpoint(entry.from, `pairs[${index}].from`, sourcesByPath, sourceTexts); const to = endpoint(entry.to, `pairs[${index}].to`, sourcesByPath, sourceTexts); const pairPayload = { type: "CALLS", from, to, language: text(entry.language, 128, "pair language") }; const pairId = id("structural-pair", pairPayload);
     if (!Array.isArray(entry.occurrences) || entry.occurrences.length < 1) fail("Pair must contain occurrences.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE"); const occurrences = entry.occurrences.map((occurrence, occurrenceIndex) => {
-      occurrenceCount += 1; if (occurrenceCount > LIMITS.occurrences) fail("Occurrence limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); fields(occurrence, ["occurrenceKey", "evidence", "supports"], `occurrences[${occurrenceIndex}]`); fields(occurrence.evidence, ["path", "digest", "range"], "occurrence.evidence"); const source = sourcesByPath.get(occurrence.evidence.path); if (!source || source.sha256 !== occurrence.evidence.digest) fail("Occurrence does not bind to sourceManifest.", "STRUCTURAL_RELATION_SOURCE_MISMATCH"); const evidenceRange = range(sourceTexts.get(source.path).lines, occurrence.evidence.range, "occurrence.evidence.range"); if (!contains(from.declarationRange, evidenceRange)) fail("Occurrence is outside caller declaration.", "STRUCTURAL_RELATION_COORDINATE_MISMATCH"); if (sliceRange(sourceTexts.get(source.path).lines, evidenceRange) !== to.name) fail("Occurrence lexeme does not equal target name.", "STRUCTURAL_RELATION_LEXEME_MISMATCH"); const occurrencePayload = { pairId, evidence: { path: source.path, digest: source.sha256, range: evidenceRange } }; const occurrenceId = id("structural-occurrence", occurrencePayload);
+      occurrenceCount += 1; if (occurrenceCount > LIMITS.occurrences) fail("Occurrence limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); fields(occurrence, ["occurrenceKey", "evidence", "supports"], `occurrences[${occurrenceIndex}]`); fields(occurrence.evidence, ["path", "digest", "range"], "occurrence.evidence"); const source = sourcesByPath.get(occurrence.evidence.path); if (!source || source.sha256 !== occurrence.evidence.digest) fail("Occurrence does not bind to sourceManifest.", "STRUCTURAL_RELATION_SOURCE_MISMATCH"); if (source.path !== from.path || source.sha256 !== from.digest) fail("Occurrence must bind to the caller source in v0.", "STRUCTURAL_RELATION_SOURCE_MISMATCH"); const evidenceRange = range(sourceTexts.get(source.path).lines, occurrence.evidence.range, "occurrence.evidence.range"); if (!contains(from.declarationRange, evidenceRange)) fail("Occurrence is outside caller declaration.", "STRUCTURAL_RELATION_COORDINATE_MISMATCH"); if (sliceRange(sourceTexts.get(source.path).lines, evidenceRange) !== to.name) fail("Name-different call occurrences are unsupported in v0.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE"); const occurrencePayload = { pairId, evidence: { path: source.path, digest: source.sha256, range: evidenceRange } }; const occurrenceId = id("structural-occurrence", occurrencePayload);
       if (!Array.isArray(occurrence.supports) || occurrence.supports.length < 1) fail("Occurrence must have support.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE"); const supports = occurrence.supports.map((support) => { supportCount += 1; if (supportCount > LIMITS.supports) fail("Support limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); fields(support, ["runKey", "rawRefKey"], "support"); const run = runByKey.get(support.runKey); const raw = rawByKey.get(support.rawRefKey); if (!run || !raw || !run.rawRefIds.includes(raw.rawRefId)) fail("Support references are not closed.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); for (const bound of [from, to, occurrencePayload.evidence]) if (!run.coverage.admittedSources.some((item) => item.path === bound.path && item.digest === bound.digest)) fail("Support uses a source outside run admittedSources.", "STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH"); const payload = { occurrenceId, runId: run.runId, rawRefId: raw.rawRefId }; return { ...payload, supportId: id("structural-support", payload) }; }).sort((a, b) => ascii(a.supportId, b.supportId)); unique(supports.map((item) => item.supportId), "occurrence supports"); return { ...occurrencePayload, occurrenceKey: text(occurrence.occurrenceKey, 128, "occurrenceKey"), occurrenceId, supports };
     }).sort((a, b) => ascii(a.occurrenceId, b.occurrenceId)); unique(occurrences.map((item) => item.occurrenceId), "pair occurrences"); return { ...pairPayload, pairKey: text(entry.pairKey, 128, "pairKey"), pairId, occurrences };
   }).sort((a, b) => ascii(a.pairId, b.pairId)); unique(pairsWithKeys.map((entry) => entry.pairKey), "pair keys"); unique(pairsWithKeys.map((entry) => entry.pairId), "pair IDs");
-  const usedRuns = new Set(); const usedRaw = new Set(); for (const pair of pairsWithKeys) for (const occurrence of pair.occurrences) for (const support of occurrence.supports) { usedRuns.add(support.runId); usedRaw.add(support.rawRefId); } if (usedRuns.size !== runsWithKeys.length || usedRaw.size !== rawWithKeys.length) fail("Envelope contains orphan run or rawRef.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH");
+  const usedRuns = new Set(); const usedRaw = new Set(); for (const pair of pairsWithKeys) for (const occurrence of pair.occurrences) for (const support of occurrence.supports) { usedRuns.add(support.runId); usedRaw.add(support.rawRefId); } const usedClaims = new Set(runsWithKeys.map((run) => run.producerClaimId)); if (usedRuns.size !== runsWithKeys.length || usedRaw.size !== rawWithKeys.length || usedClaims.size !== claimsWithKeys.length) fail("Envelope contains an orphan producer claim, run, or rawRef.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH");
   const projectionEntries = pairsWithKeys.map((pair) => ({ pairId: pair.pairId, occurrenceIds: pair.occurrences.map((item) => item.occurrenceId).sort(ascii) })).sort((a, b) => ascii(a.pairId, b.pairId)); const projectionPayload = { policy: "relation-pair-only-v0", entries: projectionEntries }; const candidateProjection = { status: "candidate-only", policy: "relation-pair-only-v0", occurrenceDisposition: "preserved-in-envelope-not-in-pair", repositoryCompleteness: "not-claimed", entries: projectionEntries, projectionDigest: H(projectionPayload) };
   const clean = (entry) => Object.fromEntries(Object.entries(entry).filter(([key]) => !key.endsWith("Key")));
   const payload = { schemaVersion: 0, kind: "StructuralRelationObservationEnvelope", protocol: { name: "head-agent-core-structural-relation-observation-envelope", version: STRUCTURAL_RELATION_OBSERVATION_ENVELOPE_VERSION }, subject: { projectId, sourceManifest: sources, sourceManifestDigest }, producerClaims: claimsWithKeys.map(clean).sort((a, b) => ascii(a.producerClaimId, b.producerClaimId)), rawRefs: rawWithKeys.map(clean).sort((a, b) => ascii(a.rawRefId, b.rawRefId)), runs: runsWithKeys.map(clean).sort((a, b) => ascii(a.runId, b.runId)), pairs: pairsWithKeys.map((pair) => clean({ ...pair, occurrences: pair.occurrences.map((occurrence) => clean(occurrence)) })), candidateProjection, diagnosticLabels: (draft.diagnosticLabels || []).map((value) => text(value, 512, "diagnostic label")).sort(ascii), authority: "ephemeral-host-evidence-only", instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false, graphAuthority: false };
@@ -140,7 +382,8 @@ export function buildStructuralRelationObservationEnvelope(draft, { sourceBytesB
  * authority.
  */
 export function verifyStructuralRelationObservationEnvelope(document, { sourceBytesByPath, rawBytesById } = {}) {
-  jsonSize(document, "Envelope"); fields(document, ["schemaVersion", "kind", "protocol", "subject", "producerClaims", "rawRefs", "runs", "pairs", "candidateProjection", "diagnosticLabels", "authority", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "graphAuthority", "envelopeId", "envelopeHash"], "Envelope");
+  preflightDocument(document, sourceBytesByPath, rawBytesById);
+  jsonSize(document, "Envelope");
   fields(document.protocol, ["name", "version"], "protocol");
   if (document.schemaVersion !== 0 || document.kind !== "StructuralRelationObservationEnvelope" || document.protocol?.name !== "head-agent-core-structural-relation-observation-envelope" || document.protocol?.version !== STRUCTURAL_RELATION_OBSERVATION_ENVELOPE_VERSION) fail("Envelope protocol is unsupported.");
   if (document.authority !== "ephemeral-host-evidence-only" || document.instructionAuthority !== false || document.promotionAuthority !== false || document.recoveryAuthority !== false || document.graphAuthority !== false) fail("Envelope cannot carry authority.", "UNSUPPORTED_STRUCTURAL_RELATION_AUTHORITY");
@@ -150,11 +393,11 @@ export function verifyStructuralRelationObservationEnvelope(document, { sourceBy
   const sourcesByPath = new Map(sources.map((entry) => [entry.path, entry]));
   const sourceTexts = sourceBytesByPath === undefined ? null : (mapExact(sourceBytesByPath, sources, "sourceBytesByPath"), new Map(sources.map((entry) => [entry.path, sourceText(sourceBytesByPath.get(entry.path), entry.path)])));
   if (rawBytesById !== undefined) mapExact(rawBytesById, document.rawRefs, "rawBytesById");
-  boundedArray(document.runs, 1, LIMITS.runs, "runs"); exactOrder(document.runs, [...document.runs].sort((a, b) => ascii(a.runId, b.runId)), "runs"); const runById = new Map(); for (const run of document.runs) { fields(run, ["producerClaimId", "inputBinding", "coverage", "rawRefIds", "runId"], "run"); fields(run.inputBinding, ["sourceManifestScope", "sourceManifestDigest", "configDigest", "profileDigest", "normalizerVersion", "normalizerImplementationDigest"], "run.inputBinding"); fields(run.coverage, ["admittedSources", "queriedDirection", "queriedSymbols", "reportedResponseClosure", "programCoverage", "repositoryRelationCompleteness"], "run.coverage"); if (!claims.has(run.producerClaimId)) fail("Run claim closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); boundedArray(run.rawRefIds, 1, LIMITS.rawRefs, "run rawRefIds"); exactOrder(run.rawRefIds, [...run.rawRefIds].sort(ascii), "run rawRefIds"); unique(run.rawRefIds, "run rawRefIds"); for (const rawId of run.rawRefIds) if (!rawById.has(rawId)) fail("Run raw closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); const admitted = boundedArray(run.coverage.admittedSources, 1, LIMITS.sources, "run admittedSources"); exactOrder(admitted,[...admitted].sort((a,b)=>ascii(a.path,b.path)),"run admittedSources");unique(admitted.map((item)=>item.path),"run admittedSources"); for (const item of admitted){fields(item,["path","digest"],"run admittedSource");pathValue(item.path,"run admittedSource.path");hex(item.digest,"run admittedSource.digest");if (!sourcesByPath.has(item.path) || sourcesByPath.get(item.path).sha256 !== item.digest) fail("Run source closure mismatch.", "STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH");} if(!new Set(["full","subset"]).has(run.inputBinding.sourceManifestScope)||(run.inputBinding.sourceManifestScope==="full"&&admitted.length!==sources.length))fail("Run scope mismatch.","STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH");hex(run.inputBinding.sourceManifestDigest,"run sourceManifestDigest");hex(run.inputBinding.configDigest,"run configDigest");hex(run.inputBinding.profileDigest,"run profileDigest");text(run.inputBinding.normalizerVersion,128,"run normalizerVersion");hex(run.inputBinding.normalizerImplementationDigest,"run normalizerImplementationDigest");if(run.coverage.queriedDirection!=="outgoing"||run.coverage.programCoverage!=="unknown"||run.coverage.repositoryRelationCompleteness!=="not-claimed"||!RESPONSE_CLOSURE.has(run.coverage.reportedResponseClosure))fail("Run coverage unsupported.","UNSUPPORTED_STRUCTURAL_RELATION_COVERAGE");boundedArray(run.coverage.queriedSymbols,0,LIMITS.occurrences,"queriedSymbols");exactOrder(run.coverage.queriedSymbols,[...run.coverage.queriedSymbols].sort((a,b)=>ascii(canonicalJson(a),canonicalJson(b))),"queriedSymbols");for(const symbol of run.coverage.queriedSymbols){fields(symbol,["path","digest","name","symbolKind","line"],"queriedSymbol");pathValue(symbol.path,"queriedSymbol.path");hex(symbol.digest,"queriedSymbol.digest");text(symbol.name,256,"queriedSymbol.name");text(symbol.symbolKind,128,"queriedSymbol.symbolKind");safe(symbol.line,LIMITS.coordinate,"queriedSymbol.line");if(!admitted.some((item)=>item.path===symbol.path&&item.digest===symbol.digest))fail("queriedSymbol outside run scope.","STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH");} const digest = sourceSubsetDigest(admitted.map((item) => sourcesByPath.get(item.path))); if (run.inputBinding.sourceManifestDigest !== digest) fail("Run manifest digest mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH"); const payload = { producerClaimId: run.producerClaimId, inputBinding: run.inputBinding, coverage: run.coverage, rawRefIds: run.rawRefIds }; if (run.runId !== id("structural-run", payload)) fail("runId mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH"); runById.set(run.runId, run); }
+  boundedArray(document.runs, 1, LIMITS.runs, "runs"); exactOrder(document.runs, [...document.runs].sort((a, b) => ascii(a.runId, b.runId)), "runs"); const runById = new Map(); const usedClaims = new Set(); for (const run of document.runs) { fields(run, ["producerClaimId", "inputBinding", "coverage", "rawRefIds", "runId"], "run"); fields(run.inputBinding, ["sourceManifestScope", "sourceManifestDigest", "configDigest", "profileDigest", "normalizerVersion", "normalizerImplementationDigest"], "run.inputBinding"); fields(run.coverage, ["admittedSources", "queriedDirection", "queriedSymbols", "reportedResponseClosure", "programCoverage", "repositoryRelationCompleteness"], "run.coverage"); if (!claims.has(run.producerClaimId)) fail("Run claim closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); usedClaims.add(run.producerClaimId); boundedArray(run.rawRefIds, 1, LIMITS.rawRefs, "run rawRefIds"); exactOrder(run.rawRefIds, [...run.rawRefIds].sort(ascii), "run rawRefIds"); unique(run.rawRefIds, "run rawRefIds"); for (const rawId of run.rawRefIds) if (!rawById.has(rawId)) fail("Run raw closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); const admitted = boundedArray(run.coverage.admittedSources, 1, LIMITS.sources, "run admittedSources"); exactOrder(admitted,[...admitted].sort((a,b)=>ascii(a.path,b.path)),"run admittedSources");unique(admitted.map((item)=>item.path),"run admittedSources"); for (const item of admitted){fields(item,["path","digest"],"run admittedSource");pathValue(item.path,"run admittedSource.path");hex(item.digest,"run admittedSource.digest");if (!sourcesByPath.has(item.path) || sourcesByPath.get(item.path).sha256 !== item.digest) fail("Run source closure mismatch.", "STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH");} if(!new Set(["full","subset"]).has(run.inputBinding.sourceManifestScope)||(run.inputBinding.sourceManifestScope==="full"&&admitted.length!==sources.length))fail("Run scope mismatch.","STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH");hex(run.inputBinding.sourceManifestDigest,"run sourceManifestDigest");hex(run.inputBinding.configDigest,"run configDigest");hex(run.inputBinding.profileDigest,"run profileDigest");text(run.inputBinding.normalizerVersion,128,"run normalizerVersion");hex(run.inputBinding.normalizerImplementationDigest,"run normalizerImplementationDigest");if(run.coverage.queriedDirection!=="outgoing"||run.coverage.programCoverage!=="unknown"||run.coverage.repositoryRelationCompleteness!=="not-claimed"||!RESPONSE_CLOSURE.has(run.coverage.reportedResponseClosure))fail("Run coverage unsupported.","UNSUPPORTED_STRUCTURAL_RELATION_COVERAGE");boundedArray(run.coverage.queriedSymbols,0,LIMITS.occurrences,"queriedSymbols");exactOrder(run.coverage.queriedSymbols,[...run.coverage.queriedSymbols].sort((a,b)=>ascii(canonicalJson(a),canonicalJson(b))),"queriedSymbols");for(const symbol of run.coverage.queriedSymbols){fields(symbol,["path","digest","name","symbolKind","line"],"queriedSymbol");pathValue(symbol.path,"queriedSymbol.path");hex(symbol.digest,"queriedSymbol.digest");text(symbol.name,256,"queriedSymbol.name");text(symbol.symbolKind,128,"queriedSymbol.symbolKind");safe(symbol.line,LIMITS.coordinate,"queriedSymbol.line");if(!admitted.some((item)=>item.path===symbol.path&&item.digest===symbol.digest))fail("queriedSymbol outside run scope.","STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH");} const digest = sourceSubsetDigest(admitted.map((item) => sourcesByPath.get(item.path))); if (run.inputBinding.sourceManifestDigest !== digest) fail("Run manifest digest mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH"); const payload = { producerClaimId: run.producerClaimId, inputBinding: run.inputBinding, coverage: run.coverage, rawRefIds: run.rawRefIds }; if (run.runId !== id("structural-run", payload)) fail("runId mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH"); runById.set(run.runId, run); }
   unique([...runById.keys()], "run IDs");
-  boundedArray(document.pairs, 1, LIMITS.pairs, "pairs"); exactOrder(document.pairs, [...document.pairs].sort((a, b) => ascii(a.pairId, b.pairId)), "pairs"); const projection = []; const seenOccurrences = new Set(); const seenSupports = new Set(); const usedRuns = new Set(); const usedRaw = new Set(); let occurrenceCount = 0; let supportCount = 0; for (const pair of document.pairs) { fields(pair, ["type", "from", "to", "language", "pairId", "occurrences"], "pair"); if (pair.type !== "CALLS") fail("Only CALLS supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE"); text(pair.language, 128, "pair.language"); for (const [label, value] of [["pair.from", pair.from], ["pair.to", pair.to]]) { fields(value, ["path", "digest", "name", "symbolKind", "declarationRange", "selectionRange"], label); const bound = sourcesByPath.get(pathValue(value.path, `${label}.path`)); if (!bound || bound.sha256 !== value.digest) fail(`${label} source mismatch.`, "STRUCTURAL_RELATION_SOURCE_MISMATCH"); hex(value.digest, `${label}.digest`); text(value.name, 256, `${label}.name`); text(value.symbolKind, 128, `${label}.symbolKind`); structuralRange(value.declarationRange, `${label}.declarationRange`); structuralRange(value.selectionRange, `${label}.selectionRange`); if (!contains(value.declarationRange, value.selectionRange)) fail(`${label} selectionRange is outside declarationRange.`, "STRUCTURAL_RELATION_COORDINATE_MISMATCH"); } const pairPayload = { type: pair.type, from: pair.from, to: pair.to, language: pair.language }; if (pair.pairId !== id("structural-pair", pairPayload)) fail("pairId mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH"); if (sourceTexts) { endpoint(pair.from, "pair.from", sourcesByPath, sourceTexts); endpoint(pair.to, "pair.to", sourcesByPath, sourceTexts); } boundedArray(pair.occurrences, 1, LIMITS.occurrences, "occurrences"); exactOrder(pair.occurrences, [...pair.occurrences].sort((a, b) => ascii(a.occurrenceId, b.occurrenceId)), "occurrences"); const occurrenceIds = []; for (const occurrence of pair.occurrences) { occurrenceCount += 1; if (occurrenceCount > LIMITS.occurrences) fail("Occurrence limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); fields(occurrence, ["pairId", "evidence", "occurrenceId", "supports"], "occurrence"); fields(occurrence.evidence, ["path", "digest", "range"], "occurrence.evidence"); const occurrenceSource = sourcesByPath.get(pathValue(occurrence.evidence.path, "occurrence.evidence.path")); if (!occurrenceSource || occurrenceSource.sha256 !== occurrence.evidence.digest) fail("Occurrence source mismatch.", "STRUCTURAL_RELATION_SOURCE_MISMATCH"); hex(occurrence.evidence.digest, "occurrence.evidence.digest"); structuralRange(occurrence.evidence.range, "occurrence.evidence.range"); if (!contains(pair.from.declarationRange, occurrence.evidence.range)) fail("Occurrence is outside caller declaration.", "STRUCTURAL_RELATION_COORDINATE_MISMATCH"); if (occurrence.pairId !== pair.pairId) fail("Occurrence pair closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); const payload = { pairId: pair.pairId, evidence: occurrence.evidence }; if (occurrence.occurrenceId !== id("structural-occurrence", payload)) fail("occurrenceId mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH"); if (seenOccurrences.has(occurrence.occurrenceId)) fail("Duplicate occurrence.", "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID"); seenOccurrences.add(occurrence.occurrenceId); occurrenceIds.push(occurrence.occurrenceId); if (sourceTexts) { const r = range(sourceTexts.get(occurrenceSource.path).lines, occurrence.evidence.range, "occurrence range"); if (sliceRange(sourceTexts.get(occurrenceSource.path).lines, r) !== pair.to.name) fail("Occurrence coordinate or lexeme mismatch.", "STRUCTURAL_RELATION_LEXEME_MISMATCH"); } boundedArray(occurrence.supports, 1, LIMITS.supports, "supports"); exactOrder(occurrence.supports, [...occurrence.supports].sort((a, b) => ascii(a.supportId, b.supportId)), "supports"); for (const support of occurrence.supports) { supportCount += 1; if (supportCount > LIMITS.supports) fail("Support limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); fields(support, ["occurrenceId", "runId", "rawRefId", "supportId"], "support"); const supportPayload = { occurrenceId: occurrence.occurrenceId, runId: support.runId, rawRefId: support.rawRefId }; if (support.occurrenceId !== occurrence.occurrenceId || support.supportId !== id("structural-support", supportPayload) || !runById.has(support.runId) || !rawById.has(support.rawRefId) || !runById.get(support.runId).rawRefIds.includes(support.rawRefId)) fail("Support closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); if (seenSupports.has(support.supportId)) fail("Duplicate support.", "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID"); seenSupports.add(support.supportId); usedRuns.add(support.runId); usedRaw.add(support.rawRefId); } } projection.push({ pairId: pair.pairId, occurrenceIds: occurrenceIds.sort(ascii) }); }
+  observationPairs(document.pairs, "pairs"); exactOrder(document.pairs, [...document.pairs].sort((a, b) => ascii(a.pairId, b.pairId)), "pairs"); const projection = []; const seenOccurrences = new Set(); const seenSupports = new Set(); const usedRuns = new Set(); const usedRaw = new Set(); let occurrenceCount = 0; let supportCount = 0; for (const pair of document.pairs) { fields(pair, ["type", "from", "to", "language", "pairId", "occurrences"], "pair"); if (pair.type !== "CALLS") fail("Only CALLS supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE"); text(pair.language, 128, "pair.language"); for (const [label, value] of [["pair.from", pair.from], ["pair.to", pair.to]]) { fields(value, ["path", "digest", "name", "symbolKind", "declarationRange", "selectionRange"], label); const bound = sourcesByPath.get(pathValue(value.path, `${label}.path`)); if (!bound || bound.sha256 !== value.digest) fail(`${label} source mismatch.`, "STRUCTURAL_RELATION_SOURCE_MISMATCH"); hex(value.digest, `${label}.digest`); text(value.name, 256, `${label}.name`); text(value.symbolKind, 128, `${label}.symbolKind`); structuralRange(value.declarationRange, `${label}.declarationRange`); structuralRange(value.selectionRange, `${label}.selectionRange`); if (!contains(value.declarationRange, value.selectionRange)) fail(`${label} selectionRange is outside declarationRange.`, "STRUCTURAL_RELATION_COORDINATE_MISMATCH"); } const pairPayload = { type: pair.type, from: pair.from, to: pair.to, language: pair.language }; if (pair.pairId !== id("structural-pair", pairPayload)) fail("pairId mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH"); if (sourceTexts) { endpoint(pair.from, "pair.from", sourcesByPath, sourceTexts); endpoint(pair.to, "pair.to", sourcesByPath, sourceTexts); } boundedArray(pair.occurrences, 1, LIMITS.occurrences, "occurrences"); exactOrder(pair.occurrences, [...pair.occurrences].sort((a, b) => ascii(a.occurrenceId, b.occurrenceId)), "occurrences"); const occurrenceIds = []; for (const occurrence of pair.occurrences) { occurrenceCount += 1; if (occurrenceCount > LIMITS.occurrences) fail("Occurrence limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); fields(occurrence, ["pairId", "evidence", "occurrenceId", "supports"], "occurrence"); fields(occurrence.evidence, ["path", "digest", "range"], "occurrence.evidence"); const occurrenceSource = sourcesByPath.get(pathValue(occurrence.evidence.path, "occurrence.evidence.path")); if (!occurrenceSource || occurrenceSource.sha256 !== occurrence.evidence.digest) fail("Occurrence source mismatch.", "STRUCTURAL_RELATION_SOURCE_MISMATCH"); if (occurrenceSource.path !== pair.from.path || occurrenceSource.sha256 !== pair.from.digest) fail("Occurrence must bind to the caller source in v0.", "STRUCTURAL_RELATION_SOURCE_MISMATCH"); hex(occurrence.evidence.digest, "occurrence.evidence.digest"); structuralRange(occurrence.evidence.range, "occurrence.evidence.range"); if (!contains(pair.from.declarationRange, occurrence.evidence.range)) fail("Occurrence is outside caller declaration.", "STRUCTURAL_RELATION_COORDINATE_MISMATCH"); if (occurrence.pairId !== pair.pairId) fail("Occurrence pair closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); const payload = { pairId: pair.pairId, evidence: occurrence.evidence }; if (occurrence.occurrenceId !== id("structural-occurrence", payload)) fail("occurrenceId mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH"); if (seenOccurrences.has(occurrence.occurrenceId)) fail("Duplicate occurrence.", "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID"); seenOccurrences.add(occurrence.occurrenceId); occurrenceIds.push(occurrence.occurrenceId); if (sourceTexts) { const r = range(sourceTexts.get(occurrenceSource.path).lines, occurrence.evidence.range, "occurrence range"); if (sliceRange(sourceTexts.get(occurrenceSource.path).lines, r) !== pair.to.name) fail("Name-different call occurrences are unsupported in v0.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE"); } boundedArray(occurrence.supports, 1, LIMITS.supports, "supports"); exactOrder(occurrence.supports, [...occurrence.supports].sort((a, b) => ascii(a.supportId, b.supportId)), "supports"); for (const support of occurrence.supports) { supportCount += 1; if (supportCount > LIMITS.supports) fail("Support limit exceeded.", "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); fields(support, ["occurrenceId", "runId", "rawRefId", "supportId"], "support"); const supportPayload = { occurrenceId: occurrence.occurrenceId, runId: support.runId, rawRefId: support.rawRefId }; if (support.occurrenceId !== occurrence.occurrenceId || support.supportId !== id("structural-support", supportPayload) || !runById.has(support.runId) || !rawById.has(support.rawRefId) || !runById.get(support.runId).rawRefIds.includes(support.rawRefId)) fail("Support closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); if (seenSupports.has(support.supportId)) fail("Duplicate support.", "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID"); seenSupports.add(support.supportId); usedRuns.add(support.runId); usedRaw.add(support.rawRefId); } } projection.push({ pairId: pair.pairId, occurrenceIds: occurrenceIds.sort(ascii) }); }
   for(const pair of document.pairs)for(const occurrence of pair.occurrences)for(const support of occurrence.supports){const run=runById.get(support.runId);for(const bound of [pair.from,pair.to,occurrence.evidence])if(!run.coverage.admittedSources.some((item)=>item.path===bound.path&&item.digest===bound.digest))fail("Support uses source outside run admittedSources.","STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH");}
-  if (usedRuns.size !== document.runs.length || usedRaw.size !== document.rawRefs.length) fail("Orphan run/raw closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); fields(document.candidateProjection,["status","policy","occurrenceDisposition","repositoryCompleteness","entries","projectionDigest"],"candidateProjection"); boundedArray(document.candidateProjection.entries, 1, LIMITS.pairs, "candidateProjection.entries"); for (const entry of document.candidateProjection.entries) { fields(entry, ["pairId", "occurrenceIds"], "candidateProjection.entry"); text(entry.pairId, 128, "candidateProjection.entry.pairId"); boundedArray(entry.occurrenceIds, 1, LIMITS.occurrences, "candidateProjection.entry.occurrenceIds"); unique(entry.occurrenceIds, "candidateProjection occurrenceIds"); exactOrder(entry.occurrenceIds, [...entry.occurrenceIds].sort(ascii), "candidateProjection occurrenceIds"); } exactOrder(document.candidateProjection.entries, projection.sort((a, b) => ascii(a.pairId, b.pairId)), "projection entries"); if (document.candidateProjection.status !== "candidate-only" || document.candidateProjection.policy !== "relation-pair-only-v0" || document.candidateProjection.occurrenceDisposition !== "preserved-in-envelope-not-in-pair" || document.candidateProjection.repositoryCompleteness !== "not-claimed" || document.candidateProjection.projectionDigest !== H({ policy: "relation-pair-only-v0", entries: document.candidateProjection.entries })) fail("Candidate projection is invalid.", "STRUCTURAL_RELATION_PROJECTION_MISMATCH"); if(!Array.isArray(document.diagnosticLabels)||document.diagnosticLabels.some((value)=>typeof value!=="string"||!value||value.length>512))fail("diagnosticLabels invalid.");exactOrder(document.diagnosticLabels,[...document.diagnosticLabels].sort(ascii),"diagnosticLabels");
+  if (usedRuns.size !== document.runs.length || usedRaw.size !== document.rawRefs.length || usedClaims.size !== document.producerClaims.length) fail("Orphan producer claim/run/raw closure mismatch.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH"); fields(document.candidateProjection,["status","policy","occurrenceDisposition","repositoryCompleteness","entries","projectionDigest"],"candidateProjection"); boundedArray(document.candidateProjection.entries, 1, LIMITS.pairs, "candidateProjection.entries"); for (const entry of document.candidateProjection.entries) { fields(entry, ["pairId", "occurrenceIds"], "candidateProjection.entry"); text(entry.pairId, 128, "candidateProjection.entry.pairId"); boundedArray(entry.occurrenceIds, 1, LIMITS.occurrences, "candidateProjection.entry.occurrenceIds"); unique(entry.occurrenceIds, "candidateProjection occurrenceIds"); exactOrder(entry.occurrenceIds, [...entry.occurrenceIds].sort(ascii), "candidateProjection occurrenceIds"); } exactOrder(document.candidateProjection.entries, projection.sort((a, b) => ascii(a.pairId, b.pairId)), "projection entries"); if (document.candidateProjection.status !== "candidate-only" || document.candidateProjection.policy !== "relation-pair-only-v0" || document.candidateProjection.occurrenceDisposition !== "preserved-in-envelope-not-in-pair" || document.candidateProjection.repositoryCompleteness !== "not-claimed" || document.candidateProjection.projectionDigest !== H({ policy: "relation-pair-only-v0", entries: document.candidateProjection.entries })) fail("Candidate projection is invalid.", "STRUCTURAL_RELATION_PROJECTION_MISMATCH"); if(!Array.isArray(document.diagnosticLabels)||document.diagnosticLabels.some((value)=>typeof value!=="string"||!value||value.length>512))fail("diagnosticLabels invalid.");exactOrder(document.diagnosticLabels,[...document.diagnosticLabels].sort(ascii),"diagnosticLabels");
   const payload = { ...document }; delete payload.envelopeId; delete payload.envelopeHash; const envelopeHash = H(payload); if (document.envelopeHash !== envelopeHash || document.envelopeId !== `structural-envelope-${envelopeHash.slice(0, 24)}`) fail("Envelope identity mismatch.", "STRUCTURAL_RELATION_ID_MISMATCH");
   const structuralContractVerification = "passed"; const sourceByteIntegrity = sourceBytesByPath === undefined ? "not-run" : "passed"; const sourceCoordinateValidation = sourceBytesByPath === undefined ? "not-run" : "passed"; const rawByteIntegrity = rawBytesById === undefined ? "not-run" : "passed"; return { envelope: document, verificationReport: { structuralContractVerification, sourceByteIntegrity, sourceCoordinateValidation, rawByteIntegrity, claimTruthVerification: "not-supported", rawSemanticSupportVerification: "not-evaluated", responseCompletenessVerification: "not-evaluated", finalStrongVerification: [structuralContractVerification, sourceByteIntegrity, sourceCoordinateValidation, rawByteIntegrity].every((value) => value === "passed") } };
 }
