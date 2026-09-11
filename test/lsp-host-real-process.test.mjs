@@ -189,6 +189,7 @@ async function runReferenceWitness({ fixtureId, sources, configText, prepare, pr
   assert.equal(result.dependencyCoverage, "partial-unresolved-external-imports");
   assert.equal(result.filesystemReadIsolation, "not-enforced-unknown");
   assert.equal(result.provenanceClass, "local-download-unverified");
+  assert.equal(result.sourcePreflight?.status, "passed");
   assert.equal(events.filter((event) => event.type === "spawn").length, events.filter((event) => event.type === "exit").length);
   for (const event of events.filter((item) => item.type === "spawn")) assert.equal(await waitGone(event.pid), true, `Owned RW process ${event.pid} remained alive.`);
   if (result.executionProvenance?.pid) assert.equal(await waitGone(result.executionProvenance.pid), true, `Pinned RW TLS process ${result.executionProvenance.pid} remained alive.`);
@@ -200,7 +201,7 @@ async function compilerApiBoundaryProbe(profile, sources) {
   const ts = typescriptModule.default || typescriptModule;
   const root = "C:/head-rw-o-virtual";
   const sourceMap = new Map(sources.map((source) => [`${root}/${source.path}`, source.text]));
-  const options = {
+  const exactOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -213,41 +214,82 @@ async function compilerApiBoundaryProbe(profile, sources) {
     allowJs: false,
     skipLibCheck: true,
   };
-  const observed = [];
-  const makeHost = (map) => ({
+  const packageRoot = `${root}/node_modules/@oh-my-opencode/mcp-stdio-core`;
+  const dependencyMap = new Map(sourceMap)
+    .set(`${packageRoot}/package.json`, JSON.stringify({ name: "@oh-my-opencode/mcp-stdio-core", types: "index.d.ts" }))
+    .set(`${packageRoot}/index.d.ts`, "export {};\n");
+  const normalizeVirtualPath = (fileName) => String(fileName).replaceAll("\\", "/");
+  const makeHost = (map, observed) => ({
     getSourceFile(fileName, languageVersion) {
-      observed.push({ api: "getSourceFile", fileName, admitted: map.has(fileName) });
-      const text = map.get(fileName);
-      return text === undefined ? undefined : ts.createSourceFile(fileName, text, languageVersion, true);
+      const normalized = normalizeVirtualPath(fileName);
+      observed.push({ api: "getSourceFile", fileName: normalized, admitted: map.has(normalized) });
+      const text = map.get(normalized);
+      return text === undefined ? undefined : ts.createSourceFile(normalized, text, languageVersion, true);
     },
     getDefaultLibFileName: () => `${root}/lib.d.ts`,
     writeFile: () => { throw new Error("compiler probe attempted a write"); },
     getCurrentDirectory: () => root,
-    getDirectories: () => [],
-    fileExists(fileName) { observed.push({ api: "fileExists", fileName, admitted: map.has(fileName) }); return map.has(fileName); },
-    readFile(fileName) { observed.push({ api: "readFile", fileName, admitted: map.has(fileName) }); return map.get(fileName); },
-    directoryExists: (directory) => directory === root || directory.startsWith(`${root}/`),
+    getDirectories(directory) {
+      const normalized = normalizeVirtualPath(directory).replace(/\/$/, "");
+      const children = [...new Set([...map.keys()].filter((file) => file.startsWith(`${normalized}/`))
+        .map((file) => file.slice(normalized.length + 1).split("/")[0]).filter((name) => name && [...map.keys()].some((file) => file.startsWith(`${normalized}/${name}/`))))].sort();
+      observed.push({ api: "getDirectories", fileName: normalized, admitted: true, resultCount: children.length });
+      return children;
+    },
+    fileExists(fileName) {
+      const normalized = normalizeVirtualPath(fileName);
+      observed.push({ api: "fileExists", fileName: normalized, admitted: map.has(normalized) });
+      return map.has(normalized);
+    },
+    readFile(fileName) {
+      const normalized = normalizeVirtualPath(fileName);
+      observed.push({ api: "readFile", fileName: normalized, admitted: map.has(normalized) });
+      return map.get(normalized);
+    },
+    directoryExists(directory) {
+      const normalized = normalizeVirtualPath(directory).replace(/\/$/, "");
+      const admitted = normalized === root || [...map.keys()].some((file) => file.startsWith(`${normalized}/`));
+      observed.push({ api: "directoryExists", fileName: normalized, admitted });
+      return admitted;
+    },
     getCanonicalFileName: (fileName) => fileName.toLowerCase(),
     useCaseSensitiveFileNames: () => false,
     getNewLine: () => "\n",
-    realpath: (fileName) => fileName,
+    realpath(fileName) {
+      const normalized = normalizeVirtualPath(fileName);
+      observed.push({ api: "realpath", fileName: normalized, admitted: map.has(normalized) || normalized === root });
+      return normalized;
+    },
   });
   const rootNames = [...sourceMap.keys()];
-  const program = ts.createProgram({ rootNames, options, host: makeHost(sourceMap) });
-  const exact = program.getSourceFiles().map((source) => source.fileName).sort();
-  const ambientMap = new Map(sourceMap).set(`${root}/ambient.ts`, "export const ambient = true;\n");
-  const ambientProgram = ts.createProgram({ rootNames: [...ambientMap.keys()], options, host: makeHost(ambientMap) });
-  const withAmbient = ambientProgram.getSourceFiles().map((source) => source.fileName).sort();
+  const runCondition = (id, map, options) => {
+    const observedApis = [];
+    const program = ts.createProgram({ rootNames, options, host: makeHost(map, observedApis) });
+    const sourceFiles = program.getSourceFiles().map((source) => normalizeVirtualPath(source.fileName)).sort();
+    const apiCoverage = Object.fromEntries(["getSourceFile", "fileExists", "readFile", "directoryExists", "getDirectories", "realpath"]
+      .map((api) => [api, observedApis.some((entry) => entry.api === api) ? "observed" : "not-observed"]));
+    return {
+      id,
+      rootNames,
+      options: { noResolve: options.noResolve, moduleResolution: "Bundler" },
+      sourceFiles,
+      sourceCount: sourceFiles.length,
+      metadataReads: observedApis.filter((entry) => entry.api === "readFile" && (entry.fileName.endsWith("package.json") || entry.fileName.endsWith(".d.ts"))),
+      apiCoverage,
+      observedApis,
+    };
+  };
+  const exactNoResolveAbsent = runCondition("no-resolve-dependency-absent", sourceMap, exactOptions);
+  const exactNoResolvePresent = runCondition("no-resolve-dependency-present", dependencyMap, exactOptions);
+  const positiveResolvePresent = runCondition("resolve-dependency-present-positive-control", dependencyMap, { ...exactOptions, noResolve: false });
   return {
     kind: "rw-o-compiler-api-boundary-probe",
-    options: { ...options, target: "ES2022", module: "ESNext", moduleResolution: "Bundler" },
-    exactGetSourceFiles: exact,
-    exactCount: exact.length,
-    ambientContrastGetSourceFiles: withAmbient,
-    ambientContrastCount: withAmbient.length,
-    recordedApis: observed,
+    rootNames,
+    dependencyFixture: { packageName: "@oh-my-opencode/mcp-stdio-core", packageJsonPath: `${packageRoot}/package.json`, declarationPath: `${packageRoot}/index.d.ts` },
+    conditions: { exactNoResolveAbsent, exactNoResolvePresent, positiveResolvePresent },
     actualTlsProgramCoverage: "not-observable-through-standard-lsp",
     actualTlsConfigSelection: "bounded-profile-requested-not-mechanically-proven",
+    resolutionMetadataCoverage: "compiler-api-probe-only",
     filesystemReadIsolation: "not-enforced-unknown",
   };
 }
@@ -272,8 +314,13 @@ test("RQ V01-V04 replay validators fail closed without invoking a provider", () 
   const apply = __private.realServerRequestReply({ jsonrpc: "2.0", id: 1, method: "workspace/applyEdit", params: { edit: { changes: {} } } });
   assert.deepEqual(apply, { response: { jsonrpc: "2.0", id: 1, result: { applied: false, failureReason: "HEAD real LSP fixture is read-only" } }, unsupported: false, sideEffect: "denied" });
   const formatting = __private.realServerRequestReply({ jsonrpc: "2.0", id: 3, method: "workspace/configuration", params: { items: [{ section: "formattingOptions" }, { section: "typescript" }] } });
-  assert.deepEqual(formatting.response.result, [{ tabSize: 4, insertSpaces: true }, null]);
+  assert.deepEqual(formatting.response.result, [null, null]);
   assert.equal(formatting.sideEffect, "none");
+  const rwFormatting = __private.realServerRequestReply(
+    { jsonrpc: "2.0", id: 4, method: "workspace/configuration", params: { items: [{ section: "formattingOptions" }, { section: "typescript" }] } },
+    { profileKind: LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND },
+  );
+  assert.deepEqual(rwFormatting.response.result, [{ tabSize: 4, insertSpaces: true }, null]);
   for (const method of ["window/showMessageRequest", "head/unknown"]) {
     const reply = __private.realServerRequestReply({ jsonrpc: "2.0", id: 2, method, params: {} });
     assert.equal(reply.unsupported, true);
@@ -492,10 +539,19 @@ rwTest("RW-O exact OMO source4 outgoing witness preserves UNKNOWN boundaries and
     assert.equal(profile.normalizerVersion, "0.3.0");
 
     const compilerProbe = await compilerApiBoundaryProbe(profile, sources);
-    assert.equal(compilerProbe.exactCount, 4);
-    assert.equal(compilerProbe.ambientContrastCount, 5);
-    assert.deepEqual(compilerProbe.exactGetSourceFiles.map((file) => file.slice("C:/head-rw-o-virtual/".length)), [...rwGolden.sourcePaths].sort());
-    assert.ok(compilerProbe.ambientContrastGetSourceFiles.some((file) => file.endsWith("/ambient.ts")));
+    const { exactNoResolveAbsent, exactNoResolvePresent, positiveResolvePresent } = compilerProbe.conditions;
+    assert.deepEqual(exactNoResolveAbsent.rootNames, exactNoResolvePresent.rootNames);
+    assert.deepEqual(exactNoResolvePresent.rootNames, positiveResolvePresent.rootNames);
+    assert.equal(exactNoResolveAbsent.sourceCount, 4);
+    assert.equal(exactNoResolvePresent.sourceCount, 4);
+    assert.deepEqual(exactNoResolveAbsent.sourceFiles, exactNoResolvePresent.sourceFiles);
+    assert.deepEqual(exactNoResolvePresent.sourceFiles.map((file) => file.slice("C:/head-rw-o-virtual/".length)), [...rwGolden.sourcePaths].sort());
+    assert.equal(exactNoResolveAbsent.metadataReads.length, 0);
+    assert.ok(exactNoResolvePresent.metadataReads.some((entry) => entry.fileName === compilerProbe.dependencyFixture.packageJsonPath));
+    assert.equal(exactNoResolvePresent.sourceFiles.includes(compilerProbe.dependencyFixture.declarationPath), false);
+    assert.equal(positiveResolvePresent.sourceCount, 5);
+    assert.ok(positiveResolvePresent.sourceFiles.includes(compilerProbe.dependencyFixture.declarationPath));
+    assert.ok(positiveResolvePresent.metadataReads.some((entry) => entry.fileName === compilerProbe.dependencyFixture.packageJsonPath));
     const heuristicCases = Object.fromEntries(heuristic.cases.map((item) => [item.id, item.counts]));
     assert.deepEqual(heuristicCases["unmodified-four-files"], { executeLspTool: 0, coerceToolArguments: 0 });
     assert.deepEqual(heuristicCases["direct-execute-runtime-ts"], { executeLspTool: 1, coerceToolArguments: 0 });
@@ -552,6 +608,26 @@ rwTest("RW-O exact OMO source4 outgoing witness preserves UNKNOWN boundaries and
     assert.equal(configDrift.status, "contaminated");
     assert.equal(configDrift.reason, "config-drift");
     assert.equal(configDriftEvents.length, 0);
+    for (const candidate of [
+      { name: "tsconfig.json", kind: "configuration", directory: false },
+      { name: "node_modules", kind: "dependency-root", directory: true },
+    ]) {
+      const ambientPath = path.join(qaRoot, candidate.name);
+      if (candidate.directory) fs.mkdirSync(ambientPath);
+      else fs.writeFileSync(ambientPath, "{\"compilerOptions\":{},\"files\":[]}", { flag: "wx" });
+      try {
+        const ambientEvents = [];
+        const ambient = await __private.collectRealOutgoingCallObservation({ ...collectorBase, fixtureId: "RW-O-A", sources, onProcessEvent: (event) => ambientEvents.push(event) });
+        assert.equal(ambient.status, "blocked");
+        assert.equal(ambient.reason, "unsupported-profile");
+        assert.equal(ambientEvents.length, 0);
+        assert.equal(ambient.sourcePreflight.status, "blocked");
+        assert.ok(ambient.sourcePreflight.candidates.some((entry) => entry.path === candidate.name && entry.kind === candidate.kind));
+      } finally {
+        if (candidate.directory) fs.rmdirSync(ambientPath);
+        else fs.rmSync(ambientPath, { force: false });
+      }
+    }
     const forgedProfileFile = path.join(qaRoot, `rw-forged-${process.pid}-${crypto.randomUUID()}.json`);
     const forgedProfile = { ...JSON.parse(fs.readFileSync(rwProfileFile, "utf8")), kind: "head.lsp.reference-witness.unreviewed" };
     fs.writeFileSync(forgedProfileFile, `${JSON.stringify(forgedProfile)}\n`, { flag: "wx" });
@@ -575,6 +651,34 @@ rwTest("RW-O exact OMO source4 outgoing witness preserves UNKNOWN boundaries and
         assert.equal(forged.reason, "unsupported-profile");
         assert.equal(events.length, 0);
       } finally { fs.rmSync(file, { force: false }); }
+    }
+    const selfProfileFile = path.join(qaRoot, `rw-self-${process.pid}-${crypto.randomUUID()}.json`);
+    const selfProfile = { ...JSON.parse(fs.readFileSync(rwProfileFile, "utf8")), baseProfileManifestFile: selfProfileFile, baseProfileManifestDigest: sha256("self-reference-placeholder") };
+    fs.writeFileSync(selfProfileFile, `${JSON.stringify(selfProfile)}\n`, { flag: "wx" });
+    const savedReadFileSync = fs.readFileSync;
+    let selfReads = 0;
+    fs.readFileSync = function readFileSyncWithCount(file, ...args) {
+      if (path.resolve(String(file)) === path.resolve(selfProfileFile)) selfReads += 1;
+      return savedReadFileSync.call(this, file, ...args);
+    };
+    try {
+      assert.throws(() => __private.verifyRealProfileManifest(selfProfileFile), { code: "unsupported-profile" });
+      assert.ok(selfReads <= 2, `self-referential profile required ${selfReads} reads`);
+    } finally {
+      fs.readFileSync = savedReadFileSync;
+      fs.rmSync(selfProfileFile, { force: false });
+    }
+    const nestedProfileFile = path.join(qaRoot, `rw-nested-${process.pid}-${crypto.randomUUID()}.json`);
+    const outerProfileFile = path.join(qaRoot, `rw-outer-${process.pid}-${crypto.randomUUID()}.json`);
+    const nestedBytes = Buffer.from(`${JSON.stringify(JSON.parse(fs.readFileSync(rwProfileFile, "utf8")))}\n`, "utf8");
+    fs.writeFileSync(nestedProfileFile, nestedBytes, { flag: "wx" });
+    const outerProfile = { ...JSON.parse(fs.readFileSync(rwProfileFile, "utf8")), baseProfileManifestFile: nestedProfileFile, baseProfileManifestDigest: sha256(nestedBytes) };
+    fs.writeFileSync(outerProfileFile, `${JSON.stringify(outerProfile)}\n`, { flag: "wx" });
+    try {
+      assert.throws(() => __private.verifyRealProfileManifest(outerProfileFile), { code: "unsupported-profile" });
+    } finally {
+      fs.rmSync(outerProfileFile, { force: false });
+      fs.rmSync(nestedProfileFile, { force: false });
     }
 
     const runInput = { sources: sources.map(({ path: relativePath, text }) => ({ path: relativePath, text })), configText: rwGolden.configText, prepare: rwGolden.prepare, profileManifestFile: rwProfileFile };
@@ -628,6 +732,46 @@ rwTest("RW-O exact OMO source4 outgoing witness preserves UNKNOWN boundaries and
     assert.equal(failure.result.publishedCandidateCount, 0);
     verifyRawEvidence(failure.result, "partial");
     failureRow.status = "passed";
+
+    const savedRmSync = fs.rmSync;
+    let interceptedOwnedRoot = null;
+    let cleanupRow = null;
+    fs.rmSync = function denyOneOwnedRoot(target, options) {
+      const absolute = path.resolve(String(target));
+      const relative = path.relative(qaRoot, absolute);
+      if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)
+        && path.dirname(absolute) === qaRoot && path.basename(absolute).startsWith("lsp-real-")) {
+        interceptedOwnedRoot = absolute;
+        const error = new Error("controlled QA owned-root cleanup failure");
+        error.code = "EACCES";
+        throw error;
+      }
+      return savedRmSync.call(this, target, options);
+    };
+    let cleanupFailure;
+    try {
+      cleanupFailure = await runReferenceWitness({ ...runInput, fixtureId: "RW-O-A", capture: ({ result, events }) => {
+        cleanupRow = { id: "cleanupFailurePreservation", status: "collected-unverified", observation: result, events };
+        rows.push(cleanupRow); recorder.record("RW-O-CLEANUP-FAILURE-collected", cleanupRow);
+      } });
+    } finally {
+      fs.rmSync = savedRmSync;
+    }
+    assert.ok(interceptedOwnedRoot);
+    assert.equal(cleanupFailure.result.status, "failed");
+    assert.equal(cleanupFailure.result.reason, "cleanup-failed");
+    assert.equal(cleanupFailure.result.normalizedRelations.length, 2);
+    assert.equal(cleanupFailure.result.rawOutgoingCount, 2);
+    assert.equal(cleanupFailure.result.cleanup.verified, false);
+    assert.equal(cleanupFailure.result.cleanup.forced, false);
+    assert.deepEqual(cleanupFailure.result.processCleanup, { attempted: true, verified: true, forced: false });
+    assert.deepEqual(cleanupFailure.result.ownedFilesystemCleanup, { attempted: true, verified: false });
+    verifyRawEvidence(cleanupFailure.result, "complete");
+    cleanupRow.status = "passed";
+    const resolvedInterceptedRoot = fs.realpathSync(interceptedOwnedRoot);
+    assert.equal(path.dirname(resolvedInterceptedRoot), fs.realpathSync(qaRoot));
+    savedRmSync(resolvedInterceptedRoot, { recursive: true, force: false });
+    assert.equal(fs.existsSync(resolvedInterceptedRoot), false);
 
     const sourceAfter = sources.map(({ path: relativePath, file }) => {
       const bytes = fs.readFileSync(file);
@@ -720,6 +864,8 @@ realTest("RQ U01-U07 fresh A/B, E-GOLDEN, V05, and F01-F04 satisfy the closed re
       const secondEvaluation = evaluate(second.result, fixture);
       verifyRawEvidence(first.result, "complete");
       verifyRawEvidence(second.result, "complete");
+      assert.equal(Object.hasOwn(first.result.executionProvenance, "referenceWitnessControl"), false);
+      assert.equal(Object.hasOwn(second.result.executionProvenance, "referenceWitnessControl"), false);
       assert.equal(firstEvaluation.verdict, "passed", `${fixture.fixtureId}:A ${canonicalJson(firstEvaluation)}`);
       assert.equal(secondEvaluation.verdict, "passed", `${fixture.fixtureId}:B ${canonicalJson(secondEvaluation)}`);
       assert.deepEqual(first.result.normalizedRelations, second.result.normalizedRelations, `${fixture.fixtureId}:relations`);

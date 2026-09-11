@@ -65,6 +65,8 @@ const REFERENCE_WITNESS_SOURCE_TRUST = Object.freeze([
 const REFERENCE_WITNESS_SOURCE_PATHS = Object.freeze(REFERENCE_WITNESS_SOURCE_TRUST.map((record) => record.path));
 const REFERENCE_WITNESS_CONFIG_DIGEST = "e24c379b997642460166073adae173796b7ba7144912deaf9c18bb74fb620161";
 const REFERENCE_WITNESS_CONTROL = "break-tools-barrel-v1";
+const REFERENCE_WITNESS_PREFLIGHT_MAX_ENTRIES = 1024;
+const REFERENCE_WITNESS_AMBIENT_NAMES = new Set(["tsconfig.json", "jsconfig.json", "package.json", "node_modules"]);
 const ALLOWED_SCENARIOS = new Set([
   "barrel", "direct", "false-positive", "wrong-position", "prepare-null", "prepare-empty",
   "hierarchy-null", "hierarchy-empty", "notifications", "notification-flood", "frame-oversize",
@@ -88,6 +90,48 @@ function safeOwnedRoot(qaRoot, ownedRoot) {
 function removeOwnedRoot(qaRoot, ownedRoot) {
   const { candidate } = safeOwnedRoot(qaRoot, ownedRoot);
   if (fs.existsSync(candidate)) fs.rmSync(candidate, { recursive: true, force: false });
+}
+
+function inspectReferenceWitnessQaBoundary(qaRoot) {
+  if (typeof qaRoot !== "string" || !path.isAbsolute(qaRoot)) {
+    throw protocolError("unsupported-profile", "Reference-witness QA boundary must be an absolute directory.");
+  }
+  const rootStat = fs.lstatSync(qaRoot, { throwIfNoEntry: false });
+  if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
+    throw protocolError("unsupported-profile", "Reference-witness QA boundary is missing or reparse-backed.");
+  }
+  const root = fs.realpathSync.native(qaRoot);
+  const pending = [{ directory: root, relativeDirectory: "" }];
+  const candidates = [];
+  let checkedEntries = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current.directory, { withFileTypes: true })) {
+      checkedEntries += 1;
+      if (checkedEntries > REFERENCE_WITNESS_PREFLIGHT_MAX_ENTRIES) {
+        const sourcePreflight = { status: "blocked", boundary: "qa-root", checkedEntries, candidates, reason: "entry-limit" };
+        throw protocolError("limit-exceeded", "Reference-witness QA preflight exceeded its bounded entry count.", { sourcePreflight });
+      }
+      const relativePath = current.relativeDirectory ? `${current.relativeDirectory}/${entry.name}` : entry.name;
+      const nativePath = path.join(current.directory, entry.name);
+      const stat = fs.lstatSync(nativePath);
+      if (stat.isSymbolicLink()) {
+        candidates.push({ path: relativePath.replaceAll("\\", "/"), kind: "reparse-entry" });
+        continue;
+      }
+      const lowerName = entry.name.toLowerCase();
+      if (REFERENCE_WITNESS_AMBIENT_NAMES.has(lowerName)) {
+        candidates.push({ path: relativePath.replaceAll("\\", "/"), kind: lowerName === "node_modules" ? "dependency-root" : "configuration" });
+        if (lowerName === "node_modules") continue;
+      }
+      if (stat.isDirectory()) pending.push({ directory: nativePath, relativeDirectory: relativePath });
+    }
+  }
+  const sourcePreflight = { status: candidates.length === 0 ? "passed" : "blocked", boundary: "qa-root", checkedEntries, candidates };
+  if (candidates.length > 0) {
+    throw protocolError("unsupported-profile", "Reference-witness QA boundary contains ambient configuration or dependency candidates.", { sourcePreflight });
+  }
+  return Object.freeze(sourcePreflight);
 }
 
 function profileProvenance(profile) {
@@ -480,7 +524,7 @@ function verifyRealPackage(packageProfile, expectedName) {
   return { ...packageProfile, root };
 }
 
-function verifyRealProfileManifest(manifestFile) {
+function verifyRealProfileManifest(manifestFile, { allowReferenceWitness = true } = {}) {
   if (typeof manifestFile !== "string" || !path.isAbsolute(manifestFile)) throw protocolError("unsupported-profile", "Real profile manifest path is invalid.");
   const manifestStat = fs.lstatSync(manifestFile, { throwIfNoEntry: false });
   if (!manifestStat?.isFile() || manifestStat.isSymbolicLink() || manifestStat.size < 1 || manifestStat.size > 1024 * 1024) {
@@ -498,6 +542,9 @@ function verifyRealProfileManifest(manifestFile) {
     && profile.profileVersion === LSP_HOST_REFERENCE_WITNESS_PROFILE_VERSION && profile.direction === "outgoing";
   if (profile.schemaVersion !== 1 || !rqIdentity && !rwIdentity) {
     throw protocolError("unsupported-profile", "Real profile manifest does not match the pinned contract.");
+  }
+  if (rwIdentity && !allowReferenceWitness) {
+    throw protocolError("unsupported-profile", "A reference-witness base must be the single pinned RQ profile.");
   }
   if (rwIdentity) {
     const expectedKeys = ["baseProfileManifestDigest", "baseProfileManifestFile", "configDigest", "direction", "kind", "normalizerVersion", "profileVersion", "provenanceClass", "schemaVersion", "sourceManifest"];
@@ -520,7 +567,22 @@ function verifyRealProfileManifest(manifestFile) {
       || profile.configDigest !== REFERENCE_WITNESS_CONFIG_DIGEST) {
       throw protocolError("unsupported-profile", "Reference-witness source or config identity is not the reviewed exact profile.");
     }
-    const base = verifyRealProfileManifest(profile.baseProfileManifestFile);
+    if (path.resolve(profile.baseProfileManifestFile) === path.resolve(manifestPath)) {
+      throw protocolError("unsupported-profile", "A reference-witness profile cannot reference itself as its base.");
+    }
+    const baseManifestPath = verifiedRegularFile(profile.baseProfileManifestFile, profile.baseProfileManifestDigest);
+    if (baseManifestPath === manifestPath) {
+      throw protocolError("unsupported-profile", "A reference-witness profile cannot alias itself as its base.");
+    }
+    let baseIdentity;
+    try { baseIdentity = JSON.parse(fs.readFileSync(baseManifestPath, "utf8")); }
+    catch { throw protocolError("unsupported-profile", "Reference-witness base profile is not valid JSON."); }
+    if (baseIdentity?.schemaVersion !== 1 || baseIdentity.kind !== LSP_HOST_REAL_PROFILE_KIND
+      || baseIdentity.normalizerVersion !== LSP_HOST_REAL_NORMALIZER_VERSION
+      || baseIdentity.profileVersion !== undefined || baseIdentity.direction !== undefined) {
+      throw protocolError("unsupported-profile", "A reference-witness base must be the single pinned RQ profile.");
+    }
+    const base = verifyRealProfileManifest(baseManifestPath, { allowReferenceWitness: false });
     if (base.kind !== LSP_HOST_REAL_PROFILE_KIND || base.manifestDigest !== profile.baseProfileManifestDigest) {
       throw protocolError("profile-drift", "Reference-witness base profile identity changed.");
     }
@@ -771,10 +833,10 @@ function verifyBridgeRealDocuments(documents, stage) {
   }
 }
 
-function realServerRequestReply(message) {
+function realServerRequestReply(message, { profileKind = LSP_HOST_REAL_PROFILE_KIND } = {}) {
   if (message?.method === "workspace/configuration" && Array.isArray(message.params?.items)
     && message.params.items.length <= LSP_HOST_REAL_LIMITS.maxConfigurationItems) {
-    const result = message.params.items.map((item) => item?.section === "formattingOptions"
+    const result = message.params.items.map((item) => profileKind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND && item?.section === "formattingOptions"
       ? { tabSize: 4, insertSpaces: true }
       : null);
     return { response: { jsonrpc: "2.0", id: message.id, result }, unsupported: false, sideEffect: "none" };
@@ -919,7 +981,7 @@ async function runRealBridge(request) {
     });
   };
   const replyToServerRequest = (message) => {
-    const reply = realServerRequestReply(message);
+    const reply = realServerRequestReply(message, { profileKind: profile.kind });
     send(reply.response);
     if (reply.unsupported) throw protocolError("unsupported-server-request", "Real LSP requested an unsupported Host operation.", { stage });
   };
@@ -1099,7 +1161,7 @@ async function runRealBridge(request) {
     rawWireDigest,
     rawEvidenceDigest,
     replayTransform: request.replayTransform || null,
-    referenceWitnessControl: request.referenceWitnessControl || null,
+    ...(profile.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? { referenceWitnessControl: request.referenceWitnessControl || null } : {}),
     stderrDigest: sha256(stderr),
   };
   if (failure || closed.code !== 0) {
@@ -1148,6 +1210,7 @@ async function collectRealOutgoingCallObservation({
   if (!profileManifestFile) return realResult({ fixtureId, status: "blocked", stage: "discovery", reason: "no-profile" });
   let descriptor;
   let profile;
+  let referenceWitnessPreflight = null;
   try {
     profile = verifyRealProfileManifest(profileManifestFile);
     const rq = profile.kind === LSP_HOST_REAL_PROFILE_KIND;
@@ -1203,8 +1266,16 @@ async function collectRealOutgoingCallObservation({
       if (configDigest !== profile.configDigest) throw protocolError("config-drift", "Reference-witness config bytes do not match the sealed profile manifest.");
     }
     if (!supervisorSelection || typeof qaRoot !== "string" || !path.isAbsolute(qaRoot) || !fs.existsSync(qaRoot)) throw protocolError("unsupported-profile", "Real fixture requires a verified supervisor and existing QA root.");
+    if (!rq) referenceWitnessPreflight = inspectReferenceWitnessQaBoundary(qaRoot);
   } catch (error) {
-    return realResult({ fixtureId, profileKind: profile?.kind, status: ["profile-drift", "source-drift", "config-drift"].includes(error.code) ? "contaminated" : "blocked", stage: "discovery", reason: error.code || "invalid-input" });
+    return realResult({
+      fixtureId,
+      profileKind: profile?.kind,
+      status: ["profile-drift", "source-drift", "config-drift"].includes(error.code) ? "contaminated" : "blocked",
+      stage: "discovery",
+      reason: error.code || "invalid-input",
+      observation: error.details?.sourcePreflight ? { sourcePreflight: error.details.sourcePreflight } : {},
+    });
   }
   let ownedRoot;
   let admission;
@@ -1260,7 +1331,7 @@ async function collectRealOutgoingCallObservation({
       fault,
       externalCancellation,
       replayTransform,
-      referenceWitnessControl,
+      ...(profile.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? { referenceWitnessControl } : {}),
       deadlines: { workEpochMs: startedAt + LSP_HOST_REAL_LIMITS.workBudgetMs, closingEpochMs: startedAt + LSP_HOST_REAL_LIMITS.workBudgetMs + LSP_HOST_REAL_LIMITS.gracefulCleanupMs, totalEpochMs: startedAt + LSP_HOST_REAL_LIMITS.totalTimeoutMs },
     };
     const controlFile = path.join(ownedRoot, "supervisor-control.jsonl");
@@ -1322,7 +1393,12 @@ async function collectRealOutgoingCallObservation({
     if (outerFailure) throw outerFailure;
     if (!supervision.ownershipEstablished || !supervision.treeCleanupVerified) throw protocolError("cleanup-failed", "Real LSP process tree cleanup was not verified.", { stage: "closing" });
     if (closed.code !== 0) throw protocolError("process-crash", `Real bridge exited ${closed.code}: ${stderr.toString("utf8").slice(0, 512)}`, { stage: "launch" });
-    result = Object.freeze({ ...result, cleanup: { attempted: true, verified: true, forced }, transport: { supervisorManifestDigest: supervision.supervisorManifestDigest, ownershipEstablished: supervision.ownershipEstablished, treeCleanupVerified: supervision.treeCleanupVerified, externalCancellationHostEvidence } });
+    result = Object.freeze({
+      ...result,
+      ...(referenceWitnessPreflight ? { sourcePreflight: referenceWitnessPreflight } : {}),
+      cleanup: { attempted: true, verified: true, forced },
+      transport: { supervisorManifestDigest: supervision.supervisorManifestDigest, ownershipEstablished: supervision.ownershipEstablished, treeCleanupVerified: supervision.treeCleanupVerified, externalCancellationHostEvidence },
+    });
   } catch (error) {
     if (supervised?.child && supervised.child.exitCode === null && supervised.child.signalCode === null) { catchForced = true; supervised.terminate(true); try { await waitForClose(supervised.child); } catch {} }
     if (supervised && !supervision) { try { supervision = supervised.finalize({ exactSupervisorExitObserved: true, terminationRequested: true }); } catch {} }
@@ -1332,6 +1408,7 @@ async function collectRealOutgoingCallObservation({
       reason: error.code || "launch-failed",
       cleanup: { attempted: Boolean(supervised), verified: supervision?.treeCleanupVerified === true, forced: forced || catchForced },
       publishedCandidateCount: 0,
+      ...(referenceWitnessPreflight ? { sourcePreflight: referenceWitnessPreflight } : {}),
       ...REAL_RESULT_GATE,
     };
     const expectedEvidenceKind = profile?.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? "lsp-real-rw-o-observation" : "lsp-real-rq-observation";
@@ -1341,7 +1418,23 @@ async function collectRealOutgoingCallObservation({
   } finally {
     clearTimeout(softTimer); clearTimeout(forceTimer); clearInterval(externalCancelTimer);
     closeRealAdmission(admission);
-    if (ownedRoot) { try { removeOwnedRoot(qaRoot, ownedRoot); } catch { result = realResult({ fixtureId, profileKind: profile?.kind, status: "failed", stage: "closed", reason: "cleanup-failed", cleanup: { attempted: true, verified: false, forced: true } }); } }
+    if (ownedRoot) { try { removeOwnedRoot(qaRoot, ownedRoot); } catch {
+      if (profile?.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND && result?.evidenceKind === "lsp-real-rw-o-observation") {
+        const processCleanup = result.cleanup || { attempted: Boolean(supervised), verified: supervision?.treeCleanupVerified === true, forced: forced || catchForced };
+        result = Object.freeze({
+          ...result,
+          status: "failed",
+          stage: "closed",
+          reason: "cleanup-failed",
+          cleanup: { attempted: true, verified: false, forced: processCleanup.forced === true },
+          processCleanup,
+          ownedFilesystemCleanup: { attempted: true, verified: false },
+          publishedCandidateCount: 0,
+        });
+      } else {
+        result = realResult({ fixtureId, profileKind: profile?.kind, status: "failed", stage: "closed", reason: "cleanup-failed", cleanup: { attempted: true, verified: false, forced: true } });
+      }
+    } }
   }
   return result;
 }
