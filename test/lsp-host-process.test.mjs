@@ -160,6 +160,11 @@ processTest("P03/P04 semantic negatives and empty completion remain candidate-fr
   const regexStringExport = await run("barrel", baseSources.map((item) => item.path === "barrel.ts" ? { ...item, text: regexBeforeEmbeddedExport } : item));
   assert.equal(regexStringExport.status, "completed");
   assert.equal(regexStringExport.candidates.length, 0);
+  const embeddedTarget = ["const text = \"prefix" + "\\", "export function target() {}" + "\\", "\";"].join("\n");
+  const regexBeforeEmbeddedTarget = ["const marker = /\"/;", ...embeddedTarget.split("\n"), "// \""].join("\n");
+  const regexStringTarget = await run("barrel", baseSources.map((item) => item.path === "target.ts" ? { ...item, text: regexBeforeEmbeddedTarget } : item));
+  assert.equal(regexStringTarget.status, "completed");
+  assert.equal(regexStringTarget.candidates.length, 0);
   for (const [scenario, reason] of [["prepare-null", "no-prepared-item"], ["prepare-empty", "no-prepared-item"], ["hierarchy-null", "empty"], ["hierarchy-empty", "empty"]]) {
     const result = await run(scenario);
     assert.equal(result.status, "completed");

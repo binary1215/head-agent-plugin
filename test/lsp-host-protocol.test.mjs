@@ -39,9 +39,12 @@ test("P03 bounded fixture semantics require a real route and direct unshadowed c
   const embeddedImport = ["const text = \"prefix" + "\\", "import { target } from './barrel';" + "\\", "\";", "function target() {}", "export function caller(){ target(); }"].join("\n");
   const embeddedExport = ["const text = \"prefix" + "\\", "export { target } from './target';" + "\\", "\";", "export const unrelated = 1;"].join("\n");
   const regexBeforeEmbeddedExport = ["const marker = /\"/;", ...embeddedExport.split("\n"), "// \""].join("\n");
+  const embeddedTarget = ["const text = \"prefix" + "\\", "export function target() {}" + "\\", "\";"].join("\n");
+  const regexBeforeEmbeddedTarget = ["const marker = /\"/;", ...embeddedTarget.split("\n"), "// \""].join("\n");
   assert.equal(boundedFixtureModuleRoute(embeddedImport, sources[1].text), null);
   assert.equal(boundedFixtureModuleRoute(caller, embeddedExport), null);
   assert.equal(boundedFixtureModuleRoute(caller, regexBeforeEmbeddedExport), null);
+  assert.equal(boundedFixtureFunctionIdentity(regexBeforeEmbeddedTarget, "target"), null);
   for (const body of ["const target = () => {}; target();", "const obj = { target() {} }; obj.target();", "function nested(){ target(); }"]) {
     const text = `import { target } from \"./barrel\";\nexport function caller(){ ${body} }`;
     assert.deepEqual(boundedFixtureCallRanges(text, boundedFixtureFunctionIdentity(text, "caller"), "target"), []);

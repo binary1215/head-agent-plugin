@@ -355,6 +355,7 @@ export function boundedFixtureModuleRoute(callerText, barrelText) {
 
 export function boundedFixtureFunctionIdentity(text, name) {
   if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name || "")) throw protocolError("invalid-input", "Fixture function name is invalid.");
+  if (hasUnsupportedFixtureLexeme(text)) return null;
   const masked = codeMask(text);
   const declaration = new RegExp(`\\bexport\\s+function\\s+${name}\\s*\\(\\s*\\)\\s*\\{`, "g");
   const matches = [...masked.matchAll(declaration)];

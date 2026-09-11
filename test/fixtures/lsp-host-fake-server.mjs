@@ -131,6 +131,7 @@ function moduleRoute(callerText, barrelText) {
 }
 
 function functionIdentity(text, name) {
+  if (hasUnsupportedFixtureLexeme(text)) return null;
   const masked = codeMask(text);
   const matches = [...masked.matchAll(new RegExp(`\\bexport\\s+function\\s+${name}\\s*\\(\\s*\\)\\s*\\{`, "g"))];
   if (matches.length !== 1) return null;
