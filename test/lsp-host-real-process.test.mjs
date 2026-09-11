@@ -680,6 +680,26 @@ rwTest("RW-O exact OMO source4 outgoing witness preserves UNKNOWN boundaries and
       fs.rmSync(outerProfileFile, { force: false });
       fs.rmSync(nestedProfileFile, { force: false });
     }
+    const oversizedBaseFile = path.join(qaRoot, `rq-oversized-${process.pid}-${crypto.randomUUID()}.json`);
+    const oversizedOverlayFile = path.join(qaRoot, `rw-oversized-base-${process.pid}-${crypto.randomUUID()}.json`);
+    const oversizedBaseBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, kind: "head-lsp-real-rq-profile-v1", padding: "x".repeat(2 * 1024 * 1024) }), "utf8");
+    fs.writeFileSync(oversizedBaseFile, oversizedBaseBytes, { flag: "wx" });
+    const oversizedOverlay = { ...JSON.parse(fs.readFileSync(rwProfileFile, "utf8")), baseProfileManifestFile: oversizedBaseFile, baseProfileManifestDigest: sha256(oversizedBaseBytes) };
+    fs.writeFileSync(oversizedOverlayFile, `${JSON.stringify(oversizedOverlay)}\n`, { flag: "wx" });
+    const savedOversizedRead = fs.readFileSync;
+    let oversizedBodyReads = 0;
+    fs.readFileSync = function readFileSyncWithOversizedCount(file, ...args) {
+      if (path.resolve(String(file)) === path.resolve(oversizedBaseFile)) oversizedBodyReads += 1;
+      return savedOversizedRead.call(this, file, ...args);
+    };
+    try {
+      assert.throws(() => __private.verifyRealProfileManifest(oversizedOverlayFile), { code: "unsupported-profile" });
+      assert.equal(oversizedBodyReads, 0);
+    } finally {
+      fs.readFileSync = savedOversizedRead;
+      fs.rmSync(oversizedOverlayFile, { force: false });
+      fs.rmSync(oversizedBaseFile, { force: false });
+    }
 
     const runInput = { sources: sources.map(({ path: relativePath, text }) => ({ path: relativePath, text })), configText: rwGolden.configText, prepare: rwGolden.prepare, profileManifestFile: rwProfileFile };
     let firstRow = null;

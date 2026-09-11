@@ -570,19 +570,7 @@ function verifyRealProfileManifest(manifestFile, { allowReferenceWitness = true 
     if (path.resolve(profile.baseProfileManifestFile) === path.resolve(manifestPath)) {
       throw protocolError("unsupported-profile", "A reference-witness profile cannot reference itself as its base.");
     }
-    const baseManifestPath = verifiedRegularFile(profile.baseProfileManifestFile, profile.baseProfileManifestDigest);
-    if (baseManifestPath === manifestPath) {
-      throw protocolError("unsupported-profile", "A reference-witness profile cannot alias itself as its base.");
-    }
-    let baseIdentity;
-    try { baseIdentity = JSON.parse(fs.readFileSync(baseManifestPath, "utf8")); }
-    catch { throw protocolError("unsupported-profile", "Reference-witness base profile is not valid JSON."); }
-    if (baseIdentity?.schemaVersion !== 1 || baseIdentity.kind !== LSP_HOST_REAL_PROFILE_KIND
-      || baseIdentity.normalizerVersion !== LSP_HOST_REAL_NORMALIZER_VERSION
-      || baseIdentity.profileVersion !== undefined || baseIdentity.direction !== undefined) {
-      throw protocolError("unsupported-profile", "A reference-witness base must be the single pinned RQ profile.");
-    }
-    const base = verifyRealProfileManifest(baseManifestPath, { allowReferenceWitness: false });
+    const base = verifyRealProfileManifest(profile.baseProfileManifestFile, { allowReferenceWitness: false });
     if (base.kind !== LSP_HOST_REAL_PROFILE_KIND || base.manifestDigest !== profile.baseProfileManifestDigest) {
       throw protocolError("profile-drift", "Reference-witness base profile identity changed.");
     }
