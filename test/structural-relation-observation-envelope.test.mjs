@@ -48,6 +48,13 @@ function fixture({ lineEnding = "\n", callerText = null } = {}) {
 function build(value = fixture()) { return { value, document: buildStructuralRelationObservationEnvelope(value.draft, { sourceBytesByPath: value.sourceBytesByPath, rawBytesById: value.rawBytesById }) }; }
 function verifierRawMap(value, document) { const map = ids(document); return new Map([[map.get("accepted-decoded-record-a"), value.rawBytesById.get("raw-a")], [map.get("accepted-decoded-record-b"), value.rawBytesById.get("raw-b")]]); }
 function clone(value) { return structuredClone(value); }
+function freezeJson(value) {
+  if (value && typeof value === "object") {
+    for (const entry of Array.isArray(value) ? value : Object.values(value)) freezeJson(entry);
+    Object.freeze(value);
+  }
+  return value;
+}
 function reseal(document) {
   const payload = { ...document }; delete payload.envelopeId; delete payload.envelopeHash;
   document.envelopeHash = H(payload); document.envelopeId = `structural-envelope-${document.envelopeHash.slice(0, 24)}`;
@@ -346,6 +353,20 @@ test("R3b final canonical byte budget rejects output overflow before hashing wit
   let hashCalls = 0; const originalHash = crypto.createHash; crypto.createHash = (...args) => { hashCalls += 1; return originalHash(...args); };
   try { assert.throws(() => verifyStructuralRelationObservationEnvelope(oversizedDocument), { code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" }); } finally { crypto.createHash = originalHash; }
   assert.equal(hashCalls, 0);
+});
+
+test("UX ordinary JSON round-trips and frozen data remain accepted without mutable-container requirements", () => {
+  const roundTripped = fixture(); roundTripped.draft = JSON.parse(JSON.stringify(roundTripped.draft));
+  const roundTrippedDocument = build(roundTripped).document;
+  assert.equal(verifyStructuralRelationObservationEnvelope(roundTrippedDocument).verificationReport.structuralContractVerification, "passed");
+
+  const frozen = fixture(); freezeJson(frozen.draft);
+  const frozenDocument = build(frozen).document;
+  freezeJson(frozenDocument);
+  const report = verifyStructuralRelationObservationEnvelope(frozenDocument, { sourceBytesByPath: frozen.sourceBytesByPath, rawBytesById: verifierRawMap(frozen, frozenDocument) }).verificationReport;
+  assert.equal(report.finalStrongVerification, true);
+  assert.equal(report.claimTruthVerification, "not-supported");
+  assert.equal(report.rawSemanticSupportVerification, "not-evaluated");
 });
 
 export { fixture, verifierRawMap };

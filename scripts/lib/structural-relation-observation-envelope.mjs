@@ -464,7 +464,10 @@ function preflightCanonicalEnvelopeBudget(draft, sourceBytesByPath, rawBytesById
  * caller-owned; only their bounded descriptors and content identities persist.
  * Schema objects and arrays must be ordinary JSON-style containers composed of
  * enumerable own data properties/elements; accessors and collection overrides
- * are rejected before any caller-provided value is read or hashed.
+ * are rejected before any caller-provided value is read or hashed. The draft
+ * byte limit bounds transient untrusted input separately from the persisted
+ * canonical-envelope limit. Typed unsupported shapes disclose this v0
+ * capability boundary; they do not establish that a relation is absent.
  */
 export function buildStructuralRelationObservationEnvelope(draft, { sourceBytesByPath, rawBytesById } = {}) {
   preflightDraft(draft, sourceBytesByPath, rawBytesById);
@@ -498,7 +501,7 @@ export function buildStructuralRelationObservationEnvelope(draft, { sourceBytesB
   const projectionEntries = pairsWithKeys.map((pair) => ({ pairId: pair.pairId, occurrenceIds: pair.occurrences.map((item) => item.occurrenceId).sort(ascii) })).sort((a, b) => ascii(a.pairId, b.pairId)); const projectionPayload = { policy: "relation-pair-only-v0", entries: projectionEntries }; const candidateProjection = { status: "candidate-only", policy: "relation-pair-only-v0", occurrenceDisposition: "preserved-in-envelope-not-in-pair", repositoryCompleteness: "not-claimed", entries: projectionEntries, projectionDigest: H(projectionPayload) };
   const clean = (entry) => Object.fromEntries(Object.entries(entry).filter(([key]) => !key.endsWith("Key")));
   const payload = { schemaVersion: 0, kind: "StructuralRelationObservationEnvelope", protocol: { name: "head-agent-core-structural-relation-observation-envelope", version: STRUCTURAL_RELATION_OBSERVATION_ENVELOPE_VERSION }, subject: { projectId, sourceManifest: sources, sourceManifestDigest }, producerClaims: claimsWithKeys.map(clean).sort((a, b) => ascii(a.producerClaimId, b.producerClaimId)), rawRefs: rawWithKeys.map(clean).sort((a, b) => ascii(a.rawRefId, b.rawRefId)), runs: runsWithKeys.map(clean).sort((a, b) => ascii(a.runId, b.runId)), pairs: pairsWithKeys.map((pair) => clean({ ...pair, occurrences: pair.occurrences.map((occurrence) => clean(occurrence)) })), candidateProjection, diagnosticLabels: (draft.diagnosticLabels || []).map((value) => text(value, 512, "diagnostic label")).sort(ascii), authority: "ephemeral-host-evidence-only", instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false, graphAuthority: false };
-  jsonSize(payload, "Canonical envelope"); const envelopeHash = H(payload); const document = { ...payload, envelopeId: `structural-envelope-${envelopeHash.slice(0, 24)}`, envelopeHash }; verifyStructuralRelationObservationEnvelope(document, { sourceBytesByPath, rawBytesById: new Map(rawWithKeys.map((entry) => [entry.rawRefId, rawBytesById.get(entry.rawRefKey)])) }); return document;
+  const envelopeHash = H(payload); const document = { ...payload, envelopeId: `structural-envelope-${envelopeHash.slice(0, 24)}`, envelopeHash }; verifyStructuralRelationObservationEnvelope(document, { sourceBytesByPath, rawBytesById: new Map(rawWithKeys.map((entry) => [entry.rawRefId, rawBytesById.get(entry.rawRefKey)])) }); return document;
 }
 
 /**
