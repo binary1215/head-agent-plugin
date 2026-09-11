@@ -55,6 +55,7 @@ const statusSet = new Set(LSP_HOST_STATUSES);
 const stageSet = new Set(LSP_HOST_STAGES);
 const reasonSet = new Set(LSP_HOST_REASONS);
 const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+const fatalUtf8 = new TextDecoder("utf-8", { fatal: true });
 export const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
 export function canonicalValue(value) {
@@ -140,7 +141,7 @@ export class LspFrameParser {
       this.buffer = this.buffer.subarray(this.expected);
       this.expected = null;
       let message;
-      try { message = JSON.parse(bytes.toString("utf8")); }
+      try { message = JSON.parse(fatalUtf8.decode(bytes)); }
       catch { throw protocolError("invalid-json", "LSP payload is not valid UTF-8 JSON."); }
       if (!message || typeof message !== "object" || Array.isArray(message) || jsonDepth(message) > this.limits.maxJsonDepth) {
         throw protocolError("invalid-message", "LSP payload is not a bounded JSON object.");
@@ -183,6 +184,12 @@ export function createSnapshotDescriptor({ projectId, generationDigest, sources,
     { path: "tsconfig.json", languageId: "json", text: requireText(fixedTsconfig, "tsconfig", LSP_HOST_LIMITS.maxDocumentBytes) },
   ];
   if (new Set(documents.map((item) => item.path)).size !== documents.length) throw protocolError("invalid-input", "Snapshot paths must be unique.");
+  const paths = documents.map((item) => item.path).sort(compareText);
+  for (let index = 0; index < paths.length; index += 1) {
+    for (let other = index + 1; other < paths.length; other += 1) {
+      if (paths[other].startsWith(`${paths[index]}/`)) throw protocolError("invalid-input", "Snapshot file paths cannot also be directory prefixes.");
+    }
+  }
   let totalBytes = 0;
   const manifestDocuments = documents.map((item) => {
     const bytes = Buffer.byteLength(item.text, "utf8");
@@ -204,7 +211,8 @@ export function relativePathFromUri(uri, collectionId, allowedPaths) {
   if (typeof uri !== "string") throw protocolError("uri-outside-snapshot", "LSP URI is missing.");
   let parsed;
   try { parsed = new URL(uri); } catch { throw protocolError("uri-outside-snapshot", "LSP URI is invalid."); }
-  if (parsed.protocol !== "head-lsp:" || parsed.hostname !== encodeURIComponent(collectionId).toLowerCase() || parsed.search || parsed.hash) {
+  if (parsed.protocol !== "head-lsp:" || parsed.hostname !== encodeURIComponent(collectionId).toLowerCase()
+    || parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash) {
     throw protocolError("uri-outside-snapshot", "LSP URI escaped the owned snapshot.");
   }
   let relative;
@@ -212,6 +220,7 @@ export function relativePathFromUri(uri, collectionId, allowedPaths) {
   catch { throw protocolError("uri-outside-snapshot", "LSP URI encoding is invalid."); }
   relative = normalizeRelativePath(relative);
   if (!allowedPaths.has(relative)) throw protocolError("uri-outside-snapshot", "LSP URI does not name an admitted snapshot document.");
+  if (uri !== snapshotUri(collectionId, relative)) throw protocolError("uri-outside-snapshot", "LSP URI is a non-canonical alias of an admitted endpoint.");
   return relative;
 }
 
@@ -236,9 +245,81 @@ export function validateRange(text, range) {
   return { start, end };
 }
 
+export function positionAtOffset(text, offset) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > text.length) throw protocolError("invalid-range", "Text offset is invalid.");
+  const before = text.slice(0, offset);
+  const lines = before.split("\n");
+  return { line: lines.length - 1, character: lines.at(-1).replace(/\r$/, "").length };
+}
+
+function codeMask(text) {
+  const chars = text.split("");
+  let mode = "code";
+  let quote = null;
+  for (let index = 0; index < chars.length; index += 1) {
+    const current = chars[index];
+    const next = chars[index + 1];
+    if (mode === "line") {
+      if (current === "\n") mode = "code";
+      else chars[index] = " ";
+    } else if (mode === "block") {
+      if (current === "*" && next === "/") { chars[index] = chars[index + 1] = " "; index += 1; mode = "code"; }
+      else if (current !== "\n" && current !== "\r") chars[index] = " ";
+    } else if (mode === "string") {
+      if (current === "\\") { chars[index] = " "; if (index + 1 < chars.length) chars[++index] = " "; }
+      else if (current === quote) { chars[index] = " "; mode = "code"; quote = null; }
+      else if (current !== "\n" && current !== "\r") chars[index] = " ";
+    } else if (current === "/" && next === "/") {
+      chars[index] = chars[index + 1] = " "; index += 1; mode = "line";
+    } else if (current === "/" && next === "*") {
+      chars[index] = chars[index + 1] = " "; index += 1; mode = "block";
+    } else if (current === "\"" || current === "'" || current === "`") {
+      chars[index] = " "; mode = "string"; quote = current;
+    }
+  }
+  return chars.join("");
+}
+
+export function boundedFixtureFunctionIdentity(text, name) {
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name || "")) throw protocolError("invalid-input", "Fixture function name is invalid.");
+  const masked = codeMask(text);
+  const declaration = new RegExp(`\\bexport\\s+function\\s+${name}\\s*\\(\\s*\\)\\s*\\{`, "g");
+  const matches = [...masked.matchAll(declaration)];
+  if (matches.length !== 1) return null;
+  const match = matches[0];
+  const selectionStart = masked.indexOf(name, match.index);
+  const open = masked.indexOf("{", match.index);
+  let depth = 0;
+  let close = -1;
+  for (let index = open; index < masked.length; index += 1) {
+    if (masked[index] === "{") depth += 1;
+    if (masked[index] === "}" && --depth === 0) { close = index; break; }
+  }
+  if (selectionStart < 0 || open < 0 || close < 0) return null;
+  return {
+    name,
+    startOffset: match.index,
+    bodyStartOffset: open + 1,
+    endOffset: close + 1,
+    range: { start: positionAtOffset(text, match.index), end: positionAtOffset(text, close + 1) },
+    selectionRange: { start: positionAtOffset(text, selectionStart), end: positionAtOffset(text, selectionStart + name.length) },
+  };
+}
+
+export function boundedFixtureCallRanges(text, functionIdentity, targetName) {
+  if (!functionIdentity || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(targetName || "")) return [];
+  const masked = codeMask(text);
+  const body = masked.slice(functionIdentity.bodyStartOffset, functionIdentity.endOffset - 1);
+  const call = new RegExp(`\\b${targetName}\\s*\\(\\s*\\)\\s*;`, "g");
+  return [...body.matchAll(call)].map((match) => {
+    const start = functionIdentity.bodyStartOffset + match.index + match[0].indexOf(targetName);
+    return { start: positionAtOffset(text, start), end: positionAtOffset(text, start + targetName.length) };
+  });
+}
+
 export function createPendingTable(binding) {
   const pending = new Map();
-  const completed = new Set();
+  const completed = new Map();
   let nextId = 1;
   return Object.freeze({
     issue(method) {
@@ -248,12 +329,12 @@ export function createPendingTable(binding) {
     },
     consume(message, currentBinding = binding) {
       if (!("id" in message) || ("result" in message) === ("error" in message)) throw protocolError("invalid-message", "LSP response shape is invalid.");
-      if (completed.has(message.id)) throw protocolError("duplicate-response-id", "LSP response ID was already completed.");
+      if (completed.has(message.id)) throw protocolError("duplicate-response-id", "LSP response ID was already completed.", { method: completed.get(message.id).method });
       const entry = pending.get(message.id);
       if (!entry) throw protocolError("unknown-response-id", "LSP response ID is not outstanding.");
       if (entry.binding !== canonicalJson(currentBinding)) throw protocolError("mapping-mismatch", "Host response ownership mapping changed.");
       pending.delete(message.id);
-      completed.add(message.id);
+      completed.set(message.id, entry);
       return entry;
     },
     outstanding() { return [...pending.keys()]; },

@@ -37,6 +37,52 @@ function range(text, start, length) {
   return { start: position(text, start), end: position(text, start + length) };
 }
 
+function codeMask(text) {
+  const chars = text.split("");
+  let mode = "code";
+  let quote = null;
+  for (let index = 0; index < chars.length; index += 1) {
+    const current = chars[index];
+    const next = chars[index + 1];
+    if (mode === "line") {
+      if (current === "\n") mode = "code"; else chars[index] = " ";
+    } else if (mode === "block") {
+      if (current === "*" && next === "/") { chars[index] = chars[index + 1] = " "; index += 1; mode = "code"; }
+      else if (current !== "\n" && current !== "\r") chars[index] = " ";
+    } else if (mode === "string") {
+      if (current === "\\") { chars[index] = " "; if (index + 1 < chars.length) chars[++index] = " "; }
+      else if (current === quote) { chars[index] = " "; mode = "code"; }
+      else if (current !== "\n" && current !== "\r") chars[index] = " ";
+    } else if (current === "/" && next === "/") { chars[index] = chars[index + 1] = " "; index += 1; mode = "line"; }
+    else if (current === "/" && next === "*") { chars[index] = chars[index + 1] = " "; index += 1; mode = "block"; }
+    else if (current === "\"" || current === "'" || current === "`") { chars[index] = " "; mode = "string"; quote = current; }
+  }
+  return chars.join("");
+}
+
+function functionIdentity(text, name) {
+  const masked = codeMask(text);
+  const matches = [...masked.matchAll(new RegExp(`\\bexport\\s+function\\s+${name}\\s*\\(\\s*\\)\\s*\\{`, "g"))];
+  if (matches.length !== 1) return null;
+  const match = matches[0];
+  const selection = masked.indexOf(name, match.index);
+  const open = masked.indexOf("{", match.index);
+  let depth = 0;
+  let close = -1;
+  for (let index = open; index < masked.length; index += 1) {
+    if (masked[index] === "{") depth += 1;
+    if (masked[index] === "}" && --depth === 0) { close = index; break; }
+  }
+  if (selection < 0 || close < 0) return null;
+  return { name, bodyStart: open + 1, end: close + 1, range: range(text, match.index, close + 1 - match.index), selectionRange: range(text, selection, name.length) };
+}
+
+function callRanges(text, identity, name) {
+  if (!identity) return [];
+  const body = codeMask(text).slice(identity.bodyStart, identity.end - 1);
+  return [...body.matchAll(new RegExp(`\\b${name}\\s*\\(\\s*\\)\\s*;`, "g"))].map((match) => range(text, identity.bodyStart + match.index + match[0].indexOf(name), name.length));
+}
+
 function documentBySuffix(suffix) {
   return [...opened.entries()].find(([uri]) => uri.endsWith(`/${suffix}`));
 }
@@ -44,17 +90,16 @@ function documentBySuffix(suffix) {
 function callerItem() {
   const [uri, text] = documentBySuffix("caller.ts") || [];
   if (!uri) return null;
-  const start = text.indexOf("caller");
-  if (start < 0) return null;
-  return { name: "caller", kind: 12, uri, range: range(text, start, "caller".length), selectionRange: range(text, start, "caller".length) };
+  const identity = functionIdentity(text, "caller");
+  return identity ? { name: "caller", kind: 12, uri, range: identity.range, selectionRange: identity.selectionRange } : null;
 }
 
 function targetItem() {
   const [uri, text] = documentBySuffix("target.ts") || [];
   if (!uri) return null;
-  const start = text.indexOf("target");
-  if (start < 0) return null;
-  const item = { name: "target", kind: 12, uri, range: range(text, start, "target".length), selectionRange: range(text, start, "target".length) };
+  const identity = functionIdentity(text, "target");
+  if (!identity) return null;
+  const item = { name: "target", kind: 12, uri, range: identity.range, selectionRange: identity.selectionRange };
   if (scenario === "external-uri") item.uri = "file:///outside/target.ts";
   if (scenario === "invalid-range") item.selectionRange = { start: { line: 999, character: 0 }, end: { line: 999, character: 1 } };
   return item;
@@ -68,6 +113,10 @@ function verifyServerResponse(message) {
 }
 
 function respond(message) {
+  if (scenario === "slow-work" && ["initialize", "textDocument/prepareCallHierarchy", "callHierarchy/outgoingCalls"].includes(message.method) && !message.headDelayed) {
+    setTimeout(() => respond({ ...message, headDelayed: true }), 4_600);
+    return;
+  }
   if (message.id !== undefined && message.method === undefined) {
     verifyServerResponse(message);
     return;
@@ -86,7 +135,7 @@ function respond(message) {
       write({ jsonrpc: "2.0", method: "_typescript.version", params: { version: "fixture" } });
       write({ jsonrpc: "2.0", method: "$/progress", params: { token: "fixture", value: { kind: "report" } } });
     }
-    if (scenario === "notification-flood") for (let index = 0; index < 129; index += 1) write({ jsonrpc: "2.0", method: "window/logMessage", params: { type: 3, message: String(index) } });
+    if (["notification-flood", "grandchild-flood"].includes(scenario)) for (let index = 0; index < 129; index += 1) write({ jsonrpc: "2.0", method: "window/logMessage", params: { type: 3, message: String(index) } });
     if (scenario === "unknown-notification") write({ jsonrpc: "2.0", method: "head/unknown", params: {} });
     if (scenario === "unknown-server-request") write({ jsonrpc: "2.0", id: "server-unknown", method: "workspace/executeCommand", params: {} });
     if (scenario === "server-requests") {
@@ -95,7 +144,7 @@ function respond(message) {
       write({ jsonrpc: "2.0", id: "server-progress", method: "window/workDoneProgress/create", params: { token: "fixture" } });
       write({ jsonrpc: "2.0", id: "server-message", method: "window/showMessageRequest", params: { message: "fixture", actions: [] } });
     }
-    if (scenario === "grandchild") {
+    if (["grandchild", "grandchild-flood", "grandchild-cancel"].includes(scenario)) {
       const childFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "lsp-host-child.mjs");
       descendant = spawn(process.execPath, [childFile], { shell: false, windowsHide: true, stdio: "ignore" });
       descendant.unref();
@@ -109,12 +158,21 @@ function respond(message) {
   }
   if (message.method === "textDocument/prepareCallHierarchy") {
     if (scenario === "crash") process.exit(31);
+    if (["external-abort", "grandchild-cancel"].includes(scenario)) {
+      try { process.getBuiltinModule("fs").appendFileSync(`${fileURLToPath(import.meta.url)}.trace`, `${message.id}\n`); } catch {}
+      return;
+    }
     if (["timeout", "cancel"].includes(scenario)) return;
-    if (scenario === "prepare-null" || scenario === "wrong-position") { write({ jsonrpc: "2.0", id: message.id, result: null }); return; }
-    if (scenario === "prepare-empty" || scenario === "false-positive") { write({ jsonrpc: "2.0", id: message.id, result: [] }); return; }
+    if (scenario === "stderr-limit") { process.stderr.write("x".repeat(1024 * 1024 + 1)); return; }
+    if (scenario === "prepare-null") { write({ jsonrpc: "2.0", id: message.id, result: null }); return; }
+    if (scenario === "prepare-empty") { write({ jsonrpc: "2.0", id: message.id, result: [] }); return; }
     const item = callerItem();
     if (!item) { write({ jsonrpc: "2.0", id: message.id, result: [] }); return; }
+    const [, callerText] = documentBySuffix("caller.ts") || [];
+    const expectedPosition = item.selectionRange.start;
+    if (message.params?.textDocument?.uri !== item.uri || JSON.stringify(message.params?.position) !== JSON.stringify(expectedPosition)) { write({ jsonrpc: "2.0", id: message.id, result: [] }); return; }
     if (scenario === "ambiguous") { write({ jsonrpc: "2.0", id: message.id, result: [item, { ...item, name: "caller2" }] }); return; }
+    if (scenario === "wrong-position") { write({ jsonrpc: "2.0", id: message.id, result: [{ ...item, selectionRange: { start: { ...item.selectionRange.start, character: item.selectionRange.start.character + 1 }, end: item.selectionRange.end } }] }); return; }
     write({ jsonrpc: "2.0", id: message.id, result: [item] });
     if (scenario === "duplicate-id") write({ jsonrpc: "2.0", id: message.id, result: [item] });
     return;
@@ -123,11 +181,17 @@ function respond(message) {
     if (scenario === "hierarchy-null") { write({ jsonrpc: "2.0", id: message.id, result: null }); return; }
     if (scenario === "hierarchy-empty") { write({ jsonrpc: "2.0", id: message.id, result: [] }); return; }
     const [, callerText] = documentBySuffix("caller.ts") || [];
+    const [, barrelText] = documentBySuffix("barrel.ts") || [];
+    const caller = callerItem();
     const target = targetItem();
-    const callStart = callerText?.indexOf("target();") ?? -1;
-    const importExpected = scenario === "direct" ? /from\s+["']\.\/target["']/ : /from\s+["']\.\/barrel["']/;
-    const validCall = callStart >= 0 && importExpected.test(callerText || "") && target;
-    const result = validCall ? [{ to: target, fromRanges: [range(callerText, callStart, "target".length)] }] : [];
+    if (!caller || JSON.stringify(message.params?.item) !== JSON.stringify(caller)) { write({ jsonrpc: "2.0", id: message.id, result: [] }); return; }
+    const direct = /import\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/.test(callerText || "");
+    const throughBarrel = /import\s*\{\s*target\s*\}\s*from\s*["']\.\/barrel["']\s*;/.test(callerText || "")
+      && /export\s*\{\s*target\s*\}\s*from\s*["']\.\/target["']\s*;/.test(barrelText || "");
+    const ranges = callRanges(callerText || "", functionIdentity(callerText || "", "caller"), "target");
+    if (scenario === "reordered") ranges.reverse();
+    const validCall = (direct || throughBarrel) && ranges.length > 0 && target;
+    const result = validCall ? [{ to: target, fromRanges: ranges }] : [];
     if (scenario === "late-response") {
       write({ jsonrpc: "2.0", id: message.id, result });
       write({ jsonrpc: "2.0", id: message.id, result });
@@ -141,10 +205,14 @@ function respond(message) {
     return;
   }
   if (message.method === "shutdown") {
-    write({ jsonrpc: "2.0", id: message.id, result: null });
+    if (scenario === "slow-shutdown") setTimeout(() => write({ jsonrpc: "2.0", id: message.id, result: null }), 3_500);
+    else write({ jsonrpc: "2.0", id: message.id, result: null });
     return;
   }
   if (message.method === "exit") {
+    if (scenario === "delete-self") {
+      try { process.getBuiltinModule("fs").unlinkSync(fileURLToPath(import.meta.url)); } catch {}
+    }
     setTimeout(() => process.exit(0), 10);
     return;
   }

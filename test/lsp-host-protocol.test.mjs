@@ -36,6 +36,10 @@ test("P07 framing is byte-safe, fragmented, bounded, and fail-closed", () => {
   assert.deepEqual(observed, [message]);
   assert.throws(() => new LspFrameParser().feed(Buffer.from("junk\r\n\r\n{}")), { code: "invalid-framing" });
   assert.throws(() => new LspFrameParser().feed(Buffer.from("Content-Length: 1\r\n\r\n{")), { code: "invalid-json" });
+  const invalidUtf8 = Buffer.concat([Buffer.from('{"jsonrpc":"2.0","id":1,"result":"'), Buffer.from([0xff]), Buffer.from('"}')]);
+  assert.throws(() => new LspFrameParser().feed(Buffer.concat([Buffer.from(`Content-Length: ${invalidUtf8.length}\r\n\r\n`), invalidUtf8])), { code: "invalid-json" });
+  const truncatedUtf8 = Buffer.concat([Buffer.from('{"jsonrpc":"2.0","id":1,"result":"'), Buffer.from([0xf0, 0x9f]), Buffer.from('"}')]);
+  assert.throws(() => new LspFrameParser().feed(Buffer.concat([Buffer.from(`Content-Length: ${truncatedUtf8.length}\r\n\r\n`), truncatedUtf8])), { code: "invalid-json" });
   assert.throws(() => new LspFrameParser().feed(Buffer.from(`Content-Length: ${LSP_HOST_LIMITS.maxFrameBytes + 1}\r\n\r\n`)), { code: "frame-oversize" });
   const oneFrame = encodeLspMessage({ jsonrpc: "2.0", method: "window/logMessage", params: {} });
   const frameLimited = new LspFrameParser({ ...LSP_HOST_LIMITS, maxFrames: 1 });
@@ -85,6 +89,12 @@ test("P08/P11 snapshot identity, URI admission, CRLF, and UTF-16 ranges are exac
   assert.equal(relativePathFromUri(uri, "collection-1", new Set(["caller.ts"])), "caller.ts");
   assert.throws(() => relativePathFromUri("file:///outside.ts", "collection-1", new Set(["caller.ts"])), { code: "uri-outside-snapshot" });
   assert.throws(() => relativePathFromUri(snapshotUri("collection-2", "caller.ts"), "collection-1", new Set(["caller.ts"])), { code: "uri-outside-snapshot" });
+  for (const alias of [
+    "head-lsp://collection-1/a/../caller.ts",
+    "head-lsp://collection-1/%63aller.ts",
+    "head-lsp://user@collection-1/caller.ts",
+    "head-lsp://collection-1:123/caller.ts",
+  ]) assert.throws(() => relativePathFromUri(alias, "collection-1", new Set(["caller.ts"])), { code: "uri-outside-snapshot" });
   const text = "😀x\r\ny";
   assert.equal(offsetAtPosition(text, { line: 0, character: 2 }), 2);
   assert.deepEqual(validateRange(text, { start: { line: 0, character: 2 }, end: { line: 1, character: 1 } }), { start: 2, end: 6 });
