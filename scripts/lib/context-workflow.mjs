@@ -132,6 +132,30 @@ function workflowDecision(capsule) {
   };
 }
 
+function canonObjectionLookup(capsule) {
+  const selectedKeys = new Set(capsule.evidenceNeedContract.needs
+    .filter((need) => need.kind === "product-context").flatMap((need) => need.entityKeys || []));
+  const kinds = new Set(["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision", "Policy"]);
+  const anchors = new Map();
+  for (const record of capsule.productContext) for (const entity of record.entities || []) {
+    const kind = entity.kind.replace(/Revision$/, "");
+    if (kinds.has(kind) && selectedKeys.has(entity.key)) {
+      anchors.set(`${kind}:${entity.key}`, { entity_kind: kind, entity_key: entity.key });
+    }
+  }
+  return {
+    status: "not-queried",
+    scope: "included-head-selected-logical-canon-only",
+    semanticRelevanceOwner: "HEAD",
+    automaticQuery: false,
+    persisted: false,
+    lookups: [...anchors.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, anchor]) => ({
+      tool: "head_conformance_queue", arguments: { canon_anchor: anchor },
+    })),
+    note: "Supply the same project root. These pointers do not establish whether objections exist. Reuse current evidence; query only when objections could affect this task. A prior acknowledge/defer is not resolution or suppression.",
+  };
+}
+
 function buildContextWorkflowProjection(preview, { callerTask, requestedBudget, attempts = [] } = {}) {
   if (preview?.status !== "preview" || preview.capsule?.kind !== "ContextCapsule") {
     const error = new Error("A non-persisted Context Capsule preview is required.");
@@ -242,6 +266,7 @@ function buildContextWorkflowProjection(preview, { callerTask, requestedBudget, 
       userDecisionRequired: false,
       persisted: false,
     },
+    conformanceLookup: canonObjectionLookup(capsule),
     nextAction: decision.nextAction,
     authority: {
       advisoryOnly: true,

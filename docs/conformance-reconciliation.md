@@ -1,5 +1,24 @@
 # Non-blocking Conformance reconciliation
 
+## Optional exact Canon lookup
+
+The existing queue accepts an optional canonAnchor with entityKind and entityKey;
+CLI uses --canon-kind and --canon-key together, and MCP uses canon_anchor with
+entity_kind and entity_key. The default queue is unchanged. Lookup selects the
+logical Canon, not only its latest revision: earlier unresolved or deferred
+Findings remain visible with currentness disclosures. Unrelated Finding source
+anchors are not re-read; retained artifact integrity is still verified.
+Pagination stays available, and filter changes resynchronize the read-only cursor.
+
+Context workflow exposes not-queried pointers only for included HEAD-selected
+Canon keys. It performs no queue read, persistence, suppression, or semantic
+selection and changes neither Capsule coverage nor approval. HEAD follows a
+pointer only when objections could affect the current judgment, reuses sufficient
+current evidence, and reads the exact returned Finding when needed. Previously
+acknowledged evidence may be important to a different task. Missing optional
+Graph or Observation still permits ordinary source work. This is an explicit
+conversational connection, not an automatic Host notifier or global Attention scan.
+
 Read [Architecture](architecture.md), [Authority planes](authority-plane-contract.md), [ChangeSets](change-sets.md), and [Observation adapters](observation-adapters.md) before changing this contract.
 
 Status: implemented provider-neutral P3 candidate evidence, P4 queue and audit view, and optional P5 Host trigger composition.

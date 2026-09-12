@@ -115,7 +115,7 @@ test("metric evidence remains P3/P4, discloses partial coverage, and requires th
   assert.ok(ids.has(assessed.hypothesis.hypothesisId));
   assert.ok(ids.has(followUp.initiativeCandidate.initiativeCandidateId));
   assert.ok(graph.edges.some((edge) => edge.type === "DERIVED_FROM" && edge.from === compared.comparison.derivedObservationId && edge.to === baseline.observation.observationId));
-  assert.ok(graph.edges.some((edge) => edge.type === "SUPPORTED_BY" && edge.from === assessed.hypothesis.hypothesisId && edge.to === compared.comparison.derivedObservationId));
+  assert.ok(graph.edges.some((edge) => edge.type === "REFERENCES" && edge.from === assessed.hypothesis.hypothesisId && edge.to === compared.comparison.derivedObservationId));
   assert.ok(graph.edges.some((edge) => edge.type === "PROPOSES_FROM" && edge.from === followUp.initiativeCandidate.initiativeCandidateId && edge.to === assessed.hypothesis.hypothesisId));
   assert.equal(graph.nodes.some((node) => node.kind === "ProductInitiativeReviewDecision"), false);
   const trace = traceMeasurementLineage({ root, anchorId: compared.comparison.derivedObservationId });

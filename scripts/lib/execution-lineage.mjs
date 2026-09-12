@@ -246,7 +246,7 @@ export function buildFreshHeadReview({ root = ".", wholePlanId, resultPacketId, 
     },
     authority: project.authority,
     reviewProtocol: {
-      question: "Does this ResultPacket satisfy the ExecutionContract and preserve the WholePlanSnapshot objective and invariants?",
+      question: "Does the result deliver the user's intended outcome to its next actual consumer? Which evidence supports that claim, what remains unverified, and does the ExecutionContract still serve the WholePlanSnapshot objective and invariants rather than narrowing them? Distinguish source changes, fixture/test success, installation, and actual Host behavior; require only evidence appropriate to this task's claims.",
       allowedDispositions: ["accept", "revise", "expand", "rollback", "escalate"],
       requiredReturn: ["disposition", "rationale", "nextActions"],
     },

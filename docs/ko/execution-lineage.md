@@ -1,5 +1,14 @@
 # Execution Lineage 계약과 Run 생명주기
 
+## 계약 충족을 넘어 실제 결과 검토
+
+Fresh HEAD 검토는 결과가 사용자의 목적과 다음 실제 소비자에게 적합한지,
+어떤 근거가 이를 뒷받침하며 무엇이 미검증인지 묻습니다. 기존 검토 판정과
+권한 경계는 바뀌지 않습니다. 소스 수정에는 소스와 집중 회귀 근거가 적합할 수
+있지만, Host 기능이 작동한다는 주장에는 그에 맞는 Host 근거가 필요합니다.
+모든 작업에 실사용 테스트를 강요하지 않으며 충분한 현재 근거를 재사용합니다.
+이전 구현 승인과 무관하게 현재 요청이 검토뿐이면 읽기 전용을 유지합니다.
+
 [영어 원문](../execution-lineage.md)
 
 이 생명주기를 변경하기 전에 [`architecture.md`](architecture.md)와
@@ -66,8 +75,12 @@ node scripts/head.mjs lineage-contract <project> --input <execution-contract.jso
 {
   "wholePlanId": "whole-plan-<24 hex>",
   "capsuleId": "capsule-<24 hex>",
-  "scope": "Produce one independently reviewable result",
-  "acceptanceCriteria": ["Required tests pass", "Direct evidence is attached"],
+  "scope": "Make recovery status actionable for the CLI operator",
+  "acceptanceCriteria": [
+    "The operator can identify the affected operation and next action without treating optional recovery attention as a general work block",
+    "Verify the claimed CLI projection behavior and preservation of recovery state with appropriate direct evidence",
+    "Disclose unverified installation or live Host behavior instead of inferring it from source or fixture results"
+  ],
   "constraints": ["Do not change material product direction"],
   "allowedActions": ["Edit and test local plugin source"],
   "forbiddenActions": ["Deploy or publish"]

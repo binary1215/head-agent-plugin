@@ -1,5 +1,17 @@
 > 이 문서는 [product-operating-loop.md](../product-operating-loop.md)의 한국어판입니다. 코드, 명령, 프로토콜 식별자와 필드 이름은 원문 표기를 유지합니다.
 
+## 중립적인 근거 참조
+
+새 ProductHypothesis 아티팩트만 프로토콜 0.5.0과 필수 referenceSemantics 값
+neutral을 사용합니다. Signal과 Observation 연결은 REFERENCES이며, 모든 인용이
+가설을 지지한다는 기계적 판정이 아닙니다. 지지·반박·불확실성은 HEAD가 기존
+rationale에 설명하며 별도 근거 역할 입력 양식은 없습니다. 나머지 운영 아티팩트는
+0.4.0을 유지합니다. 과거 가설의 바이트·해시·SUPPORTED_BY 해석은 그대로 보존되고
+새 reader가 마이그레이션 없이 읽습니다. 옛 reader는 새 가설 버전을 거부하므로
+옛 의미를 조용히 적용하지 않습니다. 새 아티팩트를 소비하는 작업에서 혼합 버전
+읽기·쓰기는 지원하지 않으며 독립적인 일반 작업에는 영향이 없습니다.
+측정 이력 조회는 두 관계를 모두 따라갑니다.
+
 # Product Operating Loop
 
 상태: Product Operating Loop 프로토콜 `0.4.0`에 따른 최소 수직 경로가 구현되어 있으며, 다이제스트를 읽을 수 있는 `0.1.0`, `0.2.0` 및 `0.3.0` 호환성을 제공합니다.

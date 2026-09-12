@@ -531,7 +531,7 @@ test("admits Observation evidence only by exact HEAD need and keeps semantic int
   assert.equal(hypothesis.hypothesis.promotionAuthority, false);
   const graph = readWorldModel({ root }).snapshot.temporalProvenanceGraph;
   assert.equal(graph.nodes.some((node) => node.nodeId === observed.observation.observationId && node.kind === "ObservationRecord"), true);
-  assert.equal(graph.edges.some((edge) => edge.type === "SUPPORTED_BY" && edge.from === hypothesis.hypothesis.hypothesisId && edge.to === observed.observation.observationId), true);
+  assert.equal(graph.edges.some((edge) => edge.type === "REFERENCES" && edge.from === hypothesis.hypothesis.hypothesisId && edge.to === observed.observation.observationId), true);
 
   assert.throws(() => compileContext({ root, task, evidenceNeeds: [{ id: "invalid-observation", kind: "observation", observationIds: [] }] }), { code: "INVALID_EVIDENCE_NEEDS" });
   await assert.rejects(() => recordProductHypothesis({ root, statement: "Unsupported", observationIds: ["observation-000000000000000000000000"] }), (error) => error.code === "UNKNOWN_OBSERVATION");

@@ -9,6 +9,7 @@ import { loadObservationArtifacts } from "./observation-store.mjs";
 import { withProjectMutationAsync } from "./project-mutation-lock.mjs";
 
 export const PRODUCT_OPERATING_LOOP_VERSION = "0.4.0";
+export const PRODUCT_HYPOTHESIS_VERSION = "0.5.0";
 export const PRODUCT_SIGNAL_DIRECTORY = ".head/product-operations/signals";
 export const PRODUCT_HYPOTHESIS_DIRECTORY = ".head/product-operations/hypotheses";
 export const PRODUCT_INITIATIVE_CANDIDATE_DIRECTORY = ".head/product-operations/initiative-candidates";
@@ -29,7 +30,7 @@ const DIRECTORIES = Object.freeze({
 
 const LIMITS = Object.freeze({ maxArtifacts: 512, maxArtifactBytes: 1024 * 1024, maxTotalBytes: 32 * 1024 * 1024 });
 const LEGACY_PROTOCOL_VERSIONS = new Set(["0.1.0", "0.2.0", "0.3.0"]);
-const OBSERVATION_REFERENCE_PROTOCOL_VERSIONS = new Set(["0.3.0", PRODUCT_OPERATING_LOOP_VERSION]);
+const OBSERVATION_REFERENCE_PROTOCOL_VERSIONS = new Set(["0.3.0", PRODUCT_OPERATING_LOOP_VERSION, PRODUCT_HYPOTHESIS_VERSION]);
 const projectionReadCache = new Map();
 const worldSummaryReadCache = new Map();
 const fail = (message, code = "PRODUCT_OPERATING_LOOP_ERROR") => { const error = new Error(message); error.code = code; throw error; };
@@ -243,7 +244,7 @@ function verifyIdentity(document, prefix, idField, hashField, label) {
 
 function commonValid(document, kind, projectId, epistemicClass, authority) {
   return document.schemaVersion === SCHEMA_VERSION && document.kind === kind
-    && document.protocol?.name === "head-agent-core-product-operating-loop" && supportedProtocolVersion(document.protocol?.version)
+    && document.protocol?.name === "head-agent-core-product-operating-loop" && (supportedProtocolVersion(document.protocol?.version) || (kind === "ProductHypothesis" && document.protocol?.version === PRODUCT_HYPOTHESIS_VERSION))
     && (!projectId || document.projectId === projectId) && document.epistemicClass === epistemicClass
     && document.authority === authority && document.instructionAuthority === false && document.promotionAuthority === false;
 }
@@ -264,6 +265,7 @@ export function verifyProductHypothesis(document, projectId = "") {
     || typeof document.statement !== "string" || !document.statement || !signalIds.length && !observationIds.length
     || observationIds.some((id) => !/^(?:observation|derived-observation)-[a-f0-9]{24}$/.test(id))) fail("ProductHypothesis fields are invalid.", "INVALID_PRODUCT_HYPOTHESIS");
   if (!OBSERVATION_REFERENCE_PROTOCOL_VERSIONS.has(document.protocol.version) && document.observationIds != null) fail("Legacy ProductHypothesis may not gain Observation references.", "INVALID_PRODUCT_HYPOTHESIS");
+  if (document.protocol.version === PRODUCT_HYPOTHESIS_VERSION ? document.referenceSemantics !== "neutral" : Object.hasOwn(document, "referenceSemantics")) fail("ProductHypothesis reference semantics are invalid.", "INVALID_PRODUCT_HYPOTHESIS");
   return document;
 }
 
@@ -538,7 +540,7 @@ async function recordProductHypothesisUnlocked({ root = ".", statement, signalId
     ]);
     for (const id of exactObservationIds) if (!knownObservationIds.has(id)) fail(`ProductHypothesis Observation not found: ${id}`, "UNKNOWN_OBSERVATION");
   }
-  const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductHypothesis", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, statement: requiredText(statement, "ProductHypothesis statement"), rationale: optionalText(rationale, "ProductHypothesis rationale"), signalIds: ids, observationIds: exactObservationIds, epistemicClass: "hypothesis", authority: "non-authoritative-hypothesis", instructionAuthority: false, promotionAuthority: false };
+  const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductHypothesis", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_HYPOTHESIS_VERSION }, projectId: inspected.project.projectId, statement: requiredText(statement, "ProductHypothesis statement"), rationale: optionalText(rationale, "ProductHypothesis rationale"), signalIds: ids, observationIds: exactObservationIds, referenceSemantics: "neutral", epistemicClass: "hypothesis", authority: "non-authoritative-hypothesis", instructionAuthority: false, promotionAuthority: false };
   const hypothesis = verifyProductHypothesis(artifact(payload, "product-hypothesis", "hypothesisId", "hypothesisHash"), inspected.project.projectId);
   const persisted = persistImmutable(inspected.project.projectRoot, PRODUCT_HYPOTHESIS_DIRECTORY, hypothesis.hypothesisId, hypothesis);
   return { ...persisted, hypothesis, productGraph: await projectProductOperatingGraph(inspected) };

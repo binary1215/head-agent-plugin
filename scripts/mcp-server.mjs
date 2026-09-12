@@ -777,7 +777,7 @@ export const tools = [
   {
     name: "head_conformance_queue",
     description: "Read a bounded, paginated P4 Conformance queue. Missing Graph or optional sources, partial coverage, risk hints, and open findings never block ordinary work.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, status: { type: "string", enum: ["all", "open", "acknowledged", "deferred", "action-requested", "needs-recheck", "resolution-proposed", "closed-dismissed", "closed-resolved"], default: "all" }, risk_hint: { type: "string", enum: ["", "unknown", "low", "medium", "high"], default: "" }, limit: { type: "integer", minimum: 1, maximum: 64, default: 25 }, projection_id: { type: "string" }, cursor: { type: "string", pattern: "^conformance-finding-[a-f0-9]{24}$" } }, required: ["project_root"], additionalProperties: false },
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, canon_anchor: conformanceFindingInputSchema.properties.canon_anchor, status: { type: "string", enum: ["all", "open", "acknowledged", "deferred", "action-requested", "needs-recheck", "resolution-proposed", "closed-dismissed", "closed-resolved"], default: "all" }, risk_hint: { type: "string", enum: ["", "unknown", "low", "medium", "high"], default: "" }, limit: { type: "integer", minimum: 1, maximum: 64, default: 25 }, projection_id: { type: "string" }, cursor: { type: "string", pattern: "^conformance-finding-[a-f0-9]{24}$" } }, required: ["project_root"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -2197,7 +2197,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
         : name === "head_conformance_propose"
           ? proposeConformanceFindings({ root: args.project_root, baseline: conformanceBaselineFromMcp(args.baseline), findings: args.findings.map(conformanceFindingFromMcp) })
         : name === "head_conformance_queue"
-          ? inspectConformanceQueue({ root: args.project_root, status: args.status || "all", riskHint: args.risk_hint || "", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "" })
+          ? inspectConformanceQueue({ root: args.project_root, status: args.status || "all", riskHint: args.risk_hint || "", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "", canonAnchor: args.canon_anchor == null ? null : { entityKind: args.canon_anchor.entity_kind, entityKey: args.canon_anchor.entity_key } })
         : name === "head_conformance_read"
           ? readConformanceFinding({ root: args.project_root, findingId: args.finding_id })
         : name === "head_conformance_disposition"

@@ -21,6 +21,7 @@ import {
   recordProductHypothesis,
   recordProductSignal,
   reviewProductInitiative,
+  verifyProductHypothesis,
 } from "../scripts/lib/product-operating-loop.mjs";
 import { recommendOperatingLane } from "../scripts/lib/operating-lane.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
@@ -30,6 +31,32 @@ import { runCommand } from "../scripts/head.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+
+test("new neutral hypotheses preserve historical support interpretation and exact immutable evidence", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const signal = (await recordProductSignal({ root, statement: "A counterexample was observed." })).signal;
+  const fresh = (await recordProductHypothesis({ root, statement: "This may contradict the claim.", rationale: "Counterevidence, not support.", signalIds: [signal.signalId] })).hypothesis;
+  assert.equal(fresh.protocol.version, "0.5.0");
+  assert.equal(fresh.referenceSemantics, "neutral");
+  const legacyPayload = structuredClone(fresh);
+  delete legacyPayload.hypothesisId; delete legacyPayload.hypothesisHash; delete legacyPayload.referenceSemantics;
+  legacyPayload.protocol.version = "0.4.0";
+  const legacy = productArtifact(legacyPayload, "product-hypothesis", "hypothesisId", "hypothesisHash");
+  const oldPath = path.join(root, ".head/product-operations/hypotheses", `${legacy.hypothesisId}.json`);
+  fs.writeFileSync(oldPath, JSON.stringify(legacy));
+  const protectedPaths = [oldPath, path.join(root, ".head/context/product-model.json"), path.join(root, ".head/sessions/current.json")];
+  const before = protectedPaths.map(p => fs.readFileSync(p));
+  assert.equal(verifyProductHypothesis(legacy).hypothesisId, legacy.hypothesisId);
+  await buildWorldModel({ root });
+  const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
+  assert.ok(graph.edges.some(e => e.from === fresh.hypothesisId && e.to === signal.signalId && e.type === "REFERENCES"));
+  assert.ok(graph.edges.some(e => e.from === legacy.hypothesisId && e.to === signal.signalId && e.type === "SUPPORTED_BY"));
+  assert.equal(graph.edges.some(e => e.from === fresh.hypothesisId && e.type === "SUPPORTED_BY"), false);
+  const invalidPayload = { ...legacyPayload, protocol: fresh.protocol };
+  assert.throws(() => verifyProductHypothesis(productArtifact(invalidPayload, "product-hypothesis", "hypothesisId", "hypothesisHash")), { code: "INVALID_PRODUCT_HYPOTHESIS" });
+  protectedPaths.forEach((p, i) => assert.deepEqual(fs.readFileSync(p), before[i]));
+});
 
 function fixture() {
   fs.mkdirSync(testParent, { recursive: true });
@@ -95,7 +122,7 @@ test("connects the minimal Product Operating Loop while keeping Product Canon an
   assert.equal(graph.nodes.some((node) => node.kind === "ProductSignal" && node.nodeId === signal.signal.signalId), true);
   assert.equal(graph.nodes.some((node) => node.kind === "ReviewedProductInitiative" && node.nodeId === reviewed.reviewedInitiative.initiativeId), true);
   assert.equal(graph.nodes.some((node) => node.kind === "ProductFeatureCandidate" && node.nodeId === candidateProposal.featureCandidate.featureCandidateId), true);
-  assert.equal(graph.edges.some((edge) => edge.type === "SUPPORTED_BY" && edge.from === hypothesis.hypothesis.hypothesisId && edge.to === signal.signal.signalId), true);
+  assert.equal(graph.edges.some((edge) => edge.type === "REFERENCES" && edge.from === hypothesis.hypothesis.hypothesisId && edge.to === signal.signal.signalId), true);
   assert.equal(graph.edges.some((edge) => edge.type === "PRODUCES" && edge.from === reviewed.reviewDecision.reviewDecisionId && edge.to === reviewed.reviewedInitiative.initiativeId), true);
 
   const capsule = compileContext({ root, task: "Implement the reviewed continuity initiative", budget: 32_768, persist: true });

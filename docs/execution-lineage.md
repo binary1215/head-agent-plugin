@@ -1,5 +1,15 @@
 # Execution Lineage contract and Run lifecycle
 
+## Review the outcome, not just the contract
+
+Fresh HEAD review asks whether the result serves the user's intended outcome and
+its next actual consumer, which evidence supports that claim, and what remains
+unverified. The existing review dispositions and authorization boundaries are
+unchanged. A source-only fix may use source and focused regression evidence;
+claiming that a Host feature works requires appropriate Host evidence. Neither
+example imposes live testing on every task. Reuse sufficient current evidence.
+A review-only request stays read-only even if earlier work was approved.
+
 Read [`architecture.md`](architecture.md) and
 [`authority-plane-contract.md`](authority-plane-contract.md) before changing
 this lifecycle.
@@ -70,8 +80,12 @@ node scripts/head.mjs lineage-contract <project> --input <execution-contract.jso
 {
   "wholePlanId": "whole-plan-<24 hex>",
   "capsuleId": "capsule-<24 hex>",
-  "scope": "Produce one independently reviewable result",
-  "acceptanceCriteria": ["Required tests pass", "Direct evidence is attached"],
+  "scope": "Make recovery status actionable for the CLI operator",
+  "acceptanceCriteria": [
+    "The operator can identify the affected operation and next action without treating optional recovery attention as a general work block",
+    "Verify the claimed CLI projection behavior and preservation of recovery state with appropriate direct evidence",
+    "Disclose unverified installation or live Host behavior instead of inferring it from source or fixture results"
+  ],
   "constraints": ["Do not change material product direction"],
   "allowedActions": ["Edit and test local plugin source"],
   "forbiddenActions": ["Deploy or publish"]

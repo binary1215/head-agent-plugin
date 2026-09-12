@@ -18,6 +18,7 @@ import {
   createConformanceFindingCandidate,
   createConformanceResolutionCandidate,
   normalizeConformanceEvidenceAnchor,
+  normalizeCanonAnchor,
   verifyConformanceDispositionReceipt,
   verifyConformanceFindingCandidate,
   verifyConformanceResolutionCandidate,
@@ -399,21 +400,23 @@ export function readConformanceFinding({ root = ".", findingId } = {}) {
   return { status: "verified", finding, dispositions, resolutions, latestDisposition: tail ? { ...tail, actor: tail.authority === HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY ? "head" : "user" } : null, graphProjection: findingGraphProjection(finding, dispositions, resolutions) };
 }
 
-export function inspectConformanceQueue({ root = ".", status = "all", riskHint = "", limit = 25, projectionId = "", cursor = "" } = {}) {
+export function inspectConformanceQueue({ root = ".", status = "all", riskHint = "", limit = 25, projectionId = "", cursor = "", canonAnchor = null } = {}) {
   const inspected = readyProject(root, "Conformance queue inspection");
+  const selectedCanon = canonAnchor === null ? null : normalizeCanonAnchor(canonAnchor);
   if (!new Set(["all", "open", "acknowledged", "deferred", "action-requested", "needs-recheck", "resolution-proposed", "closed-dismissed", "closed-resolved"]).has(status)) fail("Conformance queue status filter is invalid.", "INVALID_CONFORMANCE_QUEUE_FILTER");
   if (riskHint && !new Set(["unknown", "low", "medium", "high"]).has(riskHint)) fail("Conformance queue risk filter is invalid.", "INVALID_CONFORMANCE_QUEUE_FILTER");
   const boundedLimit = Number(limit);
   if (!Number.isInteger(boundedLimit) || boundedLimit < 1 || boundedLimit > MAX_PAGE) fail(`Conformance queue limit must be between 1 and ${MAX_PAGE}.`, "INVALID_CONFORMANCE_PAGE_LIMIT");
   const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId);
   const current = currentBaseline(inspected.project.projectRoot);
-  const rows = artifacts.findings.map((finding) => {
+  const selectedFindings = artifacts.findings.filter((finding) => !selectedCanon || (finding.canonAnchor.entityKind === selectedCanon.entityKind && finding.canonAnchor.entityKey === selectedCanon.entityKey));
+  const rows = selectedFindings.map((finding) => {
     const tail = artifacts.tails.get(finding.findingId);
     const resolutions = artifacts.resolutions.filter((item) => item.findingId === finding.findingId);
     const currency = findingCurrency(inspected.project.projectRoot, current, finding);
     return { findingId: finding.findingId, findingHash: finding.findingHash, canonAnchor: finding.canonAnchor, claim: { kind: finding.claim.kind, summary: finding.claim.summary, riskHint: finding.claim.riskHint }, disclosures: finding.disclosures, status: queueStatus({ tail, resolutions, currency }), currency, latestDisposition: tail ? { dispositionId: tail.dispositionId, disposition: tail.disposition, deferUntil: tail.deferUntil, authority: tail.authority, actor: tail.authority === HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY ? "head" : "user" } : null, resolutionCandidateCount: resolutions.length, authority: "P4-derived-queue-row" };
   }).filter((row) => (status === "all" || row.status === status) && (!riskHint || row.claim.riskHint === riskHint)).sort((a, b) => a.findingId.localeCompare(b.findingId));
-  const projectionPayload = { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, baseline: current.baseline, findingStates: rows.map((row) => [row.findingId, row.status, row.currency.state, row.latestDisposition?.dispositionId || null, row.resolutionCandidateCount]) };
+  const projectionPayload = { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, baseline: current.baseline, ...(selectedCanon ? { canonAnchor: selectedCanon } : {}), findingStates: rows.map((row) => [row.findingId, row.status, row.currency.state, row.latestDisposition?.dispositionId || null, row.resolutionCandidateCount]) };
   const currentProjectionId = `conformance-queue-${conformanceDigest(conformanceCanonicalJson(projectionPayload)).slice(0, 24)}`;
   let start = 0;
   let resynchronized = false;
@@ -432,7 +435,7 @@ export function inspectConformanceQueue({ root = ".", status = "all", riskHint =
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     projectionId: currentProjectionId,
-    filters: { status, riskHint },
+    filters: { status, riskHint, ...(selectedCanon ? { canonAnchor: selectedCanon } : {}) },
     totalMatches: rows.length,
     findings: page,
     omitted: remaining,

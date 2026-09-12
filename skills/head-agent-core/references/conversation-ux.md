@@ -127,3 +127,138 @@ existing facts, but they create no new queue, artifact, authority, or decision.
 An optional Product review or refresh is `when-product-governance-is-in-scope`:
 show it as a notice, never as an immediate user decision merely because it
 exists. The explicit Product operation still presents its real review card.
+
+## Optional product evidence
+
+Read only the part needed for the current outcome. These are optional paths,
+not a sequence to perform for every task.
+
+Use the common Observation surface only when a current task actually needs a
+durable cross-Run, rebuttal/audit, handoff, or context-loss record of structured
+external facts. The mere existence of build, delivery, analytics, support, or
+runtime data does not justify ingestion; keep ordinary inspection ephemeral.
+After HEAD determines one exact task-required Observation `typeKey`, call
+`head_observation_prepare` first. It returns bounded current exact IDs before
+matching configured Host sources without judging sufficiency, selecting a source,
+or collecting. Inspect a returned existing record with `head_observation_read` and
+reuse it when HEAD determines that its time scope and content are semantically
+sufficient. Use `head_observation_query` for additional exact-ID paging and
+`head_observation_sources` only for configured-source paging, filtering, or
+adapter diagnosis. Follow a stale source cursor's disclosed first-page
+resynchronization automatically; do not turn it into a user decision. A real Host
+adapter owns source access, binding, digests, coverage, and the Host provenance
+confirmation; do not ask the user to compose those fields or to attest to a
+machine observation. `head_observation_ingest` is the advanced Host/CI boundary
+for an already constructed bounded input, while `head_observation_collect`
+remains the adapter-facing compatibility alias. Descriptors define a closed data
+shape, not Feature meaning, success, causality, policy, or tool routing. Read
+`head_observation_status` only as a bounded P4 summary. To use one of these
+records in task context, HEAD must add an EvidenceNeed of kind `observation` with
+exact current `observationIds`; lexical overlap never makes an Observation
+eligible. If product interpretation should persist, author a non-authoritative
+ProductHypothesis that cites the exact Observation IDs. Never auto-create a
+ProductSignal, candidate, ReviewDecision, Canon mutation, or P2 recovery
+direction from an adapter payload. Read `../../../docs/observation-adapters.md`
+before adding an Observation adapter.
+
+Source-specific collection belongs behind a process-local Host adapter registry;
+authentication, pagination, rate limits, webhook acknowledgement, cursors, and
+provider identity stay outside the project. The generic
+`observation-file-ingest` CLI is a one-shot Host/CI reference for an already
+prepared bounded JSON event. Do not route its file path through MCP or ask the
+user to author its source configuration. It does not replace a configured Host
+integration, scheduler, or remote connector.
+
+When `head_observation_prepare` shows no semantically sufficient current record,
+select a configured source only if the current task requires a durable current
+Observation. Prefer a `ready` Host availability hint but treat it only as P5
+operational evidence, not semantic relevance or freshness proof. Then call
+`head_observation_collect_source` with the opaque Project-bound source ID. Do not
+ask the user for a path, binding, descriptor, digest, coverage claim, credential
+reference, provider identity, or source alias. If no configured source is
+available, disclose the optional adapter gap and continue without Observation
+persistence unless that exact evidence is required.
+
+When the user wants to add, revise, or retire a product Policy, reason about its
+meaning in the provider HEAD and call `head_product_policy_propose` with exact
+Feature or FeatureGroup applications plus optional exact Requirement,
+Constraint, or Decision references. Do not infer those references from group
+membership, source names, or graph proximity, and do not ask the user to write
+proposal JSON. The candidate is non-blocking P3 evidence. Present one compact
+decision card and call `head_product_policy_review` only after the current user
+unambiguously accepts or rejects that exact candidate. A missing optional
+reference or evidence anchor is a disclosure, not a reason to manufacture one
+or block ordinary work. On later inspection, summarize the shared read-only
+evidence-currentness result; `changed` or `missing` can motivate a new proposal
+but does not automatically invalidate Canon or require another review.
+
+For before/after measurement, reuse existing exact observations or a configured
+Host source before asking for any new input. The provider HEAD may call the
+typed metric operations, but the user should speak in ordinary task language
+rather than supplying digests, coverage structures, adapter identities, or
+metric JSON. A numeric comparison remains available when collection conditions
+differ, while adapter key/version/descriptor, source scope, form, duration,
+sample size, and coverage remain visibly `same`, `different`, or `unknown`.
+Never convert that comparison into semantic equivalence or causality. Assessment
+is only a P3 ProductHypothesis; a follow-up remains an initiative candidate and
+uses the existing explicit Product review only if the user chooses to promote it.
+
+When the task asks what is currently deployed or delivered to named targets,
+use `head_delivery_status` and summarize observed `uniform`, `mixed`, or
+`unknown` state without asking the user for event JSON. A trusted Host adapter
+may call `head_delivery_observe`; neither the Host nor user needs an additional
+approval step because the record is P3 evidence and performs no deployment.
+Never choose current state by receipt time, let a failed attempt erase the last
+applied revision, infer success for an unobserved target, or call the projection
+a complete deployment inventory. A declared revision remains unverified. Only
+an exact retained World `FileRevision` binding may receive an `AT_REVISION`
+edge. Because that label is a Core proof, never route `delivery.state` through
+generic Observation ingestion; use the dedicated typed delivery call, which
+revalidates the exact same-Project World binding without adding user approval.
+Ordering conflicts are a disclosed `unknown` for that target, not a block
+on ordinary work or a request for a Product review.
+
+When approved Product Canon may have drifted from code or external evidence,
+keep Conformance reconciliation non-blocking. Call `head_conformance_prepare`
+without asking the user for Canon keys, graph IDs, digests, or JSON. Provider
+HEAD performs the semantic comparison and cites one or more exact current
+source, ChangeSet, Observation, or optional Graph anchors; Core only verifies
+those anchors through `head_conformance_propose`. Lexical overlap, test or
+document presence, Graph availability, connector availability, coverage class,
+risk hint, and queue length never determine candidate eligibility or ordinary-
+work blocking. Missing optional evidence is a disclosure.
+
+Read `head_conformance_queue` in bounded pages and summarize Findings at natural
+work boundaries instead of interrupting every change. A Finding is P3 candidate
+evidence. HEAD may acknowledge or defer it with `actor: "head"` and no user
+confirmation; do not impersonate a user or supersede any user disposition.
+Keep maintained Findings discoverable. This neither resolves them nor requires
+a user response. A Finding remains
+evidence, not a violation or decision. Source or Canon drift means
+`needs-recheck`, never automatic resolution. Provider HEAD may submit a fresh
+`head_conformance_resolution_propose`, but close or dismiss an exact Finding
+only after the user's natural-language disposition by calling
+`head_conformance_disposition` with explicit confirmation. Requests for a code
+fix still enter the normal execution lane; requests for Canon revision still
+enter the existing exact candidate and user ReviewDecision path.
+
+Optional Host triggers remain process-local P5. Default opportunistic use runs
+at a conversational boundary and invokes no background provider. Monitor mode
+and provider assessment require explicit user opt-in. Duplicate triggers
+converge, refresh triggers coalesce with disclosed coverage, and an uncertain
+provider outcome must not auto-replay. Missing Host composition never blocks
+ordinary HEAD work. Read `../../../docs/conformance-reconciliation.md` before
+changing this subsystem.
+
+For Product-to-code or Product-to-test mapping, inspect the current World and
+Graph, then use `head_feature_mapping_propose` with exact current Product and
+source/test node identities. Do not derive mappings from names or token overlap.
+Inspect and batch unreviewed candidates without interrupting ordinary work.
+To replace an obsolete pending unreviewed batch, call the same proposal tool
+with its exact `expected_candidate_set_id` and a fresh semantic proposal.
+This preserves historical evidence and cannot bypass an already saved decision.
+Present the relevant batch when reviewed relationship promotion is needed.
+Only after an explicit user disposition,
+call `head_feature_mapping_review` with the exact candidate-set ID and
+`confirm_user_review: true`; proposal, model agreement, or tool success alone
+never creates a reviewed relationship or changes Product Canon.

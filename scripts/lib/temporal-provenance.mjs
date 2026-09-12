@@ -2034,9 +2034,10 @@ function appendProductOperatingProjection({ projectId, productModelId, sourceSna
     for (const observationId of hypothesis.observationIds) {
       if (!["ObservationRecord", "DerivedObservationRecord"].includes(nodeById.get(observationId)?.kind)) fail("ProductHypothesis exact Observation is absent from the graph.", "PRODUCT_OPERATING_OBSERVATION_MISSING");
     }
-    pushNode({ nodeId: hypothesis.hypothesisId, kind: "ProductHypothesis", projectId, hypothesisHash: hypothesis.hypothesisHash, statement: hypothesis.statement, rationale: hypothesis.rationale, signalIds: hypothesis.signalIds, observationIds: hypothesis.observationIds, epistemicClass: hypothesis.epistemicClass, sourceAuthority: hypothesis.authority, ...meta([hypothesis.hypothesisId, ...hypothesis.signalIds, ...hypothesis.observationIds], "derived", "explicit-product-hypothesis") });
-    for (const signalId of hypothesis.signalIds) add("SUPPORTED_BY", hypothesis.hypothesisId, signalId, [hypothesis.hypothesisId, signalId], "derived", "explicit-product-hypothesis");
-    for (const observationId of hypothesis.observationIds) add("SUPPORTED_BY", hypothesis.hypothesisId, observationId, [hypothesis.hypothesisId, observationId], "derived", "explicit-product-hypothesis");
+    const neutral = hypothesis.referenceSemantics === "neutral";
+    pushNode({ nodeId: hypothesis.hypothesisId, kind: "ProductHypothesis", projectId, hypothesisHash: hypothesis.hypothesisHash, statement: hypothesis.statement, rationale: hypothesis.rationale, signalIds: hypothesis.signalIds, observationIds: hypothesis.observationIds, ...(neutral ? { referenceSemantics: "neutral" } : {}), epistemicClass: hypothesis.epistemicClass, sourceAuthority: hypothesis.authority, ...meta([hypothesis.hypothesisId, ...hypothesis.signalIds, ...hypothesis.observationIds], "derived", "explicit-product-hypothesis") });
+    // Preserve legacy immutable evidence semantics; only new neutral records opt in.
+    for (const referenceId of [...hypothesis.signalIds, ...hypothesis.observationIds]) add(neutral ? "REFERENCES" : "SUPPORTED_BY", hypothesis.hypothesisId, referenceId, [hypothesis.hypothesisId, referenceId], "derived", "explicit-product-hypothesis");
   }
   for (const feature of projection.featureCandidates) pushNode({
     nodeId: feature.featureCandidateId, kind: "ProductFeatureCandidate", projectId, featureCandidateHash: feature.featureCandidateHash,
@@ -2885,6 +2886,7 @@ function validEndpointKinds(type, fromKind, toKind) {
     || (fromKind === "ProductModelRevision" && toKind === "ProductModelRevision");
   if (type === "DECLARES") return fromKind === "FileRevision" && toKind === "SymbolRevision";
   if (type === "REFERENCES") return (fromKind === "TestRevision" && toKind === "FileRevision")
+    || (fromKind === "ProductHypothesis" && ["ProductSignal", "ObservationRecord", "DerivedObservationRecord"].includes(toKind))
     || (fromKind === "VcsEvidence" && toKind === "GitCommit")
     || (fromKind === "ChangeRevisionReference" && ["FileRevision", "SymbolRevision", "TestRevision", "RevisionReference"].includes(toKind))
     || (fromKind === "ProductModelRevisionReference" && toKind === "PolicyRevision");
@@ -3802,8 +3804,12 @@ export function verifyTemporalProvenanceGraph(graph) {
   const operatingSets = [[operatingSignals, "signalIds"], [operatingHypotheses, "hypothesisIds"], [operatingInitiativeCandidates, "initiativeCandidateIds"], [operatingReviews, "reviewDecisionIds"], [operatingReviewedInitiatives, "reviewedInitiativeIds"], [operatingFeatureCandidates, "featureCandidateIds"], [operatingOutcomes, "outcomeObservationIds"]];
   for (const [values, field] of operatingSets) if (canonicalJson(idsOf(values)) !== canonicalJson(productOperatingDescriptor[field])) fail(`Product operating projected ${field} does not match its descriptor.`, "PRODUCT_OPERATING_TEMPORAL_SET_MISMATCH");
   for (const hypothesis of operatingHypotheses) {
-    for (const signalId of hypothesis.signalIds) if (!hasEdge("SUPPORTED_BY", hypothesis.nodeId, signalId)) fail("ProductHypothesis signal support relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
-    if (legacyV12 || legacyV13 || legacyV14 || graphVersion === TEMPORAL_PROVENANCE_VERSION) for (const observationId of hypothesis.observationIds) if (!hasEdge("SUPPORTED_BY", hypothesis.nodeId, observationId)) fail("ProductHypothesis Observation support relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
+    const neutral = hypothesis.referenceSemantics === "neutral";
+    if (Object.hasOwn(hypothesis, "referenceSemantics") && (!neutral || graphVersion !== TEMPORAL_PROVENANCE_VERSION)) fail("ProductHypothesis reference semantics are invalid.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
+    const relation = neutral ? "REFERENCES" : "SUPPORTED_BY";
+    const referenceIds = [...hypothesis.signalIds, ...((legacyV12 || legacyV13 || legacyV14 || graphVersion === TEMPORAL_PROVENANCE_VERSION) ? hypothesis.observationIds : [])].sort();
+    const referenceEdges = graph.edges.filter(edge => edge.from === hypothesis.nodeId && ["REFERENCES", "SUPPORTED_BY"].includes(edge.type));
+    if (referenceEdges.some(edge => edge.type !== relation) || canonicalJson(referenceEdges.map(edge => edge.to).sort()) !== canonicalJson(referenceIds)) fail("ProductHypothesis exact evidence references or their semantics do not match.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");
   }
   for (const candidate of operatingInitiativeCandidates) {
     for (const hypothesisId of candidate.hypothesisIds) if (!hasEdge("PROPOSES_FROM", candidate.nodeId, hypothesisId)) fail("Product Initiative hypothesis relation is missing.", "PRODUCT_OPERATING_TEMPORAL_RELATION_MISSING");

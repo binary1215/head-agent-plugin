@@ -64,6 +64,48 @@ test("HEAD maintenance stays visible, preserves user authority, and rejects forg
   assert.throws(() => inspectConformanceQueue({ root }), { code: "INVALID_CONFORMANCE_DISPOSITION_CHAIN" });
 });
 
+test("exact logical Canon lookup survives revision drift and preserves deferred findings without unrelated source reads", async (t) => {
+  const root = fixture({ constraints: 66 });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "selected.mjs"), "export const selected = true;\n");
+  fs.writeFileSync(path.join(root, "unrelated.mjs"), "export const unrelated = true;\n");
+  const baseline = prepareConformanceAssessment({ root }).baseline;
+  const findings = Array.from({ length: 66 }, (_, i) => proposal(root, { baseline }, i === 65 ? "selected.mjs" : "unrelated.mjs", { constraint: `constraint.${i}` }).findings[0]);
+  const saved = [];
+  for (let i = 0; i < findings.length; i += 64) saved.push(...proposeConformanceFindings({ root, baseline, findings: findings.slice(i, i + 64) }).findings);
+  const chosen = inspectConformanceQueue({ root, canonAnchor: { entityKind: "Constraint", entityKey: "constraint.65" } }).findings[0];
+  recordConformanceDisposition({ root, findingId: chosen.findingId, disposition: "defer", actor: "head", rationale: "Not material to the earlier task." });
+  const canonAnchor = chosen.canonAnchor;
+  assert.equal(inspectConformanceQueue({ root, canonAnchor }).findings[0].status, "deferred");
+  const canonPath = path.join(root, ".head/context/product-model.json");
+  const canon = JSON.parse(fs.readFileSync(canonPath));
+  canon.constraints[65].statement = "Revised logical policy";
+  fs.writeFileSync(canonPath, JSON.stringify(canon));
+  const protectedPaths = [canonPath, path.join(root, ".head/project.json"), path.join(root, ".head/sessions/current.json")];
+  const before = protectedPaths.map(p => fs.readFileSync(p));
+  const read = fs.readFileSync;
+  let unrelatedReads = 0;
+  fs.readFileSync = function(file, ...args) {
+    if (String(file).endsWith("unrelated.mjs")) unrelatedReads++;
+    return read.call(this, file, ...args);
+  };
+  let queue;
+  try { queue = inspectConformanceQueue({ root, canonAnchor }); } finally { fs.readFileSync = read; }
+  assert.equal(unrelatedReads, 0);
+  assert.equal(queue.totalMatches, 1);
+  assert.equal(queue.findings[0].findingId, chosen.findingId);
+  assert.equal(queue.findings[0].status, "needs-recheck");
+  assert.deepEqual(queue.filters.canonAnchor, canonAnchor);
+  const cli = await runCommand(["conformance-queue", root, "--canon-kind", "Constraint", "--canon-key", "constraint.65"]);
+  const mcp = await dispatchMcp({ jsonrpc: "2.0", id: "canon-filter", method: "tools/call", params: { name: "head_conformance_queue", arguments: { project_root: root, canon_anchor: { entity_kind: "Constraint", entity_key: "constraint.65" } } } });
+  assert.deepEqual(cli, queue);
+  assert.deepEqual(mcp.result.structuredContent, queue);
+  const other = inspectConformanceQueue({ root, canonAnchor: { ...canonAnchor, entityKey: "absent" }, projectionId: queue.projectionId, cursor: chosen.findingId });
+  assert.equal(other.resynchronization.occurred, true);
+  assert.equal(other.totalMatches, 0);
+  protectedPaths.forEach((p, i) => assert.deepEqual(fs.readFileSync(p), before[i]));
+});
+
 function fixture({ constraints = 1 } = {}) {
   fs.mkdirSync(testParent, { recursive: true });
   const root = fs.mkdtempSync(path.join(testParent, "head-agent-conformance-"));

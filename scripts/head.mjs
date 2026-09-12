@@ -135,7 +135,7 @@ export function usage({ all = false } = {}) {
       "head change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>",
       "head conformance-prepare <project> [--limit <1-64>] [--projection <projection-id> --cursor <kind:key>]",
       "head conformance-propose <project> --input <provider-head-proposal.json>",
-      "head conformance-queue <project> [--status <state>] [--risk-hint <level>] [--limit <1-64>] [--projection <projection-id> --cursor <finding-id>]",
+      "head conformance-queue <project> [--canon-kind <kind> --canon-key <key>] [--status <state>] [--risk-hint <level>] [--limit <1-64>] [--projection <projection-id> --cursor <finding-id>]",
       "head conformance-read <project> --finding <conformance-finding-id>",
       "head conformance-disposition <project> --input <user-confirmed-disposition.json>",
       "head conformance-resolution-propose <project> --input <provider-head-resolution.json>",
@@ -421,7 +421,7 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (command === "change-set-vcs-read") return readVcsEvidence({ root, vcsEvidenceId: options["vcs-evidence"] });
   if (command === "conformance-prepare") return prepareConformanceAssessment({ root, limit: options.limit == null ? 32 : Number(options.limit), projectionId: options.projection || "", cursor: options.cursor || "" });
   if (command === "conformance-propose") return proposeConformanceFindings({ ...inputJson(options, "Conformance provider-HEAD proposal"), root });
-  if (command === "conformance-queue") return inspectConformanceQueue({ root, status: options.status || "all", riskHint: options["risk-hint"] || "", limit: options.limit == null ? 25 : Number(options.limit), projectionId: options.projection || "", cursor: options.cursor || "" });
+  if (command === "conformance-queue") return inspectConformanceQueue({ root, status: options.status || "all", riskHint: options["risk-hint"] || "", limit: options.limit == null ? 25 : Number(options.limit), projectionId: options.projection || "", cursor: options.cursor || "", canonAnchor: options["canon-kind"] != null || options["canon-key"] != null ? { entityKind: options["canon-kind"], entityKey: options["canon-key"] } : null });
   if (command === "conformance-read") return readConformanceFinding({ root, findingId: options.finding });
   if (command === "conformance-disposition") return recordConformanceDisposition({ ...inputJson(options, "Conformance user disposition"), root });
   if (command === "conformance-resolution-propose") return proposeConformanceResolution({ ...inputJson(options, "Conformance provider-HEAD resolution"), root });

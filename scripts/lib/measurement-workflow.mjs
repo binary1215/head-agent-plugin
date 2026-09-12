@@ -389,7 +389,7 @@ export function traceMeasurementLineage({ root = ".", anchorId = "", metricKey =
       "ObservationTypeDescriptor", "ObservationCollectionReceipt", "ObservationRecord", "DerivedObservationRecord",
       "ProductHypothesis", "ProductInitiativeCandidate", "ProductInitiativeReviewDecision", "ReviewedProductInitiative",
     ],
-    relations: ["CONFORMS_TO", "EVIDENCED_BY", "DERIVED_FROM", "SUPPORTED_BY", "PROPOSES_FROM", "REVIEWED_BY", "ACCEPTED_BY", "REJECTED_BY", "PRODUCES", "PROMOTED_FROM"],
+    relations: ["CONFORMS_TO", "EVIDENCED_BY", "DERIVED_FROM", "REFERENCES", "SUPPORTED_BY", "PROPOSES_FROM", "REVIEWED_BY", "ACCEPTED_BY", "REJECTED_BY", "PRODUCES", "PROMOTED_FROM"],
     authorityClasses: ["derived", "runtime-observed", "reviewed"],
     freshness: ["current", "historical", "stale"],
     includeUnreviewedCandidates: true,

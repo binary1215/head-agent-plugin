@@ -384,6 +384,32 @@ test("Context coverage packs only new relation IDs while retaining independently
   assert.deepEqual(managedTreeSnapshot(root), partialBefore);
 });
 
+test("Context Canon objection pointers are exact optional read-only hints, not queries or authority", async (t) => {
+  const root = temporaryProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const task = "Inspect continuity";
+  const empty = previewContextWorkflow({ root, task });
+  assert.deepEqual(empty.workflow.conformanceLookup.lookups, []);
+  fs.writeFileSync(path.join(root, ".head/context/product-model.json"), JSON.stringify({
+    schemaVersion: 1, featureGroups: [], features: [], requirements: [], constraints: [], decisions: [],
+    capabilities: [{ key: "chosen", name: "Continuity" }, { key: "neighbor", name: "Continuity neighbor" }],
+  }));
+  await buildWorldModel({ root });
+  const evidenceNeeds = [{ id: "chosen", kind: "product-context", entityKeys: ["chosen"] }];
+  const before = managedTreeSnapshot(root);
+  const direct = compileContext({ root, task, evidenceNeeds }).capsule;
+  const wrapped = previewContextWorkflow({ root, task, evidenceNeeds });
+  assert.equal(wrapped.capsule.capsuleId, direct.capsuleId);
+  assert.deepEqual(wrapped.workflow.conformanceLookup.lookups, [{
+    tool: "head_conformance_queue", arguments: { canon_anchor: { entity_kind: "Capability", entity_key: "chosen" } },
+  }]);
+  assert.equal(wrapped.workflow.conformanceLookup.status, "not-queried");
+  assert.equal(wrapped.workflow.conformanceLookup.automaticQuery, false);
+  assert.deepEqual(previewContextWorkflow({ root, task }).workflow.conformanceLookup.lookups, []);
+  assert.deepEqual(managedTreeSnapshot(root), before);
+});
+
 test("Product coverage counts logical revisions across overlapping carriers and preserves provenance", async (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

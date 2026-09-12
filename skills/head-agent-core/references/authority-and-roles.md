@@ -21,7 +21,7 @@ Coder implements a fully decided bounded scope: one Session request or a Run con
 
 ## Reviewer
 
-Reviewer evaluates a consequential decision before implementation. Reviewer tests options and assumptions against primary evidence but does not implement or choose the final direction.
+Reviewer provides an independent evaluation when useful, including a bounded second opinion. Reviewer tests options and assumptions against evidence appropriate to the user's question but does not implement or choose the final direction.
 
 ## Invariants
 

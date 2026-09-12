@@ -87,7 +87,7 @@ function normalizeBaseline(value) {
   };
 }
 
-function normalizeCanonAnchor(value) {
+export function normalizeCanonAnchor(value) {
   exactFields(value, ["entityKind", "entityKey"], "Conformance Canon anchor");
   const entityKind = text(value.entityKind, "Conformance Canon entityKind", 32);
   if (!new Set(["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision", "Policy"]).has(entityKind)) fail("Conformance Canon entityKind is invalid.", "INVALID_CONFORMANCE_CANON_ANCHOR");

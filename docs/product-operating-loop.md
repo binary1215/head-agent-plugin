@@ -1,5 +1,18 @@
 # Product Operating Loop
 
+## Neutral evidence references
+
+New ProductHypothesis artifacts alone use protocol 0.5.0 and a required
+referenceSemantics value of neutral. Their Signal and Observation links are
+REFERENCES, not a mechanical claim that every citation supports the hypothesis.
+HEAD explains support, challenges, and uncertainty in the existing rationale;
+no evidence-role form is required. Other operating artifacts remain at 0.4.0.
+Historical hypotheses retain their bytes, hashes, and SUPPORTED_BY interpretation.
+The new reader accepts them without migration. Older readers reject the new
+hypothesis version instead of silently assigning old semantics. Mixed-version
+writers/readers are not supported for operations that consume these new artifacts;
+ordinary independent work is unaffected. Measurement trace follows both relations.
+
 Status: implemented minimal vertical under Product Operating Loop protocol `0.4.0`, with digest-readable `0.1.0`, `0.2.0`, and `0.3.0` compatibility.
 
 The Product Operating Loop connects product learning to reviewed execution without turning observations, model inference, GraphDB, or a continuity summary into HEAD or user authority.

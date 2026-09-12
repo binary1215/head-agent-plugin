@@ -1,5 +1,22 @@
 # 비차단 Conformance 재정
 
+## 선택적 정확 Canon 조회
+
+기존 큐는 entityKind와 entityKey를 가진 선택적 canonAnchor를 받습니다.
+CLI는 --canon-kind와 --canon-key를 함께 쓰고, MCP는 entity_kind와 entity_key가
+있는 canon_anchor를 사용합니다. 기본 큐는 바뀌지 않습니다. 최신 revision만이
+아닌 논리 Canon을 선택하므로 과거 미해결·유예 Finding도 현재성 고지와 함께
+남습니다. 무관한 Finding의 소스 근거는 다시 읽지 않으며 저장 아티팩트 무결성은
+계속 검증합니다. 페이지 탐색은 유지되고 필터 변경 시 읽기 전용 커서가 재동기화됩니다.
+
+Context workflow는 실제 포함된 HEAD 선택 Canon 키에 대해서만 not-queried
+포인터를 표시합니다. 큐 읽기·저장·억제·의미 선택은 수행하지 않으며 Capsule의
+coverage나 승인도 바꾸지 않습니다. HEAD는 이의가 현재 판단에 영향을 줄 때만
+조회하고 충분한 현재 근거를 재사용하며 필요하면 반환된 정확 Finding을 읽습니다.
+전에 확인한 이의도 다른 작업에서는 중요할 수 있습니다. 선택적 Graph나 Observation이
+없어도 일반 소스 작업은 가능합니다. 이는 명시적 대화 연결이지 자동 Host 알림이나
+전역 Attention 스캔이 아닙니다.
+
 [English source](../conformance-reconciliation.md)
 
 이 계약을 변경하기 전에 [아키텍처](architecture.md), [권위 평면](authority-plane-contract.md), [ChangeSet](change-sets.md), [Observation 어댑터](observation-adapters.md)를 읽습니다.
