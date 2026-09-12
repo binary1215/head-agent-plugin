@@ -20,7 +20,7 @@ const INCLUDE_ENTRIES = [
   "skills",
 ];
 const EXCLUDED_DIRECTORY_NAMES = new Set([".git", "dist", "node_modules", "test", "tmp", "__pycache__"]);
-const RUNTIME_TEXT_EXTENSIONS = new Set([".json", ".js", ".md", ".mjs", ".ps1", ".sh", ".txt"]);
+const RUNTIME_TEXT_EXTENSIONS = new Set([".json", ".js", ".md", ".mjs", ".ps1", ".py", ".sh", ".txt"]);
 
 function developmentOnlyFiles() {
   const developmentGoal = `${["ULTIMATE", "GOAL"].join("_")}.md`;

@@ -367,7 +367,7 @@ Load only the reference needed for the current outcome:
 
 - Product onboarding, Product Canon, World Model, GraphDB, Markdown, or source
   scope: use `head-agent-onboarding`, then read the linked subsystem document.
-- Context compilation: read `references/context-compiler.md`.
+- Context compilation and current source/call observations: read `references/context-compiler.md`. `head_source_context` collects and compiles HEAD-selected evidence without a World scan or user-authored JSON.
 - Roles, worker boundaries, review, and authority: read
   `references/authority-and-roles.md`.
 - Provider/runtime/host composition: read `references/runtime-composition.md`.

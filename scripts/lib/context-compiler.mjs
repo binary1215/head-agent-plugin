@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { SOURCE_OBSERVATION_TYPE, sourceObservationNode, readSourceObservation } from "./source-observation.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
@@ -220,7 +221,7 @@ function validateKnowledge(value) {
   return value;
 }
 
-function loadSources(root) {
+function loadSources(root, includeRepositoryWorld = true) {
   const files = {
     project: path.join(root, ".head", "project.json"),
     projectContext: path.join(root, ".head", "instructions", "project.md"),
@@ -232,7 +233,7 @@ function loadSources(root) {
   }
   const raw = Object.fromEntries(Object.entries(files).map(([name, file]) => [name, fs.readFileSync(file, "utf8")]));
   let worldModel = null;
-  try { worldModel = inspectWorldModel({ root }); }
+  try { if (includeRepositoryWorld) worldModel = inspectWorldModel({ root }); }
   catch (error) {
     if (error.code !== "WORLD_MODEL_NOT_BUILT") throw error;
   }
@@ -806,19 +807,33 @@ function runtimeStateCandidates(worldModel, task) {
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
-function observationCandidates(projectRoot, projectId, evidenceNeeds) {
+function observationCandidates(projectRoot, projectId, evidenceNeeds, sourceObservations = []) {
   const requestedIds = new Set(evidenceNeeds
     .filter((need) => need.kind === "observation")
     .flatMap((need) => need.observationIds));
   if (!requestedIds.size) return [];
-  const projection = loadObservationProjection({ projectRoot, projectId });
-  return projection.nodes
+  const suppliedIds = new Set(sourceObservations.map((bundle) => bundle.observation.observationId));
+  const projection = [...requestedIds].every((id) => suppliedIds.has(id))
+    ? { nodes: [], projectionId: null, projectionHash: null }
+    : loadObservationProjection({ projectRoot, projectId });
+  const nodes = new Map(projection.nodes.map((node) => [node.nodeId, node]));
+  for (const bundle of sourceObservations) {
+    const node = sourceObservationNode(projectRoot, projectId, bundle);
+    if (nodes.has(node.nodeId) && nodes.get(node.nodeId).observationHash !== node.observationHash) fail("Conflicting source Observation.", "SOURCE_OBSERVATION_INVALID");
+    nodes.set(node.nodeId, node);
+  }
+  return [...nodes.values()]
     .filter((node) => requestedIds.has(node.nodeId) && ["ObservationRecord", "DerivedObservationRecord"].includes(node.kind))
     .map((node) => {
+      if (node.typeKey === SOURCE_OBSERVATION_TYPE && !sourceObservations.some((bundle) => bundle.observation.observationId === node.nodeId)) {
+        const verified = sourceObservationNode(projectRoot, projectId, readSourceObservation(projectRoot, projectId, node.payload.bundleKey));
+        if (verified.observationHash !== node.observationHash) fail("Source Observation binding mismatch.", "SOURCE_OBSERVATION_INVALID");
+        node = verified;
+      }
       const record = {
         ...node,
-        observationProjectionId: projection.projectionId,
-        observationProjectionHash: projection.projectionHash,
+        observationProjectionId: node.observationProjectionId ?? projection.projectionId,
+        observationProjectionHash: node.observationProjectionHash ?? projection.projectionHash,
         instructionAuthority: false,
         promotionAuthority: false,
         recoveryAuthority: false,
@@ -1284,14 +1299,15 @@ function compatibilitySufficiency(coverageAssessment) {
   };
 }
 
-export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDGET, evidenceNeeds = [], persist = false, graphProjectionAdapter = null } = {}) {
+export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDGET, evidenceNeeds = [], persist = false, graphProjectionAdapter = null, sourceObservations = [], includeRepositoryWorld = true } = {}) {
+  if (persist && sourceObservations.length) fail("Ephemeral source observations must be retained before durable Capsule compilation.", "EPHEMERAL_SOURCE_REFERENCE");
   if (typeof task !== "string" || !task.trim()) fail("Context compilation requires a task.", "TASK_REQUIRED");
   const normalizedBudget = normalizeContextBudget(budget);
   const { maxApproxTokens } = normalizedBudget;
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail(`Project must be ready to compile context; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   const projectRoot = inspected.project.projectRoot;
-  const sources = loadSources(projectRoot);
+  const sources = loadSources(projectRoot, includeRepositoryWorld);
   const snapshot = contextSnapshot(inspected, sources);
   const projectContext = sources.raw.projectContext.trim();
   const historyClass = historyRelevance(task);
@@ -1310,7 +1326,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     ...repositoryCandidates(sources.worldModel, task, maxApproxTokens, needContract.needs),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
-    ...observationCandidates(projectRoot, inspected.project.projectId, needContract.needs),
+    ...observationCandidates(projectRoot, inspected.project.projectId, needContract.needs, sourceObservations),
   ].sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
   bindEvidenceNeeds(candidates, needContract.needs);
   const selection = selectCandidates(candidates, maxApproxTokens, approxTokens(canonicalJson(base)), needContract.needs);

@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import {
   buildStructuralRelationObservationEnvelope,
   verifyStructuralRelationObservationEnvelope,
+  prepareStructuralRelationObservationEnvelope,
 } from "../scripts/lib/structural-relation-observation-envelope.mjs";
 
 const enc = new TextEncoder();
@@ -95,6 +96,32 @@ function recomputeLineage(document) {
   document.candidateProjection.projectionDigest = H({ policy: "relation-pair-only-v0", entries: document.candidateProjection.entries });
   return reseal(document);
 }
+
+test("UX rejected observations do not mutate inputs or poison subsequent valid observations", () => {
+  const baseline = build().document;
+  const cases = [
+    ["unsupported shape", (value) => { value.draft.pairs = []; }, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE"],
+    ["resource limit", (value) => { value.rawBytesById.set("raw-a", new Uint8Array(1_048_577)); }, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"],
+    ["invalid truth claim", (value) => { value.draft.producerClaims[0].analysisMethodClaim.truthStatus = "verified"; }, "UNSUPPORTED_STRUCTURAL_RELATION_TRUTH_STATUS"],
+    ["invalid coverage claim", (value) => { value.draft.runs[0].coverage.repositoryRelationCompleteness = "complete"; }, "UNSUPPORTED_STRUCTURAL_RELATION_COVERAGE"],
+  ];
+  for (const [label, change, code] of cases) {
+    const rejected = fixture();
+    change(rejected);
+    const before = clone(rejected);
+    assert.throws(() => build(rejected), { code }, label);
+    assert.deepEqual(rejected, before, `${label}: caller data preserved`);
+    const { value, document } = build();
+    assert.deepEqual(document, baseline, `${label}: next observation unchanged`);
+    const { verificationReport } = verifyStructuralRelationObservationEnvelope(document, {
+      sourceBytesByPath: value.sourceBytesByPath,
+      rawBytesById: verifierRawMap(value, document),
+    });
+    assert.equal(verificationReport.finalStrongVerification, true);
+    assert.equal(verificationReport.claimTruthVerification, "not-supported");
+    assert.equal(verificationReport.responseCompletenessVerification, "not-evaluated");
+  }
+});
 
 test("SEO01 unknown claim survives strong integrity verification without truth promotion", () => {
   const { value, document } = build();
@@ -370,3 +397,209 @@ test("UX ordinary JSON round-trips and frozen data remain accepted without mutab
 });
 
 export { fixture, verifierRawMap };
+
+const prepare = (value) => prepareStructuralRelationObservationEnvelope(value.draft, {
+  sourceBytesByPath: value.sourceBytesByPath, rawBytesById: value.rawBytesById,
+});
+
+function renameKeys(value) {
+  const draft = value.draft;
+  const claims = new Map(draft.producerClaims.map((entry, index) => [entry.producerClaimKey, `c${index}`.padEnd(128, "c")]));
+  const raw = new Map(draft.rawRefs.map((entry, index) => [entry.rawRefKey, `b${index}`.padEnd(128, "b")]));
+  const runs = new Map(draft.runs.map((entry, index) => [entry.runKey, `r${index}`.padEnd(128, "r")]));
+  for (const entry of draft.producerClaims) entry.producerClaimKey = claims.get(entry.producerClaimKey);
+  for (const entry of draft.rawRefs) entry.rawRefKey = raw.get(entry.rawRefKey);
+  value.rawBytesById = new Map([...value.rawBytesById].map(([key, bytes]) => [raw.get(key), bytes]));
+  for (const run of draft.runs) {
+    run.runKey = runs.get(run.runKey); run.producerClaimKey = claims.get(run.producerClaimKey);
+    run.rawRefKeys = run.rawRefKeys.map((key) => raw.get(key));
+  }
+  for (const [index, pair] of draft.pairs.entries()) {
+    pair.pairKey = `p${index}`.padEnd(128, "p");
+    for (const occurrence of pair.occurrences) {
+      occurrence.occurrenceKey = "o".repeat(128); // Repeated labels remain legal.
+      for (const support of occurrence.supports) { support.runKey = runs.get(support.runKey); support.rawRefKey = raw.get(support.rawRefKey); }
+    }
+  }
+  return value;
+}
+
+function padCanonical(value, targetBytes) {
+  value.draft.diagnosticLabels = [];
+  const baseBytes = Buffer.byteLength(canonicalJson(build(value).document));
+  const delta = targetBytes - baseBytes;
+  const count = Math.floor((delta + 1) / 515);
+  const labels = Array(count).fill("x".repeat(512));
+  let remainder = delta - (count * 515 - 1);
+  if (remainder > 0) {
+    if (remainder < 4) { labels[count - 1] = "x".repeat(508); remainder += 4; }
+    labels.push("x".repeat(remainder - 3));
+  }
+  value.draft.diagnosticLabels = labels;
+}
+
+test("Preparation preserves frozen input, arbitrary bookkeeping names/order and identical raw bytes with different descriptors", () => {
+  const original = fixture();
+  original.rawBytesById.set("raw-b", original.rawBytesById.get("raw-a"));
+  const expected = build(original).document;
+  const value = renameKeys(clone(original));
+  value.draft.runs.reverse(); value.draft.rawRefs.reverse(); value.draft.sourceManifest.reverse();
+  value.draft.pairs[0].occurrences.reverse();
+  freezeJson(value.draft);
+  const before = clone(value);
+  const result = prepare(value);
+  assert.equal(result.status, "ready");
+  assert.deepEqual(result.envelope, expected);
+  assert.equal(result.verificationReport.finalStrongVerification, true);
+  assert.equal(result.verificationReport.rawSemanticSupportVerification, "not-evaluated");
+  assert.deepEqual(value, before);
+});
+
+test("Preparation admits long bookkeeping above draft limit while preserving exact canonical 8 MiB and rejecting +1 before hashing", () => {
+  const value = fixture();
+  const caller = `export function caller() {\n  ${Array(100).fill("target();").join(" ")}\n}\n`;
+  value.sourceBytesByPath.set("src/caller.ts", enc.encode(caller));
+  const callerDigest = digest(value.sourceBytesByPath.get("src/caller.ts"));
+  value.draft.pairs[0].from.digest = callerDigest;
+  for (const run of value.draft.runs) {
+    run.coverage.admittedSources.find((entry) => entry.path === "src/caller.ts").digest = callerDigest;
+    run.coverage.queriedSymbols[0].digest = callerDigest;
+  }
+  const supports = value.draft.pairs[0].occurrences[0].supports;
+  value.draft.pairs[0].occurrences = Array.from({ length: 100 }, (_, index) => ({
+    occurrenceKey: `o${index}`, evidence: { path: "src/caller.ts", digest: callerDigest, range: range(1, 2 + 10 * index, 8 + 10 * index) }, supports: clone(supports),
+  }));
+  padCanonical(value, 8_388_608);
+  const expected = build(value).document;
+  assert.equal(Buffer.byteLength(canonicalJson(expected)), 8_388_608);
+  renameKeys(value);
+  assert.ok(Buffer.byteLength(canonicalJson(value.draft)) > 8_388_608);
+  assert.throws(() => build(value), { code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" });
+  const result = prepare(value);
+  assert.equal(result.status, "ready");
+  assert.deepEqual(result.envelope, expected);
+  value.draft.diagnosticLabels[0] = value.draft.diagnosticLabels[0].replace(/^x/, "é");
+  let calls = 0; const original = crypto.createHash;
+  crypto.createHash = (...args) => { calls++; return original(...args); };
+  try { assert.deepEqual(prepare(value), { status: "unavailable", reason: "limit", code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT", stage: "canonical-budget" }); }
+  finally { crypto.createHash = original; }
+  assert.equal(calls, 0);
+});
+
+test("Preparation rejects original reference defects and false claims without rekey repair", () => {
+  const changes = [
+    (v) => v.draft.producerClaims.push(clone(v.draft.producerClaims[0])),
+    (v) => { v.draft.runs[0].producerClaimKey = "missing"; },
+    (v) => { v.draft.pairs[0].occurrences[0].supports[0].runKey = "missing"; },
+    (v) => v.draft.runs[0].rawRefKeys.push(v.draft.runs[0].rawRefKeys[0]),
+    (v) => v.rawBytesById.set("extra", enc.encode("x")),
+    (v) => { v.draft.pairs[0].from.digest = "f".repeat(64); },
+    (v) => { v.draft.producerClaims[0].analysisMethodClaim.truthStatus = "verified"; },
+    (v) => { v.draft.runs[0].coverage.repositoryRelationCompleteness = "complete"; },
+    (v) => { v.draft.instructionAuthority = true; },
+  ];
+  for (const change of changes) {
+    const value = fixture(); change(value); const before = clone(value);
+    assert.equal(prepare(value).status, "invalid");
+    assert.deepEqual(value, before);
+  }
+});
+
+test("Preparation guards options and collections without invoking callbacks and propagates unexpected errors", () => {
+  let calls = 0;
+  const getter = () => { calls++; throw new Error("callback executed"); };
+  const value = fixture();
+  const options = { rawBytesById: value.rawBytesById };
+  Object.defineProperty(options, "sourceBytesByPath", { enumerable: true, get: getter });
+  assert.equal(prepareStructuralRelationObservationEnvelope(value.draft, options).status, "invalid");
+  for (const change of [
+    (v) => Object.defineProperty(v.draft, "projectId", { enumerable: true, get: getter }),
+    (v) => Object.defineProperty(v.draft.pairs, "0", { enumerable: true, get: getter }),
+    (v) => { v.draft.toJSON = getter; },
+    (v) => { v.rawBytesById[Symbol.iterator] = getter; },
+    (v) => { v.rawBytesById.get = getter; },
+  ]) {
+    const input = fixture(); change(input); assert.equal(prepare(input).status, "invalid");
+  }
+  assert.equal(calls, 0);
+  const original = crypto.createHash;
+  const unexpected = Object.assign(new Error("unexpected implementation error"), { code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" });
+  crypto.createHash = () => { throw unexpected; };
+  try { assert.throws(() => prepare(value), (error) => error === unexpected); }
+  finally { crypto.createHash = original; }
+});
+
+test("Preparation test consumer retains unavailable and invalid outcomes before next independent success", () => {
+  const unsupported = fixture(); unsupported.draft.pairs = [];
+  const limited = fixture(); limited.rawBytesById.set("raw-a", new Uint8Array(1_048_577));
+  const invalid = fixture(); invalid.draft.runs[0].coverage.programCoverage = "complete";
+  const results = [fixture(), unsupported, limited, invalid, fixture()].map(prepare);
+  assert.deepEqual(results.map((result) => result.status), ["ready", "unavailable", "unavailable", "invalid", "ready"]);
+  assert.equal(results[1].reason, "unsupported"); assert.equal(results[2].reason, "limit");
+  assert.deepEqual(results[0].envelope, results[4].envelope);
+  for (const result of results.slice(1, 4)) assert.equal(Object.hasOwn(result, "envelope"), false);
+  for (const result of results) for (const field of ["canContinue", "complete", "retained", "workBlocked"]) assert.equal(Object.hasOwn(result, field), false);
+});
+
+test("Preparation uses internal byte view identity and distinguishes invalid backing stores from empty/offset buffers", () => {
+  for (const makeInvalid of [
+    () => Object.setPrototypeOf(new Uint16Array([0x4241]), Uint8Array.prototype),
+    () => { const buffer = new ArrayBuffer(4); const view = new Uint8Array(buffer); structuredClone(buffer, { transfer: [buffer] }); return view; },
+    () => { const buffer = new ArrayBuffer(4, { maxByteLength: 8 }); const view = new Uint8Array(buffer, 0, 4); buffer.resize(0); return view; },
+  ]) {
+    const value = fixture(); value.rawBytesById.set("raw-a", makeInvalid());
+    assert.deepEqual(prepare(value), { status: "invalid", code: "INVALID_STRUCTURAL_RELATION_BYTE_MAP", stage: "input" });
+  }
+  for (const bytes of [new Uint8Array(0), Buffer.alloc(0), Buffer.from([65, 66]), new Uint8Array([0, 65, 66, 0]).subarray(1, 3)]) {
+    const value = fixture(); value.rawBytesById.set("raw-a", bytes);
+    const expected = build(value).document;
+    assert.deepEqual(prepare(value).envelope, expected);
+  }
+  const value = fixture(); const expected = build(value).document;
+  let callbacks = 0;
+  for (const bytes of [...value.sourceBytesByPath.values(), ...value.rawBytesById.values()]) {
+    for (const key of ["byteLength", "buffer", "length", "slice", Symbol.iterator, Symbol.toStringTag]) {
+      Object.defineProperty(bytes, key, { get() { callbacks++; throw new Error("byte getter invoked"); } });
+    }
+  }
+  assert.deepEqual(prepare(value).envelope, expected);
+  assert.equal(callbacks, 0);
+});
+
+test("Preparation distinguishes malformed values from actual capacity and capability limits without changing strict codes", () => {
+  for (const coordinate of [-1, 2.5, "2", NaN, undefined]) {
+    const value = fixture(); value.draft.pairs[0].occurrences[0].evidence.range.start.character = coordinate;
+    assert.equal(prepare(value).status, "invalid");
+    assert.throws(() => build(value), { code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" });
+  }
+  for (const change of [
+    (v) => { delete v.draft.runs[0].coverage.queriedSymbols[0].line; },
+    (v) => { v.draft.pairs[0].occurrences[0].supports = []; },
+    (v) => { v.draft.producerClaims = []; },
+  ]) { const value = fixture(); change(value); assert.equal(prepare(value).status, "invalid"); }
+  for (const pairs of [null, "CALLS", {}, undefined]) {
+    const value = fixture(); value.draft.pairs = pairs;
+    assert.equal(prepare(value).status, "invalid");
+    assert.throws(() => build(value), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE" });
+  }
+  const empty = fixture(); empty.draft.pairs = [];
+  assert.equal(prepare(empty).reason, "unsupported");
+  const upper = fixture(); upper.draft.pairs[0].occurrences[0].evidence.range.start.character = 10_000_001;
+  assert.equal(prepare(upper).reason, "limit");
+});
+
+test("Preparation distinguishes malformed relation discriminators and unserializable fields from unavailable evidence", () => {
+  for (const type of [undefined, null, 1, {}, [], true, "", Symbol("CALLS")]) {
+    const value = fixture(); value.draft.pairs[0].type = type;
+    assert.equal(prepare(value).status, "invalid");
+    assert.throws(() => build(value), { code: "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE" });
+  }
+  const unsupported = fixture(); unsupported.draft.pairs[0].type = "IMPORTS";
+  assert.equal(prepare(unsupported).reason, "unsupported");
+  const unserializable = fixture(); unserializable.draft.diagnosticLabels = undefined;
+  assert.equal(prepare(unserializable).status, "invalid");
+  assert.throws(() => build(unserializable), { code: "STRUCTURAL_RELATION_OBSERVATION_LIMIT" });
+  assert.equal(Object.hasOwn(unserializable.draft, "diagnosticLabels"), true);
+  const omitted = fixture(); delete omitted.draft.diagnosticLabels;
+  assert.equal(prepare(omitted).status, "ready");
+});

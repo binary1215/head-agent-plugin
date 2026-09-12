@@ -29,13 +29,56 @@ Canonical sources and promoted knowledge
 
 HEAD owns the whole outcome and determines whether the compiled world is sufficient. For each task, HEAD should first perform semantic task analysis and may define an explicit `EvidenceNeed[]` contract with exact project-relative `paths`, exact Product Canon `entityKeys`, evidence kind, relation types, and minimum item counts. For `temporal-relation`, HEAD may add an exact `graphAnchor` bound to the current `projectId`, `worldModelId`, and `graphSnapshotId`, plus one to 32 exact `nodeIds` and explicit `depth`, `maxNodes`, and `maxEdges`. Core verifies current eligibility and actual bounded inclusion only. Do not combine lexical facets with exact graph anchors. Lexical overlap is discovery/fallback ranking only: zero overlap never makes a current candidate ineligible. The compiler must not choose graph anchors or infer required evidence kinds from available candidates.
 
-Begin this authoring flow with `head_context_prepare`, passing only the exact
+For task-local source/call inspection, use the source workflow below without a
+World scan. For World/Graph preparation, begin with `head_context_prepare`, passing only the exact
 user task. The returned `ContextPreparationProjection` is bounded P4 candidate
 visibility, not a semantic proposal. Use its current binding and node identities
 plus ordinary repository inspection to author the structure yourself as HEAD;
 do not ask the user to write JSON and do not treat omission from the lexical
 baseline as irrelevance. Then pass the byte-identical task and your proposal to
 `head_context_preview`.
+
+### Current source evidence without a World scan
+
+When the task needs current file contents or Python direct-call evidence, inspect
+the relevant files as HEAD and call `head_source_context` with the unchanged task
+and `needs: [{kind: "outgoing-calls", path: "src/service.py", symbol: "handle"}]`.
+Use `kind: "source"` for text evidence. `symbol` is a qualified declaration name,
+not a product concept. HEAD authors these inputs from the user's request; do not
+ask the user to write JSON, find hashes/IDs, select a budget, or repeat the request.
+A task-only call returns a HEAD selection step, not a user approval gate.
+
+The Host reads exact working-tree bytes, runs a packaged Python AST observer in
+`-I -S` isolation, prepares and verifies the structural envelope, then includes
+the selected Observation in a Context preview. No project module is executed,
+dependency installation attempted, or full index, Product onboarding, LSP server
+or GraphDB required. Only positive lexical direct-name candidates in one Python
+file are supported, not dynamic call truth. Attribute/import/alias/ambiguous or
+shadowed bindings remain unresolved. Partial observations never prove repository
+completeness or semantic sufficiency.
+
+Use `retain: true` when audit, cross-process reuse or handoff needs originals;
+HEAD can choose this within the task without another user approval. Otherwise
+evidence is ephemeral, not durable recovery. Retained success uses common P3
+Observations and create-only source bundles. Failed attempts retain raw responses
+and coalesce identical source/profile/query/outcome. `head_source_observation_read`
+reads the returned `bundle_key` or `failure_key`; neither writes P2 direction.
+Reuse checks source bytes and collector/runtime/profile/normalizer identity;
+edits or replacement trigger recollection. Old evidence remains historical.
+Historical reads return verified originals with stale/unavailable `sourceState`;
+they do not admit stale evidence to current Context. Stored corruption is reported
+and preserved while valid candidates/fresh collection can recover the need.
+Inspect `retentionPending` before claiming durable handoff. The result wrapper
+is P4; its P2-typed Capsule preview is not persisted, bound or a recovery update.
+
+Read `pendingNeeds`, each need's `includedInContext`, unresolved calls and omitted
+source bytes. Only judgments depending on missing required evidence need
+attention; independent work can continue. Source text never satisfies a call
+need. A positive relation is evidence, not approval, full coverage or permission
+to continue after cancellation. For unsupported syntax/encoding/language, explain
+the unconfirmed scope and use separate appropriate evidence, not an empty success.
+MCP cancellation/connection loss and CLI interrupt terminate the parse worker
+before settlement. See `docs/observation-adapters.md` for supported scope/limits.
 
 If no World Model exists, preparation returns `curated_only`: direct work and
 ordinary repository inspection remain primary, while reproducible repository,

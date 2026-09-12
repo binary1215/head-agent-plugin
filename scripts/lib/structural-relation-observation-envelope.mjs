@@ -7,7 +7,8 @@ const CLAIM_SOURCES = new Set(["producer-output", "profile-declaration", "observ
 const EVIDENCE_STATUS = new Set(["partial", "unknown"]);
 const RESPONSE_CLOSURE = new Set(["complete-frame-observed", "partial", "unknown"]);
 const ascii = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-const fail = (message, code = "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE") => { const error = new Error(message); error.code = code; throw error; };
+const contractFailures = new WeakMap();
+const fail = (message, code = "INVALID_STRUCTURAL_RELATION_OBSERVATION_ENVELOPE", disposition = null) => { const error = new Error(message); error.code = code; contractFailures.set(error, disposition); throw error; };
 function canonicalJson(value) {
   if (value === null) return "null";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
@@ -38,7 +39,11 @@ const object = (value, label) => {
 };
 const fields = (value, allowed, label) => { const record = object(value, label); const extra = Object.keys(record).filter((key) => !allowed.includes(key)); if (extra.length) fail(`${label} contains unsupported fields: ${extra.join(", ")}.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_FIELD"); return record; };
 const text = (value, max, label, nullable = false) => { if (nullable && value === null) return null; if (typeof value !== "string" || !value || value.length > max) fail(`${label} is invalid.`); return value; };
-const safe = (value, max, label) => { if (!Number.isSafeInteger(value) || value < 0 || value > max) fail(`${label} is outside the supported numeric range.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT"); return value; };
+const safe = (value, max, label) => {
+  if (!Number.isSafeInteger(value) || value < 0) fail(`${label} is outside the supported numeric range.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT", "invalid");
+  if (value > max) fail(`${label} is outside the supported numeric range.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+  return value;
+};
 const hex = (value, label) => { if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) fail(`${label} must be a SHA-256 digest.`); return value; };
 const pathValue = (value, label) => { text(value, 512, label); if (value.includes("\\") || value.startsWith("/") || /^[A-Za-z]:/.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || value.split("/").some((part) => !part || part === "." || part === "..")) fail(`${label} must be a normalized relative path.`, "INVALID_STRUCTURAL_RELATION_SOURCE_PATH"); return value; };
 const unique = (values, label) => { if (new Set(values).size !== values.length) fail(`${label} contains duplicates.`, "DUPLICATE_STRUCTURAL_RELATION_OBSERVATION_ID"); };
@@ -59,7 +64,8 @@ const ordinaryArray = (value, label) => {
 };
 const boundedArray = (value, min, max, label) => {
   const array = ordinaryArray(value, label);
-  if (array.length < min || array.length > max) {
+  if (array.length < min) fail(`${label} count is unsupported.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT", "invalid");
+  if (array.length > max) {
     fail(`${label} count is unsupported.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
   }
   return array;
@@ -74,7 +80,7 @@ function jsonSize(value, label) {
     if (entry === null) { add(4); return; }
     if (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean") {
       const scalar = JSON.stringify(entry);
-      if (scalar === undefined) fail(`${label} is unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+      if (scalar === undefined) fail(`${label} is unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT", "invalid");
       add(Buffer.byteLength(scalar, "utf8"));
       return;
     }
@@ -99,7 +105,7 @@ function jsonSize(value, label) {
       }
       return;
     }
-    fail(`${label} is unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+    fail(`${label} is unserializable.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT", "invalid");
   };
   visit(value);
   return encoded;
@@ -107,7 +113,9 @@ function jsonSize(value, label) {
 function structuralRange(value,label){fields(value,["start","end"],label);for(const [name,pos] of [["start",value.start],["end",value.end]]){fields(pos,["line","character"],`${label}.${name}`);safe(pos.line,LIMITS.coordinate,`${label}.${name}.line`);safe(pos.character,LIMITS.coordinate,`${label}.${name}.character`);}if(comparePos(value.start,value.end)>0)fail(`${label} is reversed.`,"STRUCTURAL_RELATION_COORDINATE_MISMATCH");return value;}
 
 function observationPairs(value, label) {
-  if (!Array.isArray(value) || value.length === 0) fail(`${label} is outside the positive direct-name CALLS shape supported by v0.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE");
+  if (!Array.isArray(value)) fail(`${label} is outside the positive direct-name CALLS shape supported by v0.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE", "invalid");
+  ordinaryArray(value, label);
+  if (value.length === 0) fail(`${label} is outside the positive direct-name CALLS shape supported by v0.`, "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE");
   if (value.length > LIMITS.pairs) fail(`${label} exceeds the pair count limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
   return boundedArray(value, 1, LIMITS.pairs, label);
 }
@@ -179,6 +187,10 @@ function preflightInputBinding(value, label, canonical) {
   text(value.normalizerVersion, 128, `${label}.normalizerVersion`);
   hex(value.normalizerImplementationDigest, `${label}.normalizerImplementationDigest`);
 }
+function preflightPairType(value) {
+  if (typeof value !== "string" || value.length === 0) fail("Only direct-name CALLS pairs are supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE", "invalid");
+  if (value !== "CALLS") fail("Only direct-name CALLS pairs are supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE");
+}
 function preflightDraft(draft, sourceBytesByPath, rawBytesById) {
   fields(draft, ["projectId", "sourceManifest", "producerClaims", "rawRefs", "runs", "pairs", "diagnosticLabels"], "Envelope draft");
   text(draft.projectId, 256, "projectId");
@@ -216,7 +228,7 @@ function preflightDraft(draft, sourceBytesByPath, rawBytesById) {
   const pairKeys = observationPairs(draft.pairs, "pairs").map((pair, pairIndex) => {
     fields(pair, ["pairKey", "type", "from", "to", "language", "occurrences"], `pairs[${pairIndex}]`);
     text(pair.pairKey, 128, `pairs[${pairIndex}].pairKey`);
-    if (pair.type !== "CALLS") fail("Only direct-name CALLS pairs are supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE");
+    preflightPairType(pair.type);
     preflightEndpoint(pair.from, `pairs[${pairIndex}].from`);
     preflightEndpoint(pair.to, `pairs[${pairIndex}].to`);
     text(pair.language, 128, `pairs[${pairIndex}].language`);
@@ -290,7 +302,7 @@ function preflightDocument(document, sourceBytesByPath, rawBytesById) {
   let supportCount = 0;
   const pairIds = observationPairs(document.pairs, "pairs").map((pair, pairIndex) => {
     fields(pair, ["type", "from", "to", "language", "pairId", "occurrences"], `pairs[${pairIndex}]`);
-    if (pair.type !== "CALLS") fail("Only direct-name CALLS pairs are supported.", "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE");
+    preflightPairType(pair.type);
     preflightEndpoint(pair.from, `pairs[${pairIndex}].from`);
     preflightEndpoint(pair.to, `pairs[${pairIndex}].to`);
     text(pair.language, 128, `pairs[${pairIndex}].language`);
@@ -466,8 +478,14 @@ function preflightCanonicalEnvelopeBudget(draft, sourceBytesByPath, rawBytesById
  * enumerable own data properties/elements; accessors and collection overrides
  * are rejected before any caller-provided value is read or hashed. The draft
  * byte limit bounds transient untrusted input separately from the persisted
- * canonical-envelope limit. Typed unsupported shapes disclose this v0
- * capability boundary; they do not establish that a relation is absent.
+ * canonical-envelope limit. Hosts should construct ordinary data and compact
+ * temporary keys automatically; users should not have to edit envelope JSON.
+ * Do not execute arbitrary getters/toJSON or discard evidence to fit a limit.
+ * A rejected observation grants no task-wide stop/continue authority. Hosts may
+ * seek other evidence, preserving the failed observation's unknown coverage.
+ * Never classify errors by the UNSUPPORTED prefix alone: invalid truth,
+ * coverage and authority claims must remain rejected. An unsupported shape
+ * describes this v0 capability, not relation absence or semantic sufficiency.
  */
 export function buildStructuralRelationObservationEnvelope(draft, { sourceBytesByPath, rawBytesById } = {}) {
   preflightDraft(draft, sourceBytesByPath, rawBytesById);
@@ -502,6 +520,125 @@ export function buildStructuralRelationObservationEnvelope(draft, { sourceBytesB
   const clean = (entry) => Object.fromEntries(Object.entries(entry).filter(([key]) => !key.endsWith("Key")));
   const payload = { schemaVersion: 0, kind: "StructuralRelationObservationEnvelope", protocol: { name: "head-agent-core-structural-relation-observation-envelope", version: STRUCTURAL_RELATION_OBSERVATION_ENVELOPE_VERSION }, subject: { projectId, sourceManifest: sources, sourceManifestDigest }, producerClaims: claimsWithKeys.map(clean).sort((a, b) => ascii(a.producerClaimId, b.producerClaimId)), rawRefs: rawWithKeys.map(clean).sort((a, b) => ascii(a.rawRefId, b.rawRefId)), runs: runsWithKeys.map(clean).sort((a, b) => ascii(a.runId, b.runId)), pairs: pairsWithKeys.map((pair) => clean({ ...pair, occurrences: pair.occurrences.map((occurrence) => clean(occurrence)) })), candidateProjection, diagnosticLabels: (draft.diagnosticLabels || []).map((value) => text(value, 512, "diagnostic label")).sort(ascii), authority: "ephemeral-host-evidence-only", instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false, graphAuthority: false };
   const envelopeHash = H(payload); const document = { ...payload, envelopeId: `structural-envelope-${envelopeHash.slice(0, 24)}`, envelopeHash }; verifyStructuralRelationObservationEnvelope(document, { sourceBytesByPath, rawBytesById: new Map(rawWithKeys.map((entry) => [entry.rawRefId, rawBytesById.get(entry.rawRefKey)])) }); return document;
+}
+
+// Private Host preparation for an already authored v0 draft, not a provider
+// semantic mapper. No persistence, retries, partial envelopes or task decisions.
+const unavailableCodes = new Set([
+  "UNSUPPORTED_STRUCTURAL_RELATION_OBSERVATION_SHAPE",
+  "UNSUPPORTED_STRUCTURAL_RELATION_SOURCE_BOM",
+  "UNSUPPORTED_STRUCTURAL_RELATION_LINE_ENDING",
+]);
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const typedByteLength = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength").get;
+const typedInternalKind = Object.getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag).get;
+const typedValues = typedArrayPrototype.values;
+const typedSet = typedArrayPrototype.set;
+
+function preparedByteMap(value, maxEntries, label) {
+  if (!(value instanceof Map) || Object.getPrototypeOf(value) !== Map.prototype || Reflect.ownKeys(value).length !== 0) fail(`${label} must be an ordinary Map.`, "INVALID_STRUCTURAL_RELATION_BYTE_MAP");
+  const size = Object.getOwnPropertyDescriptor(Map.prototype, "size").get.call(value);
+  if (size > maxEntries) fail(`${label} exceeds the entry limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+  const result = new Map();
+  let total = 0;
+  for (const [key, bytes] of Map.prototype.entries.call(value)) {
+    if (typeof key !== "string" || !ArrayBuffer.isView(bytes) || typedInternalKind.call(bytes) !== "Uint8Array" || ![Uint8Array.prototype, Buffer.prototype].includes(Object.getPrototypeOf(bytes))) fail(`${label} requires string keys and ordinary Uint8Array/Buffer bytes.`, "INVALID_STRUCTURAL_RELATION_BYTE_MAP");
+    // ValidateTypedArray rejects detached/OOB backing stores even when their
+    // intrinsic byteLength is zero. Genuine zero-length views remain valid.
+    try { typedValues.call(bytes); }
+    catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      fail(`${label} contains a detached or out-of-bounds byte view.`, "INVALID_STRUCTURAL_RELATION_BYTE_MAP");
+    }
+    // Intrinsic reads/copies do not consult caller byteLength, iterator or slice.
+    const length = typedByteLength.call(bytes);
+    total += length;
+    if (length > LIMITS.itemBytes || total > LIMITS.totalBytes) fail(`${label} exceeds its byte limit.`, "STRUCTURAL_RELATION_OBSERVATION_LIMIT");
+    const copy = new Uint8Array(length);
+    typedSet.call(copy, bytes);
+    result.set(key, copy);
+  }
+  return result;
+}
+
+function copyPreparedData(value) {
+  if (Array.isArray(value)) return ordinaryArray(value, "Prepared array").map(copyPreparedData);
+  if (value !== null && typeof value === "object") {
+    const result = Object.create(null);
+    for (const key of Object.keys(object(value, "Prepared object"))) result[key] = copyPreparedData(Object.getOwnPropertyDescriptor(value, key).value);
+    return result;
+  }
+  return value;
+}
+
+/**
+ * Prepare a bounded v0 observation without asking users to edit bookkeeping.
+ * Original per-field/count/byte bounds and the final canonical budget are
+ * checked before rekeying. The original serialized draft may exceed 8 MiB;
+ * the compact draft still passes the strict builder's unchanged input limit.
+ * Only module-owned contract failures become local results. An unavailable
+ * result does not prove absence or authorize continuing/stopping a whole task.
+ */
+export function prepareStructuralRelationObservationEnvelope(draft, options = {}) {
+  let stage = "input";
+  try {
+    fields(options, ["sourceBytesByPath", "rawBytesById"], "Preparation options");
+    const sourceBytesByPath = preparedByteMap(options.sourceBytesByPath, LIMITS.sources, "sourceBytesByPath");
+    const rawBytesById = preparedByteMap(options.rawBytesById, LIMITS.rawRefs, "rawBytesById");
+    preflightDraft(draft, sourceBytesByPath, rawBytesById);
+    const claims = new Map(draft.producerClaims.map((entry, index) => [entry.producerClaimKey, `c${index}`]));
+    const raw = new Map(draft.rawRefs.map((entry, index) => [entry.rawRefKey, `b${index}`]));
+    const runs = new Map(draft.runs.map((entry, index) => [entry.runKey, `r${index}`]));
+    const ref = (map, key) => map.has(key) ? map.get(key) : fail("Preparation references an unknown key.", "STRUCTURAL_RELATION_CLOSURE_MISMATCH");
+    // Validate original references before replacing labels, so rekeying cannot
+    // repair duplicates, dangling references or raw-map identity mismatches.
+    for (const run of draft.runs) {
+      ref(claims, run.producerClaimKey);
+      unique(run.rawRefKeys, "run rawRefKeys");
+      for (const key of run.rawRefKeys) ref(raw, key);
+    }
+    for (const pair of draft.pairs) for (const occurrence of pair.occurrences) for (const support of occurrence.supports) {
+      ref(runs, support.runKey);
+      ref(raw, support.rawRefKey);
+    }
+    stage = "canonical-budget";
+    preflightCanonicalEnvelopeBudget(draft, sourceBytesByPath, rawBytesById);
+    stage = "key-preparation";
+    const compact = copyPreparedData(draft);
+    for (const claim of compact.producerClaims) claim.producerClaimKey = ref(claims, claim.producerClaimKey);
+    for (const entry of compact.rawRefs) entry.rawRefKey = ref(raw, entry.rawRefKey);
+    for (const run of compact.runs) {
+      run.runKey = ref(runs, run.runKey);
+      run.producerClaimKey = ref(claims, run.producerClaimKey);
+      run.rawRefKeys = run.rawRefKeys.map((key) => ref(raw, key));
+    }
+    let occurrenceCount = 0;
+    for (const [index, pair] of compact.pairs.entries()) {
+      pair.pairKey = `p${index}`;
+      for (const occurrence of pair.occurrences) {
+        occurrence.occurrenceKey = `o${occurrenceCount++}`;
+        for (const support of occurrence.supports) {
+          support.runKey = ref(runs, support.runKey);
+          support.rawRefKey = ref(raw, support.rawRefKey);
+        }
+      }
+    }
+    const compactRaw = new Map([...rawBytesById].map(([key, bytes]) => [ref(raw, key), bytes]));
+    stage = "build";
+    const envelope = buildStructuralRelationObservationEnvelope(compact, { sourceBytesByPath, rawBytesById: compactRaw });
+    // Bind the verifier's map by content identity, not output sort position.
+    const verifiedRaw = new Map(normalizeRawDescriptors(compact.rawRefs, compactRaw)
+      .map((entry) => [entry.rawRefId, compactRaw.get(entry.rawRefKey)]));
+    stage = "verify";
+    const { verificationReport } = verifyStructuralRelationObservationEnvelope(envelope, { sourceBytesByPath, rawBytesById: verifiedRaw });
+    return { status: "ready", envelope, verificationReport, preparation: { temporaryKeys: "compacted", occurrenceCount } };
+  } catch (error) {
+    if (!contractFailures.has(error)) throw error;
+    if (contractFailures.get(error) === "invalid") return { status: "invalid", code: error.code, stage };
+    if (error.code === "STRUCTURAL_RELATION_OBSERVATION_LIMIT") return { status: "unavailable", reason: "limit", code: error.code, stage };
+    if (unavailableCodes.has(error.code)) return { status: "unavailable", reason: "unsupported", code: error.code, stage };
+    return { status: "invalid", code: error.code, stage };
+  }
 }
 
 /**

@@ -1,5 +1,62 @@
 # Common Observation contract and adapters
 
+## Task-scoped source collection
+
+`head_source_context` / `head source-context` collects HEAD-selected current
+source evidence and feeds it into the existing Context Compiler. HEAD translates
+the conversational task into exact paths and qualified function names; users do
+not author hashes, IDs or JSON. No World scan, full reindex, Product onboarding or
+GraphDB is required. A task-only request returns a HEAD selection step rather
+than inventing semantic relevance from words.
+
+The current live collector is **Python stdlib AST**, not LSP: Python 3.8+ found
+on Host PATH, or a trusted absolute `HEAD_PYTHON` setting. It runs the packaged
+worker with `-I -S -B` in a neutral directory, parses supplied bytes, never imports
+project modules, and opens no network listener. It reports positive direct-name
+lexical candidates for an unambiguous undecorated module function or an earlier
+unconditional function local to the selected caller. Imported/aliased, attribute,
+dynamic, shadowed, decorated, conditional and unresolved enclosing-scope calls
+are disclosed as unresolved. Nested bodies/default/decorator evaluation are not
+complete call coverage. No semantic truth or complete program coverage is claimed.
+
+Source reads bind exact dirty working-tree bytes and reject symlinks/path escape,
+concurrent changes and non-UTF8/BOM/lone-CR input rather than silently rewriting
+it. AST UTF8 byte offsets are converted to exact UTF16 ranges, including CRLF and
+non-BMP text. Source files and raw responses each use the existing v0 1 MiB bound;
+ordinary source excerpts disclose omitted bytes and fit the common Observation
+64 KiB string contract. The batch has at most 32 HEAD-selected needs. A per-worker
+15-second default (Host-selectable up to 120 seconds), bounded stdout/stderr and
+explicit cancellation keep failures finite; these are operational bounds, not
+semantic sufficiency gates.
+
+Successful observations use `source.structural-context` in the common P3 store
+and separately hashed original source/response bundles when `retain` is selected.
+Default ephemeral inputs receive the same verification before Context use but
+make no durable-recovery claim. Cross-process reuse checks current source,
+query, Python/AST/tokenizer, worker and normalizer identities. Failed collection
+records preserve raw responses when available and coalesce identical outcomes.
+Read exact success/failure keys with `head_source_observation_read`; keys are
+returned to HEAD automatically. Retention is a task-local evidence choice, not
+an extra user approval. Neither cache, observations, results nor Context previews
+alter Product Canon, ReviewDecision or P2 checkpoint/direction.
+
+Historical reads validate stored integrity even when working-tree sources have
+changed: `sourceState` discloses stale/unavailable bytes and current Context
+eligibility separately. Damaged/missing stored candidates are reported and left
+untouched; the Host tries valid candidates or fresh collection, without losing
+independent needs. Optional retention failure does not invalidate verified
+ephemeral evidence, but `retentionPending` prevents a durable-handoff claim.
+`SourceContextResult` is a P4 wrapper; the included `ContextCapsule` remains a
+P2-typed **unpersisted, unbound preview**, not a recovery update.
+`SourceCollectionFailure` is P3, and process/cache state is P5. Existing version
+0.6 authority boundaries remain valid; new classification is additive.
+
+`pendingNeeds` applies only to dependent judgments. Independent needs still
+collect and compile; source-text fallback never satisfies a CALLS requirement.
+`observed` means selected observations were included, **not** task completion,
+whole-call-graph completeness or HEAD semantic acceptance. CLI interrupts and
+MCP cancellation/connection close settle after the owned worker terminates.
+
 Read [Architecture](architecture.md) and [Authority planes](authority-plane-contract.md) before changing this contract. Release-specific evidence remains documented in [Release observation](release-observation.md), per-target delivery history in [Delivery state observation](delivery-observation.md), and exact task inclusion in [Context Compiler](context-compiler.md).
 
 Status: implemented provider-neutral P3 evidence grammar and P4 projection.

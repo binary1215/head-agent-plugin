@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { compileContext, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
 import { prepareContextWorkflow, previewContextWorkflow } from "./lib/context-workflow.mjs";
+import { prepareSourceContext, inspectSourceObservation } from "./lib/source-context-workflow.mjs";
 import { createExecutionContract, createNextWholePlanSnapshot, createWholePlanSnapshot, readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
@@ -239,6 +240,8 @@ export function usage({ all = false } = {}) {
       "head run-integration-read <project> --review <review-decision-id>",
       "head context-preview <project> --task <text> [--budget <tokens>] [--evidence-needs <json-file>]",
       "head context-prepare <project> --task <text> [--budget <tokens>]",
+      "head source-context <project> --task <text> [--source <relative-path>] [--symbol <qualified-function>] [--retain true] [--timeout <ms>]",
+      "head source-observation-read <project> --bundle <key> | --failure <key>",
       "head context-compile <project> --task <text> [--budget <tokens>] [--evidence-needs <json-file>]",
       "head context-read <project> --capsule <capsule-id>",
       "head lineage-read <project> --artifact <lineage-artifact-id>",
@@ -296,7 +299,7 @@ function evidenceNeedsInput(options) {
   return Array.isArray(value) ? value : value?.evidenceNeeds ?? value;
 }
 
-export function runCommand(argv = process.argv.slice(2), { observationRegistry = null, compactionLifecycleHost = null } = {}) {
+export function runCommand(argv = process.argv.slice(2), { observationRegistry = null, compactionLifecycleHost = null, signal, onProcess } = {}) {
   const { command, root, options } = parse(argv);
   if (command === "help" || command === "--help" || command === "-h") return usage();
   if (command === "help-all") return usage({ all: true });
@@ -690,6 +693,11 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (command === "run-integrate-checkpoint") return integrateReviewedRunCheckpoint({ ...inputJson(options, "Run result integration"), root });
   if (command === "run-integration-read") return readRunResultIntegration({ root, reviewDecisionId: options.review });
   if (command === "context-prepare") return prepareContextWorkflow({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget) });
+  if (command === "source-context") return prepareSourceContext({ root, task: options.task,
+    needs: options.source ? [{ kind: options.symbol ? "outgoing-calls" : "source", path: options.source, symbol: options.symbol ?? "", required: options.required !== "false" }] : [],
+    retain: options.retain === "true", budget: options.budget == null ? undefined : Number(options.budget), signal, onProcess,
+    timeoutMs: options.timeout == null ? 15_000 : Number(options.timeout) });
+  if (command === "source-observation-read") return inspectSourceObservation({ root, bundleKey: options.bundle, failureKey: options.failure });
   if (command === "context-preview") return previewContextWorkflow({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options) });
   if (command === "context-compile") return compileContext({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget), evidenceNeeds: evidenceNeedsInput(options), persist: true });
   if (command === "context-read") return readContextCapsule({ root, capsuleId: options.capsule });
@@ -703,11 +711,17 @@ if (invokedDirectly) {
   const jsonOutput = directArgs.includes("--json");
   const normalizedArgs = directArgs.filter((item) => item !== "--json");
   const directCommand = normalizedArgs[0] || "help";
-  Promise.resolve().then(() => runCommand(normalizedArgs)).then((result) => {
+  const sourceController = new AbortController();
+  const abortSource = () => sourceController.abort();
+  if (directCommand === "source-context") { process.on("SIGINT", abortSource); process.on("SIGTERM", abortSource); }
+  Promise.resolve().then(() => runCommand(normalizedArgs, { signal: sourceController.signal,
+    onProcess: (event) => process.stderr.write(`${JSON.stringify({ sourceProcess: event })}\n`) })).then((result) => {
     process.stdout.write(jsonOutput ? `${JSON.stringify(result, null, 2)}\n` : formatCliResult(directCommand, result));
   }).catch((error) => {
     const failure = { status: "failed", code: error.code || "HEAD_CLI_ERROR", error: error.message };
     process.stdout.write(jsonOutput ? `${JSON.stringify(failure, null, 2)}\n` : formatCliError(error));
     process.exitCode = 1;
+  }).finally(() => {
+    process.removeListener("SIGINT", abortSource); process.removeListener("SIGTERM", abortSource);
   });
 }

@@ -2,6 +2,55 @@
 
 # 공통 Observation 계약과 어댑터
 
+## 작업 범위 소스 수집
+
+`head_source_context` / `head source-context`는 HEAD가 선택한 현재 소스를
+수집해 기존 Context Compiler에 넣습니다. 사용자는 작업을 대화로 설명하고,
+HEAD가 정확한 파일 경로와 함수 이름을 구성합니다. JSON·ID·해시를 직접 작성하거나
+전체 World 스캔, 재인덱싱, Product 온보딩, GraphDB를 요구하지 않습니다.
+작업만 전달하면 HEAD가 범위를 선택하는 단계로 이어지며 단어 매칭으로 의미를 추측하지 않습니다.
+
+실제 수집기는 LSP가 아닌 **Python 표준 AST**입니다. Host PATH의 Python 3.8+
+또는 신뢰된 절대경로 `HEAD_PYTHON`을 사용합니다. 배포된 worker를 중립 디렉터리에서
+`-I -S -B`로 실행해 전달된 소스만 구문 분석하며, 프로젝트 모듈을 import하거나
+네트워크 포트를 열지 않습니다. 모듈의 명확한 비장식 함수 또는 호출 전에 무조건
+정의된 로컬 함수의 직접 이름 호출 후보를 보고합니다. import·별칭·속성·동적 호출,
+이름 가림, 장식자, 조건부 정의, 미해결 상위 스코프는 미확인 이유를 남깁니다.
+중첩 본문·기본 인자·장식자 평가의 모든 호출까지 다루지는 않습니다.
+실행 시의 의미적 진실이나 프로그램 전체 완전성을 주장하지 않습니다.
+
+dirty 파일을 포함해 실제 bytes를 digest로 묶고, 경로 이탈·심볼릭 링크·수집 중 변경과
+비UTF8·BOM·단독 CR 입력은 조용히 변환하지 않습니다. AST의 UTF8 byte 좌표를
+CRLF·비BMP 문자를 포함한 UTF16 좌표로 변환합니다. 파일·원본 응답은 각각 기존 v0의
+1 MiB 한도를 따릅니다. 일반 소스 발췌는 생략 bytes를 공개하며 공통 Observation의
+64 KiB 문자열 계약을 지킵니다. 한 번에 HEAD가 선택한 need 32개까지 처리합니다.
+worker 기본 제한은 15초이며 Host가 최대 120초까지 지정할 수 있습니다.
+stdout/stderr 제한과 취소는 유한한 종료를 위한 운영 한도이지 충분성 판단이 아닙니다.
+
+`retain`을 선택한 성공은 공통 P3 `source.structural-context` 관측과 별도로 해시된
+원본 소스·응답 bundle을 저장합니다. 기본값인 일시적 증거도 Context에서 같은 검증을
+받지만 영속 복구를 주장하지 않습니다. 재시작 후 재사용은 현재 소스, 질의,
+Python/AST/tokenizer, worker·normalizer 식별자를 대조합니다. 실패는 확보한 원본
+응답을 보관하고 동일 소스·profile·질의·결과의 반복 기록은 합칩니다.
+`head_source_observation_read`로 결과에 자동 반환된 성공/실패 key를 조회합니다.
+보관은 작업 내 증거 선택이지 추가 사용자 승인 단계가 아닙니다. 캐시·관측·결과·미리보기는
+Product Canon, ReviewDecision, P2 checkpoint나 방향을 변경하지 않습니다.
+
+과거 조회는 현재 파일이 바뀌었어도 보관 자료의 무결성을 검증해 원본을 제공합니다.
+`sourceState`가 stale/unavailable 및 현재 Context 적격성을 별도로 표시합니다.
+손상·누락된 후보는 이유를 알리고 원본을 보존하며, 유효한 다른 후보나 새 수집으로
+복구합니다. 독립 need가 함께 사라지지 않습니다. 선택적 보관 실패도 검증된 일시적
+증거를 무효화하지 않지만 `retentionPending`이 영속 handoff 주장을 막습니다.
+`SourceContextResult`는 P4 wrapper입니다. 내부 `ContextCapsule`은 P2 타입의
+**미보관·미바인딩 미리보기**이며 복구 상태 갱신이 아닙니다.
+`SourceCollectionFailure`는 P3, 프로세스·캐시는 P5입니다. 기존 0.6 권한 경계는
+계속 유효하며 새 타입 분류만 추가합니다.
+
+`pendingNeeds`는 그 증거에 의존하는 판단에만 적용됩니다. 독립 need는 계속 수집·컴파일하며,
+소스 텍스트가 CALLS 요구를 대신 충족하지 않습니다. `observed`는 선택된 관측의 포함을
+뜻하며 작업 완료·전체 호출 그래프 완전성·HEAD의 의미적 수락을 뜻하지 않습니다.
+CLI 중단 및 MCP 취소·연결 종료는 소유 worker가 종료된 후 정리됩니다.
+
 이 계약을 변경하기 전에 [아키텍처](architecture.md)와 [권한 평면](authority-plane-contract.md)을 읽으세요. 릴리스 전용 증거는 [Release observation](release-observation.md)에, 대상별 전달 이력은 [전달 상태 관측](delivery-observation.md)에, 작업별 정확한 포함 방식은 [Context Compiler](context-compiler.md)에 설명되어 있습니다.
 
 상태: 공급자 중립 P3 증거 문법과 P4 프로젝션이 구현되었습니다.
