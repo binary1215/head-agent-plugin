@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "head_core": {
+      "command": "node",
+      "args": ["scripts/mcp-server.mjs"],
+      "cwd": ".",
+      "required": false
+    }
+  }
+}

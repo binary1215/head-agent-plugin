@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "kind": "HeadAgentProcessSupervisorManifest",
+  "manifestVersion": "0.1.0",
+  "supervisorProtocolVersion": "0.1.0",
+  "target": {
+    "platform": "linux",
+    "arch": "arm64",
+    "directory": "linux-arm64"
+  },
+  "binary": {
+    "relativePath": "head-agent-supervisor",
+    "sha256": "3a14a815dcacb4f5c80d1546f6ff5ddb9ca3d1e540e4e1fb1cf346a2659501ac",
+    "size": 2293922
+  },
+  "processModel": {
+    "transport": "single-request-stdio-with-control-fd3",
+    "windowsTreeOwnership": "job-object-kill-on-close",
+    "posixTreeOwnership": "isolated-process-group",
+    "shellInterpretation": false
+  },
+  "authority": {
+    "kind": "operational-process-control-only",
+    "instructionAuthority": false,
+    "promotionAuthority": false,
+    "mutatesCanon": false
+  },
+  "manifestId": "process-supervisor-manifest-19e7976e3063fe7b3cdf4a36",
+  "manifestHash": "19e7976e3063fe7b3cdf4a36298f1d81bb19152f7f0e1480db5e226ad3504945"
+}
