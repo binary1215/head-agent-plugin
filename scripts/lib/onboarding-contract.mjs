@@ -294,12 +294,10 @@ export function buildOnboardingState(input = {}) {
 }
 
 export function onboardingStateLatestReviewDecisionId(document = {}) {
-  const current = document.latestReviewDecisionId ?? null;
-  const legacy = document.reviewDecisionId ?? null;
-  if (current && legacy && current !== legacy) {
-    fail("Onboarding state contains conflicting latest ReviewDecision identities.", "ONBOARDING_REVIEW_CONFLICT");
+  if (Object.hasOwn(document, "reviewDecisionId")) {
+    fail("Retired onboarding state requires the standalone legacy migrator.", "ONBOARDING_LEGACY_STATE_REQUIRES_MIGRATOR");
   }
-  return current || legacy;
+  return document.latestReviewDecisionId ?? null;
 }
 
 export function verifyOnboardingState(document, { projectId = "", sessionId = "" } = {}) {
@@ -318,8 +316,9 @@ export function verifyOnboardingState(document, { projectId = "", sessionId = ""
     fail("Onboarding state pointer identity does not match current project state.", "ONBOARDING_STATE_IDENTITY_MISMATCH");
   }
   const stateVersion = document.protocol?.name === "head-agent-core-onboarding" ? document.protocol.version : "";
-  if (!new Set([ONBOARDING_PROTOCOL_VERSION, ONBOARDING_STATE_PROTOCOL_VERSION]).has(stateVersion)) {
-    fail("Onboarding state pointer protocol is invalid.", "INVALID_ONBOARDING_STATE");
+  if (stateVersion !== ONBOARDING_STATE_PROTOCOL_VERSION) {
+    fail("Unsupported onboarding state requires an explicit standalone migration or recovery operation.", stateVersion === ONBOARDING_PROTOCOL_VERSION
+      ? "ONBOARDING_LEGACY_STATE_REQUIRES_MIGRATOR" : "INVALID_ONBOARDING_STATE");
   }
   const stateInput = {
     projectId: document.projectId,
@@ -336,9 +335,7 @@ export function verifyOnboardingState(document, { projectId = "", sessionId = ""
     migration: document.migration,
     updatedAt: document.updatedAt,
   };
-  const rebuilt = stateVersion === ONBOARDING_PROTOCOL_VERSION
-    ? buildOnboardingStateDocument(stateInput, { protocolVersion: ONBOARDING_PROTOCOL_VERSION, reviewField: "reviewDecisionId" })
-    : buildOnboardingState(stateInput);
+  const rebuilt = buildOnboardingState(stateInput);
   if (onboardingCanonicalJson(rebuilt) !== onboardingCanonicalJson(document)) {
     fail("Onboarding state pointer fields are invalid.", "INVALID_ONBOARDING_STATE");
   }

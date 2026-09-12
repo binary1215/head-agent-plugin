@@ -270,7 +270,7 @@ export async function executeOpenCodeRuntimeInvocation({
   onProcessEvent = () => {},
   evidenceMode = "actual-provider",
   persist = true,
-} = {}) {
+} = {}, { preConsumeGate = null } = {}) {
   const verified = verifyRuntimeInvocationAuthorization(authorization);
   if (!new Set(["actual-provider", "protocol-fixture"]).has(evidenceMode)) fail("OpenCode execution evidence mode is invalid.", "INVALID_OPENCODE_RUN_EVIDENCE_MODE");
   const prepared = prepareRuntimeInvocationExecution({ root, authorization: verified, sessionRequest });
@@ -339,7 +339,7 @@ export async function executeOpenCodeRuntimeInvocation({
     } finally {
       removeOperationalControlState(operationalStateRoot, verified, controlState);
     }
-  });
+  }, { preConsumeGate });
   const draft = buildRuntimeResultPacketDraft({
     authorization: verified,
     receipt: leased.result.receipt,

@@ -8,7 +8,7 @@ import { initializeProject } from "./lib/head-core.mjs";
 import { compileContext } from "./lib/context-compiler.mjs";
 import { onboardingCanonicalJson, onboardingDigest, verifyOnboardingState } from "./lib/onboarding-contract.mjs";
 import { inspectOnboarding, readOnboardingCandidateSet, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
-import { verifyOnboardingCandidateSetForProjection } from "./lib/onboarding-projection.mjs";
+import { verifyOnboardingCandidateSetForProjection, verifyOnboardingReviewDecisionForProjection } from "./lib/onboarding-projection.mjs";
 import { normalizeProductModelDocument } from "./lib/product-model.mjs";
 import { verifyTemporalProvenanceGraph } from "./lib/temporal-provenance.mjs";
 import { inspectWorldModel, queryWorldTemporalGraph } from "./lib/world-model.mjs";
@@ -329,13 +329,21 @@ async function verifyNewProjectBriefAndRevision() {
   assert.equal(ready.reviewLineage.producerReviewDecisionId, revised.reviewDecision.reviewDecisionId);
   assert.equal(ready.reviewLineage.latestReviewDecisionId, accepted.reviewDecision.reviewDecisionId);
   assert.notEqual(ready.reviewLineage.producerReviewDecisionId, ready.reviewLineage.latestReviewDecisionId);
+  assert.equal(accepted.reviewDecision.protocol.version, "0.1.0");
+  assert.equal(verifyOnboardingReviewDecisionForProjection(accepted.reviewDecision, revised.candidateSet, ready.state.projectId).reviewDecisionId,
+    accepted.reviewDecision.reviewDecisionId);
   const legacyState = structuredClone(ready.state);
   legacyState.protocol.version = "0.1.0";
   legacyState.reviewDecisionId = legacyState.latestReviewDecisionId;
   delete legacyState.latestReviewDecisionId;
   delete legacyState.pointerHash;
   legacyState.pointerHash = onboardingDigest(onboardingCanonicalJson(legacyState));
-  assert.equal(verifyOnboardingState(legacyState).reviewDecisionId, accepted.reviewDecision.reviewDecisionId);
+  const legacyInputBefore = structuredClone(legacyState);
+  const fixtureBytesBefore = Object.fromEntries(filesUnder(root).map((file) => [path.relative(root, file), fs.readFileSync(file).toString("base64")]));
+  assert.throws(() => verifyOnboardingState(legacyState), { code: "ONBOARDING_LEGACY_STATE_REQUIRES_MIGRATOR" });
+  assert.deepEqual(legacyState, legacyInputBefore);
+  assert.deepEqual(Object.fromEntries(filesUnder(root).map((file) => [path.relative(root, file), fs.readFileSync(file).toString("base64")])),
+    fixtureBytesBefore, "legacy state verification is read-only and writes no files");
   const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
   assert.equal(graph.edges.some((edge) => edge.type === "PRODUCES"
     && edge.from === revised.reviewDecision.reviewDecisionId

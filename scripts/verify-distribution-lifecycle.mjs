@@ -112,6 +112,9 @@ try {
   const generatedInstructions = fs.readFileSync(path.join(projectRoot, ".head", "generated", "head-instructions.md"), "utf8").toLowerCase();
   assert.equal(runtimeForbiddenMarkers.some((marker) => generatedInstructions.includes(marker)), false);
   const installedReleaseRoot = path.join(installRoot, "releases", installed.releaseId);
+  assert.equal(fs.existsSync(path.join(installedReleaseRoot, "legacy")), false, "standalone legacy migrator must not enter the installed runtime");
+  const installedManifest = JSON.parse(fs.readFileSync(path.join(installedReleaseRoot, "distribution-manifest.json"), "utf8"));
+  assert.equal(installedManifest.files.some((file) => file.path === "legacy" || file.path.startsWith("legacy/")), false);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "workspace-host-export-mcp.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-live-provider-coordination.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-hostless-session-recovery.mjs")), true);

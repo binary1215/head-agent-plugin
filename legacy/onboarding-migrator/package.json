@@ -1,0 +1,13 @@
+{
+  "name": "@head-agent/legacy-onboarding-migrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "head-onboarding-migrate": "bin/head-onboarding-migrate.mjs"
+  },
+  "scripts": {
+    "test": "node --test --test-isolation=none --test-concurrency=1 test/*.test.mjs"
+  }
+}

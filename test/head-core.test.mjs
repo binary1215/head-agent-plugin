@@ -2016,6 +2016,37 @@ test("materializes and queries temporal graphs through an authority-free replace
   assert.equal(mcpStatus.result.structuredContent.authority, "rebuildable-derived-projection-not-project-canon");
 });
 
+test("prepared traversal benchmark matches the reviewed fixture and rejects a different query", () => {
+  const runBenchmark = (extra = []) => {
+    const args = [path.join(pluginRoot, "scripts", "benchmark-prepared-traversal.mjs"), "--iterations", "3", ...extra];
+    console.log(JSON.stringify({ event: "owned-benchmark-planned", parentPid: process.pid, command: [process.execPath, ...args], cwd: pluginRoot, ports: [] }));
+    const execution = spawnSync(process.execPath, args, { cwd: pluginRoot, encoding: "utf8", windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 });
+    console.log(JSON.stringify({ event: "owned-benchmark-closed", pid: execution.pid, parentPid: process.pid, exitCode: execution.status, signal: execution.signal, ports: [] }));
+    assert.ifError(execution.error);
+    return execution;
+  };
+  const execution = runBenchmark();
+  assert.equal(execution.status, 0, execution.stderr);
+  const report = JSON.parse(execution.stdout);
+  const expected = JSON.parse(fs.readFileSync(path.join(pluginRoot, "benchmarks", "prepared-traversal-v1", "expected.json"), "utf8"));
+  for (const [key, value] of Object.entries(report.semanticIdentity)) assert.equal(value, expected[key], key);
+  const cost = report.deterministicCost;
+  assert.deepEqual([cost.nodeCount, cost.edgeCount, cost.expansionNodeCount, cost.expansionEdgeCount], [274, 480, 6, 7]);
+  assert.deepEqual(cost.components, { identityEnvelopeBytes: 667, graphManifestBytes: 282, boundedExpansionBytes: 20024, graphSnapshotBytes: 437802, fullTopologyRecordsBytes: 430794 });
+  for (const key of ["preparedQueryBytes", "fullReloadBaselineBytes", "savedBytes", "reductionBasisPoints"]) assert.equal(cost[key], expected[key], key);
+  assert.equal(report.authorityEffect, "none");
+  assert.equal(report.diagnostics.timingSemantic, false);
+  assert.equal(report.diagnostics.pointerReadOptimization.pointerReadCalls, 3);
+  assert.equal(report.diagnostics.clientReceiptOptimization.locallyBuiltRequestReuseCount, 3);
+  assert.deepEqual(report.safety, {
+    queryPhaseReadOnly: true, persistentWrites: false, credentialsPersisted: false,
+    fullSnapshotReads: 0, fullTopologyReads: 0, distinctValidReceiptReplayRejected: true, liveEnvironmentValidated: false,
+  });
+  const changed = runBenchmark(["--query", "src/component-001.mjs"]);
+  assert.equal(changed.status, 1);
+  assert.match(changed.stderr, /BENCHMARK_FIXTURE_IDENTITY_DRIFT/);
+});
+
 test("records deterministic prepared traversal cost without making latency semantic", () => {
   const graph = buildTemporalProvenanceGraph({
     projectId: "project-prepared-cost-test",

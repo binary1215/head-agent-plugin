@@ -21,7 +21,7 @@ Git commits, branches, tags, GraphDB record IDs, provider session IDs, document-
 
 ## Logical entities and immutable revisions
 
-Temporal provenance protocol `0.14.0` materializes a P4 rebuildable relation and retrieval index under the [`AuthorityPlaneContract`](authority-plane-contract.md). Digest-valid protocols from `0.2.0` through `0.13.0` remain readable. New graphs add exact Policy proposal/review genealogy and common Observation derivation while preserving older identities:
+Temporal provenance protocol `0.15.0` materializes a P4 rebuildable relation and retrieval index under the [`AuthorityPlaneContract`](authority-plane-contract.md). Digest-valid protocols from `0.2.0` through `0.14.0` remain readable. New graphs add bounded opaque historical onboarding references while preserving older identities and the existing Policy and Observation projections:
 
 - stable product logical entities: `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, `Decision`, and schema-v2 `Policy`;
 - immutable product states: the corresponding `*Revision` kinds;
@@ -29,6 +29,7 @@ Temporal provenance protocol `0.14.0` materializes a P4 rebuildable relation and
 - immutable implementation states: `FileRevision`, `SymbolRevision`, and `TestRevision`;
 - temporal roots and external ancestry references: `SourceSnapshot`, `SourceSnapshotReference`, and `RevisionReference`.
 - onboarding evidence and review history: `OnboardingCandidateSet`, `OnboardingProductCandidate`, `OnboardingEvidence`, `OnboardingUnknown`, `OnboardingReviewDecision`, `ProductConceptReference`, and `ProductModelRevision`.
+- bounded historical onboarding continuity: opaque `HistoricalOnboardingCandidateReference` nodes and non-authoritative `HISTORICALLY_FOLLOWS` edges. Exact `typedRevisionIds` and `opaqueRevisionIds` coverage must agree with the projected revision set; it cannot grant P1 or recovery authority.
 - mapping review history: `FeatureMappingCandidateSet`, `FeatureMappingCandidate`, `FeatureMappingEvidence`, `FeatureMappingUnknown`, `FeatureMappingReviewDecision`, `ReviewedRelationship`, and historical `MappingEndpointReference`.
 - change lineage: `ChangeSet`, `ChangeRevisionReference`, execution-lineage references, `ChangeImpactCandidateSet`, `ChangeImpactCandidate`, `ChangeImpactUnknown`, `ChangeImpactReviewDecision`, `ReviewedImpact`, and historical product references.
 - optional external change evidence: `VcsEvidence` and immutable `GitCommit` observation nodes. These nodes are omitted when no attachment exists and never replace the ChangeSet.
@@ -61,6 +62,7 @@ Every edge records the same authority and provenance surface plus `edgeId`, type
 - `PROPOSES_FROM`, `PROPOSES_TO`, and `SUPPORTED_BY`;
 - `REVIEWED_BY`, `ACCEPTED_BY`, and `REJECTED_BY`;
 - `PRODUCES` and `PROMOTED_FROM`. For onboarding, `revise ReviewDecision -[:PRODUCES]-> successor CandidateSet` is distinct from `accept ReviewDecision -[:PRODUCES]-> ProductModelRevision`.
+- non-authoritative historical continuity through `HISTORICALLY_FOLLOWS`.
 - reviewed canonical `IMPLEMENTS` and `VERIFIED_BY` edges.
 - provider-neutral `CHANGES` and `SUPERSEDES` lineage plus explicitly reviewed `IMPACTS` edges.
 - optional `ChangeSet -[:MATERIALIZED_AS]-> VcsEvidence -[:REFERENCES]-> GitCommit` evidence links.

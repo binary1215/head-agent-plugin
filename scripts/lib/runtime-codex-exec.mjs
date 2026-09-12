@@ -310,7 +310,7 @@ export async function executeCodexRuntimeInvocation({
   onProcessEvent = () => {},
   evidenceMode = "actual-provider",
   persist = true,
-} = {}) {
+} = {}, { preConsumeGate = null } = {}) {
   const verified = verifyRuntimeInvocationAuthorization(authorization);
   if (!new Set(["actual-provider", "protocol-fixture"]).has(evidenceMode)) fail("Codex execution evidence mode is invalid.", "INVALID_CODEX_EXEC_EVIDENCE_MODE");
   const prepared = prepareRuntimeInvocationExecution({ root, authorization: verified, sessionRequest });
@@ -379,7 +379,7 @@ export async function executeCodexRuntimeInvocation({
     } finally {
       removeOperationalSchemaFile(operationalStateRoot, verified, schemaState);
     }
-  });
+  }, { preConsumeGate });
   const draft = buildRuntimeResultPacketDraft({
     authorization: verified,
     receipt: leased.result.receipt,

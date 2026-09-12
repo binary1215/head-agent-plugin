@@ -574,6 +574,7 @@ export function formatDeliveryStatus(value) {
 }
 
 export function formatMcpToolContent(name, value) {
+  if (name === "head_source_context") return formatSourceContext(value);
   if (name === "head_project_status") return formatProjectStatus(value);
   if (name === "head_project_initialize_or_resume") return formatProjectBootstrap(value);
   if (name === "head_session_restore") return formatSessionRestore(value);
@@ -606,6 +607,7 @@ export function formatCliError(error) {
 }
 
 export function formatCliResult(command, value) {
+  if (command === "source-context") return formatSourceContext(value);
   if (["help", "--help", "-h", "help-all"].includes(command)) return formatHelp(value);
   if (command === "status" || command === "doctor") return formatProjectStatus(value, { doctor: command === "doctor" });
   if (command === "init" || command === "resume") return formatProjectBootstrap(value);
@@ -624,4 +626,16 @@ export function formatCliResult(command, value) {
   if (command === "checkpoint-diagnose") return formatCheckpointDiagnosis(value);
   if (command === "checkpoint-sync") return formatCheckpointSync(value);
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function formatSourceContext(value) {
+  if (value.status === "head-selection-needed") return `${value.nextAction}\n`;
+  const ready = value.results.filter((item) => item.status === "ready" && item.includedInContext);
+  const lines = [`Source context: ${ready.length}/${value.results.length} selected needs included.`];
+  for (const item of value.results) lines.push(`${item.need.path}${item.need.symbol ? ` :: ${item.need.symbol}` : ""}: ${item.status}${item.reused ? " (reused; current bytes verified)" : ""}${item.code ? ` — ${item.code}` : ""}${item.unresolvedCount ? `; ${item.unresolvedCount} unresolved calls` : ""}`);
+  if (value.pendingNeeds.length) lines.push("Only judgments depending on missing required evidence need attention; independent work can continue.");
+  if (value.retentionPending?.length) lines.push("Some requested retention is unavailable: verified evidence remains usable, but durable handoff is not confirmed.");
+  if (value.results.some((item) => item.storageIssues?.length)) lines.push("Stored-evidence issues are listed in the result; damaged originals were not overwritten or deleted.");
+  lines.push("Partial source observations, not runtime truth or semantic sufficiency. HEAD assesses what the task still needs.");
+  return `${lines.join("\n")}\n`;
 }

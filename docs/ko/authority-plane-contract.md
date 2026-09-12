@@ -124,3 +124,10 @@ Core는 양쪽을 모두 검증합니다. 이름으로 지정된 그래프에는
 - receipt는 자신이 이름으로 지정한 그래프에는 없고 이후 child에만 나타납니다.
 - 로컬, in-memory, 활성화된 GraphDB backend는 동일한 의미 GraphSnapshot과 TraversalResult identity를 보존합니다.
 - reply는 ReviewDecision을 하나도 만들지 않으며, provider 요약은 checkpoint digest나 field를 변경할 수 없습니다.
+
+선택적 Worker Admission은 P5 Host 운영 상태입니다. queue, reservation,
+generation, capacity, expectation 및 status record는 P1 review, P2 recovery
+direction, P3 result meaning, Product Canon 또는 wave completion을 만들거나
+수정할 수 없습니다. Admission 상태 누락은 영향받은 admission domain만
+차단하며 일반 Core recovery와 admission을 사용하지 않는 실행은 기존 계약을
+그대로 따릅니다.

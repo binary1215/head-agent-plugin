@@ -50,8 +50,21 @@ function atomicCreate(file, content) {
 function readCreateOnly(file, label) {
   const stat = fs.lstatSync(file);
   if (stat.isSymbolicLink() || !stat.isFile() || stat.size > LIMITS.maxArtifactBytes) fail(`${label} is unsafe or too large.`, "OBSERVATION_STORE_LIMIT");
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch (error) { fail(`${label} contains invalid JSON: ${error.message}`, "INVALID_OBSERVATION_ARTIFACT"); }
+  return readStoredObject(file, label);
+}
+
+function readStoredObject(file, label) {
+  // I/O errors remain I/O errors. Only JSON syntax and the required record
+  // container shape are classified here, before readers access record fields.
+  const text = fs.readFileSync(file, "utf8");
+  let document;
+  try { document = JSON.parse(text); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    fail(`${label} contains invalid JSON: ${error.message}`, "INVALID_OBSERVATION_ARTIFACT");
+  }
+  if (!document || typeof document !== "object" || Array.isArray(document)) fail(`${label} must contain a JSON object.`, "INVALID_OBSERVATION_ARTIFACT");
+  return document;
 }
 
 function persistCreateOnly(projectRoot, relative, fileName, document, divergentCode = "OBSERVATION_IMMUTABLE_COLLISION") {
@@ -83,7 +96,7 @@ function readDirectory(projectRoot, relative, label) {
     if (stat.isSymbolicLink() || !stat.isFile() || stat.size > LIMITS.maxArtifactBytes) fail(`${label} artifact is unsafe or too large.`, "OBSERVATION_STORE_LIMIT");
     totalBytes += stat.size;
     if (totalBytes > LIMITS.maxTotalBytes) fail(`${label} total bytes exceed its bound. Use bounded source aggregation.`, "OBSERVATION_STORE_LIMIT");
-    try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch (error) { fail(`${label} contains invalid JSON: ${error.message}`, "INVALID_OBSERVATION_ARTIFACT"); }
+    return readStoredObject(file, label);
   });
 }
 

@@ -235,7 +235,7 @@ export async function executeClaudeRuntimeInvocation({
   platform = process.platform, environment = process.env, fileSystem = fs, spawnImplementation = spawn,
   targetResolver = resolveReadOnlyRuntimeExecutableTarget, supervisorSelection = null, providerArguments = null,
   onProcessEvent = () => {}, evidenceMode = "actual-provider", persist = true,
-} = {}) {
+} = {}, { preConsumeGate = null } = {}) {
   const verified = verifyRuntimeInvocationAuthorization(authorization);
   if (!new Set(["actual-provider", "protocol-fixture"]).has(evidenceMode)) fail("Claude execution evidence mode is invalid.", "INVALID_CLAUDE_PRINT_EVIDENCE_MODE");
   const prepared = prepareRuntimeInvocationExecution({ root, authorization: verified, sessionRequest });
@@ -271,7 +271,7 @@ export async function executeClaudeRuntimeInvocation({
     } finally {
       removeOperationalControlState(operationalStateRoot, verified, controlState);
     }
-  });
+  }, { preConsumeGate });
   const draft = buildRuntimeResultPacketDraft({ authorization: verified, receipt: leased.result.receipt, leaseRelease: leased.release, providerResult: leased.result.providerResult });
   const record = persist
     ? persistRuntimeInvocationRecord({ projectRoot: prepared.projectRoot, authorization: verified, events: leased.result.events, receipt: leased.result.receipt, draft })

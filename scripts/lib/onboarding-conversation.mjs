@@ -152,6 +152,13 @@ export function inspectConversationalOnboarding({ root = ".", candidateLimit = 2
       credentialValuesPersisted: false,
     },
     review: compactCandidateSet(["promotion_recovery_pending", "review_recovery_pending"].includes(onboarding.status) ? null : onboarding.candidateSet, limit),
+    historical: onboarding.historical ? {
+      status: "historical-ready-opaque",
+      boundaryId: onboarding.historical.boundaryId,
+      boundaryIntegrity: onboarding.historical.boundaryIntegrity,
+      applicationStatus: onboarding.historical.applicationStatus,
+      nextAction: onboarding.historical.nextAction,
+    } : null,
     readiness: {
       world: onboarding.worldModel?.status || "missing",
       worldModelId: onboarding.worldModel?.worldModelId || null,
@@ -167,7 +174,7 @@ export function inspectConversationalOnboarding({ root = ".", candidateLimit = 2
     },
     authority: {
       productCanon: "user-owned-project-canon",
-      candidates: "non-authoritative-until-review",
+      candidates: onboarding.historical ? "historical-ready-opaque" : "non-authoritative-until-review",
       conversationProjection: "non-authoritative-guidance",
       graph: "rebuildable-derived-evidence",
     },

@@ -12,6 +12,7 @@
 - [공급자 중립 HEAD 헌법](head-constitution.md)
 - [권한 평면과 Graph/기록 경계](authority-plane-contract.md)
 - [프로젝트 온보딩](onboarding.md)
+- [독립 실행 legacy 온보딩 migrator 경계](onboarding-migrator.md)
 - [Product Model 정본](product-model.md)
 - [Product Operating Loop](product-operating-loop.md)
 - [Release observation](release-observation.md)
@@ -36,6 +37,7 @@
 - [Session 복원과 검토 결과 통합](session-recovery.md)
 - [공급자 중립 지속 역할 조정](role-coordination.md)
 - [공급자 중립 bounded worker launch wave](bounded-worker-wave.md)
+- [선택적 provider-neutral Worker Admission](worker-admission.md)
 - [외부 런타임 상태 증거](runtime-state.md)
 
 ## 어댑터와 프로젝션

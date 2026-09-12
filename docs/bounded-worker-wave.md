@@ -73,3 +73,9 @@ Typed MCP exposes equivalent `head_bounded_worker_wave_*` tools over the same
 Core functions and identities. A safe Skill flow creates individual dispatches,
 creates the wave, launches each member through its existing execution path,
 seals only after verified start evidence, and then uses status or bounded wait.
+
+An embedding Host may optionally pass an opened Worker Admission capability to
+wave status. That adds P5 queue/reservation detail only; it never changes the
+wave state machine or its `started` evidence. Ordinary CLI/MCP and Core calls
+without that capability remain unchanged. See
+[worker-admission.md](worker-admission.md).

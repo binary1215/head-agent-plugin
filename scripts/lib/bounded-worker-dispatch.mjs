@@ -301,10 +301,43 @@ export async function waitForBoundedWorkerDispatch({
   }
 }
 
-export async function executeBoundedWorkerDispatch({ root = ".", authorizationId, role, execution = {} } = {}) {
+export async function executeBoundedWorkerDispatch({
+  root = ".", authorizationId, role, execution = {}, admissionHost = null, admissionMode = "attached",
+} = {}) {
   const created = createBoundedWorkerDispatch({ root, authorizationId, role });
   const { authorization } = readBoundedWorkerDispatch({ root, authorizationId });
-  const result = await executeRuntimeInvocation({ ...execution, root, authorization, persist: true });
+  let admission = null;
+  if (admissionHost !== null) {
+    const { enqueueWorkerAdmission } = await import("./worker-admission.mjs");
+    admission = await enqueueWorkerAdmission({
+      host: admissionHost,
+      root,
+      authorizationId,
+      dispatchId: created.dispatch.dispatchId,
+      mode: admissionMode,
+      signal: execution.signal || null,
+    });
+  }
+  let result;
+  try {
+    result = await executeRuntimeInvocation(
+      { ...execution, root, authorization, persist: true },
+      { preConsumeGate: admission?.preConsumeGate || null },
+    );
+  } catch (error) {
+    if (admission) {
+      try { await admission.finalize({ outcomeCode: "execution-threw" }); }
+      catch (finalizeError) {
+        if (finalizeError.code !== "WORKER_ADMISSION_JOURNAL_UNAVAILABLE"
+          && finalizeError.code !== "WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING") {
+          finalizeError.cause = error;
+          throw finalizeError;
+        }
+      }
+    }
+    throw error;
+  }
+  if (admission) await admission.finalize({ outcomeCode: result.receipt?.status || "settled" });
   return { status: "bounded_worker_execution_completed", dispatch: created.dispatch, result };
 }
 

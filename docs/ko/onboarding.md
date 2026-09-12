@@ -22,9 +22,9 @@ HEAD Session identity는 Claude Code, Codex, OpenCode 및 다른 모든 provider
 보존하면서 누락된 Session 레코드, 로컬 저장소 선택 및 상태 포인터를 생성합니다.
 
 상태 포인터 protocol `0.2.0`은 가장 최근 결정을
-`latestReviewDecisionId`로 명명합니다. 호환성 필드가 `reviewDecisionId`인
-digest 유효 `0.1.0` 포인터는 계속 읽을 수 있으며, 이후의 명시적 상태 전이가 있을
-때만 다시 작성됩니다. 후속 candidate는 자신을 생성한 `revise` 결정을 별도로
+`latestReviewDecisionId`로 명명합니다. 현재 Core는 상태 protocol `0.1.0`을 더 이상
+해석하지 않습니다. 그 상태를 사용하는 프로젝트는 별도로 고정된 legacy migrator
+또는 별도로 검토된 복구 경로가 필요합니다. 후속 candidate는 자신을 생성한 `revise` 결정을 별도로
 `producerReviewDecisionId`로 명명합니다. 그 후속 candidate가 수락되거나 거부된
 뒤에는 producer와 latest review가 의도적으로 서로 다릅니다.
 
@@ -58,6 +58,23 @@ producer ReviewDecision 및 producer policy로부터 candidate-set identity를 �
 파생 World Model ID는 materialized-view pointer에 authority review를 결합하지 않도록
 제외합니다. 폐기된 lexical-inference protocol의 candidate set은 거부하며,
 현재 SourceSnapshot에 결속된 fresh HEAD semantic proposal로 다시 만들어야 합니다.
+
+## 과거 온보딩 경계
+
+완료된 candidate protocol `0.1.0`부터 `0.3.0`은
+[`onboarding-migrator.md`](onboarding-migrator.md)에 설명된 독립 실행 패키지만
+해석합니다. 현재 플러그인은 이 parser를 배포·import·호출하지 않으며 MCP에도
+노출하지 않습니다. 명시적인 one-shot apply는 create-only P3 boundary, 적용 receipt,
+최종 commit marker만 기록합니다. 과거 candidate와 review는 opaque 상태로 남고,
+현재 verifier를 독립적으로 통과한 Product Model revision만 기존 P1 지위를 유지합니다.
+
+helper를 제거한 뒤에도 정상 status, World, Context, Session recovery와 새 current
+온보딩은 계속 동작합니다. 제품 의미를 변경하려면 provider HEAD가
+`head_onboarding_semantic_refresh` 또는 `onboarding-semantic-refresh`로 fresh current
+semantic proposal을 작성하고, 사용자는 일반 ReviewDecision 경로에서 새 candidate를
+검토합니다. 첫 current candidate는 historical candidate를 typed parent로 재사용하지
+않습니다. P3 continuity receipt와 P4 `HISTORICALLY_FOLLOWS` edge는 역사적 연속성만
+보존하며 instruction, recovery 또는 promotion 권한을 만들지 않습니다.
 
 ## 공개 initialize 및 resume 경로
 
@@ -353,15 +370,17 @@ ReviewDecision, Product Model revision, Product Canon identity 및 World Model f
 
 ## Temporal graph projection
 
-World Model `0.14.0`은 bounded immutable onboarding artifact를 계속 load하고, 모든
-nested content identity를 검증한 뒤, onboarding projection protocol `0.1.0`을 거쳐
-P4 temporal provenance protocol `0.11.0`으로 project합니다. Candidate set은 정확한
+현재 World snapshot은 온보딩을 temporal provenance protocol `0.15.0`으로
+project합니다. Candidate set은 정확한
 source evidence와 연결되고, candidate는 Evidence 및 별도의 proposed product-concept
 reference와 연결되며, ReviewDecision은 accepted, rejected, revised 및 promotion outcome을
 보존합니다. revise decision에는 후속 candidate set으로 향하는 명시적 `PRODUCES` edge가
 있습니다. 이후 accepted decision은 변경 불가능한 previous/resulting ProductModelRevision
 receipt에 별도로 연결되고, resulting receipt는 promoted candidate identity로 다시
 연결됩니다.
+
+Opaque historical candidate reference는 bounded ID와 digest만 노출하며 fresh current
+candidate에는 `HISTORICALLY_FOLLOWS`로만 연결됩니다.
 
 이 graph는 audit 및 traversal projection이지 decision source가 아닙니다. source
 ReviewDecision이 사용자의 promotion authority를 기록하더라도 project된 모든 node와 edge의

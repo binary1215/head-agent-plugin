@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
 import { prepareContextWorkflow, previewContextWorkflow } from "./lib/context-workflow.mjs";
+import { prepareSourceContext, inspectSourceObservation } from "./lib/source-context-workflow.mjs";
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
 import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
-import { inspectOnboarding, reviewOnboarding } from "./lib/onboarding.mjs";
+import { inspectOnboarding, proposeOnboardingSemanticRefresh, reviewOnboarding } from "./lib/onboarding.mjs";
 import { inspectConversationalOnboarding } from "./lib/onboarding-conversation.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
 import { inspectFeatureMapping, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
@@ -109,6 +110,47 @@ const observationInputSchema = {
   required: ["subject", "form", "temporal_scope", "source_event_key_digest", "source_evidence_digest", "coverage", "payload"], additionalProperties: false,
 };
 const nullableIdentity = (pattern) => ({ anyOf: [{ type: "string", pattern }, { type: "null" }] });
+const onboardingSemanticProposalSchema = {
+  type: "object",
+  description: "Fresh provider-HEAD-authored P3 product candidates. Core verifies exact current source evidence and never treats this proposal as Product Canon.",
+  properties: {
+    schemaVersion: { type: "integer", const: 1 },
+    sourceSnapshotId: { type: "string", pattern: "^source-snapshot-[a-f0-9]{24}$" },
+    candidates: {
+      type: "array", minItems: 1, maxItems: 200,
+      items: {
+        type: "object",
+        properties: {
+          productKind: { type: "string", enum: ["FeatureGroup", "Capability", "Feature", "Requirement", "Constraint", "Decision"] },
+          proposedEntity: { type: "object" },
+          explanation: { type: "string", minLength: 1, maxLength: 2000 },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          evidence: {
+            type: "array", minItems: 1, maxItems: 8,
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string", minLength: 1 },
+                line: { type: "integer", minimum: 1 },
+                contentDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+                symbol: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string", minLength: 1 }, kind: { type: "string", minLength: 1 }, line: { type: "integer", minimum: 1 },
+                  },
+                  required: ["name", "kind", "line"], additionalProperties: false,
+                },
+              },
+              required: ["path", "line"], additionalProperties: false,
+            },
+          },
+        },
+        required: ["productKind", "proposedEntity", "evidence", "explanation", "confidence"], additionalProperties: false,
+      },
+    },
+  },
+  required: ["schemaVersion", "sourceSnapshotId", "candidates"], additionalProperties: false,
+};
 const conformanceBaselineSchema = {
   type: "object",
   properties: {
@@ -152,6 +194,7 @@ const supplementalReadOnlyHints = {
   head_runtime_invocation_lease_status: true,
   head_runtime_invocation_result: true,
   head_onboarding_status: true,
+  head_onboarding_semantic_refresh: false,
   head_product_policy_status: true,
   head_product_policy_candidate: true,
   head_product_policy_review_decision: true,
@@ -346,6 +389,20 @@ export const tools = [
         },
       },
       required: ["project_root"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_onboarding_semantic_refresh",
+    description: "Create a fresh current P3 semantic onboarding proposal after a completed historical boundary. This creates only P3 candidates and continuity evidence; Product Canon changes only through a later explicit user ReviewDecision.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        semantic_proposal: onboardingSemanticProposalSchema,
+      },
+      required: ["project_root", "semantic_proposal"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -748,6 +805,27 @@ export const tools = [
     name: "head_conformance_trigger_prepare",
     description: "Prepare the next bounded Host-local trigger batch and current read-only Conformance baseline. It invokes no provider, creates no Finding, and does not auto-replay an uncertain assessment.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, source_id: { type: "string", pattern: "^conformance-trigger-source-[a-f0-9]{24}$" }, limit: { type: "integer", minimum: 1, maximum: 64, default: 64 } }, required: ["project_root", "source_id"], additionalProperties: false },
+  },
+  {
+    name: "head_source_context",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    description: "Collect current task-scoped source evidence and compile it into Context without Product onboarding or full indexing. HEAD chooses exact needs after inspecting the user's task; never ask users to author JSON or IDs. Python outgoing-calls uses isolated parse-only stdlib AST, preserves unresolved calls, and claims no runtime truth or completeness. Optional retention stores P3 evidence only; failures affect dependent judgments, not independent work.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, task: { type: "string", minLength: 1 },
+      needs: { type: "array", maxItems: 32, items: { type: "object", properties: {
+        kind: { type: "string", enum: ["source", "outgoing-calls"] }, path: { type: "string", minLength: 1 },
+        symbol: { type: "string", maxLength: 512 }, required: { type: "boolean", default: true },
+      }, required: ["kind", "path"], additionalProperties: false } },
+      retain: { type: "boolean", default: false, description: "HEAD selects retention for audit/reuse/handoff; no additional user approval. Ephemeral is the default." },
+      timeout_ms: { type: "integer", minimum: 1, maximum: 120000, default: 15000 },
+      budget: { type: "integer", enum: CONTEXT_BUDGET_TIERS },
+    }, required: ["project_root", "task"], additionalProperties: false },
+  },
+  {
+    name: "head_source_observation_read",
+    description: "Audit exact retained original source/response after integrity verification, even after source edits. Reports current, stale or unavailable sourceState separately; historical data is not eligible as current Context or P2 recovery authority.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, bundle_key: { type: "string", pattern: "^[a-f0-9]{64}$" }, failure_key: { type: "string", pattern: "^[a-f0-9]{64}$", description: "Alternatively, read the exact retained failure. Supply exactly one key; HEAD obtains it from the collection result." } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_context_prepare",
@@ -1945,7 +2023,7 @@ function continueSessionFromMcp(args, coordinationWorkspaceHost) {
   });
 }
 
-export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null } = {}) {
+export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, signal, onProcess } = {}) {
   const id = request.id ?? null;
     if (request.method === "initialize") {
       return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: packageVersion } });
@@ -1983,6 +2061,8 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           profile: args.profile || "core",
           onboarding: onboardingInputFromMcp(args),
         })
+      : name === "head_onboarding_semantic_refresh"
+        ? proposeOnboardingSemanticRefresh({ root: args.project_root, semanticProposal: args.semantic_proposal })
       : name === "head_onboarding_review"
         ? compactReviewResult(await reviewOnboarding({
           root: args.project_root,
@@ -2127,6 +2207,10 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
           ? (conformanceTriggerRegistry ? conformanceTriggerRegistry.inspect({ root: args.project_root, sourceId: args.source_id }) : { status: "optional-host-adapter-unavailable", ordinaryWorkBlocked: false, authority: "P5-capability-disclosure-only" })
         : name === "head_conformance_trigger_prepare"
           ? (conformanceTriggerRegistry ? conformanceTriggerRegistry.prepare({ root: args.project_root, sourceId: args.source_id, limit: args.limit ?? 64 }) : { status: "optional-host-adapter-unavailable", ordinaryWorkBlocked: false, authority: "P5-capability-disclosure-only" })
+        : name === "head_source_context"
+          ? prepareSourceContext({ root: args.project_root, task: args.task, needs: args.needs ?? [], retain: args.retain ?? false, budget: args.budget, timeoutMs: args.timeout_ms ?? 15_000, signal, onProcess })
+        : name === "head_source_observation_read"
+          ? inspectSourceObservation({ root: args.project_root, bundleKey: args.bundle_key, failureKey: args.failure_key })
         : name === "head_context_prepare"
           ? prepareContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET })
         : name === "head_context_preview"
@@ -2360,11 +2444,33 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
 
 export function serveMcp({ coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null } = {}) {
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const sourceRequests = new Map();
+  const abortSources = () => { for (const controller of sourceRequests.values()) controller.abort(); };
+  let closing = false;
+  const shutdown = () => { abortSources(); input.close(); };
+  const cleanupSignals = () => {
+    if (closing && !sourceRequests.size) { process.removeListener("SIGINT", shutdown); process.removeListener("SIGTERM", shutdown); }
+  };
+  process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown);
+  input.once("close", () => { closing = true; abortSources(); cleanupSignals(); });
   input.on("line", async (line) => {
     if (!line.trim()) return;
     let response;
-    try { response = await dispatch(JSON.parse(line), { coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost }); }
+    let sourceRequestId, ownsSourceRequest = false;
+    try {
+      const request = JSON.parse(line);
+      if (request.method === "notifications/cancelled") { sourceRequests.get(request.params?.requestId)?.abort(); return; }
+      let controller;
+      if (request.method === "tools/call" && request.params?.name === "head_source_context") {
+        sourceRequestId = request.id;
+        if (sourceRequests.has(sourceRequestId)) throw new Error("Duplicate active source request id.");
+        controller = new AbortController(); sourceRequests.set(sourceRequestId, controller); ownsSourceRequest = true;
+      }
+      response = await dispatch(request, { coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost,
+        signal: controller?.signal, onProcess: (event) => process.stderr.write(`${JSON.stringify({ sourceProcess: event })}\n`) });
+    }
     catch (error) { response = failure(null, `Parse error: ${error.message}`); }
+    finally { if (ownsSourceRequest) sourceRequests.delete(sourceRequestId); cleanupSignals(); }
     if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
   });
   return input;

@@ -487,13 +487,13 @@ function buildContextPreparationProjection(preview, { root, callerTask, requeste
   };
 }
 
-export function previewContextWorkflow({ root = ".", task, budget = DEFAULT_CONTEXT_BUDGET, evidenceNeeds = [], graphProjectionAdapter = null } = {}) {
+export function previewContextWorkflow({ root = ".", task, budget = DEFAULT_CONTEXT_BUDGET, evidenceNeeds = [], graphProjectionAdapter = null, sourceObservations = [], includeRepositoryWorld = true } = {}) {
   const requestedBudget = budget;
   let currentBudget = budget;
   const attempts = [];
 
   for (let attemptIndex = 0; attemptIndex < CONTEXT_BUDGET_TIERS.length; attemptIndex += 1) {
-    const preview = compileContext({ root, task, budget: currentBudget, evidenceNeeds, persist: false, graphProjectionAdapter });
+    const preview = compileContext({ root, task, budget: currentBudget, evidenceNeeds, persist: false, graphProjectionAdapter, sourceObservations, includeRepositoryWorld });
     const decision = workflowDecision(preview.capsule);
     attempts.push({
       attempt: attemptIndex + 1,

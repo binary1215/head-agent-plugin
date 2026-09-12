@@ -12,6 +12,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 - [Provider-neutral HEAD constitution](head-constitution.md)
 - [Authority planes and the Graph/record boundary](authority-plane-contract.md)
 - [Project onboarding](onboarding.md)
+- [Standalone legacy onboarding migrator boundary](onboarding-migrator.md)
 - [Product Model canon](product-model.md)
 - [Product Operating Loop](product-operating-loop.md)
 - [Release observation](release-observation.md)
@@ -36,6 +37,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 - [Session restore and reviewed-result integration](session-recovery.md)
 - [Provider-neutral durable role coordination](role-coordination.md)
 - [Provider-neutral bounded worker launch waves](bounded-worker-wave.md)
+- [Optional provider-neutral worker admission](worker-admission.md)
 - [External runtime state evidence](runtime-state.md)
 
 ## Adapters and projections
