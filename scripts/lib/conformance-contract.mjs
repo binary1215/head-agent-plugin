@@ -175,7 +175,13 @@ export function verifyConformanceFindingCandidate(document, projectId = "") {
   return document;
 }
 
-export function createConformanceDispositionReceipt({ projectId, sessionId, finding, disposition, rationale, deferUntil = null, previousDisposition = null, resolution = null } = {}) {
+export const HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY = "head-maintenance-evidence-not-user-decision-or-execution-authority";
+export const USER_CONFORMANCE_DISPOSITION_AUTHORITY = "user-disposition-evidence-not-canon-or-execution-authority";
+
+export function createConformanceDispositionReceipt({ projectId, sessionId, finding, disposition, rationale, deferUntil = null, previousDisposition = null, resolution = null, actor = "user" } = {}) {
+  if (!["user", "head"].includes(actor)) fail("Conformance disposition actor is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
+  if (actor === "head" && (!["acknowledge", "defer"].includes(disposition)
+    || previousDisposition && previousDisposition.authority !== HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY)) fail("HEAD may only acknowledge/defer without superseding a user disposition.", "CONFORMANCE_HEAD_MAINTENANCE_ONLY");
   const verified = verifyConformanceFindingCandidate(finding, projectId);
   const normalizedDisposition = text(disposition, "Conformance disposition", 64);
   if (!CONFORMANCE_DISPOSITIONS.includes(normalizedDisposition)) fail("Conformance disposition is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
@@ -201,7 +207,7 @@ export function createConformanceDispositionReceipt({ projectId, sessionId, find
     rationale: text(rationale, "Conformance disposition rationale", 4096),
     deferUntil: normalizedDeferUntil,
     scope: "exact-finding-only",
-    authority: "user-disposition-evidence-not-canon-or-execution-authority",
+    authority: actor === "head" ? HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY : USER_CONFORMANCE_DISPOSITION_AUTHORITY,
     authorityBoundary: artifactAuthorityBoundary("ConformanceDispositionReceipt"),
     instructionAuthority: false,
     promotionAuthority: false,
@@ -226,7 +232,8 @@ export function verifyConformanceDispositionReceipt(document, finding, projectId
     || document.resolutionId != null && (!/^conformance-resolution-[a-f0-9]{24}$/.test(document.resolutionId) || !/^[a-f0-9]{64}$/.test(document.resolutionHash))
     || (document.disposition === "accept-resolution") !== (document.resolutionId !== null)
     || !CONFORMANCE_DISPOSITIONS.includes(document.disposition) || document.scope !== "exact-finding-only"
-    || !authorityValid(document, "user-disposition-evidence-not-canon-or-execution-authority")) fail("ConformanceDispositionReceipt fields or authority are invalid.", "INVALID_CONFORMANCE_DISPOSITION");
+    || !(authorityValid(document, USER_CONFORMANCE_DISPOSITION_AUTHORITY)
+      || authorityValid(document, HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY) && ["acknowledge", "defer"].includes(document.disposition))) fail("ConformanceDispositionReceipt fields or authority are invalid.", "INVALID_CONFORMANCE_DISPOSITION");
   text(document.rationale, "Conformance disposition rationale", 4096);
   if (document.deferUntil != null && Number.isNaN(Date.parse(document.deferUntil)) || document.disposition !== "defer" && document.deferUntil !== null) fail("Conformance disposition deferUntil is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
   verifyArtifactAuthorityBoundary("ConformanceDispositionReceipt", document.authorityBoundary);

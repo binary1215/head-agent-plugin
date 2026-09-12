@@ -149,6 +149,60 @@ async function startWithSemanticProposal(root) {
   return startFeatureMapping({ root, semanticProposal: semanticMappingProposal(root) });
 }
 
+test("HEAD can replace only the exact unreviewed mapping batch without fabricating a decision", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const first = await startWithSemanticProposal(root);
+  const id = first.candidateSet.candidateSetId;
+  const candidateFile = path.join(root, '.head/feature-mappings/candidate-sets', `${id}.json`);
+  const original = fs.readFileSync(candidateFile);
+  const proposal = semanticMappingProposal(root);
+  proposal.candidates[0].explanation = 'HEAD refined its evidence explanation without user review.';
+  const before = treeBytes(root);
+  await assert.rejects(() => startFeatureMapping({ root, expectedCandidateSetId: id }), { code: 'FEATURE_MAPPING_SUPERSESSION_CONFLICT' });
+  await assert.rejects(() => startFeatureMapping({ root, expectedCandidateSetId: `feature-mapping-candidates-${'0'.repeat(24)}`, semanticProposal: proposal }), { code: 'FEATURE_MAPPING_SUPERSESSION_CONFLICT' });
+  assert.deepEqual(treeBytes(root), before);
+  const second = await startFeatureMapping({ root, expectedCandidateSetId: id, semanticProposal: proposal });
+  assert.notEqual(second.candidateSet.candidateSetId, id);
+  assert.deepEqual(fs.readFileSync(candidateFile), original);
+  const after = treeBytes(root);
+  for (const key of Object.keys(before).filter(key => key.startsWith('.head/sessions/') || key === '.head/project.json' || key === '.head/context/product-model.json' || key.includes('/review-decisions/'))) assert.equal(after[key], before[key], key);
+  assert.equal(Object.keys(after).some(key => key.includes('/review-decisions/')), false);
+  const pending = second.candidateSet.candidateSetId;
+  const request = { root, candidateSetId: pending, disposition: 'accept-all', rationale: 'User accepts exact refined mapping.' };
+  await interruptMappingPointer(root, request);
+  const durableBefore = treeBytes(root);
+  await assert.rejects(() => startFeatureMapping({ root, expectedCandidateSetId: pending, semanticProposal: semanticMappingProposal(root) }), { code: 'FEATURE_MAPPING_REVIEW_CONFLICT' });
+  assert.deepEqual(treeBytes(root), durableBefore);
+});
+
+test("supersession preserves historical reviewed links and serializes competing current proposals", async (t) => {
+  const root = initializedProject();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const first = await startWithSemanticProposal(root);
+  await reviewFeatureMapping({ root, candidateSetId: first.candidateSet.candidateSetId, disposition: 'accept-all', rationale: 'User reviewed the initial batch.' });
+  const prior = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph.edges.filter(e => ['IMPLEMENTS', 'VERIFIED_BY'].includes(e.type));
+  const revised = semanticMappingProposal(root);
+  revised.candidates.forEach(c => { c.explanation += ' Updated evidence proposal.'; });
+  const pending = await startFeatureMapping({ root, semanticProposal: revised });
+  const id = pending.candidateSet.candidateSetId;
+  const before = treeBytes(root);
+  const stale = structuredClone(revised);
+  stale.sourceSnapshotId = `source-snapshot-${'0'.repeat(24)}`;
+  await assert.rejects(() => startFeatureMapping({ root, expectedCandidateSetId: id, semanticProposal: stale }), { code: 'FEATURE_MAPPING_PROPOSAL_DRIFT' });
+  assert.deepEqual(treeBytes(root), before);
+  const candidates = ['B', 'C'].map(suffix => {
+    const proposal = semanticMappingProposal(root);
+    proposal.candidates.forEach(c => { c.explanation += suffix; });
+    return proposal;
+  });
+  const results = await Promise.allSettled(candidates.map(semanticProposal => startFeatureMapping({ root, expectedCandidateSetId: id, semanticProposal })));
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.deepEqual(inspectWorldModel({ root }).snapshot.temporalProvenanceGraph.edges.filter(e => ['IMPLEMENTS', 'VERIFIED_BY'].includes(e.type)), prior);
+  const after = treeBytes(root);
+  for (const key of Object.keys(before).filter(key => key.includes('/review-decisions/') || key.includes('/candidate-sets/'))) assert.equal(after[key], before[key], key);
+});
+
 test("accepts a typed MCP semantic proposal but requires explicit confirmation for review authority", async (t) => {
   const root = initializedProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

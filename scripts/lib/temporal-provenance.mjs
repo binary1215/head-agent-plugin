@@ -1342,7 +1342,7 @@ function appendFeatureMappingProjection({
 
   return {
     featureMappingCandidateSetCount: projection.candidateSets.length,
-    featureMappingCandidateCount: projection.candidateSets.reduce((count, item) => count + item.candidates.length, 0),
+    featureMappingCandidateCount: new Set(projection.candidateSets.flatMap((item) => item.candidates.map((candidate) => candidate.candidateId))).size,
     featureMappingEvidenceCount: new Set(projection.candidateSets.flatMap((item) => item.evidence.map((evidence) => evidence.evidenceId))).size,
     featureMappingUnknownCount: new Set(projection.candidateSets.flatMap((item) => item.unknowns.map((unknown) => unknown.unknownId))).size,
     featureMappingReviewDecisionCount: projection.reviewDecisions.length,

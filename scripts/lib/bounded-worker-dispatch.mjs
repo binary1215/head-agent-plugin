@@ -4,12 +4,12 @@ import path from "node:path";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { inspectProject } from "./head-core.mjs";
 import { inspectRuntimeExecutionLease } from "./runtime-execution-lease.mjs";
-import { readRuntimeInvocationAuthorization } from "./runtime-invocation-lifecycle.mjs";
+import { prepareRuntimeInvocationExecution, readRuntimeInvocationAuthorization } from "./runtime-invocation-lifecycle.mjs";
 import { executeRuntimeInvocation } from "./runtime-one-shot-exec.mjs";
 import { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-record.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./runtime-run-result-application.mjs";
 
-export const BOUNDED_WORKER_DISPATCH_VERSION = "0.1.0";
+export const BOUNDED_WORKER_DISPATCH_VERSION = "0.2.0";
 
 const fail = (message, code = "BOUNDED_WORKER_DISPATCH_ERROR") => {
   const error = new Error(message);
@@ -28,6 +28,15 @@ function canonical(value) {
 const canonicalJson = (value) => JSON.stringify(canonical(value));
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const pretty = (value) => `${JSON.stringify(value, null, 2)}\n`;
+
+function currentScope(inspected, authorization) {
+  const scope = authorization.scope;
+  if (authorization.projectId !== inspected.project.projectId || authorization.headSessionId !== inspected.state.sessionId
+    || (scope.kind === "run" ? inspected.state.activeRunId !== scope.runId || inspected.state.activeExecutionContractId !== scope.executionContractId
+      : scope.kind !== "session" || inspected.state.mode !== "session" || inspected.state.activeRunId || inspected.state.activeExecutionContractId || inspected.state.pendingReview)) {
+    fail("Bounded worker requires its exact current Run or idle Session authorization.", "BOUNDED_WORKER_DISPATCH_RUN_CONFLICT");
+  }
+}
 
 function ready(root, action) {
   const inspected = inspectProject(root);
@@ -95,17 +104,18 @@ export function verifyBoundedWorkerDispatch(document) {
   };
   if (document.schemaVersion !== 1 || document.kind !== "BoundedWorkerDispatch"
     || document.protocol?.name !== "head-agent-core-bounded-worker-dispatch"
-    || document.protocol?.version !== BOUNDED_WORKER_DISPATCH_VERSION
+    || !["0.1.0", BOUNDED_WORKER_DISPATCH_VERSION].includes(document.protocol?.version)
+    || document.protocol?.version === "0.1.0" && document.runId === null
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
     || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^[a-f0-9]{64}$/.test(document.authorizationHash || "")
     || !new Set(["claude", "codex", "opencode"]).has(document.runtime)
     || document.workerRole === "head" || typeof document.workerRole !== "string" || !document.workerRole
-    || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
-    || !/^whole-plan-[a-f0-9]{24}$/.test(document.wholePlanId || "")
-    || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
-    || !/^capsule-[a-f0-9]{24}$/.test(document.contextCapsuleId || "")
+    || (document.runId === null
+      ? document.wholePlanId !== null || document.executionContractId !== null || document.contextCapsuleId !== null && !/^capsule-[a-f0-9]{24}$/.test(document.contextCapsuleId)
+      : !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "") || !/^whole-plan-[a-f0-9]{24}$/.test(document.wholePlanId || "")
+        || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "") || !/^capsule-[a-f0-9]{24}$/.test(document.contextCapsuleId || ""))
     || canonicalJson(document.ownershipBoundary) !== canonicalJson(boundary)
     || document.authority !== "bounded-worker-scope-and-result-ownership-evidence"
     || document.recoveryAuthority !== false || document.instructionAuthority !== false
@@ -127,11 +137,11 @@ function verifiedDispatchForAuthorization(inspected, authorizationId) {
   const authorization = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId }).authorization;
   if (dispatch.projectId !== inspected.project.projectId || dispatch.headSessionId !== inspected.state.sessionId
     || dispatch.authorizationHash !== authorization.authorizationHash || dispatch.runtime !== authorization.runtime
-    || authorization.scope.kind !== "run" || dispatch.runId !== authorization.scope.runId
+    || dispatch.authorizationId !== authorization.authorizationId || dispatch.runId !== authorization.scope.runId
     || dispatch.wholePlanId !== authorization.scope.wholePlanId
     || dispatch.executionContractId !== authorization.scope.executionContractId
     || dispatch.contextCapsuleId !== authorization.scope.contextCapsuleId) {
-    fail("Bounded worker dispatch conflicts with its exact Run authorization.", "BOUNDED_WORKER_DISPATCH_LINEAGE_CONFLICT");
+    fail("Bounded worker dispatch conflicts with its exact stored authorization.", "BOUNDED_WORKER_DISPATCH_LINEAGE_CONFLICT");
   }
   return { file, dispatch, authorization };
 }
@@ -140,10 +150,7 @@ export function createBoundedWorkerDispatch({ root = ".", authorizationId, role 
   const inspected = ready(root, "a bounded worker is dispatched");
   const selectedRole = workerRole(inspected, role);
   const authorization = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId }).authorization;
-  if (authorization.scope.kind !== "run" || inspected.state.activeRunId !== authorization.scope.runId
-    || inspected.state.activeExecutionContractId !== authorization.scope.executionContractId) {
-    fail("Bounded worker dispatch requires the exact current contract-bound Run authorization.", "BOUNDED_WORKER_DISPATCH_RUN_CONFLICT");
-  }
+  currentScope(inspected, authorization);
   const dispatch = verifyBoundedWorkerDispatch(identify({
     schemaVersion: 1,
     kind: "BoundedWorkerDispatch",
@@ -181,7 +188,9 @@ export function createBoundedWorkerDispatch({ root = ".", authorizationId, role 
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
     const existing = verifiedDispatchForAuthorization(inspected, authorization.authorizationId).dispatch;
-    if (existing.dispatchId !== dispatch.dispatchId) {
+    // Exact stored authorization/lineage and ownership are already verified.
+    // A protocol upgrade must not replace or strand a pending immutable dispatch.
+    if (existing.workerRole !== dispatch.workerRole) {
       fail("The authorization is already owned by another bounded worker dispatch.", "BOUNDED_WORKER_DISPATCH_OWNERSHIP_CONFLICT");
     }
     return { status: "existing", file, dispatch: existing };
@@ -244,7 +253,7 @@ export function verifyBoundedWorkerWaitOutcome(document) {
   const expectedHash = digest(canonicalJson(payload));
   if (document.schemaVersion !== 1 || document.kind !== "BoundedWorkerWaitOutcome"
     || document.protocol?.name !== "head-agent-core-bounded-worker-wait"
-    || document.protocol?.version !== BOUNDED_WORKER_DISPATCH_VERSION
+    || !["0.1.0", BOUNDED_WORKER_DISPATCH_VERSION].includes(document.protocol?.version)
     || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
     || !/^bounded-worker-dispatch-[a-f0-9]{24}$/.test(document.dispatchId || "")
@@ -283,6 +292,8 @@ export async function waitForBoundedWorkerDispatch({
   const started = Date.now();
   while (true) {
     if (signal?.aborted) fail("Bounded worker wait was aborted.", "BOUNDED_WORKER_WAIT_ABORTED");
+    const current = readBoundedWorkerDispatch({ root, authorizationId });
+    if (current.dispatch.dispatchHash !== dispatch.dispatchHash) fail("Worker dispatch changed during wait.", "BOUNDED_WORKER_DISPATCH_LINEAGE_CONFLICT");
     const result = currentResult(root, authorization.authorizationId);
     const lease = inspectRuntimeExecutionLease({
       projectRoot: inspected.project.projectRoot,
@@ -304,6 +315,8 @@ export async function waitForBoundedWorkerDispatch({
 export async function executeBoundedWorkerDispatch({
   root = ".", authorizationId, role, execution = {}, admissionHost = null, admissionMode = "attached",
 } = {}) {
+  const verified = readRuntimeInvocationAuthorization({ root, authorizationId }).authorization;
+  prepareRuntimeInvocationExecution({ root, authorization: verified, sessionRequest: execution.sessionRequest ?? "" });
   const created = createBoundedWorkerDispatch({ root, authorizationId, role });
   const { authorization } = readBoundedWorkerDispatch({ root, authorizationId });
   let admission = null;
@@ -342,7 +355,8 @@ export async function executeBoundedWorkerDispatch({
 }
 
 export function applyBoundedWorkerDispatchResult({ root = ".", authorizationId } = {}) {
-  const { dispatch } = readBoundedWorkerDispatch({ root, authorizationId });
+  const { dispatch, authorization } = readBoundedWorkerDispatch({ root, authorizationId });
+  if (authorization.scope.kind !== "run") fail("Session worker results are evidence for HEAD consumption through worker-wait or runtime-invocation-result; Run application is not applicable.", "BOUNDED_WORKER_APPLY_RUN_REQUIRED");
   const applied = applyRuntimeRunResult({ root, authorizationId });
   return { status: "bounded_worker_result_applied_for_fresh_head_review", dispatch, applied };
 }

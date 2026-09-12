@@ -6,6 +6,17 @@
 
 상태: 공급자 중립 P3 후보 증거, P4 큐와 감사 뷰, 선택적 P5 Host trigger 구성이 구현되었습니다.
 
+## 사용자 확인 없는 HEAD 증거 정리
+
+기존 disposition API는 `actor: "head"`일 때 `acknowledge`와 `defer`를
+`confirmUserDisposition` 없이 허용합니다(MCP: `confirm_user_disposition`).
+영수증 권위는 `head-maintenance-evidence-not-user-decision-or-execution-authority`로
+구분합니다. HEAD는 어떤 사용자 영수증도 덮거나 Finding을 닫을 수 없습니다.
+사용자 처분에는 명시적 확인이 필요하며 HEAD 정리를 대체할 수 있습니다.
+조회 시 개별 해시뿐 아니라 작성자 전환 계보도 검증하고, 재시도는 작성 권위를
+포함해 비교합니다. 기본 전체 상태 큐는 정리된 Finding도 작성자와 함께 보여줍니다.
+증거 정리는 사용자 응답을 요구하지 않으며 해결이나 실행 허가를 뜻하지 않습니다.
+
 ## 경계
 
 Conformance 재정은 Core를 의미적 정책 엔진으로 바꾸지 않으면서 승인된 Product Canon을 정확한 현재 source, ChangeSet, Observation 또는 선택적 Graph 증거와 비교합니다. 공급자 HEAD가 `ConformanceFindingCandidate`를 제안하고, Core는 정확한 현재 anchor, digest, Project, baseline, bound, replay identity와 비권위 필드를 검증합니다. Core는 위반, 의미적 관련성, 충분성, 심각도, 해결 또는 제품 의미를 추론하지 않습니다.
@@ -17,7 +28,7 @@ Graph 부재, partial 또는 unknown Observation coverage, 사용할 수 없는 
 | Artifact | Plane | Effect |
 | --- | --- | --- |
 | `ConformanceFindingCandidate` | P3 | 정확한 증거를 가진 불변 공급자 HEAD 의미 후보 |
-| `ConformanceDispositionReceipt` | P3 | 정확한 Finding 하나에 한정된 명시적 사용자 disposition |
+| `ConformanceDispositionReceipt` | P3 | 정확한 Finding 하나에 한정된 사용자 처분 또는 작성자가 명시된 HEAD acknowledge/defer |
 | `ConformanceResolutionCandidate` | P3 | Finding을 닫을 수 없는 fresh 공급자 HEAD 재평가 |
 | `ConformancePreparationProjection` | P4 | HEAD를 위한 bounded 현재 Canon과 선택적 World baseline |
 | `ConformanceQueueProjection` | P4 | 재구축 가능하고 페이지가 구분된 queue 상태 |

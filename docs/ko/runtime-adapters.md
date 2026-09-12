@@ -1,5 +1,22 @@
 # 런타임 어댑터 계약
 
+## 작업에 비례하는 일회성 worker
+
+Operating-lane 권고 `0.2.0`은 `executionLane`과 권한 결정을 분리합니다.
+자격 증명 사용만으로 Authority를 요구하지 않으며, 승인 범위의 외부 효과나
+일회성 독립 검토만으로 Run을 요구하지 않습니다. 의존 결과, 중대한·비가역 효과,
+복구 분기가 있으면 Run을 권합니다. `authorizationStatus`는 판단 정보일 뿐
+허가가 아닙니다. 기존 런타임 권한은 그대로이며 Session에 외부 쓰기를 허용하지 않습니다.
+
+기존 dispatch/execute/read/wait는 idle Session ExecutionAuthorization도 받습니다.
+CLI `worker-execute --input <file>`에는 승인 당시와 정확히 같은 `sessionRequest`만
+전달합니다. Run·WholePlan·contract·필수 영속 Capsule을 만들지 않습니다. MCP
+dispatch/status/wait는 동일 Core를 사용하며 실행은 기존 Host/CLI가 맡습니다.
+HEAD는 결과를 증거로 소비하며 `worker-apply`와 Wave는 Run 전용입니다.
+요청된 admission, 소유권·범위 검증, 일회성 lease와 정리 증명은 생략하지 않습니다.
+과거 read/wait는 동일 계보와 무결성을 검증하되 현재 active Run을 강제하지 않습니다.
+생성·실행에는 여전히 최신 범위가 필요하며 구버전 Run dispatch 재시도는 원본을 보존합니다.
+
 [영어 원문](../runtime-adapters.md)
 
 런타임 어댑터 계약 `0.1.0`은 v0.6 공급자 중립 경계를 확립합니다. Runtime-machine-discovery 프로토콜 `0.1.0`은 현재 호스트에서 읽기 전용 실행 파일 탐색을 추가하고, runtime-version-evidence 프로토콜 `0.1.0`은 세션을 만들지 않는 제한된 직접 버전 호출을 추가하며, runtime-protocol-evidence 프로토콜 `0.2.0`은 고정된 공급자별 도움말 표면과 정확한 일회성 옵션 집합을 관찰하고, runtime-project-binding 프로토콜 `0.1.0`은 이러한 관찰 결과를 정식 HEAD 프로젝트 및 Session ID에 결속합니다. Execution-authorization 프로토콜 `0.3.0`은 `scope.kind: session | run`과 선택적인 정확한 `provider/model` 선택을 담는 하나의 봉투를 추가합니다. execution-lease 프로토콜 `0.3.0`은 내구성 있는 소비/해제 증거를 운영 소유자 상태와 분리합니다. process-supervisor 프로토콜/매니페스트 `0.1.0`, event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, ResultPacket-draft `0.5.0`은 공통 수명 주기 경계를 통과해 범위를 전달합니다. Claude Code, Codex, OpenCode 일회성 어댑터는 동일한 네이티브 하위 프로세스 트리 감독자와 호출 기록 코어를 공유합니다. 세 어댑터 모두 결정론적 Session/Run 권한 부여, 수명 주기, 이벤트, 결과 및 공급자별 프로토콜 fixture 적합성을 통과합니다. Codex와 OpenCode는 완료된 실제 Session/Run 증거도 보존합니다. Claude Code 실제 모델 호출 적합성은 동일한 opt-in 검증기를 통해 확인할 수 있지만, 실행되기 전에는 충족되었다고 주장하지 않습니다. 새 프로세스를 통한 Codex에서 OpenCode로의 아티팩트 복구도 통과합니다. HEAD는 정확히 권한이 부여된 모델과 임시 권한/프라이버시 오버레이만 제공합니다. 공급자 인증과 라우팅은 계속 공급자가 소유합니다. HEAD는 공급자 패키지를 합성하지도, 구성된 endpoint를 다시 쓰지도 않습니다. 공급자 중립적인 호스트 로컬 역할 조정과 정확한 endpoint로의 WorkspaceHost 전달은 각각 별도의 신뢰된 binding 및 호스트 호출자 경계를 통해 활성화됩니다. 호스트별 실행, 소켓, CLI 명령, pane, TUI 통합은 의도적으로 이 플러그인의 범위 밖에 있으며, 별도 소유 어댑터만 제공할 수 있습니다. 공급자 resume과 일반 런타임 제어는 계속 비활성화되어 있습니다.

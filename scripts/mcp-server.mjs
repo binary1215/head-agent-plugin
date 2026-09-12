@@ -677,6 +677,7 @@ export const tools = [
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
+        expected_candidate_set_id: { type: "string", pattern: "^feature-mapping-candidates-[a-f0-9]{24}$", description: "Explicitly replace this exact pending unreviewed batch with fresh evidence; never replaces a durable user decision." },
         semantic_proposal: {
           type: "object",
           properties: {
@@ -787,8 +788,8 @@ export const tools = [
   },
   {
     name: "head_conformance_disposition",
-    description: "Record a user-confirmed disposition for one exact Finding. It may request a normal fix or Canon-revision flow but cannot authorize execution, create a Product ReviewDecision, mutate Canon, or write recovery direction.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, finding_id: { type: "string", pattern: "^conformance-finding-[a-f0-9]{24}$" }, disposition: { type: "string", enum: ["acknowledge", "defer", "dismiss", "request-code-fix", "request-canon-revision", "accept-resolution"] }, rationale: { type: "string", minLength: 1 }, defer_until: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] }, resolution_id: { anyOf: [{ type: "string", pattern: "^conformance-resolution-[a-f0-9]{24}$" }, { type: "null" }] }, confirm_user_disposition: { type: "boolean" } }, required: ["project_root", "finding_id", "disposition", "rationale", "confirm_user_disposition"], additionalProperties: false },
+    description: "Record a disposition for one exact Finding. HEAD may acknowledge/defer with actor=head without user confirmation, but cannot supersede user dispositions or close findings. User dispositions require explicit confirmation. Neither path authorizes execution, mutates Canon, or writes recovery direction.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, finding_id: { type: "string", pattern: "^conformance-finding-[a-f0-9]{24}$" }, disposition: { type: "string", enum: ["acknowledge", "defer", "dismiss", "request-code-fix", "request-canon-revision", "accept-resolution"] }, rationale: { type: "string", minLength: 1 }, defer_until: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] }, resolution_id: { anyOf: [{ type: "string", pattern: "^conformance-resolution-[a-f0-9]{24}$" }, { type: "null" }] }, actor: { type: "string", enum: ["user", "head"], default: "user" }, confirm_user_disposition: { type: "boolean", default: false } }, required: ["project_root", "finding_id", "disposition", "rationale"], additionalProperties: false },
   },
   {
     name: "head_conformance_resolution_propose",
@@ -1001,7 +1002,7 @@ export const tools = [
   },
   {
     name: "head_bounded_worker_dispatch",
-    description: "Create or verify one P3 non-HEAD worker ownership record bound to an exact current Run ExecutionAuthorization. This cannot change WholePlan, recovery direction, or review state.",
+    description: "Create or verify one P3 non-HEAD worker ownership record bound to an exact current Run or idle Session ExecutionAuthorization. Execute via CLI worker-execute; for Session pass --input with the exact sessionRequest. This cannot change WholePlan, recovery direction, or review state.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1030,7 +1031,7 @@ export const tools = [
   },
   {
     name: "head_bounded_worker_wait",
-    description: "Boundedly observe one worker's operational P5 lease/result state. The returned cursor is non-persisted and cannot create a ReviewDecision or recovery direction.",
+    description: "Boundedly observe one worker's operational P5 lease/result state. Session results are evidence for HEAD consumption, without Run application or a review gate. The returned cursor is non-persisted and cannot create a ReviewDecision or recovery direction.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1045,7 +1046,7 @@ export const tools = [
   },
   {
     name: "head_bounded_worker_apply_result",
-    description: "Map one completed, actual-provider, native-supervised bounded-worker draft into the canonical ResultPacket and Fresh HEAD review context. This does not create a ReviewDecision or integrate checkpoint direction.",
+    description: "Run-only: map one completed, actual-provider, native-supervised bounded-worker draft into the canonical ResultPacket and Fresh HEAD review context. This does not create a ReviewDecision or integrate checkpoint direction.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1533,7 +1534,7 @@ export const tools = [
     description: "Recommend the lightest safe Observe, Session, Run, or Authority lane without creating authority or project artifacts.",
     inputSchema: { type: "object", properties: {
       project_root: { type: "string", minLength: 1 }, intent: { type: "string", enum: ["observe", "execute"], default: "observe" }, workspace_effect: { type: "string", enum: ["none", "reversible", "consequential"], default: "none" }, dependency_count: { type: "integer", minimum: 0, maximum: 32, default: 0 },
-      provider_invocation: { type: "boolean", default: false }, handoff: { type: "boolean", default: false }, context_replacement: { type: "boolean", default: false }, independent_review: { type: "boolean", default: false }, failure_branches: { type: "boolean", default: false }, human_decision_during_execution: { type: "boolean", default: false }, irreversible: { type: "boolean", default: false }, external_write: { type: "boolean", default: false }, uses_credentials: { type: "boolean", default: false }, product_canon_mutation: { type: "boolean", default: false }, product_initiative_decision: { type: "boolean", default: false }, recovery_checkpoint_replacement: { type: "boolean", default: false },
+      provider_invocation: { type: "boolean", default: false }, handoff: { type: "boolean", default: false }, context_replacement: { type: "boolean", default: false }, independent_review: { type: "boolean", default: false }, failure_branches: { type: "boolean", default: false }, human_decision_during_execution: { type: "boolean", default: false }, irreversible: { type: "boolean", default: false }, external_write: { type: "boolean", default: false }, uses_credentials: { type: "boolean", default: false }, authorization_status: { type: "string", enum: ["unknown", "within-approved-scope", "requires-user-decision"], default: "unknown", description: "HEAD assessment of existing scope, not a permission grant." }, product_canon_mutation: { type: "boolean", default: false }, product_initiative_decision: { type: "boolean", default: false }, recovery_checkpoint_replacement: { type: "boolean", default: false },
     }, required: ["project_root"], additionalProperties: false },
   },
   {
@@ -2164,7 +2165,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
       : name === "head_delivery_status"
         ? inspectDeliveryState({ root: args.project_root, environmentKey: args.environment_key || "", targetKey: args.target_key || "", historyLimit: args.history_limit ?? 100 })
       : name === "head_feature_mapping_propose"
-        ? startFeatureMapping({ root: args.project_root, semanticProposal: featureMappingProposalFromMcp(args.semantic_proposal) })
+        ? startFeatureMapping({ root: args.project_root, semanticProposal: featureMappingProposalFromMcp(args.semantic_proposal), expectedCandidateSetId: args.expected_candidate_set_id ?? null })
       : name === "head_feature_mapping_review"
         ? (requireMcpConfirmation(args.confirm_user_review, "Feature mapping review requires explicit user confirmation.", "FEATURE_MAPPING_REVIEW_CONFIRMATION_REQUIRED"), reviewFeatureMapping({
           root: args.project_root,
@@ -2200,7 +2201,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
         : name === "head_conformance_read"
           ? readConformanceFinding({ root: args.project_root, findingId: args.finding_id })
         : name === "head_conformance_disposition"
-          ? recordConformanceDisposition({ root: args.project_root, findingId: args.finding_id, disposition: args.disposition, rationale: args.rationale, deferUntil: args.defer_until ?? null, resolutionId: args.resolution_id ?? null, confirmUserDisposition: args.confirm_user_disposition })
+          ? recordConformanceDisposition({ root: args.project_root, findingId: args.finding_id, disposition: args.disposition, rationale: args.rationale, deferUntil: args.defer_until ?? null, resolutionId: args.resolution_id ?? null, confirmUserDisposition: args.confirm_user_disposition, actor: args.actor ?? "user" })
         : name === "head_conformance_resolution_propose"
           ? proposeConformanceResolution({ root: args.project_root, findingId: args.finding_id, baseline: conformanceBaselineFromMcp(args.baseline), evidenceAnchors: args.evidence_anchors.map(conformanceEvidenceAnchorFromMcp), assessment: args.assessment, rationale: args.rationale })
         : name === "head_conformance_trigger_status"
@@ -2362,7 +2363,7 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                             limit: args.limit ?? 50,
                           })
                           : name === "head_operating_lane_recommend"
-                            ? recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
+                            ? recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, authorizationStatus: args.authorization_status, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
                           : name === "head_coordination_send_message"
                             ? (() => { const bindingToken = mcpCoordinationBindingToken(); return sendCoordinationMessage({ root: args.project_root, bindingToken, toRole: args.to_role, content: args.content, evidenceIds: args.evidence_ids || [], idempotencyKey: args.idempotency_key, lane: args.lane || "session", deliveryAdapter: coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }) }); })()
                           : name === "head_coordination_read_inbox"

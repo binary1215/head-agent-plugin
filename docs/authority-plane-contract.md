@@ -6,10 +6,10 @@ history or validation fixtures.
 
 Status: active, executable contract
 
-Protocol version: `0.6.0`
+Protocol version: `0.7.0`
 
-Digest-valid `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, and `0.5.0` embedded boundaries remain readable for upgrade continuity;
-new builders emit `0.6.0`. The only legacy classification retained by the reader
+Digest-valid `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, and `0.6.0` embedded boundaries remain readable for upgrade continuity;
+new builders emit `0.7.0`. The only legacy classification retained by the reader
 is the former generic Feature/Policy naming, never used to promote a new artifact.
 
 ## Why this boundary exists
@@ -161,7 +161,10 @@ a fresh read; integrity failure and required-artifact loss remain failures rathe
 than being relabeled as optional evidence loss.
 
 Independently ownable worker execution records one P3 `BoundedWorkerDispatch` over
-the exact Run `ExecutionAuthorization`. P5 lease/process/wait state enforces
+an exact Session or Run `ExecutionAuthorization`. Session workers return one
+bounded result for HEAD evidence consumption through wait/result read, without
+Run application, a compulsory persisted Capsule, or P1/P2 advancement. Run
+workers retain the following review/integration boundary. P5 lease/process/wait state enforces
 at-most-once use and reports progress, but neither dispatch nor wait can alter the
 WholePlan or create a ReviewDecision. Only the resulting P3 ResultPacket reaches
 Fresh HEAD; explicit P1 review and the existing reviewed-result integration are

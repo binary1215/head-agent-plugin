@@ -1,6 +1,6 @@
 import { inspectProject } from "./head-core.mjs";
 
-export const OPERATING_LANE_POLICY_VERSION = "0.1.0";
+export const OPERATING_LANE_POLICY_VERSION = "0.2.0";
 
 const LANES = Object.freeze(["observe", "session", "run", "authority"]);
 const WORKSPACE_EFFECTS = Object.freeze(["none", "reversible", "consequential"]);
@@ -47,6 +47,7 @@ export function recommendOperatingLane({
   irreversible = false,
   externalWrite = false,
   usesCredentials = false,
+  authorizationStatus = "unknown",
   productCanonMutation = false,
   productInitiativeDecision = false,
   recoveryCheckpointReplacement = false,
@@ -66,6 +67,7 @@ export function recommendOperatingLane({
     irreversible: boolean(irreversible, "irreversible"),
     externalWrite: boolean(externalWrite, "externalWrite"),
     usesCredentials: boolean(usesCredentials, "usesCredentials"),
+    authorizationStatus: enumValue(authorizationStatus, "authorizationStatus", ["unknown", "within-approved-scope", "requires-user-decision"], "unknown"),
     productCanonMutation: boolean(productCanonMutation, "productCanonMutation"),
     productInitiativeDecision: boolean(productInitiativeDecision, "productInitiativeDecision"),
     recoveryCheckpointReplacement: boolean(recoveryCheckpointReplacement, "recoveryCheckpointReplacement"),
@@ -74,14 +76,13 @@ export function recommendOperatingLane({
   const authorityReasons = uniqueSorted([
     input.productCanonMutation && "product-canon-mutation",
     input.productInitiativeDecision && "product-initiative-decision",
-    input.externalWrite && "external-write",
-    input.usesCredentials && "credential-bound-action",
+    input.authorizationStatus === "requires-user-decision" && "new-user-authorization-needed",
+    input.authorizationStatus === "unknown" && (input.externalWrite || input.irreversible || input.workspaceEffect === "consequential") && "authorization-scope-unverified",
     input.recoveryCheckpointReplacement && "recovery-checkpoint-replacement",
   ]);
   const runReasons = uniqueSorted([
     input.workspaceEffect === "consequential" && "consequential-workspace-effect",
     input.dependencyCount >= 2 && "multiple-dependent-results",
-    input.independentReview && "independent-review-required",
     input.failureBranches && "failure-recovery-branches",
     input.humanDecisionDuringExecution && "mid-run-human-decision",
     input.irreversible && "irreversible-effect",
@@ -89,18 +90,22 @@ export function recommendOperatingLane({
   const sessionReasons = uniqueSorted([
     input.intent === "execute" && "execution-requested",
     input.providerInvocation && "provider-invocation",
+    input.independentReview && "bounded-independent-review",
+    input.externalWrite && "external-effect",
     input.workspaceEffect === "reversible" && "reversible-workspace-effect",
     input.handoff && "handoff-needs-bounded-context",
     input.contextReplacement && "context-replacement-needs-bounded-context",
   ]);
 
-  const lane = authorityReasons.length ? "authority" : runReasons.length ? "run" : sessionReasons.length ? "session" : "observe";
+  const executionLane = runReasons.length ? "run" : sessionReasons.length ? "session" : "observe";
+  const lane = authorityReasons.length ? "authority" : executionLane;
   const selectedReasons = lane === "authority" ? authorityReasons : lane === "run" ? runReasons : lane === "session" ? sessionReasons : ["read-or-reason-only"];
-  const contracts = lane === "observe"
+  const contracts = executionLane === "observe"
     ? []
-    : lane === "session"
+    : executionLane === "session"
       ? ["exact-session-request", "session-scoped-execution-authorization-if-provider-invoked", ...(input.handoff || input.contextReplacement ? ["optional-context-capsule"] : [])]
-      : ["WholePlanSnapshot", "ExecutionContract", "ContextCapsule", "ResultPacket", "FreshHeadReview", ...(lane === "authority" ? ["explicit-user-decision-at-affected-boundary"] : [])];
+      : ["WholePlanSnapshot", "ExecutionContract", "ContextCapsule", "ResultPacket", "FreshHeadReview"];
+  if (authorityReasons.length) contracts.push("explicit-user-decision-at-affected-boundary");
 
   return {
     status: "recommended",
@@ -108,14 +113,16 @@ export function recommendOperatingLane({
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     lane,
+    executionLane,
+    authorizationAssessment: { status: input.authorizationStatus, permissionGranted: false, userDecisionRequired: authorityReasons.length > 0 },
     reasons: selectedReasons,
     input,
     minimumContracts: contracts,
-    persistence: lane === "observe" ? "none-by-default" : lane === "session" ? "session-position-and-execution-evidence-only" : "recoverable-lineage-required",
+    persistence: executionLane === "observe" ? "none-by-default" : executionLane === "session" ? "session-position-and-execution-evidence-only" : "recoverable-lineage-required",
     automaticEscalation: {
-      toSession: ["provider-invocation", "reversible-workspace-effect", "handoff", "context-replacement"],
-      toRun: ["multiple-dependent-results", "consequential-or-irreversible-effect", "failure-recovery-branch", "independent-review", "mid-run-human-decision"],
-      toAuthority: ["product-canon-mutation", "product-initiative-decision", "external-write", "credential-bound-action", "recovery-checkpoint-replacement"],
+      toSession: ["provider-invocation", "bounded-independent-review", "external-effect", "reversible-workspace-effect", "handoff", "context-replacement"],
+      toRun: ["multiple-dependent-results", "consequential-or-irreversible-effect", "failure-recovery-branch", "mid-run-human-decision"],
+      toAuthority: ["product-canon-mutation", "product-initiative-decision", "new-user-authorization-needed", "authorization-scope-unverified", "recovery-checkpoint-replacement"],
     },
     supportedLanes: LANES,
     authority: "advisory-lane-selection-only",

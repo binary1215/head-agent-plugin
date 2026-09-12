@@ -344,7 +344,8 @@ package versions, and technical details. The structured projection separates
 `readiness.core`, `readiness.product`, and `readiness.context`, names one
 `nextAction`, and lists optional capabilities with their real prerequisites.
 For example, Product appears as `available-not-activated`, while bounded workers
-appear as `requires-active-run-authorization`. This is a non-persisted advisory
+appear as `requires-session-or-run-authorization`. One bounded second opinion
+can use a Session; durable coordinated work retains the Run flow. This is a non-persisted advisory
 projection: reading it never activates Product, creates a Run, grants authority,
 or repairs drift. `profile` remains a choice for one initialize/resume operation,
 not a hidden project mode.

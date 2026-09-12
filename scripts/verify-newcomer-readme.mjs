@@ -103,7 +103,7 @@ function assertReadmeContract() {
     "--profile product",
     "core_ready",
     "readiness.product",
-    "requires-active-run-authorization",
+    "requires-session-or-run-authorization",
     "evidence_needs_unassessed",
     "world_refresh_required",
     "ready_for_head_semantic_assessment",

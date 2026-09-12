@@ -360,9 +360,9 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
     },
     {
       id: "bounded-workers",
-      availability: blocked || "requires-active-run-authorization",
-      useWhen: "Independent, bounded whole outcomes can run in parallel under one Whole-plan HEAD.",
-      entrypoint: "Create exact per-worker authorizations before dispatch or wave grouping.",
+      availability: blocked || "requires-session-or-run-authorization",
+      useWhen: "One independently consumable Session result, or Run-scoped workers under a Whole-plan HEAD.",
+      entrypoint: "Create exact per-worker authorization, dispatch, execute, then read/wait. Session results are evidence-only; waves and result application remain Run-only.",
     },
     {
       id: "compaction-recovery",

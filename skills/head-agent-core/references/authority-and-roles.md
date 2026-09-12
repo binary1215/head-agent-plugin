@@ -17,7 +17,7 @@ Developer owns one bounded, independently consumable implementation result. The 
 
 ## Coder
 
-Coder implements a fully decided Run contract. Any missing choice that could alter observable behavior is a contract conflict returned to HEAD.
+Coder implements a fully decided bounded scope: one Session request or a Run contract. Any missing choice that could alter observable behavior is a scope conflict returned to HEAD. Session results remain evidence; Run result application retains Fresh HEAD review and explicit integration.
 
 ## Reviewer
 

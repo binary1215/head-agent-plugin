@@ -371,7 +371,7 @@ test("defaults to the constitutional core without activating Product or Graph go
   const projected = inspectProjectExperience({ root });
   assert.equal(projected.status, "core_ready");
   assert.equal(projected.state.sessionId, first.project.sessionId);
-  assert.equal(projected.capabilities.find((item) => item.id === "bounded-workers").availability, "requires-active-run-authorization");
+  assert.equal(projected.capabilities.find((item) => item.id === "bounded-workers").availability, "requires-session-or-run-authorization");
   assert.equal(fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8"), onboardingBeforeResume);
   assert.equal(runCommand(["status", root]).status, "core_ready");
   const mcpStatus = await dispatchMcp({

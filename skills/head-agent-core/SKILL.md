@@ -261,6 +261,10 @@ work blocking. Missing optional evidence is a disclosure.
 
 Read `head_conformance_queue` in bounded pages and summarize Findings at natural
 work boundaries instead of interrupting every change. A Finding is P3 candidate
+evidence. HEAD may acknowledge or defer it with `actor: "head"` and no user
+confirmation; do not impersonate a user or supersede any user disposition.
+Keep maintained Findings discoverable. This neither resolves them nor requires
+a user response. A Finding remains
 evidence, not a violation or decision. Source or Canon drift means
 `needs-recheck`, never automatic resolution. Provider HEAD may submit a fresh
 `head_conformance_resolution_propose`, but close or dismiss an exact Finding
@@ -280,10 +284,27 @@ changing this subsystem.
 For Product-to-code or Product-to-test mapping, inspect the current World and
 Graph, then use `head_feature_mapping_propose` with exact current Product and
 source/test node identities. Do not derive mappings from names or token overlap.
-Present every candidate to the user. Only after an explicit user disposition,
+Inspect and batch unreviewed candidates without interrupting ordinary work.
+To replace an obsolete pending unreviewed batch, call the same proposal tool
+with its exact `expected_candidate_set_id` and a fresh semantic proposal.
+This preserves historical evidence and cannot bypass an already saved decision.
+Present the relevant batch when reviewed relationship promotion is needed.
+Only after an explicit user disposition,
 call `head_feature_mapping_review` with the exact candidate-set ID and
 `confirm_user_review: true`; proposal, model agreement, or tool success alone
 never creates a reviewed relationship or changes Product Canon.
+
+For one independently consumable worker result, use an idle Session's existing
+ExecutionAuthorization and `head_bounded_worker_dispatch`; a Run, plan, contract and
+persisted Capsule are not compulsory. The Host executes `worker-execute` with
+`--input` containing the exact authorized `sessionRequest`. Read/wait through
+the existing worker tools and consume the result as evidence, not approval or
+P2 advancement. Keep role, scope, authorization lease and cleanup checks.
+`worker-apply` and worker waves remain Run-only. An independent second opinion
+alone does not require a Run; actual dependent results, recovery branches or
+consequential effects can. Lane advice never grants permission; credentials
+alone are not a new user decision and approved external effects do not by
+themselves require a full Run.
 
 For a durable Run, preserve this sequence:
 

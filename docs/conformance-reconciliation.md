@@ -4,6 +4,18 @@ Read [Architecture](architecture.md), [Authority planes](authority-plane-contrac
 
 Status: implemented provider-neutral P3 candidate evidence, P4 queue and audit view, and optional P5 Host trigger composition.
 
+## HEAD maintenance without another user gate
+
+The existing disposition API accepts `actor: "head"` for `acknowledge` and
+`defer` without `confirmUserDisposition` (MCP: `confirm_user_disposition`).
+Its receipt uses `head-maintenance-evidence-not-user-decision-or-execution-authority`,
+not user provenance. HEAD cannot follow any user receipt or close a Finding;
+user dispositions still require confirmation and may supersede HEAD maintenance.
+Readers validate the entire author chain, not just individual hashes. Replay
+includes author authority. Queue/read output exposes the author and maintained
+Findings remain visible in the default all-status queue. Maintenance requests
+no user response and establishes neither resolution nor execution permission.
+
 ## Boundary
 
 Conformance reconciliation compares approved Product Canon with exact current source, ChangeSet, Observation, or optional Graph evidence without turning Core into a semantic policy engine. Provider HEAD proposes `ConformanceFindingCandidate`; Core verifies its exact current anchors, digest, Project, baseline, bounds, replay identity, and non-authority fields. Core does not infer a violation, semantic relevance, sufficiency, severity, resolution, or product meaning.
@@ -15,7 +27,7 @@ Missing Graph, partial or unknown Observation coverage, an unavailable optional 
 | Artifact | Plane | Effect |
 | --- | --- | --- |
 | `ConformanceFindingCandidate` | P3 | immutable provider-HEAD semantic candidate with exact evidence |
-| `ConformanceDispositionReceipt` | P3 | explicit user disposition scoped to one exact Finding |
+| `ConformanceDispositionReceipt` | P3 | exact-Finding user disposition or explicitly attributed HEAD acknowledge/defer |
 | `ConformanceResolutionCandidate` | P3 | fresh provider-HEAD reassessment that cannot close a Finding |
 | `ConformancePreparationProjection` | P4 | bounded current Canon and optional World baseline for HEAD |
 | `ConformanceQueueProjection` | P4 | rebuildable, paginated queue state |

@@ -5,6 +5,17 @@
 이 권위 경계를 변경하기 전에 [`architecture.md`](architecture.md)와
 [`authority-plane-contract.md`](authority-plane-contract.md)를 읽으세요.
 
+## 검토 전 증거 정리
+
+HEAD는 후보마다 사용자에게 묻지 않고 제안을 조사하고 묶어 제시할 수 있습니다.
+검토되지 않은 대기 배치가 오래되면 기존 제안 API에 `expectedCandidateSetId`와
+최신 의미 제안을 전달합니다. CLI는 `--expected-candidate-set`, MCP는
+`expected_candidate_set_id`를 사용합니다. 공유 변경 잠금 안에서 이전 원본과
+저장된 검토 파일을 검증하며, 이미 저장된 사용자 결정·손상된 검토·잘못된 대기 ID·
+오래된 새 증거가 있으면 쓰기 전에 거부합니다. 과거 후보와 검토된 관계는 보존하며,
+거절·승인·P2 방향을 만들어 내지 않습니다. 관계 승격에는 여전히 명시적 사용자
+검토가 필요합니다.
+
 ## 계약
 
 Feature 매핑 프로토콜 `0.2.0`은 Core 코드 분석이 관련성이나 승인된 제품 관계를 만들어 내도록 허용하지 않으면서, 권위 있는 `Feature` 및 `Capability` 개념을 관찰된 `File`, `Symbol`, `Test` 엔터티에 연결합니다.

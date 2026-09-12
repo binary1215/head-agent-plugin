@@ -1,5 +1,28 @@
 # Runtime adapter contracts
 
+## Proportional one-shot worker flow
+
+Operating-lane advice `0.2.0` separates `executionLane` from an authorization
+decision. Credentials alone do not require Authority; approved external effects
+and a one-shot independent second opinion do not alone require a Run. Real
+dependent results, consequential/irreversible effects and recovery branches still
+select Run. `authorizationStatus` is an assessment, never a permission grant:
+existing runtime scope restrictions remain unchanged (Session runtime does not
+gain external-write permission from advice).
+
+The existing worker dispatch/execute/read/wait flow accepts an idle Session
+ExecutionAuthorization. CLI `worker-execute --input <file>` supplies only the
+exact `sessionRequest` frozen in that authorization. No Run, WholePlan, contract
+or compulsory persisted Capsule is created. Typed MCP dispatch/status/wait use
+the same Core identity; execution remains the existing Host/CLI composition,
+not a new MCP provider-launch tool. HEAD consumes the bounded invocation result
+as evidence. `worker-apply` and waves remain Run-only. Requested admission uses
+the same Host registry, request/ownership checks, at-most-once lease and cleanup
+proof; it is never silently skipped. Passive historical read/wait verifies
+identity and integrity without demanding a currently active Run. Creation and
+execution still require current scope. Exact legacy Run dispatch replay reuses
+its immutable bytes rather than rewriting its protocol.
+
 Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation, runtime-protocol-evidence protocol `0.2.0` observes fixed provider-specific help surfaces and exact one-shot option sets, and runtime-project-binding protocol `0.1.0` binds those observations to canonical HEAD project and Session identities. Execution-authorization protocol `0.3.0` adds one envelope with `scope.kind: session | run` and an optional exact `provider/model` selection; execution-lease protocol `0.3.0` separates durable consumption/release evidence from operational owner state; process-supervisor protocol/manifest `0.1.0`, event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, and ResultPacket-draft `0.5.0` carry scope through the common lifecycle boundary. Claude Code, Codex, and OpenCode one-shot adapters share the same native descendant-tree supervisor and invocation-record core. All three pass deterministic Session/Run authorization, lifecycle, event, result, and provider-specific protocol-fixture conformance. Codex and OpenCode additionally retain completed live Session/Run evidence; Claude Code live model-call conformance is available through the same opt-in verifier but is not claimed until run. Fresh-process Codex-to-OpenCode artifact recovery also passes. HEAD supplies only the exact authorized model plus an ephemeral permission/privacy overlay; provider authentication and routing remain provider-owned. HEAD neither synthesizes provider packages nor rewrites configured endpoints. Provider-neutral host-local role coordination and exact-endpoint WorkspaceHost delivery are active through separate trusted binding and host-caller boundaries. Host-specific execution, socket, CLI-command, pane, and TUI integration is intentionally outside this plugin and may be supplied only by a separately owned adapter. Provider resume and general runtime controls remain disabled.
 
 ```text

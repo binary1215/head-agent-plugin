@@ -331,7 +331,8 @@ head-agent status C:\path\to\project
 `readiness.product`, `readiness.context`를 분리하고, 지금 수행할
 `nextAction` 하나와 실제 선행조건이 붙은 선택 기능 목록을 보여줍니다. 예를
 들어 Product는 `available-not-activated`, bounded worker는
-`requires-active-run-authorization`으로 표시됩니다. 이 결과는 저장되지 않는
+`requires-session-or-run-authorization`으로 표시됩니다. 한 번의 독립 검토는
+Session으로 수행할 수 있으며, 지속적인 조율 작업은 Run 흐름을 유지합니다. 이 결과는 저장되지 않는
 자문용 투영입니다. 읽는 것만으로 Product 활성화, Run 생성, 권한 부여 또는
 드리프트 복구가 일어나지 않습니다. `profile`도 숨은 프로젝트 모드가 아니라
 한 번의 초기화/재개 호출에서 선택하는 동작 범위입니다.

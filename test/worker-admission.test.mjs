@@ -23,7 +23,7 @@ import {
   inspectRuntimeExecutionLease,
   withRuntimeExecutionLease,
 } from "../scripts/lib/runtime-execution-lease.mjs";
-import { createBoundedWorkerDispatch, executeBoundedWorkerDispatch } from "../scripts/lib/bounded-worker-dispatch.mjs";
+import { createBoundedWorkerDispatch, executeBoundedWorkerDispatch, readBoundedWorkerDispatch, waitForBoundedWorkerDispatch, applyBoundedWorkerDispatchResult } from "../scripts/lib/bounded-worker-dispatch.mjs";
 import { createBoundedWorkerWave, readBoundedWorkerWaveStatus } from "../scripts/lib/bounded-worker-wave.mjs";
 import {
   enqueueWorkerAdmission,
@@ -96,7 +96,7 @@ function waitChild(child) {
   });
 }
 
-async function fixture(t) {
+async function fixture(t, scopeKind = "run") {
   const container = fs.mkdtempSync(path.join(os.tmpdir(), "head-worker-admission-"));
   const make = (name) => {
     const directory = path.join(container, name);
@@ -121,6 +121,7 @@ async function fixture(t) {
   });
   fs.writeFileSync(path.join(root, "example.mjs"), "export const answer = 42;\n");
   const initialized = initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
+  if (scopeKind === "run") {
   const capsule = compileContext({ root, task: "Verify provider-neutral bounded worker admission", budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Verify worker admission", plan: ["reserve", "consume", "release"], persist: true }).artifact;
   const contract = createExecutionContract({
@@ -134,6 +135,7 @@ async function fixture(t) {
     persist: true,
   }).artifact;
   startRun({ root, executionContractId: contract.executionContractId });
+  }
   for (const runtime of ["claude", "codex", "opencode"]) {
     const executable = path.join(bin, process.platform === "win32" ? `${runtime}.exe` : runtime);
     fs.writeFileSync(executable, `${runtime} fixture\n`);
@@ -158,7 +160,7 @@ async function fixture(t) {
     root,
     runtime,
     runtimeSelection: model ? { model } : {},
-    scope: { kind: "run" },
+    scope: scopeKind === "run" ? { kind: "run" } : { kind: "session", request: "Return one bounded source inspection result.", contextCapsuleId: null },
     workspaceMode: "read-only",
     protocolEvidence,
     projectBinding,
@@ -186,6 +188,59 @@ async function fixture(t) {
   };
   return { container, root, runtimeOperationalRoot, admissionOperationalRoot, hostExpectationRoot, protocolEvidence, projectBinding, authorization, dispatch, provision, open, spawnOwned };
 }
+
+test("Session worker keeps one-shot evidence independent from Run authority and rejects widened requests before dispatch", async (t) => {
+  const f = await fixture(t, "session");
+  const auth = f.authorization();
+  const protectedFiles = ['.head/project.json', '.head/sessions/current.json', '.head/context/product-model.json'];
+  const before = protectedFiles.map(file => fs.readFileSync(path.join(f.root, file)));
+  for (const sessionRequest of ['', 'Do additional unapproved work.']) {
+    await assert.rejects(() => executeBoundedWorkerDispatch({ root: f.root, authorizationId: auth.authorizationId, role: 'coder', execution: { sessionRequest } }), { code: 'RUNTIME_INVOCATION_INPUT_DRIFT' });
+    assert.equal(fs.existsSync(path.join(f.root, '.head/runtime/worker-dispatches', `${auth.authorizationId}.json`)), false);
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId }).singleUseConsumed, false);
+  }
+  const dispatch = f.dispatch(auth);
+  for (const field of ['runId', 'wholePlanId', 'executionContractId', 'contextCapsuleId']) assert.equal(dispatch[field], null);
+  assert.equal(readBoundedWorkerDispatch({ root: f.root, authorizationId: auth.authorizationId }).dispatch.dispatchId, dispatch.dispatchId);
+  assert.equal((await waitForBoundedWorkerDispatch({ root: f.root, authorizationId: auth.authorizationId })).status, 'bounded_worker_pending');
+  assert.throws(() => applyBoundedWorkerDispatchResult({ root: f.root, authorizationId: auth.authorizationId }), { code: 'BOUNDED_WORKER_APPLY_RUN_REQUIRED' });
+  assert.throws(() => f.dispatch(auth, 'head'), { code: 'INVALID_BOUNDED_WORKER_ROLE' });
+  assert.throws(() => f.dispatch(auth, 'reviewer'), { code: 'BOUNDED_WORKER_DISPATCH_OWNERSHIP_CONFLICT' });
+  const host = f.open(f.provision('session'));
+  const reservation = await enqueueWorkerAdmission({ host, root: f.root, authorizationId: auth.authorizationId, dispatchId: dispatch.dispatchId });
+  assert.equal(readWorkerAdmissionProjection({ host, root: f.root, authorizationId: auth.authorizationId }).state, 'capacity-reserved');
+  const ownerFenceDigest = hash('session-test-owner');
+  const leased = await withRuntimeExecutionLease({ projectRoot: f.root, authorization: auth, ownerFenceDigest }, async ({ consumption }) => ({
+    receipt: buildRuntimeInvocationLifecycleReceipt({ authorization: auth, events: [], consumption, status: 'completed', exitCode: 0, signal: '', stdoutBytes: 0, stderrBytes: 0, stdoutDigest: hash(''), stderrDigest: hash(''), callerFenceDigest: ownerFenceDigest, childFenceDigest: hash('session-test-child'), childStarted: false, childExitObserved: false, terminationRequested: false, projectFenceValidated: true, inputDigestObserved: auth.executionInput.digest, noDescendantFixture: true, descendantTreeOwnershipValidated: false, providerMode: 'codex-protocol-fixture' }),
+  }), { preConsumeGate: reservation.preConsumeGate });
+  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId }).singleUseConsumed, true);
+  await assert.rejects(() => reservation.finalize({ outcomeCode: 'completed' }), { code: 'WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING' });
+  const draft = buildRuntimeResultPacketDraft({ authorization: auth, receipt: leased.result.receipt, leaseRelease: leased.release });
+  persistRuntimeInvocationRecord({ projectRoot: f.root, authorization: auth, events: [], receipt: leased.result.receipt, draft });
+  await reservation.finalize({ outcomeCode: 'completed' });
+  const waited = await waitForBoundedWorkerDispatch({ root: f.root, authorizationId: auth.authorizationId });
+  assert.equal(waited.status, 'bounded_worker_completed');
+  assert.equal(waited.waitOutcome.reviewAuthority, false);
+  const other = f.authorization();
+  f.dispatch(other, 'reviewer');
+  assert.throws(() => createBoundedWorkerWave({ root: f.root, authorizationIds: [auth.authorizationId, other.authorizationId] }));
+  protectedFiles.forEach((file, index) => assert.deepEqual(fs.readFileSync(path.join(f.root, file)), before[index]));
+});
+
+test("legacy immutable Run dispatch replays without rewriting its protocol or ownership", async (t) => {
+  const f = await fixture(t);
+  const auth = f.authorization();
+  const dispatch = f.dispatch(auth);
+  const { dispatchId, dispatchHash, ...legacy } = dispatch;
+  legacy.protocol.version = '0.1.0';
+  const legacyHash = canonicalHash(legacy);
+  const file = path.join(f.root, '.head/runtime/worker-dispatches', `${auth.authorizationId}.json`);
+  fs.writeFileSync(file, JSON.stringify({ ...legacy, dispatchId: `bounded-worker-dispatch-${legacyHash.slice(0, 24)}`, dispatchHash: legacyHash }));
+  const bytes = fs.readFileSync(file);
+  assert.equal(f.dispatch(auth).protocol.version, '0.1.0');
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  assert.equal((await waitForBoundedWorkerDispatch({ root: f.root, authorizationId: auth.authorizationId })).status, 'bounded_worker_pending');
+});
 
 test("worker admission provisions exact Host identity and refuses partial or repeated domains", async (t) => {
   const f = await fixture(t);

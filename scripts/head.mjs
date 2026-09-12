@@ -103,7 +103,7 @@ export function usage({ all = false } = {}) {
       "head worker-dispatch <project> --authorization <execution-authorization-id> --role <developer|coder|reviewer>",
       "head worker-read <project> --authorization <execution-authorization-id>",
       "head worker-wait <project> --authorization <execution-authorization-id> [--wait-timeout-ms <0..600000>]",
-      "head worker-execute <project> --authorization <execution-authorization-id> --role <developer|coder|reviewer>",
+      "head worker-execute <project> --authorization <execution-authorization-id> --role <developer|coder|reviewer> [--input <session-request.json>]",
       "head worker-apply <project> --authorization <execution-authorization-id>",
       "head worker-wave-create <project> --input <wave.json>",
       "head worker-wave-read <project> --wave <bounded-worker-wave-id>",
@@ -120,7 +120,7 @@ export function usage({ all = false } = {}) {
       "head onboarding-review-read <project> --review <onboarding-review-decision-id>",
       "head source-scope-set <project> --input <source-scope.json>",
       "head source-scope-status <project>",
-      "head feature-mapping-start <project> [--input <semantic-mapping-proposal.json>]",
+      "head feature-mapping-start <project> [--input <semantic-mapping-proposal.json>] [--expected-candidate-set <pending-candidate-set-id>]",
       "head feature-mapping-status <project>",
       "head feature-mapping-review <project> --input <review.json>",
       "head feature-mapping-candidates <project> --candidate-set <feature-mapping-candidate-set-id>",
@@ -352,11 +352,15 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
     timeoutMs: options["wait-timeout-ms"] == null ? 0 : Number(options["wait-timeout-ms"]),
   });
   if (command === "worker-execute") {
+    const input = options.input ? inputJson(options, "Bounded worker execution") : {};
+    const unexpected = Object.keys(input).filter((key) => key !== "sessionRequest");
+    if (unexpected.length) throw new Error(`Bounded worker execution contains unsupported fields: ${unexpected.sort().join(", ")}`);
     return inspectRuntimeAdapters(root).then((runtimeStatus) => executeBoundedWorkerDispatch({
       root,
       authorizationId: options.authorization,
       role: options.role,
       execution: {
+        sessionRequest: input.sessionRequest ?? "",
         protocolEvidence: runtimeStatus.protocolEvidence,
         projectBinding: runtimeStatus.projectBinding,
       },
@@ -402,7 +406,7 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
     if (inspected.status === "not_initialized") throw new Error("HEAD Agent Core is not initialized.");
     return readRepositorySourceScope({ projectRoot: inspected.project.projectRoot });
   }
-  if (command === "feature-mapping-start") return startFeatureMapping({ root, semanticProposal: options.input ? inputJson(options, "Feature mapping semantic proposal") : null });
+  if (command === "feature-mapping-start") return startFeatureMapping({ root, semanticProposal: options.input ? inputJson(options, "Feature mapping semantic proposal") : null, expectedCandidateSetId: options["expected-candidate-set"] ?? null });
   if (command === "feature-mapping-status") return inspectFeatureMapping({ root });
   if (command === "feature-mapping-review") return reviewFeatureMapping({ ...inputJson(options, "Feature mapping ReviewDecision"), root });
   if (command === "feature-mapping-candidates") return readFeatureMappingCandidateSet({ root, candidateSetId: options["candidate-set"] });

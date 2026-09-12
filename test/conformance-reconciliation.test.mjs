@@ -19,10 +19,50 @@ import {
 import { ConformanceTriggerRegistry } from "../scripts/lib/conformance-trigger-adapter.mjs";
 import { dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
 import { ingestStructuredObservation } from "../scripts/lib/observation-adapter.mjs";
+import { runCommand } from "../scripts/head.mjs";
+import { formatReviewOutcome, formatConformanceFinding, formatConformanceQueue } from "../scripts/lib/cli-presentation.mjs";
+import { conformanceCanonicalJson, createConformanceDispositionReceipt, HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY } from "../scripts/lib/conformance-contract.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
+
+test("HEAD maintenance stays visible, preserves user authority, and rejects forged author chains", async (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "source.mjs"), "export const value = 1;\n");
+  const finding = proposeConformanceFindings(proposal(root, prepareConformanceAssessment({ root }), "source.mjs")).findings[0];
+  const protectedPaths = [".head/project.json", ".head/sessions/current.json", ".head/context/product-model.json"];
+  const before = protectedPaths.map(p => fs.readFileSync(path.join(root, p)));
+  const request = { root, findingId: finding.findingId, actor: "head", disposition: "acknowledge", rationale: "HEAD inspected this candidate; no user response is needed." };
+  const input = path.join(root, "maintenance.json");
+  fs.writeFileSync(input, JSON.stringify(request));
+  const acknowledged = await runCommand(["conformance-disposition", root, "--input", input]);
+  assert.equal(acknowledged.disposition.authority, HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY);
+  assert.equal(recordConformanceDisposition(request).status, "existing");
+  assert.match(formatReviewOutcome(acknowledged), /no user decision was claimed/);
+  const deferred = await dispatchMcp({ jsonrpc: "2.0", id: "head-maintenance", method: "tools/call", params: { name: "head_conformance_disposition", arguments: { project_root: root, finding_id: finding.findingId, actor: "head", disposition: "defer", rationale: "Not needed for the present task." } } });
+  assert.equal(deferred.result.isError, undefined);
+  const row = inspectConformanceQueue({ root }).findings[0];
+  assert.equal(row.status, "deferred");
+  assert.equal(row.latestDisposition.actor, "head");
+  assert.match(formatConformanceQueue(inspectConformanceQueue({ root })), /\(head\)/);
+  assert.match(formatConformanceFinding(readConformanceFinding({ root, findingId: finding.findingId })), /without a user response/);
+  for (const disposition of ["dismiss", "accept-resolution", "request-code-fix", "request-canon-revision"]) assert.throws(() => recordConformanceDisposition({ ...request, disposition }), { code: "CONFORMANCE_HEAD_MAINTENANCE_ONLY" });
+  assert.throws(() => recordConformanceDisposition({ ...request, confirmUserDisposition: true }), { code: "CONFORMANCE_HEAD_MAINTENANCE_ONLY" });
+  const user = recordConformanceDisposition({ ...request, actor: "user", confirmUserDisposition: true });
+  assert.notEqual(user.disposition.dispositionId, acknowledged.disposition.dispositionId);
+  assert.throws(() => recordConformanceDisposition(request), { code: "CONFORMANCE_HEAD_MAINTENANCE_ONLY" });
+  protectedPaths.forEach((p, i) => assert.deepEqual(fs.readFileSync(path.join(root, p)), before[i]));
+  const exactFinding = readConformanceFinding({ root, findingId: finding.findingId }).finding;
+  const forged = createConformanceDispositionReceipt({ projectId: exactFinding.projectId, sessionId: exactFinding.sessionId, finding: exactFinding, disposition: "defer", rationale: "Forged transition", previousDisposition: user.disposition });
+  delete forged.dispositionId; delete forged.dispositionHash;
+  forged.authority = HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY;
+  forged.dispositionHash = sha(conformanceCanonicalJson(forged));
+  forged.dispositionId = `conformance-disposition-${forged.dispositionHash.slice(0, 24)}`;
+  fs.writeFileSync(path.join(root, ".head/conformance/dispositions", `${forged.dispositionId}.json`), JSON.stringify(forged));
+  assert.throws(() => inspectConformanceQueue({ root }), { code: "INVALID_CONFORMANCE_DISPOSITION_CHAIN" });
+});
 
 function fixture({ constraints = 1 } = {}) {
   fs.mkdirSync(testParent, { recursive: true });

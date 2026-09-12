@@ -694,10 +694,11 @@ function currentTarget(root, authorizationId, dispatchId) {
   if (inspected.status !== "ready") fail("Worker admission requires a ready Project.", "WORKER_ADMISSION_PROJECT_NOT_READY");
   const { authorization } = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId });
   const { dispatch } = readBoundedWorkerDispatch({ root: inspected.project.projectRoot, authorizationId });
-  if (dispatch.dispatchId !== dispatchId || authorization.scope.kind !== "run"
+  if (dispatch.dispatchId !== dispatchId
     || authorization.projectId !== inspected.project.projectId || authorization.headSessionId !== inspected.state.sessionId
-    || authorization.scope.runId !== inspected.state.activeRunId
-    || authorization.scope.executionContractId !== inspected.state.activeExecutionContractId
+    || (authorization.scope.kind === "run"
+      ? authorization.scope.runId !== inspected.state.activeRunId || authorization.scope.executionContractId !== inspected.state.activeExecutionContractId
+      : authorization.scope.kind !== "session" || inspected.state.mode !== "session" || inspected.state.activeRunId || inspected.state.activeExecutionContractId || inspected.state.pendingReview)
     || dispatch.authorizationHash !== authorization.authorizationHash) {
     fail("Worker admission target no longer matches the current dispatch lineage.", "WORKER_ADMISSION_LINEAGE_CONFLICT");
   }

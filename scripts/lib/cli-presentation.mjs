@@ -380,7 +380,7 @@ export function formatConformanceQueue(value) {
     "Ordinary work is not blocked by this queue.",
   ];
   for (const finding of findings.slice(0, 5)) {
-    lines.push(`  - [${finding.status || "open"}] ${compactText(finding.claim?.summary || "finding", 160)}`);
+    lines.push(`  - [${finding.status || "open"}] ${compactText(finding.claim?.summary || "finding", 160)}${finding.latestDisposition?.actor ? ` (${finding.latestDisposition.actor})` : ""}`);
   }
   if ((value?.omitted || 0) > 0) lines.push(`  - ${value.omitted} more finding(s) available on the next bounded page`);
   lines.push("", "A finding is evidence, not a violation or decision. Inspect one exact finding before disposition.", "Technical IDs remain in the structured result.");
@@ -398,21 +398,23 @@ export function formatConformanceFinding(value) {
     `Resolution candidates: ${Array.isArray(value?.resolutions) ? value.resolutions.length : 0}`,
     "Options: acknowledge, defer, dismiss, request a code fix, request Canon revision, or accept an exact resolution.",
     "",
-    "Reply in natural language. HEAD must re-read this exact current finding before recording a disposition.",
+    "HEAD may acknowledge or defer this evidence without a user response. Ask the user only for dismissal, resolution acceptance, or new direction; re-read the exact finding first.",
+    `Latest disposition author: ${value?.latestDisposition?.actor || "none"}.`,
     "This finding neither blocks ordinary work nor authorizes a fix by itself.",
   ].join("\n")}\n`;
 }
 
 export function formatReviewOutcome(value) {
   const disposition = value?.reviewDecision?.disposition || value?.disposition?.disposition || "recorded";
+  const headMaintenance = value?.disposition?.authority === "head-maintenance-evidence-not-user-decision-or-execution-authority";
   const authorityChanged = value?.authorityEffect === "explicit-product-canon-transition";
   return `${[
-    "The explicit user decision was recorded.",
+    headMaintenance ? "HEAD evidence maintenance was recorded; no user decision was claimed or requested." : "The explicit user decision was recorded.",
     "",
     `Disposition: ${disposition}`,
     `Product Canon changed: ${authorityChanged ? "yes, through the scoped ReviewDecision" : "no"}`,
     "Verification: the Core accepted the exact current target and structured decision.",
-    "Remaining uncertainty: semantic correctness remains subject to the user's decision and cited evidence.",
+    headMaintenance ? "The finding remains evidence, not resolved or approved; ordinary work can continue." : "Remaining uncertainty: semantic correctness remains subject to the user's decision and cited evidence.",
     "",
     "Technical IDs remain in the structured result.",
   ].join("\n")}\n`;

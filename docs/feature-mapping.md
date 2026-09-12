@@ -4,6 +4,18 @@ Read [`architecture.md`](architecture.md) and
 [`authority-plane-contract.md`](authority-plane-contract.md) before changing
 this authority boundary.
 
+## Pending evidence maintenance
+
+HEAD may inspect and batch proposals without asking for a decision after every
+candidate. When an unreviewed pending batch becomes obsolete, the existing
+proposal accepts `expectedCandidateSetId` and a fresh semantic proposal (CLI
+`--expected-candidate-set`; MCP `expected_candidate_set_id`). Under the shared
+mutation lock, Core verifies the exact old artifact and all durable review files
+before replacing the workflow pointer. Any saved user decision, corrupt review,
+stale expected ID or stale new evidence rejects before writes. Old evidence and
+reviewed relationships remain intact. No rejection, approval or P2 direction is
+fabricated. Only explicit user review promotes the new batch's relationships.
+
 ## Contract
 
 Feature mapping protocol `0.2.0` connects authoritative `Feature` and `Capability` concepts to observed `File`, `Symbol`, and `Test` entities without allowing Core code analysis to invent either relevance or an approved product relationship.

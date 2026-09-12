@@ -402,7 +402,7 @@ export async function startFeatureMapping(options = {}) {
   return withProjectMutationAsync({ root: options.root ?? ".", scope: "session-recovery" }, () => startFeatureMappingLocked(options));
 }
 
-async function startFeatureMappingLocked({ root = ".", semanticProposal = null } = {}) {
+async function startFeatureMappingLocked({ root = ".", semanticProposal = null, expectedCandidateSetId = null } = {}) {
   const inspected = readyProject(root, "feature mapping start");
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("Feature mapping cannot change reviewed relationships while a Run is active or awaiting review.", "FEATURE_MAPPING_RUN_CONFLICT");
@@ -412,8 +412,17 @@ async function startFeatureMappingLocked({ root = ".", semanticProposal = null }
   const previousState = fs.existsSync(currentStateFile)
     ? verifyState(readJson(currentStateFile, "Feature mapping state pointer"), { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId })
     : null;
-  if (previousState?.phase === "awaiting-review") {
-    fail(`Review the exact Feature mapping candidate set ${previousState.candidateSetId} before starting another proposal. If its evidence is obsolete, explicitly reject that set; rejection does not revoke earlier approved mappings.`, "FEATURE_MAPPING_REVIEW_REQUIRED");
+  if (expectedCandidateSetId !== null) {
+    if (previousState?.phase !== "awaiting-review" || expectedCandidateSetId !== previousState.candidateSetId || semanticProposal === null) {
+      fail("Replacing pending evidence requires the exact current candidate-set ID and a fresh semantic proposal.", "FEATURE_MAPPING_SUPERSESSION_CONFLICT");
+    }
+    const oldCandidate = readFeatureMappingCandidateSet({ root: projectRoot, candidateSetId: expectedCandidateSetId }).candidateSet;
+    if (oldCandidate.sessionId !== inspected.state.sessionId || previousState.reviewDecisionId !== null) fail("Pending candidate lineage is not an unreviewed current Session candidate.", "FEATURE_MAPPING_SUPERSESSION_CONFLICT");
+    if (recordedCandidateReview({ projectRoot, projectId: inspected.project.projectId, candidateSet: oldCandidate })) {
+      fail("A durable decision already exists. Recover its exact pending projection; do not supersede reviewed evidence.", "FEATURE_MAPPING_REVIEW_CONFLICT");
+    }
+  } else if (previousState?.phase === "awaiting-review") {
+    fail(`Inspect pending evidence ${previousState.candidateSetId}; HEAD may explicitly replace it with an exact expected candidate-set ID and fresh proposal, or present it for user review when promotion is needed.`, "FEATURE_MAPPING_REVIEW_REQUIRED");
   }
   let indexed;
   try { indexed = inspectWorldModel({ root: projectRoot }); }

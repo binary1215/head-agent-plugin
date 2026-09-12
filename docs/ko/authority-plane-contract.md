@@ -6,9 +6,9 @@
 
 상태: 활성 실행 가능 계약
 
-프로토콜 버전: `0.6.0`
+프로토콜 버전: `0.7.0`
 
-다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.6.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
+다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.7.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
 
 ## 이 경계가 존재하는 이유
 
@@ -95,7 +95,7 @@ field를 제공할 수 없습니다. 순차 관찰의 일치는 원자적 filesy
 감지할 수 없습니다. 관찰이 바뀌면 새로 읽어야 하고 integrity 실패와 필수 artifact 누락은
 선택적 증거 누락으로 다시 표시되지 않습니다.
 
-독립적으로 소유 가능한 worker 실행은 정확한 Run `ExecutionAuthorization` 위에 하나의 P3 `BoundedWorkerDispatch`를 기록합니다. P5 lease/process/wait 상태는 at-most-once 사용을 강제하고 진행 상황을 보고하지만, dispatch도 wait도 WholePlan을 변경하거나 ReviewDecision을 만들 수 없습니다. 그 결과인 P3 ResultPacket만 Fresh HEAD에 도달합니다. 새 P2 checkpoint를 쓰기 전에 명시적 P1 검토와 기존의 reviewed-result integration이 여전히 필요합니다.
+독립적으로 소유 가능한 worker 실행은 정확한 Session 또는 Run `ExecutionAuthorization` 위에 하나의 P3 `BoundedWorkerDispatch`를 기록합니다. Session 결과는 wait/result 조회를 통해 HEAD가 증거로 소비하며, Run 적용이나 필수 영속 Capsule, P1/P2 진행을 요구하지 않습니다. P5 lease/process/wait는 at-most-once 사용을 강제하지만 WholePlan을 바꾸거나 ReviewDecision을 만들 수 없습니다. Run 결과는 기존 P3 ResultPacket → Fresh HEAD → 명시적 P1 검토 → reviewed-result integration을 유지합니다. Wave와 worker-apply는 Run 전용입니다.
 
 `BoundedWorkerWave`는 정확한 Project, HEAD Session, active Run, WholePlan, ExecutionContract, Capsule lineage가 모두 동일할 때만 여러 dispatch를 묶을 수 있습니다. 이는 어떤 승인도 부여하지 않으며 각 lease는 독립적으로 유지됩니다. P3 seal에는 모든 member에 대한 검증된 소비가 필요하고, P4 status는 그 seal을 만들 수 없습니다. Wave의 실패, 완료, abandonment, result projection과 P5 wait는 P1 review나 P2 recovery direction을 만들 수 없습니다.
 
