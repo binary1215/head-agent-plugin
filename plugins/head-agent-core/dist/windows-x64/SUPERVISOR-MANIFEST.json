@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "kind": "HeadAgentProcessSupervisorManifest",
+  "manifestVersion": "0.1.0",
+  "supervisorProtocolVersion": "0.1.0",
+  "target": {
+    "platform": "win32",
+    "arch": "x64",
+    "directory": "windows-x64"
+  },
+  "binary": {
+    "relativePath": "head-agent-supervisor.exe",
+    "sha256": "8b95a5512343d615a6dab6e5fc2f005c76074de0be67659528f5060a7651f7ce",
+    "size": 2467840
+  },
+  "processModel": {
+    "transport": "single-request-stdio-with-control-fd3",
+    "windowsTreeOwnership": "job-object-kill-on-close",
+    "posixTreeOwnership": "isolated-process-group",
+    "shellInterpretation": false
+  },
+  "authority": {
+    "kind": "operational-process-control-only",
+    "instructionAuthority": false,
+    "promotionAuthority": false,
+    "mutatesCanon": false
+  },
+  "manifestId": "process-supervisor-manifest-252f233601f9b3e68b2b09a1",
+  "manifestHash": "252f233601f9b3e68b2b09a1ef9264dbc098c94fb255cf88c6f11e11256fd46a"
+}

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "kind": "HeadAgentProcessSupervisorManifest",
+  "manifestVersion": "0.1.0",
+  "supervisorProtocolVersion": "0.1.0",
+  "target": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "directory": "darwin-arm64"
+  },
+  "binary": {
+    "relativePath": "head-agent-supervisor",
+    "sha256": "1d9fa9c495b167fd942f7de42b4bd89d5d571d1b9a1ebe9487ec29d574fb9a47",
+    "size": 2214594
+  },
+  "processModel": {
+    "transport": "single-request-stdio-with-control-fd3",
+    "windowsTreeOwnership": "job-object-kill-on-close",
+    "posixTreeOwnership": "isolated-process-group",
+    "shellInterpretation": false
+  },
+  "authority": {
+    "kind": "operational-process-control-only",
+    "instructionAuthority": false,
+    "promotionAuthority": false,
+    "mutatesCanon": false
+  },
+  "manifestId": "process-supervisor-manifest-0c84834fd4ce29cbbeefb8e5",
+  "manifestHash": "0c84834fd4ce29cbbeefb8e50a75f154c28b2d400addd83690f15f2bac2c30dc"
+}

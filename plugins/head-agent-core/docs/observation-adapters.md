@@ -1,0 +1,208 @@
+# Common Observation contract and adapters
+
+## Task-scoped source collection
+
+`head_source_context` / `head source-context` collects HEAD-selected current
+source evidence and feeds it into the existing Context Compiler. HEAD translates
+the conversational task into exact paths and qualified function names; users do
+not author hashes, IDs or JSON. No World scan, full reindex, Product onboarding or
+GraphDB is required. A task-only request returns a HEAD selection step rather
+than inventing semantic relevance from words.
+
+The current live collector is **Python stdlib AST**, not LSP: Python 3.8+ found
+on Host PATH, or a trusted absolute `HEAD_PYTHON` setting. It runs the packaged
+worker with `-I -S -B` in a neutral directory, parses supplied bytes, never imports
+project modules, and opens no network listener. It reports positive direct-name
+lexical candidates for an unambiguous undecorated module function or an earlier
+unconditional function local to the selected caller. Imported/aliased, attribute,
+dynamic, shadowed, decorated, conditional and unresolved enclosing-scope calls
+are disclosed as unresolved. Nested bodies/default/decorator evaluation are not
+complete call coverage. No semantic truth or complete program coverage is claimed.
+
+Source reads bind exact dirty working-tree bytes and reject symlinks/path escape,
+concurrent changes and non-UTF8/BOM/lone-CR input rather than silently rewriting
+it. AST UTF8 byte offsets are converted to exact UTF16 ranges, including CRLF and
+non-BMP text. Source files and raw responses each use the existing v0 1 MiB bound;
+ordinary source excerpts disclose omitted bytes and fit the common Observation
+64 KiB string contract. The batch has at most 32 HEAD-selected needs. A per-worker
+15-second default (Host-selectable up to 120 seconds), bounded stdout/stderr and
+explicit cancellation keep failures finite; these are operational bounds, not
+semantic sufficiency gates.
+
+Successful observations use `source.structural-context` in the common P3 store
+and separately hashed original source/response bundles when `retain` is selected.
+Default ephemeral inputs receive the same verification before Context use but
+make no durable-recovery claim. Cross-process reuse checks current source,
+query, Python/AST/tokenizer, worker and normalizer identities. Failed collection
+records preserve raw responses when available and coalesce identical outcomes.
+Read exact success/failure keys with `head_source_observation_read`; keys are
+returned to HEAD automatically. Retention is a task-local evidence choice, not
+an extra user approval. Neither cache, observations, results nor Context previews
+alter Product Canon, ReviewDecision or P2 checkpoint/direction.
+
+Historical reads validate stored integrity even when working-tree sources have
+changed: `sourceState` discloses stale/unavailable bytes and current Context
+eligibility separately. Damaged/missing stored candidates are reported and left
+untouched; the Host tries valid candidates or fresh collection, without losing
+independent needs. Optional retention failure does not invalidate verified
+ephemeral evidence, but `retentionPending` prevents a durable-handoff claim.
+`SourceContextResult` is a P4 wrapper; the included `ContextCapsule` remains a
+P2-typed **unpersisted, unbound preview**, not a recovery update.
+`SourceCollectionFailure` is P3, and process/cache state is P5. Existing version
+0.6 authority boundaries remain valid; new classification is additive.
+
+`pendingNeeds` applies only to dependent judgments. Independent needs still
+collect and compile; source-text fallback never satisfies a CALLS requirement.
+`observed` means selected observations were included, **not** task completion,
+whole-call-graph completeness or HEAD semantic acceptance. CLI interrupts and
+MCP cancellation/connection close settle after the owned worker terminates.
+
+Read [Architecture](architecture.md) and [Authority planes](authority-plane-contract.md) before changing this contract. Release-specific evidence remains documented in [Release observation](release-observation.md), per-target delivery history in [Delivery state observation](delivery-observation.md), and exact task inclusion in [Context Compiler](context-compiler.md).
+
+Status: implemented provider-neutral P3 evidence grammar and P4 projection.
+
+## Boundary
+
+The common contract standardizes evidence shape, lineage, coverage, replay, and authority without standardizing product vocabulary. An `ObservationTypeDescriptor` declares only a closed bounded payload schema. It cannot declare a Feature, policy, success condition, causal relation, tool route, or product meaning.
+
+An adapter supplies an exact `ObservationSourceBinding` and bounded input. Core creates an immutable `ObservationRecord` plus one `ObservationCollectionReceipt`. Deterministic computation over exact source records creates a separate `DerivedObservationRecord`; it never rewrites an observed fact.
+
+Credentials, provider sessions, process IDs, sockets, and source cursors remain Host-local. Only credential reference names may appear in the binding, and they are not copied into observation records. Replay identity is scoped to the exact adapter key, adapter version, source-scope digest, and source-event-key digest. Identical replay inside that binding converges on the same record, while divergent content fails closed. Independent source bindings may reuse an upstream event key without colliding.
+
+Core publishes each create-only Observation artifact with an atomic same-directory hard-link commit. Concurrent writers therefore cannot replace an existing replay key: identical content converges, while a losing divergent writer stops before creating its receipt. A receipt is written only for the record identity that actually won or already existed, so later readers never inherit a record/receipt split-brain. This process-safe storage fence adds no ingestion approval or semantic judgment.
+
+## Coverage and graph
+
+Coverage is explicit: complete, sampled, partial, or unknown. Complete coverage is accepted only when a bounded enumeration supplies a query digest, equal examined and source totals, and zero omissions. An adapter cannot claim completeness from a sample.
+
+The rebuildable common `ObservationStatusProjection` creates `CONFORMS_TO`, `EVIDENCED_BY`, and `DERIVED_FROM`. It does not infer impact, motivation, measurement, ownership, success, or Feature links. The delivery specialization may additionally add `AT_REVISION` only after verifying an exact retained World `FileRevision`; declared revision strings receive no such edge. Product interpretation belongs to a HEAD-authored `ProductHypothesis` or the existing review-gated candidate flow. `ProductSignal` remains available for lossless human/source statements; it is not manufactured from arbitrary payload fields.
+
+Release evidence is a strict specialization, not a replacement by the generic adapter. `BranchStateObservation`, `DeploymentResultObservation`, and `ReleaseObservation` preserve their exact Git reachability, approval, commit, ref, and lineage checks.
+
+Per-target delivery history is another thin specialization. It reuses the common immutable record and receipt, derives current state from explicit sequence/predecessor evidence rather than receipt time, leaves conflicts unknown, and never infers completeness for unobserved targets. It adds no deployment engine or approval gate.
+
+Because a verified `delivery.state` record grants the graph-specific `AT_REVISION` proof label, that type is reserved to the dedicated delivery writer. Generic ingestion and registered generic adapters reject it instead of trusting a self-asserted binding. This does not close custom Observation types or add a human confirmation: it keeps the mechanically elevated claim behind its exact same-Project World/revision verifier.
+
+## Host adapter SDK and reference file adapter
+
+`ObservationAdapterRegistry` is a process-local P5 Host registry. It binds an adapter instance to one exact ready HEAD Project, `ObservationSourceBinding`, and `ObservationTypeDescriptor`, then delegates collection through the same Core verifier used by structured Host input. The same source alias may be used independently in different Projects, but its opaque source ID and collection remain Project-bound. Registration has no arbitrary Core source-count gate. Its non-persisted P4 discovery view returns at most 64 sources per page, supports exact type/adapter/availability filters, and exposes an opaque cursor bound to the current filtered registry projection. A stale cursor restarts at the first page with explicit resynchronization metadata because source discovery has no authority or mutation effect; collection still revalidates the exact current Project and source ID. The registry, source aliases, source paths, credentials, cursors, provider identities, and polling state are never written into the project. Core never discovers or dynamically loads project adapter code; only a trusted Host composition may register an adapter instance.
+
+Each source projection includes a bounded descriptor-shape summary: type/version, forms, and at most 16 field key/type/required triples with an omission count. A Host may attach only a bounded operational availability state (`unknown`, `ready`, `auth-missing`, `rate-limited`, or `unavailable`), timestamp, retry timestamp, and stable reason code. These hints are P5 operational evidence with false semantic authority. They cannot rank product relevance, establish freshness sufficiency, or become instructions.
+
+Product-specific adapters own authentication, API queries, pagination, rate limits, webhook acknowledgement, and cursor storage outside Core. They normalize one bounded result into the common contract; Core persists only the verified P3 record and receipt. Missing optional adapters do not block HEAD, and adapter output cannot assign product meaning.
+
+`JsonEventFileObservationAdapter` is the provider-neutral reference for CI or webhook spool integration. It opens one regular, non-symlink JSON file from an absolute Host path, verifies the opened file identity, enforces a 512 KiB read bound, and hashes the raw event key and full evidence before collection. The source path, raw event key, source alias, and credential reference names are not persisted. The event file contains only the product-shaped event:
+
+```json
+{
+  "schemaVersion": 1,
+  "eventKey": "build-42",
+  "subject": { "type": "example.ci.target", "key": "app" },
+  "form": "event",
+  "temporalScope": {
+    "observedAt": "2026-09-01T01:00:00.000Z",
+    "start": null,
+    "end": null
+  },
+  "coverage": {
+    "state": "complete",
+    "basis": "enumerated-bounded-query",
+    "queryDigest": "<sha256>",
+    "examinedCount": 1,
+    "sourceReportedTotal": 1,
+    "omittedCount": 0,
+    "cursorStartDigest": null,
+    "cursorEndDigest": null
+  },
+  "payload": { "succeeded": true }
+}
+```
+
+The advanced one-shot Host configuration supplies the binding, descriptor, and absolute event path. `sourceKey` is optional and is derived from the exact binding and descriptor when omitted:
+
+```json
+{
+  "binding": {
+    "adapterKey": "head.json-event-file-observation",
+    "adapterVersion": "0.1.0",
+    "sourceScopeDigest": "<sha256>",
+    "credentialReferenceNames": []
+  },
+  "descriptor": {
+    "typeKey": "example.ci.build-result",
+    "typeVersion": "1.0.0",
+    "forms": ["event"],
+    "payloadSchema": {
+      "fields": [{ "key": "succeeded", "type": "boolean", "required": true }],
+      "additionalFields": false
+    }
+  },
+  "eventFile": "<absolute-host-path>"
+}
+```
+
+Run `observation-file-ingest` only from a trusted Host/CI integration. It intentionally has no MCP file-path surface: normal conversational use should call a configured Host integration rather than ask the model or user to compose paths and provenance JSON. The reference adapter is one-shot and does not provide a daemon, scheduler, remote connector, or automatic product interpretation.
+
+## Conversational configured-source flow
+
+A trusted Host composition passes its Project-bound registry to `serveMcp`. After provider HEAD selects one exact required `typeKey`, `head_observation_prepare` performs the read-only reuse-first flow: it queries current exact Observation IDs, then returns matching configured source IDs without selecting or collecting one. When existing evidence is not semantically sufficient and durable current evidence is actually needed, HEAD pages or filters `head_observation_sources` as necessary and calls `head_observation_collect_source` with one selected ID:
+
+```text
+trusted Host configuration
+  -> head_observation_prepare(exact HEAD-selected typeKey)
+  -> existing exact Observation IDs first
+  -> head_observation_sources only for paging or diagnosis
+  -> opaque Project-bound sourceId
+  -> head_observation_collect_source
+  -> verified P3 ObservationRecord + ObservationCollectionReceipt
+```
+
+The preparation projection does not judge semantic sufficiency, infer relevance from lexical overlap, select a source, or persist anything. Provider HEAD performs that judgment in the conversation. The model and user provide no file path, credential reference, binding, descriptor, digest, coverage claim, provider identity, or source alias on this path. Core verifies Project readiness before the adapter may access its source. Missing Host composition is disclosed as optional adapter unavailability; it does not fall back to user-authored provenance or weaken the common contract. An embedding Host may use the same injected registry with the advanced CLI composition, but the ordinary standalone CLI does not load adapter code or configuration dynamically.
+
+## Metric evidence workflow
+
+The metric workflow is a thin provider-neutral use of the common contract, not a second analytics store. `head_metric_define` registers a versioned metric shape containing its unit and desired direction. An exact replay is idempotent; a conflicting shape under the same metric key and version fails with a request to use a new version instead of making later lookup ambiguous.
+
+`head_metric_observe` records an exact subject, value, time scope, source scope, sample size when known, coverage, and collection-adapter identity. If a Host retries the same event without resupplying an observation time, Core reuses the durable event time; changed content under the same source event still fails closed. `head_metric_compare` permits a numeric difference only for the exact same descriptor, subject, unit, and direction. Different adapter key, adapter version, adapter descriptor digest, source scope, snapshot/aggregate form, period duration, sample size, or coverage state does not add an approval gate: the numeric comparison remains available, but the result marks the condition as same, different, or unknown, states that no normalization was applied, and downgrades derived coverage rather than presenting a like-for-like result. Even when every recorded collection condition matches, Core reports only `recordedCollectionConditionsEquivalent: true`; semantic equivalence remains `not-assessed` and is never mechanically inferred.
+
+`head_metric_assess` records only a P3 ProductHypothesis and always states that causality is not established. `head_metric_follow_up` creates only a Product Initiative candidate, which still needs the existing explicit user review before approval. `head_metric_status` and `head_metric_trace` are bounded read-only P4 views. None of these operations writes Product Canon, a ReviewDecision, Conformance disposition, or P2 recovery direction.
+
+## Context and use
+
+Context compilation excludes common observations by default. HEAD performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core then proves actual inclusion without lexical eligibility, semantic promotion, or sufficiency judgment.
+
+Ordinary inspection remains ephemeral. Persist an Observation only when cross-Run, rebuttal/audit, handoff, or context-loss evidence is required. A Host adapter, not the user, constructs the exact source binding, descriptor, digests, coverage, and provenance confirmation. `observation-ingest` and `head_observation_ingest` are advanced Host/CI surfaces for already bounded input; collect remains the adapter-facing compatibility alias.
+
+`observation-status` and `head_observation_status` return a bounded P4 summary without full payload nodes. `observation-query` and `head_observation_query` filter exact current identities by type, subject, source, time, and observed/derived kind with a maximum page of 100. Cursor continuation is bound to the exact current `ObservationStatusProjection`; drift fails closed. Query results contain payload digests rather than payload bodies. The exact read surface returns the selected record, descriptor, and bounded receipt or derivation lineage. Querying is discovery, not semantic selection, Context eligibility, or sufficiency judgment.
+
+## Acceptance properties
+
+- unrelated product domains use the same contract without domain vocabulary in Core;
+- independent source bindings may reuse the same upstream event key, while divergent replay inside one exact binding fails closed;
+- concurrent identical writers converge and concurrent divergent writers retain exactly one record with exactly one matching receipt;
+- observation writes leave Product Canon and Session recovery bytes unchanged;
+- Product Signal and other unrelated operating flows do not load or depend on unused Observation storage;
+- false completeness, schema drift, authority drift, and divergent replay fail closed;
+- status and query output stays bounded and never turns discovery into semantic selection;
+- default Capsule compilation includes no common observation, even with lexical overlap;
+- an exact HEAD EvidenceNeed includes only the named immutable records;
+- derived records and projections cannot add semantic graph relations;
+- a hypothesis may reference exact observations while remaining non-authoritative;
+- CLI and MCP return the same Core identities.
+- the Host registry remains non-persisted P5 configuration, while its verified result uses the same P3 identity and replay contract;
+- source registration is not blocked by the bounded status projection, and omitted status entries are disclosed;
+- exact source filters and opaque pagination make every registered source discoverable without unbounded output;
+- stale source cursors restart with explicit non-authoritative resynchronization rather than creating a user-visible recovery ritual;
+- source shape and availability summaries stay bounded, non-semantic, non-instructional, and non-persisted;
+- reuse-first preparation returns existing exact Observation IDs before matching configured sources and never judges sufficiency or collects automatically;
+- every registered source ID is bound to one exact HEAD Project and cannot be collected into another Project;
+- Project readiness is verified before external adapter collection;
+- the conversational source flow accepts only an opaque configured source ID and never asks the user for provenance structure;
+- the reference event-file adapter accepts unrelated product schemas without persisting Host paths, raw event keys, source aliases, or credential references;
+- the reference file path stays outside MCP, and malformed, oversized, relative-path, or divergent events fail closed.
+- the same metric key and version cannot acquire two definitions, while a new explicit version remains available;
+- numeric before/after comparison remains usable across disclosed adapter-revision and collection-condition differences without claiming semantic equivalence, normalization, or causality;
+- metric assessment and follow-up stay P3 evidence/candidates and do not mutate Conformance, Product Canon, or P2 recovery.
+- delivery failure never overwrites prior applied state, rollback remains a new immutable event, and conflicting order stays unknown;
+- exact delivery revision bindings are verified before persistence and connected in P4, while declared-only references remain disclosed and unlinked;
+- delivery status is bounded and cannot infer success for unobserved targets or deployment completeness.
