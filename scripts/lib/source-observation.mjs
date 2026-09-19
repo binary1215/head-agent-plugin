@@ -3,7 +3,7 @@ import path from "node:path";
 import { createObservationTypeDescriptor, createObservationRecord, verifyObservationRecord, observationDigest } from "./observation-contract.mjs";
 import { recordCollectedObservation } from "./observation-store.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
-import { sourceDigest, sourceObjectDigest, readSourceBytes, sourceCurrent, sourceError, preparePythonObservation } from "./python-source-collector.mjs";
+import { sourceDigest, sourceObjectDigest, readSourceBytes, sourceCurrent, sourceError, preparePythonObservation, preparePythonDeclarations } from "./python-source-collector.mjs";
 
 const DIRECTORY = ".head/observations/source-bundles";
 export const SOURCE_OBSERVATION_TYPE = "source.structural-context";
@@ -37,6 +37,33 @@ export const sourceObservationDescriptor = createObservationTypeDescriptor({
   ] },
 });
 
+export const DECLARATION_OBSERVATION_TYPE = "source.python-declaration-context";
+export const declarationObservationDescriptor = createObservationTypeDescriptor({
+  typeKey: DECLARATION_OBSERVATION_TYPE, typeVersion: "1", forms: ["snapshot"],
+  payloadSchema: { additionalFields: false, fields: sourceObservationDescriptor.payloadSchema.fields.map((field) =>
+    field.key === "evidenceKind" ? { ...field, enum: ["declarations", "selected-source"] } : field) },
+});
+// Explicit dispatch: historical v1 records retain their descriptor and meaning.
+const formats = Object.freeze({
+  "1:source": sourceObservationDescriptor, "1:outgoing-calls": sourceObservationDescriptor,
+  "2:declarations": declarationObservationDescriptor, "2:selected-source": declarationObservationDescriptor,
+});
+function descriptorFor(evidence) {
+  if (![1, 2].includes(evidence.version)) throw sourceError("SOURCE_OBSERVATION_INVALID");
+  const descriptor = formats[`${evidence.version}:${evidence.kind}`];
+  if (!descriptor) throw sourceError("SOURCE_OBSERVATION_INVALID");
+  return descriptor;
+}
+function declarationResult(evidence) {
+  try {
+    return preparePythonDeclarations({ query: evidence.query, sources: evidence.sources, profile: evidence.profile,
+      response: { result: parseStoredJson(Buffer.from(evidence.response, "base64")) } });
+  } catch (error) {
+    if (error.code === "SOURCE_NEEDS_INVALID") throw sourceError("SOURCE_OBSERVATION_INVALID");
+    throw error;
+  }
+}
+
 export function sourceBundleKey(evidence) { return sourceObjectDigest(evidence); }
 
 function observationInput(evidence) {
@@ -46,7 +73,7 @@ function observationInput(evidence) {
   let sourceExcerpt = rawText.slice(0, 60_000);
   while (Buffer.byteLength(sourceExcerpt) > 60_000 || /[\uD800-\uDBFF]$/u.test(sourceExcerpt)) sourceExcerpt = sourceExcerpt.slice(0, -1);
   const result = evidence.response ? JSON.parse(Buffer.from(evidence.response, "base64").toString("utf8")) : null;
-  const details = evidence.kind === "outgoing-calls" ? JSON.stringify({
+  const details = evidence.version === 2 ? JSON.stringify(declarationResult(evidence).details) : evidence.kind === "outgoing-calls" ? JSON.stringify({
     claimTruth: "unknown", repositoryCompleteness: "not-claimed", profile: evidence.profile.runtime,
     pairs: result.results[0].pairs, unresolved: result.results[0].unresolved,
   }) : sourceExcerpt;
@@ -66,10 +93,11 @@ function observationInput(evidence) {
 }
 
 export function createSourceObservation(evidence) {
+  const descriptor = descriptorFor(evidence);
   const { sourceScopeDigest, input } = observationInput(evidence);
-  const observation = createObservationRecord({ projectId: evidence.projectId, descriptor: sourceObservationDescriptor,
+  const observation = createObservationRecord({ projectId: evidence.projectId, descriptor,
     ...input, source: { ...adapterDescriptor, sourceScopeDigest, sourceEventKeyDigest: input.sourceEventKeyDigest, sourceEvidenceDigest: input.sourceEvidenceDigest } });
-  return { evidence, descriptor: sourceObservationDescriptor, observation };
+  return { evidence, descriptor, observation };
 }
 
 // This verifies both content and current source bytes for persisted AND ephemeral
@@ -77,8 +105,7 @@ export function createSourceObservation(evidence) {
 export function verifySourceObservation(root, projectId, bundle, { requireCurrent = true } = {}) {
   if (!recordShape(bundle) || !recordShape(bundle.evidence) || !recordShape(bundle.descriptor) || !recordShape(bundle.observation)) throw sourceError("SOURCE_OBSERVATION_INVALID");
   const { evidence, descriptor, observation } = bundle;
-  if (descriptor.descriptorId !== sourceObservationDescriptor.descriptorId || evidence.projectId !== projectId
-    || !["source", "outgoing-calls"].includes(evidence.kind) || evidence.version !== 1
+  if (descriptor.descriptorId !== descriptorFor(evidence).descriptorId || evidence.projectId !== projectId
     || !Array.isArray(evidence.sources) || evidence.sources.length !== 1 || !Array.isArray(evidence.query) || evidence.query.length !== 1
     || !recordShape(evidence.profile) || !recordShape(evidence.query[0]) || typeof evidence.query[0].path !== "string"
     || typeof evidence.query[0].symbol !== "string") throw sourceError("SOURCE_OBSERVATION_INVALID");
@@ -95,6 +122,11 @@ export function verifySourceObservation(root, projectId, bundle, { requireCurren
     const result = parseStoredJson(raw);
     const prepared = preparePythonObservation({ projectId, query: evidence.query, sources: evidence.sources, response: { raw, result }, profile: evidence.profile });
     if (prepared.status !== "ready" || prepared.envelope.envelopeHash !== evidence.envelopeHash) throw sourceError("SOURCE_OBSERVATION_INVALID");
+  }
+  if (evidence.version === 2) {
+    if (typeof evidence.response !== "string" || !recordShape(evidence.profile.runtime) || !recordShape(evidence.profile.implementation)) throw sourceError("SOURCE_OBSERVATION_INVALID");
+    const prepared = declarationResult(evidence);
+    if (prepared.status !== "ready" || prepared.evidenceHash !== evidence.envelopeHash) throw sourceError("SOURCE_OBSERVATION_INVALID");
   }
   const expected = createSourceObservation(evidence);
   if (expected.observation.observationHash !== observation.observationHash) throw sourceError("SOURCE_OBSERVATION_INVALID");

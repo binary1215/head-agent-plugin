@@ -156,3 +156,108 @@ export function preparePythonObservation({ projectId, query, sources, response, 
   };
   return { draft, ...prepareStructuralRelationObservationEnvelope(draft, { sourceBytesByPath, rawBytesById: new Map([[rawKey, response.raw]]) }) };
 }
+
+export const PYTHON_DECLARATION_KINDS = Object.freeze(["declarations", "selected-source"]);
+// Diagnostic provenance, not a capability gate or claim of parse success.
+// The digest binds the complete profile; paths, raw frames and file bytes stay private.
+export function compactDeclarationProfile(profile) {
+  if (!profile?.runtime) return null;
+  return { producer: "python-stdlib-ast", declarationProtocol: "python-static-declarations-1",
+    workerProtocol: profile.runtime.version, pythonVersion: String(profile.runtime.python ?? "").split(/\s/u)[0].slice(0, 32),
+    implementation: String(profile.runtime.implementation ?? "").slice(0, 32),
+    isolated: profile.runtime.isolated === true, noSite: profile.runtime.noSite === true,
+    profileDigest: sourceObjectDigest(profile), workerDigest: profile.implementation?.worker ?? null,
+    normalizerDigest: profile.implementation?.normalizer ?? null,
+    basis: "verified-worker-identity; not-parse-success-or-runtime-truth" };
+}
+const declarationKinds = ["class", "function", "async-function", "method", "async-method"];
+const closed = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
+  && Object.keys(value).every((key) => keys.includes(key));
+const pointValid = (p) => closed(p, ["line", "character"]) && Number.isSafeInteger(p.line) && p.line >= 0
+  && Number.isSafeInteger(p.character) && p.character >= 0;
+const rangeValid = (r) => closed(r, ["start", "end"]) && pointValid(r.start) && pointValid(r.end);
+export function validateDeclarationSelection(selection) {
+  if (!closed(selection, ["path", "fileDigest", "qualifiedName", "kind", "occurrence", "range"])
+    || typeof selection.path !== "string" || !selection.path || selection.path.length > 512
+    || !/^[a-f0-9]{64}$/.test(selection.fileDigest ?? "") || typeof selection.qualifiedName !== "string"
+    || !selection.qualifiedName || selection.qualifiedName.length > 512 || !declarationKinds.includes(selection.kind)
+    || !Number.isSafeInteger(selection.occurrence) || selection.occurrence < 1 || !rangeValid(selection.range)) throw sourceError("SOURCE_NEEDS_INVALID");
+  return selection;
+}
+
+// JS string offsets are UTF-16. Never normalize newlines, whitespace or literals.
+export function exactDeclarationSlice(text, range) {
+  if (!rangeValid(range)) throw sourceError("SOURCE_RESPONSE_INVALID");
+  const lines = text.split("\n");
+  const offset = (point) => {
+    const line = lines[point.line];
+    if (line === undefined || point.character > line.length
+      || (point.character > 0 && /[\uD800-\uDBFF]/u.test(line[point.character - 1])
+        && /[\uDC00-\uDFFF]/u.test(line[point.character] ?? ""))) throw sourceError("SOURCE_RESPONSE_INVALID");
+    return lines.slice(0, point.line).reduce((sum, entry) => sum + entry.length + 1, 0) + point.character;
+  };
+  const start = offset(range.start), end = offset(range.end);
+  if (end <= start) throw sourceError("SOURCE_RESPONSE_INVALID");
+  return { text: text.slice(start, end), start, end };
+}
+
+export function preparePythonDeclarations({ query, sources, response, profile }) {
+  const invalid = () => { throw sourceError("SOURCE_RESPONSE_INVALID"); };
+  if (response.result?.protocol !== PYTHON_SOURCE_PROFILE || sourceObjectDigest(response.result.profile) !== sourceObjectDigest(profile.runtime)
+    || !Array.isArray(response.result.results) || response.result.results.length !== 1 || query.length !== 1 || sources.length !== 1) invalid();
+  const result = response.result.results[0], need = query[0], file = sources[0];
+  if (!closed(result, ["path", "symbol", "kind", "status", "declarationProtocol", "total", "omitted", "declarations", "errorType"])
+    || result.path !== need.path || result.symbol !== need.symbol || result.kind !== need.kind
+    || !PYTHON_DECLARATION_KINDS.includes(need.kind) || result.declarationProtocol !== "python-static-declarations-1"
+    || !["ready", "partial", "ambiguous", "missing", "stale-selection", "selection-mismatch", "parse-unsupported"].includes(result.status)
+    || !Number.isSafeInteger(result.total) || result.total < 0 || !Number.isSafeInteger(result.omitted) || result.omitted < 0
+    || !Array.isArray(result.declarations) || result.declarations.length > 64 || result.total !== result.declarations.length + result.omitted) invalid();
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(file.base64, "base64"));
+  const seen = new Set();
+  const declarations = result.declarations.map((item) => {
+    if (!closed(item, ["qualifiedName", "kind", "scope", "occurrence", "conditional", "decorated", "range", "headerRange", "nameRange"])
+      || typeof item.qualifiedName !== "string" || !item.qualifiedName || item.qualifiedName.length > 512
+      || typeof item.scope !== "string" || !declarationKinds.includes(item.kind) || !Number.isSafeInteger(item.occurrence) || item.occurrence < 1
+      || typeof item.conditional !== "boolean" || typeof item.decorated !== "boolean") invalid();
+    const source = exactDeclarationSlice(text, item.range), header = exactDeclarationSlice(text, item.headerRange), name = exactDeclarationSlice(text, item.nameRange);
+    if (header.start < source.start || header.end > source.end || name.start < header.start || name.end > header.end
+      || name.text.normalize("NFKC") !== item.qualifiedName.split(".").at(-1)
+      || !/^(?:(?:class|def)(?:\s|\\\r?\n)|async(?:\s|\\\r?\n)+def(?:\s|\\\r?\n))/u.test(header.text)
+      || !header.text.endsWith(":") || (item.decorated ? !source.text.startsWith("@") : header.start !== source.start)
+      || (need.kind === "selected-source" && item.qualifiedName !== need.symbol)) invalid();
+    const selection = { path: file.path, fileDigest: file.digest, qualifiedName: item.qualifiedName, kind: item.kind, occurrence: item.occurrence, range: item.range };
+    const key = sourceObjectDigest(selection);
+    if (seen.has(key)) invalid(); seen.add(key);
+    if (need.selection) {
+      const chosen = validateDeclarationSelection(need.selection);
+      if (["path", "fileDigest", "qualifiedName", "kind", "occurrence"].some((key) => chosen[key] !== selection[key])
+        || ["start", "end"].some((key) => chosen.range[key].line !== item.range[key].line || chosen.range[key].character !== item.range[key].character)) invalid();
+    }
+    const display = header.text.replace(/\s+/gu, " ");
+    const signature = display.slice(0, 500).replace(/[\uD800-\uDBFF]$/u, "");
+    return { ...item, selection, displaySignature: signature, displaySignatureTruncated: display.length > signature.length };
+  });
+  if ((result.status === "ready" && (result.omitted !== 0 || (need.kind === "selected-source" && declarations.length !== 1)))
+    || (result.status === "partial" && (need.kind !== "declarations" || result.omitted === 0))
+    || (result.status === "ambiguous" && (need.kind !== "selected-source" || result.total < 2))
+    || (["missing", "stale-selection", "selection-mismatch", "parse-unsupported"].includes(result.status) && result.total !== 0)) invalid();
+  let status = result.status;
+  const details = { claimTruth: "unknown", repositoryCompleteness: "not-claimed", staticDeclarationsOnly: true,
+    collectionProfile: compactDeclarationProfile(profile),
+    status, total: result.total, omitted: result.omitted, declarations };
+  if (need.kind === "selected-source" && status === "ready") {
+    const source = exactDeclarationSlice(text, declarations[0].range).text;
+    details.selectedSourceBytes = Buffer.byteLength(source);
+    if (Buffer.byteLength(source) > 48_000) status = "source-too-large";
+    else details.source = source;
+  }
+  // Keep the existing common Observation string bound, with explicit omissions.
+  while (Buffer.byteLength(JSON.stringify(details)) > 60_000 && details.declarations.length) {
+    details.declarations.pop(); details.omitted += 1;
+    status = need.kind === "declarations" ? "partial" : status === "ready" ? "source-too-large" : status;
+    delete details.source;
+  }
+  details.status = status;
+  return { status: ["ready", "partial"].includes(status) ? "ready" : status, code: `SOURCE_DECLARATION_${status.toUpperCase().replaceAll("-", "_")}`,
+    details, evidenceHash: sourceObjectDigest(details) };
+}

@@ -29,8 +29,8 @@ Canonical sources and promoted knowledge
 
 HEAD owns the whole outcome and determines whether the compiled world is sufficient. For each task, HEAD should first perform semantic task analysis and may define an explicit `EvidenceNeed[]` contract with exact project-relative `paths`, exact Product Canon `entityKeys`, evidence kind, relation types, and minimum item counts. For `temporal-relation`, HEAD may add an exact `graphAnchor` bound to the current `projectId`, `worldModelId`, and `graphSnapshotId`, plus one to 32 exact `nodeIds` and explicit `depth`, `maxNodes`, and `maxEdges`. Core verifies current eligibility and actual bounded inclusion only. Do not combine lexical facets with exact graph anchors. Lexical overlap is discovery/fallback ranking only: zero overlap never makes a current candidate ineligible. The compiler must not choose graph anchors or infer required evidence kinds from available candidates.
 
-For task-local source/call inspection, use the source workflow below without a
-World scan. For World/Graph preparation, begin with `head_context_prepare`, passing only the exact
+For optional task-local source/call evidence, see the source workflow below; it
+needs no World scan. For World/Graph preparation, begin with `head_context_prepare`, passing only the exact
 user task. The returned `ContextPreparationProjection` is bounded P4 candidate
 visibility, not a semantic proposal. Use its current binding and node identities
 plus ordinary repository inspection to author the structure yourself as HEAD;
@@ -40,13 +40,43 @@ baseline as irrelevance. Then pass the byte-identical task and your proposal to
 
 ### Current source evidence without a World scan
 
-When the task needs current file contents or Python direct-call evidence, inspect
-the relevant files as HEAD and call `head_source_context` with the unchanged task
-and `needs: [{kind: "outgoing-calls", path: "src/service.py", symbol: "handle"}]`.
-Use `kind: "source"` for text evidence. `symbol` is a qualified declaration name,
-not a product concept. HEAD authors these inputs from the user's request; do not
-ask the user to write JSON, find hashes/IDs, select a budget, or repeat the request.
-A task-only call returns a HEAD selection step, not a user approval gate.
+Keep ordinary file reads or already-current World range reads when they suffice.
+Use `head_source_context` when the task benefits from narrowly selected declaration
+evidence, verified declaration boundaries or task-scoped Context inclusion—not
+merely because a file is Python or a name is known. HEAD makes this judgment;
+no per-call measurement, comparison, justification form or approval is required.
+The user requests the task once. HEAD chooses the method, parser and budget and
+authors any JSON, digests and IDs internally, while respecting an explicit request
+to use an advanced API or CLI. A task-only tool call asks HEAD to select evidence,
+not the user to approve or repeat the request.
+
+Within this workflow, use `kind: "source"` for small-file or whole-file text
+evidence in Context; it is not an ordinary file read. For Python direct-call
+evidence, an input is `needs: [{kind: "outgoing-calls", path: "src/service.py", symbol: "handle"}]`.
+Keep the task unchanged. `symbol` is a qualified declaration name, not a product
+concept. If `kind: "selected-source"` is appropriate, read a known unique name
+directly; `kind: "declarations"` is an optional discovery step, never a prerequisite.
+A returned selection binds path, digest, qualified name, kind, occurrence and range.
+Use it unchanged to resolve repeated names; after drift, inspect current evidence
+and reselect without reusing old coordinates or inferring a successor.
+
+If parsing is unavailable or fails, or evidence drifts, HEAD may re-query or
+continue with ordinary reads as the task permits. Do not present that substitution
+as verified exact boundaries or Context inclusion. Continue independent work; ask
+the user only about intent ambiguity HEAD cannot resolve or an existing authority
+boundary. Lead with results and meaningful limitations, not internal status or
+a menu of lookup methods on every turn.
+
+Declarations are static syntax occurrences, not a complete public API or evidence
+of runtime activation. Selected source preserves the continuous original slice
+from the first decorator `@` (otherwise `class`/`def`/`async`) through the last AST
+token, excluding unrelated preceding comments and trailing comments/blank lines.
+Ranges are zero-based UTF-16 and end-exclusive. `displaySignature` is a lossy
+500-character display, never exact source. List omissions, ambiguity, missing
+declarations, parser loss, parse failure and oversized bodies remain explicit;
+inspect `declarationStatus` and `omittedDeclarations` as well as Context inclusion.
+The list is bounded to 64 entries; known names beyond it can still be read directly.
+Do not infer semantic sufficiency or make independent work wait on this lookup.
 
 The Host reads exact working-tree bytes, runs a packaged Python AST observer in
 `-I -S` isolation, prepares and verifies the structural envelope, then includes

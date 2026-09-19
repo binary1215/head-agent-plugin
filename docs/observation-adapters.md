@@ -169,6 +169,69 @@ The metric workflow is a thin provider-neutral use of the common contract, not a
 
 ## Context and use
 
+### Optional Python declaration reads
+
+The user asks for the task once; HEAD chooses how to inspect it without requesting
+JSON, digests, IDs, parser or budget choices. Keep ordinary file reads or an
+already-current World range read when sufficient; no Context workflow is needed
+just because the file is Python or a declaration name is known. HEAD may choose
+selected-source for useful narrow evidence, exact declaration boundaries or
+task-scoped Context inclusion, without a per-call benchmark, justification form
+or approval. Once chosen, read a known unique name directly; outline is optional.
+Within this workflow, `source` includes file text in Context and is suitable for
+small files or whole-file context; it is not synonymous with ordinary file reading.
+Outline plus selection can cost more than one file read. Count World construction
+separately if needed; ordinary World ranges may include trailing lines and do not
+create a Context Capsule. These outputs do not establish universal performance superiority.
+
+When parsing is unavailable, fails, or evidence drifts, HEAD can re-query or
+continue ordinary reads without pretending that exact boundaries or Context
+inclusion were verified. Never reuse stale selection coordinates. Independent
+work continues; ask only about unresolved user intent or existing authority
+boundaries. Report results and meaningful limitations, not every internal state
+or a repeated menu of lookup choices.
+
+For a local developer comparison, run
+`node scripts/measure-python-declarations.mjs --output <new-absolute-directory>`.
+It records three fresh-process trials, in-process repeat queries, individual
+values and medians, raw dispatch responses, correctness and process logs. Fresh
+process does not mean cold OS cache. Fixed execution order and instrumentation
+affect latency; serialized in-process dispatch bytes are not stdio wire or
+installed Host cost. Provider tokens, billing and prompt-cache savings remain
+unknown. This measurement is optional, not a usage or deployment gate.
+
+The existing `head_source_context` accepts `declarations` for a bounded static
+outline and `selected-source` for a known qualified declaration. The latter needs
+no prior outline. CLI uses `--kind`; an unqualified `--symbol` option retains its
+existing outgoing-call meaning. For ambiguous occurrences, HEAD supplies the
+returned exact selection through typed MCP or advanced CLI `--input` needs.
+HEAD authors that structure in normal conversation; explicit advanced API/CLI
+requests remain supported.
+
+New declaration Context details include a compact `collectionProfile`: producer,
+Python version, protocols and implementation digests, even without retention.
+Failures expose the same summary when worker identity was already obtained.
+It describes the attempted parser, not successful parsing or runtime truth;
+missing identity is not invented. No full file, raw worker frame or executable
+path is added to the public response. Existing v1 details remain unchanged.
+
+The parser remains isolated stdlib AST/tokenize. No project module executes. A
+selection binds path, digest, qualified name, declaration kind, occurrence and
+UTF-16 end-exclusive range. Source spans preserve decorators and internal bytes;
+display signatures are separate lossy labels. The bounds are one 1 MiB source,
+64 list entries, 500 display characters, and 60,000 serialized detail bytes within
+the existing 65,536-byte Observation field. A selected body over 48,000 bytes is
+explicitly unavailable rather than silently cut; JSON escaping can reach the
+detail limit earlier. These are response bounds, not semantic eligibility or a
+requirement to perform an outline. Ordinary source/range inspection stays usable.
+
+Historical `source.structural-context` with evidence version 1 is unchanged.
+New `source.python-declaration-context` records use type version 1 and evidence
+version 2 via explicit dispatch; the same create-only store is reused. Historical
+records are not migrated or rehashed. New retained records are also checked for
+source drift before Context inclusion. Default retention remains off; no Canon,
+World, ReviewDecision or recovery direction is created by these optional reads.
+
 Context compilation excludes common observations by default. HEAD performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core then proves actual inclusion without lexical eligibility, semantic promotion, or sufficiency judgment.
 
 Ordinary inspection remains ephemeral. Persist an Observation only when cross-Run, rebuttal/audit, handoff, or context-loss evidence is required. A Host adapter, not the user, constructs the exact source binding, descriptor, digests, coverage, and provenance confirmation. `observation-ingest` and `head_observation_ingest` are advanced Host/CI surfaces for already bounded input; collect remains the adapter-facing compatibility alias.

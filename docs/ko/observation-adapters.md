@@ -163,6 +163,66 @@ Metric workflow는 공통 계약을 얇게 사용하는 provider-neutral 경로�
 
 ## Context와 사용법
 
+### 선택적인 Python 선언 조회
+
+사용자는 작업을 한 번 요청하고, HEAD가 JSON·digest·ID·파서·예산 선택을 사용자에게
+요구하지 않고 조회 방법을 판단합니다. 일반 파일 읽기나 이미 최신인 World 범위
+읽기로 충분하면 그대로 진행합니다. Python 파일이거나 선언 이름을 안다는 이유만으로
+Context 작업 흐름을 추가하지 않습니다. 좁은 증거, 정확한 선언 경계, 과제별 Context
+편입이 유용할 때 HEAD가 selected-source를 선택할 수 있으며, 매번 벤치마크·이유서·
+승인을 요구하지 않습니다. 선택했다면 아는 유일한 선언은 바로 읽고 목록은 선택
+사항으로 둡니다. 이 작업 흐름 안의 `source`는 파일 텍스트를 Context에 넣는 기능으로,
+작은 파일이나 전체 파일 문맥에 적합하지만 일반 파일 읽기와 같지는 않습니다.
+목록과 선택을 두 번 요청하면 파일 한 번 읽기보다 비용이 커질 수 있습니다. World가
+필요하면 구축 비용을 별도로 계산합니다. 일반 World 범위는 뒤의 줄을 포함할 수
+있으며 Context Capsule을 만들지 않습니다. 출력 차이를 보편적 성능 우위로 해석하지
+않습니다.
+
+파서를 사용할 수 없거나 파싱 실패·증거 변경이 발생하면 HEAD는 재조회하거나 일반
+읽기를 계속할 수 있습니다. 이를 정확한 선언 경계나 Context 포함을 검증한 것처럼
+표현하거나 오래된 선택 좌표를 재사용하지 않습니다. 독립 작업은 계속하고, 해소하지
+못한 사용자 의도 모호성이나 기존 권한 경계만 질문합니다. 매번 내부 상태나 조회
+방법 목록을 나열하기보다 결과와 의미 있는 한계를 설명합니다.
+
+개발용 로컬 비교는
+`node scripts/measure-python-declarations.mjs --output <new-absolute-directory>`로
+실행합니다. 새 프로세스 3회의 최초·프로세스 내 반복 조회, 개별 값과 중앙값, 실제
+dispatch 응답, 정확성 및 프로세스 기록을 남깁니다. 새 프로세스가 OS 캐시 초기화를
+뜻하지는 않습니다. 고정 실행 순서와 계측도 지연에 영향을 주며, 프로세스 내부
+dispatch 직렬화 크기는 stdio 전송량이나 설치 Host 비용이 아닙니다. 실제 provider
+토큰·과금·프롬프트 캐시 절감은 미확인입니다. 이 측정은 선택 사항이지 사용·배포
+관문이 아닙니다.
+
+기존 `head_source_context`에서 `declarations`는 제한된 정적 선언 목록을,
+`selected-source`는 알려진 정규화된 선언 이름의 원문을 조회합니다. 원문 조회 전에
+목록을 읽을 필요는 없습니다. CLI는 `--kind`로 선택하며, 단독 `--symbol`은 기존
+호출 관계 조회 의미를 유지합니다. 동명 선언은 HEAD가 응답의 정확한 선택 객체를
+typed MCP 또는 고급 CLI `--input`에 전달합니다. 일반 대화에서는 HEAD가 구조를
+작성하며 사용자가 고급 API/CLI를 명시적으로 요청한 경우도 계속 지원합니다.
+
+새 선언 Context 상세에는 비보존 상태에서도 작은 `collectionProfile`을 포함합니다.
+생산자, Python 버전, 프로토콜과 구현 digest를 표시하며, 워커 identity를 이미
+얻었다면 실패 응답에도 같은 요약을 제공합니다. 이는 시도한 파서를 설명할 뿐
+파싱 성공이나 실행 시 진실성을 뜻하지 않습니다. 얻지 못한 identity를 꾸미지 않고,
+전체 파일·원시 워커 응답·실행 파일 경로도 공개 응답에 추가하지 않습니다.
+기존 v1 상세 형식은 그대로 유지합니다.
+
+파서는 격리된 표준 라이브러리 AST/tokenize를 재사용하며 프로젝트 모듈을 실행하지
+않습니다. 선택은 경로, digest, 선언 이름과 종류, 출현 번호, UTF-16 끝 제외 범위에
+결합됩니다. 원문은 데코레이터와 내부 바이트를 보존하고 표시용 서명은 별도 축약
+라벨입니다. 상한은 소스 1 MiB, 목록 64개, 표시 500자, 직렬화된 상세 60,000바이트이며
+기존 Observation 필드의 65,536바이트 안에 머뭅니다. 선택 본문이 48,000바이트를
+넘으면 조용히 자르지 않고 불가 상태를 명시합니다. JSON 이스케이프 때문에 상세
+상한에 먼저 도달할 수도 있습니다. 이는 응답 크기 제한이지 의미적 자격 판정이나
+목록 조회 의무가 아닙니다. 일반 소스·범위 읽기는 계속 사용할 수 있습니다.
+
+증거 버전 1인 기존 `source.structural-context`는 바뀌지 않습니다.
+새 `source.python-declaration-context`는 타입 버전 1, 증거 버전 2로 명시적으로
+분기하며 기존 create-only 저장소를 재사용합니다. 과거 기록을 마이그레이션하거나
+재해시하지 않습니다. 새 보존 증거도 Context 포함 전에 소스 변경을 검증합니다.
+기본값은 비보존이며 이 선택적 읽기는 Canon, World, ReviewDecision 또는 복구
+방향을 생성하지 않습니다.
+
 Context compilation은 기본적으로 공통 observation을 제외합니다. HEAD가 semantic analysis를 수행하고 kind가 `observation`이며 `observationIds`에 불변 현재 ID가 들어 있는 EvidenceNeed로 정확한 identity를 요청합니다. Core는 lexical eligibility, semantic promotion 또는 sufficiency judgment 없이 실제 포함만 증명합니다.
 
 일상적인 inspection은 ephemeral하게 유지합니다. cross-Run, rebuttal/audit, handoff, context-loss evidence가 필요할 때만 Observation을 persist합니다. 사용자가 아니라 Host adapter가 정확한 source binding, descriptor, digest, coverage, provenance confirmation을 구성합니다. `observation-ingest`와 `head_observation_ingest`는 이미 bounded된 input을 위한 고급 Host/CI surface이고 collect는 adapter-facing compatibility alias로 유지됩니다.
