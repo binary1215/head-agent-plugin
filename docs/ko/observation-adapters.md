@@ -163,6 +163,30 @@ Metric workflow는 공통 계약을 얇게 사용하는 provider-neutral 경로�
 
 ## Context와 사용법
 
+### 선택적인 Python 선언 조회
+
+기존 `head_source_context`에서 `declarations`는 제한된 정적 선언 목록을,
+`selected-source`는 알려진 정규화된 선언 이름의 원문을 조회합니다. 원문 조회 전에
+목록을 읽을 필요는 없습니다. CLI는 `--kind`로 선택하며, 단독 `--symbol`은 기존
+호출 관계 조회 의미를 유지합니다. 동명 선언은 HEAD가 응답의 정확한 선택 객체를
+typed MCP 또는 고급 CLI `--input`에 전달합니다. 사용자가 구조를 작성하지 않습니다.
+
+파서는 격리된 표준 라이브러리 AST/tokenize를 재사용하며 프로젝트 모듈을 실행하지
+않습니다. 선택은 경로, digest, 선언 이름과 종류, 출현 번호, UTF-16 끝 제외 범위에
+결합됩니다. 원문은 데코레이터와 내부 바이트를 보존하고 표시용 서명은 별도 축약
+라벨입니다. 상한은 소스 1 MiB, 목록 64개, 표시 500자, 직렬화된 상세 60,000바이트이며
+기존 Observation 필드의 65,536바이트 안에 머뭅니다. 선택 본문이 48,000바이트를
+넘으면 조용히 자르지 않고 불가 상태를 명시합니다. JSON 이스케이프 때문에 상세
+상한에 먼저 도달할 수도 있습니다. 이는 응답 크기 제한이지 의미적 자격 판정이나
+목록 조회 의무가 아닙니다. 일반 소스·범위 읽기는 계속 사용할 수 있습니다.
+
+증거 버전 1인 기존 `source.structural-context`는 바뀌지 않습니다.
+새 `source.python-declaration-context`는 타입 버전 1, 증거 버전 2로 명시적으로
+분기하며 기존 create-only 저장소를 재사용합니다. 과거 기록을 마이그레이션하거나
+재해시하지 않습니다. 새 보존 증거도 Context 포함 전에 소스 변경을 검증합니다.
+기본값은 비보존이며 이 선택적 읽기는 Canon, World, ReviewDecision 또는 복구
+방향을 생성하지 않습니다.
+
 Context compilation은 기본적으로 공통 observation을 제외합니다. HEAD가 semantic analysis를 수행하고 kind가 `observation`이며 `observationIds`에 불변 현재 ID가 들어 있는 EvidenceNeed로 정확한 identity를 요청합니다. Core는 lexical eligibility, semantic promotion 또는 sufficiency judgment 없이 실제 포함만 증명합니다.
 
 일상적인 inspection은 ephemeral하게 유지합니다. cross-Run, rebuttal/audit, handoff, context-loss evidence가 필요할 때만 Observation을 persist합니다. 사용자가 아니라 Host adapter가 정확한 source binding, descriptor, digest, coverage, provenance confirmation을 구성합니다. `observation-ingest`와 `head_observation_ingest`는 이미 bounded된 input을 위한 고급 Host/CI surface이고 collect는 adapter-facing compatibility alias로 유지됩니다.

@@ -48,6 +48,25 @@ not a product concept. HEAD authors these inputs from the user's request; do not
 ask the user to write JSON, find hashes/IDs, select a budget, or repeat the request.
 A task-only call returns a HEAD selection step, not a user approval gate.
 
+For a known Python declaration, use `kind: "selected-source"` with its qualified
+name directly. For an unfamiliar large file, optionally use `kind: "declarations"`
+first, then select an occurrence. Keep `source` for small files; do not force an
+outline, Python parser, World build or new approval on ordinary reads. A returned
+selection binds path, file digest, qualified name, kind, occurrence and range.
+Pass it unchanged to disambiguate repeated names. After drift, inspect the current
+file and reselect; do not reuse old coordinates or infer a successor.
+
+Declarations are static syntax occurrences, not a complete public API or evidence
+of runtime activation. Selected source preserves the continuous original slice
+from the first decorator `@` (otherwise `class`/`def`/`async`) through the last AST
+token, excluding unrelated preceding comments and trailing comments/blank lines.
+Ranges are zero-based UTF-16 and end-exclusive. `displaySignature` is a lossy
+500-character display, never exact source. List omissions, ambiguity, missing
+declarations, parser loss, parse failure and oversized bodies remain explicit;
+inspect `declarationStatus` and `omittedDeclarations` as well as Context inclusion.
+The list is bounded to 64 entries; known names beyond it can still be read directly.
+Do not infer semantic sufficiency or make independent work wait on this lookup.
+
 The Host reads exact working-tree bytes, runs a packaged Python AST observer in
 `-I -S` isolation, prepares and verifies the structural envelope, then includes
 the selected Observation in a Context preview. No project module is executed,

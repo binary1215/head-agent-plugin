@@ -814,8 +814,15 @@ export const tools = [
     inputSchema: { type: "object", properties: {
       project_root: { type: "string", minLength: 1 }, task: { type: "string", minLength: 1 },
       needs: { type: "array", maxItems: 32, items: { type: "object", properties: {
-        kind: { type: "string", enum: ["source", "outgoing-calls"] }, path: { type: "string", minLength: 1 },
+        kind: { type: "string", enum: ["source", "outgoing-calls", "declarations", "selected-source"] }, path: { type: "string", minLength: 1 },
         symbol: { type: "string", maxLength: 512 }, required: { type: "boolean", default: true },
+        selection: { type: "object", description: "Optional exact occurrence from a declarations response; selected-source only. No outline prerequisite for a known unique symbol.", properties: {
+          path: { type: "string", minLength: 1, maxLength: 512 }, fileDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+          qualifiedName: { type: "string", minLength: 1, maxLength: 512 }, kind: { type: "string", enum: ["class", "function", "async-function", "method", "async-method"] },
+          occurrence: { type: "integer", minimum: 1 }, range: { type: "object", properties: Object.fromEntries(["start", "end"].map((key) => [key, {
+            type: "object", properties: { line: { type: "integer", minimum: 0 }, character: { type: "integer", minimum: 0 } }, required: ["line", "character"], additionalProperties: false,
+          }])), required: ["start", "end"], additionalProperties: false },
+        }, required: ["path", "fileDigest", "qualifiedName", "kind", "occurrence", "range"], additionalProperties: false },
       }, required: ["kind", "path"], additionalProperties: false } },
       retain: { type: "boolean", default: false, description: "HEAD selects retention for audit/reuse/handoff; no additional user approval. Ephemeral is the default." },
       timeout_ms: { type: "integer", minimum: 1, maximum: 120000, default: 15000 },

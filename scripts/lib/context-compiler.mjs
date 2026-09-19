@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { SOURCE_OBSERVATION_TYPE, sourceObservationNode, readSourceObservation } from "./source-observation.mjs";
+import { SOURCE_OBSERVATION_TYPE, DECLARATION_OBSERVATION_TYPE, sourceObservationNode, readSourceObservation } from "./source-observation.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
@@ -825,7 +825,7 @@ function observationCandidates(projectRoot, projectId, evidenceNeeds, sourceObse
   return [...nodes.values()]
     .filter((node) => requestedIds.has(node.nodeId) && ["ObservationRecord", "DerivedObservationRecord"].includes(node.kind))
     .map((node) => {
-      if (node.typeKey === SOURCE_OBSERVATION_TYPE && !sourceObservations.some((bundle) => bundle.observation.observationId === node.nodeId)) {
+      if ([SOURCE_OBSERVATION_TYPE, DECLARATION_OBSERVATION_TYPE].includes(node.typeKey) && !sourceObservations.some((bundle) => bundle.observation.observationId === node.nodeId)) {
         const verified = sourceObservationNode(projectRoot, projectId, readSourceObservation(projectRoot, projectId, node.payload.bundleKey));
         if (verified.observationHash !== node.observationHash) fail("Source Observation binding mismatch.", "SOURCE_OBSERVATION_INVALID");
         node = verified;

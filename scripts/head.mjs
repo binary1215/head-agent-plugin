@@ -240,7 +240,7 @@ export function usage({ all = false } = {}) {
       "head run-integration-read <project> --review <review-decision-id>",
       "head context-preview <project> --task <text> [--budget <tokens>] [--evidence-needs <json-file>]",
       "head context-prepare <project> --task <text> [--budget <tokens>]",
-      "head source-context <project> --task <text> [--source <relative-path>] [--symbol <qualified-function>] [--retain true] [--timeout <ms>]",
+      "head source-context <project> --task <text> [--source <relative-path>] [--kind source|outgoing-calls|declarations|selected-source] [--symbol <qualified-name>] [--input <needs.json>] [--retain true] [--timeout <ms>]",
       "head source-observation-read <project> --bundle <key> | --failure <key>",
       "head context-compile <project> --task <text> [--budget <tokens>] [--evidence-needs <json-file>]",
       "head context-read <project> --capsule <capsule-id>",
@@ -698,7 +698,7 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (command === "run-integration-read") return readRunResultIntegration({ root, reviewDecisionId: options.review });
   if (command === "context-prepare") return prepareContextWorkflow({ root, task: options.task, budget: options.budget == null ? DEFAULT_CONTEXT_BUDGET : Number(options.budget) });
   if (command === "source-context") return prepareSourceContext({ root, task: options.task,
-    needs: options.source ? [{ kind: options.symbol ? "outgoing-calls" : "source", path: options.source, symbol: options.symbol ?? "", required: options.required !== "false" }] : [],
+    needs: options.input ? inputJson(options, "Source needs").needs : options.source ? [{ kind: options.kind ?? (options.symbol ? "outgoing-calls" : "source"), path: options.source, symbol: options.symbol ?? "", required: options.required !== "false" }] : [],
     retain: options.retain === "true", budget: options.budget == null ? undefined : Number(options.budget), signal, onProcess,
     timeoutMs: options.timeout == null ? 15_000 : Number(options.timeout) });
   if (command === "source-observation-read") return inspectSourceObservation({ root, bundleKey: options.bundle, failureKey: options.failure });

@@ -3,8 +3,8 @@ import { loadObservationArtifacts } from "./observation-store.mjs";
 import { previewContextWorkflow } from "./context-workflow.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { readSourceBytes, sourceCurrent, sourceDigest, sourceObjectDigest, sourceError, collectorImplementation,
-  runPythonSourceWorker, preparePythonObservation } from "./python-source-collector.mjs";
-import { SOURCE_OBSERVATION_TYPE, createSourceObservation, verifySourceObservation, retainSourceObservation, readSourceObservation, retainSourceFailure, readSourceFailure, classifySourceStorageError } from "./source-observation.mjs";
+  runPythonSourceWorker, preparePythonObservation, preparePythonDeclarations, validateDeclarationSelection, PYTHON_DECLARATION_KINDS } from "./python-source-collector.mjs";
+import { SOURCE_OBSERVATION_TYPE, DECLARATION_OBSERVATION_TYPE, createSourceObservation, verifySourceObservation, retainSourceObservation, readSourceObservation, retainSourceFailure, readSourceFailure, classifySourceStorageError } from "./source-observation.mjs";
 
 const recent = new Map(); // P5 bounded optimization only; never a recovery pointer.
 let recentBytes = 0;
@@ -23,12 +23,16 @@ const cacheKey = (root, query, sources, profile, kind) => sourceObjectDigest({ r
 function normalizeNeeds(needs) {
   if (!Array.isArray(needs) || needs.length > 32) throw sourceError("SOURCE_NEEDS_INVALID");
   return needs.map((need, index) => {
-    if (!need || Object.keys(need).some((key) => !["kind", "path", "symbol", "required"].includes(key))
-      || !["source", "outgoing-calls"].includes(need.kind) || typeof need.path !== "string"
+    if (!need || Object.keys(need).some((key) => !["kind", "path", "symbol", "required", "selection"].includes(key))
+      || !["source", "outgoing-calls", ...PYTHON_DECLARATION_KINDS].includes(need.kind) || typeof need.path !== "string"
       || (need.required !== undefined && typeof need.required !== "boolean")
       || (need.symbol !== undefined && (typeof need.symbol !== "string" || need.symbol.length > 512))
-      || (need.kind === "outgoing-calls" && !need.symbol)) throw sourceError("SOURCE_NEEDS_INVALID");
-    return { id: `source-need-${index + 1}`, kind: need.kind, path: need.path, symbol: need.symbol ?? "", required: need.required ?? true };
+      || (["outgoing-calls", "selected-source"].includes(need.kind) && !need.symbol)
+      || (need.selection !== undefined && need.kind !== "selected-source")
+      || (need.kind === "declarations" && need.symbol)) throw sourceError("SOURCE_NEEDS_INVALID");
+    if (need.selection !== undefined) validateDeclarationSelection(need.selection);
+    return { id: `source-need-${index + 1}`, kind: need.kind, path: need.path, symbol: need.symbol ?? "", required: need.required ?? true,
+      ...(need.selection === undefined ? {} : { selection: need.selection }) };
   });
 }
 
@@ -64,12 +68,13 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
       if (signal?.aborted) throw sourceError("SOURCE_CANCELLED");
       const bytes = readSourceBytes(root, need.path);
       sources = [{ path: need.path, digest: sourceDigest(bytes), base64: bytes.toString("base64") }];
-      query = [{ path: need.path, symbol: need.symbol }];
+      const declarationNeed = PYTHON_DECLARATION_KINDS.includes(need.kind);
+      query = [{ path: need.path, symbol: need.symbol, ...(declarationNeed ? { kind: need.kind, ...(need.selection ? { selection: need.selection } : {}) } : {}) }];
       if (bytes.subarray(0, 3).equals(Buffer.from([239, 187, 191]))) throw sourceError("SOURCE_ENCODING_UNSUPPORTED");
       let text;
       try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw sourceError("SOURCE_ENCODING_UNSUPPORTED"); }
       if (/\r(?!\n)/u.test(text)) throw sourceError("SOURCE_ENCODING_UNSUPPORTED");
-      if (need.kind === "outgoing-calls") {
+      if (need.kind !== "source") {
         if (!need.path.endsWith(".py")) throw sourceError("SOURCE_LANGUAGE_UNSUPPORTED");
         identity ??= await runPythonSourceWorker({ operation: "identity" }, { signal, timeoutMs, onProcess });
         profile = { runtime: identity.result.profile, executableDigest: identity.executableDigest, implementation: collectorImplementation() };
@@ -93,7 +98,7 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
         let observations = [];
         try { observations = loadObservationArtifacts({ projectRoot: root, projectId }).observations; }
         catch (error) { storageIssue(error, "observation-index"); }
-        for (const record of observations.filter((entry) => entry.typeKey === SOURCE_OBSERVATION_TYPE
+        for (const record of observations.filter((entry) => entry.typeKey === (declarationNeed ? DECLARATION_OBSERVATION_TYPE : SOURCE_OBSERVATION_TYPE)
           && entry.payload.path === need.path && entry.payload.evidenceKind === need.kind && entry.payload.sourceDigest === sources[0].digest)) {
           try {
             const previous = readSourceObservation(root, projectId, record.payload.bundleKey);
@@ -104,26 +109,28 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
       if (bundle) { verifySourceObservation(root, projectId, bundle); reused = true; }
       else {
         let prepared = null;
-        if (need.kind === "outgoing-calls") {
-          response = await runPythonSourceWorker({ operation: "collect", sources: [{ path: need.path, symbol: need.symbol, text }] }, { signal, timeoutMs, onProcess });
+        if (need.kind !== "source") {
+          response = await runPythonSourceWorker({ operation: declarationNeed ? "declarations" : "collect", sources: [{ ...query[0], text }] }, { signal, timeoutMs, onProcess });
           if (response.result.reason === "output-frame-limit") throw sourceError("SOURCE_RESPONSE_LIMIT");
           if (sourceObjectDigest(response.result.profile) !== sourceObjectDigest(profile.runtime) || response.executableDigest !== profile.executableDigest
             || sourceObjectDigest(collectorImplementation()) !== sourceObjectDigest(profile.implementation)) throw sourceError("SOURCE_DRIFT");
-          prepared = preparePythonObservation({ projectId, query, sources, response, profile });
+          prepared = (declarationNeed ? preparePythonDeclarations : preparePythonObservation)({ projectId, query, sources, response, profile });
           if (prepared.status !== "ready") {
             if (!sourceCurrent(root, sources)) throw sourceError("SOURCE_DRIFT");
             const failureKey = saveFailure({ projectId, query, sources, profile, response: response.raw.toString("base64"), status: prepared.status, code: prepared.code });
             results.push({ need, status: prepared.status, code: prepared.code, reason: response.result.results[0].reason ?? prepared.reason,
               unresolved: response.result.results[0].unresolved, sourceDigest: sources[0].digest,
+              ...(declarationNeed ? { declarations: prepared.details.declarations, total: prepared.details.total, omitted: prepared.details.omitted,
+                selectedSourceBytes: prepared.details.selectedSourceBytes ?? null } : {}),
               failureKey, retained: Boolean(failureKey), storageIssues,
-              scope: "this-need-only", fallback: "HEAD may request a separate source need; source text does not satisfy outgoing-calls" });
+              scope: "this-need-only", fallback: "HEAD may inspect current source separately or reselect an exact declaration; missing evidence does not block independent work" });
             continue;
           }
         }
         if (signal?.aborted) throw sourceError("SOURCE_CANCELLED");
         if (!sourceCurrent(root, sources)) throw sourceError("SOURCE_DRIFT");
-        bundle = createSourceObservation({ version: 1, projectId, kind: need.kind, query, sources, profile,
-          observedAt: new Date().toISOString(), response: response?.raw.toString("base64") ?? null, envelopeHash: prepared?.envelope.envelopeHash ?? null });
+        bundle = createSourceObservation({ version: declarationNeed ? 2 : 1, projectId, kind: need.kind, query, sources, profile,
+          observedAt: new Date().toISOString(), response: response?.raw.toString("base64") ?? null, envelopeHash: prepared?.evidenceHash ?? prepared?.envelope?.envelopeHash ?? null });
         verifySourceObservation(root, projectId, bundle);
       }
       let retained = false;
@@ -134,6 +141,7 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
       remember(key, bundle);
       selected.push({ need, bundle });
       results.push({ need, status: "ready", reused, observationId: bundle.observation.observationId,
+        ...(declarationNeed ? { declarationStatus: JSON.parse(bundle.observation.payload.details).status, omittedDeclarations: JSON.parse(bundle.observation.payload.details).omitted } : {}),
         retained, bundleKey: retained ? bundle.observation.payload.bundleKey : null, storageIssues,
         coverage: "partial", truth: "unknown", sourceDigest: sources[0].digest,
         unresolvedCount: bundle.observation.payload.unresolvedCount, omittedSourceBytes: bundle.observation.payload.omittedSourceBytes });

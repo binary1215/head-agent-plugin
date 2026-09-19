@@ -169,6 +169,32 @@ The metric workflow is a thin provider-neutral use of the common contract, not a
 
 ## Context and use
 
+### Optional Python declaration reads
+
+The existing `head_source_context` accepts `declarations` for a bounded static
+outline and `selected-source` for a known qualified declaration. The latter needs
+no prior outline. CLI uses `--kind`; an unqualified `--symbol` option retains its
+existing outgoing-call meaning. For ambiguous occurrences, HEAD supplies the
+returned exact selection through typed MCP or advanced CLI `--input` needs.
+Users need not author that structure.
+
+The parser remains isolated stdlib AST/tokenize. No project module executes. A
+selection binds path, digest, qualified name, declaration kind, occurrence and
+UTF-16 end-exclusive range. Source spans preserve decorators and internal bytes;
+display signatures are separate lossy labels. The bounds are one 1 MiB source,
+64 list entries, 500 display characters, and 60,000 serialized detail bytes within
+the existing 65,536-byte Observation field. A selected body over 48,000 bytes is
+explicitly unavailable rather than silently cut; JSON escaping can reach the
+detail limit earlier. These are response bounds, not semantic eligibility or a
+requirement to perform an outline. Ordinary source/range inspection stays usable.
+
+Historical `source.structural-context` with evidence version 1 is unchanged.
+New `source.python-declaration-context` records use type version 1 and evidence
+version 2 via explicit dispatch; the same create-only store is reused. Historical
+records are not migrated or rehashed. New retained records are also checked for
+source drift before Context inclusion. Default retention remains off; no Canon,
+World, ReviewDecision or recovery direction is created by these optional reads.
+
 Context compilation excludes common observations by default. HEAD performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core then proves actual inclusion without lexical eligibility, semantic promotion, or sufficiency judgment.
 
 Ordinary inspection remains ephemeral. Persist an Observation only when cross-Run, rebuttal/audit, handoff, or context-loss evidence is required. A Host adapter, not the user, constructs the exact source binding, descriptor, digests, coverage, and provenance confirmation. `observation-ingest` and `head_observation_ingest` are advanced Host/CI surfaces for already bounded input; collect remains the adapter-facing compatibility alias.
