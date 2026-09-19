@@ -178,6 +178,13 @@ existing outgoing-call meaning. For ambiguous occurrences, HEAD supplies the
 returned exact selection through typed MCP or advanced CLI `--input` needs.
 Users need not author that structure.
 
+New declaration Context details include a compact `collectionProfile`: producer,
+Python version, protocols and implementation digests, even without retention.
+Failures expose the same summary when worker identity was already obtained.
+It describes the attempted parser, not successful parsing or runtime truth;
+missing identity is not invented. No full file, raw worker frame or executable
+path is added to the public response. Existing v1 details remain unchanged.
+
 The parser remains isolated stdlib AST/tokenize. No project module executes. A
 selection binds path, digest, qualified name, declaration kind, occurrence and
 UTF-16 end-exclusive range. Source spans preserve decorators and internal bytes;

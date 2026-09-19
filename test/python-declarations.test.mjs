@@ -135,3 +135,60 @@ test("parenthesized decorators, overloads, tab header and reordered selection ke
   assert.equal((await query(root, [need("selected-source", "dup")])).results[0].status, "ambiguous");
   assert.throws(() => exactDeclarationSlice('"😀"', { start: { line: 0, character: 2 }, end: { line: 0, character: 4 } }), { code: "SOURCE_RESPONSE_INVALID" });
 });
+
+test("ephemeral declaration success and failures expose compact parser provenance without raw evidence", async (t) => {
+  const root = project(t, '# DO_NOT_PUBLISH_FULL_FILE\ndef f(): pass\n');
+  const assertProfile = (profile) => {
+    assert.equal(profile.producer, "python-stdlib-ast");
+    assert.equal(profile.declarationProtocol, "python-static-declarations-1");
+    assert.match(profile.pythonVersion, /^3\./u);
+    assert.match(profile.profileDigest, /^[a-f0-9]{64}$/u);
+    assert.match(profile.workerDigest, /^[a-f0-9]{64}$/u);
+    assert.match(profile.normalizerDigest, /^[a-f0-9]{64}$/u);
+    assert.equal(profile.isolated, true);
+    assert.equal(profile.noSite, true);
+    assert.ok(Buffer.byteLength(JSON.stringify(profile)) < 800);
+  };
+  for (const kind of ["declarations", "selected-source"]) {
+    const result = await query(root, [need(kind, kind === "selected-source" ? "f" : "")]);
+    assertProfile(details(result).collectionProfile);
+    assert.equal(result.results[0].retained, false);
+    assert.doesNotMatch(JSON.stringify(result), /DO_NOT_PUBLISH_FULL_FILE|"base64"|"response"|"executableDigest"/u);
+  }
+  fs.writeFileSync(path.join(root, "module.py"), 'def broken(\n# PRIVATE_PARSE_INPUT\n');
+  const failed = await dispatch({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "head_source_context", arguments: {
+    project_root: root, task: "Inspect", needs: [need("declarations")],
+  } } }, { onProcess });
+  const failure = failed.result.structuredContent;
+  assert.equal(failure.results[0].status, "parse-unsupported");
+  assertProfile(failure.results[0].collectionProfile);
+  assert.equal(failure.results[0].retained, false);
+  assert.doesNotMatch(JSON.stringify(failed), /PRIVATE_PARSE_INPUT|"base64"|"executableDigest"/u);
+  fs.writeFileSync(path.join(root, "module.py"), "def f(): pass\n");
+  const controller = new AbortController(); let closes = 0;
+  const cancelled = await query(root, [need("declarations")], { signal: controller.signal, onProcess(event) {
+    onProcess(event); if (event.event === "closed" && ++closes === 1) controller.abort();
+  } });
+  assert.equal(cancelled.results[0].code, "SOURCE_CANCELLED");
+  assertProfile(cancelled.results[0].collectionProfile);
+  assert.equal(fs.existsSync(path.join(root, ".head/observations/source-bundles")), false);
+});
+
+test("return lambdas and explicit async line joins preserve the complete exact header", async (t) => {
+  for (const header of [
+    'def target() -> lambda x: x:',
+    'def target() -> lambda x: lambda y: (x, y):',
+    'def target(value=lambda x: x):',
+    'async \\\ndef target():',
+    'async \\\r\ndef target():',
+  ]) {
+    const source = `${header}\n    return 1\n`;
+    const root = project(t, source);
+    const result = await query(root, [need("selected-source", "target")]);
+    assert.equal(result.status, "observed", JSON.stringify(result.results));
+    const d = details(result);
+    assert.equal(d.source, `${header}\n    return 1`);
+    assert.equal(exactDeclarationSlice(source, d.declarations[0].headerRange).text, header);
+    assert.equal(d.declarations[0].displaySignature, header.replace(/\s+/gu, " "));
+  }
+});

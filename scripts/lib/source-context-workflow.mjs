@@ -3,7 +3,7 @@ import { loadObservationArtifacts } from "./observation-store.mjs";
 import { previewContextWorkflow } from "./context-workflow.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { readSourceBytes, sourceCurrent, sourceDigest, sourceObjectDigest, sourceError, collectorImplementation,
-  runPythonSourceWorker, preparePythonObservation, preparePythonDeclarations, validateDeclarationSelection, PYTHON_DECLARATION_KINDS } from "./python-source-collector.mjs";
+  runPythonSourceWorker, preparePythonObservation, preparePythonDeclarations, validateDeclarationSelection, PYTHON_DECLARATION_KINDS, compactDeclarationProfile } from "./python-source-collector.mjs";
 import { SOURCE_OBSERVATION_TYPE, DECLARATION_OBSERVATION_TYPE, createSourceObservation, verifySourceObservation, retainSourceObservation, readSourceObservation, retainSourceFailure, readSourceFailure, classifySourceStorageError } from "./source-observation.mjs";
 
 const recent = new Map(); // P5 bounded optimization only; never a recovery pointer.
@@ -120,7 +120,7 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
             const failureKey = saveFailure({ projectId, query, sources, profile, response: response.raw.toString("base64"), status: prepared.status, code: prepared.code });
             results.push({ need, status: prepared.status, code: prepared.code, reason: response.result.results[0].reason ?? prepared.reason,
               unresolved: response.result.results[0].unresolved, sourceDigest: sources[0].digest,
-              ...(declarationNeed ? { declarations: prepared.details.declarations, total: prepared.details.total, omitted: prepared.details.omitted,
+              ...(declarationNeed ? { collectionProfile: prepared.details.collectionProfile, declarations: prepared.details.declarations, total: prepared.details.total, omitted: prepared.details.omitted,
                 selectedSourceBytes: prepared.details.selectedSourceBytes ?? null } : {}),
               failureKey, retained: Boolean(failureKey), storageIssues,
               scope: "this-need-only", fallback: "HEAD may inspect current source separately or reselect an exact declaration; missing evidence does not block independent work" });
@@ -150,7 +150,8 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
       const status = unavailable.has(error.code) ? "unavailable" : "invalid";
       const failureKey = saveFailure({ projectId, query: query ?? [{ path: need.path, symbol: need.symbol }], sources: sources ?? [], profile: profile ?? null,
         response: response?.raw.toString("base64") ?? null, status, code: error.code });
-      results.push({ need, status, code: error.code, diagnostic: error.diagnostic ?? null, failureKey, retained: Boolean(failureKey), storageIssues, scope: "this-need-only", sourceDigest: sources?.[0]?.digest ?? null });
+      results.push({ need, status, code: error.code, diagnostic: error.diagnostic ?? null, failureKey, retained: Boolean(failureKey), storageIssues, scope: "this-need-only", sourceDigest: sources?.[0]?.digest ?? null,
+        ...(PYTHON_DECLARATION_KINDS.includes(need.kind) && profile?.runtime ? { collectionProfile: compactDeclarationProfile(profile) } : {}) });
     }
   }
   // Revalidate at the consumption boundary, not merely after collection.

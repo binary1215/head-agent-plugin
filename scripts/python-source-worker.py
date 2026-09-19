@@ -90,11 +90,15 @@ def declarations(item):
         if index is None:
             raise ValueError("declaration-token-missing")
         depth, header_end, name_token = 0, None, None
+        # A return annotation may itself be an unparenthesized lambda. Its ':'
+        # is not the suite delimiter, even though tokenizer bracket depth is zero.
+        returns = getattr(node, "returns", None)
+        annotation_end = ast_point(returns.end_lineno, returns.end_col_offset) if returns is not None else begin
         for token in tokens[index:]:
             if name_token is None and token.type == tokenize.NAME and token.string not in ("class", "def", "async"):
                 name_token = token
             if token.type == tokenize.OP:
-                if token.string == ":" and depth == 0:
+                if token.string == ":" and depth == 0 and token.start >= annotation_end:
                     header_end = token.end
                     break
                 if token.string in "([{":

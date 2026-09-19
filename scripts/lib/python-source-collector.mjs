@@ -158,6 +158,18 @@ export function preparePythonObservation({ projectId, query, sources, response, 
 }
 
 export const PYTHON_DECLARATION_KINDS = Object.freeze(["declarations", "selected-source"]);
+// Diagnostic provenance, not a capability gate or claim of parse success.
+// The digest binds the complete profile; paths, raw frames and file bytes stay private.
+export function compactDeclarationProfile(profile) {
+  if (!profile?.runtime) return null;
+  return { producer: "python-stdlib-ast", declarationProtocol: "python-static-declarations-1",
+    workerProtocol: profile.runtime.version, pythonVersion: String(profile.runtime.python ?? "").split(/\s/u)[0].slice(0, 32),
+    implementation: String(profile.runtime.implementation ?? "").slice(0, 32),
+    isolated: profile.runtime.isolated === true, noSite: profile.runtime.noSite === true,
+    profileDigest: sourceObjectDigest(profile), workerDigest: profile.implementation?.worker ?? null,
+    normalizerDigest: profile.implementation?.normalizer ?? null,
+    basis: "verified-worker-identity; not-parse-success-or-runtime-truth" };
+}
 const declarationKinds = ["class", "function", "async-function", "method", "async-method"];
 const closed = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).every((key) => keys.includes(key));
@@ -209,7 +221,8 @@ export function preparePythonDeclarations({ query, sources, response, profile })
       || typeof item.conditional !== "boolean" || typeof item.decorated !== "boolean") invalid();
     const source = exactDeclarationSlice(text, item.range), header = exactDeclarationSlice(text, item.headerRange), name = exactDeclarationSlice(text, item.nameRange);
     if (header.start < source.start || header.end > source.end || name.start < header.start || name.end > header.end
-      || name.text.normalize("NFKC") !== item.qualifiedName.split(".").at(-1) || !/^(?:(?:class|def)\s|async\s+def\s)/u.test(header.text)
+      || name.text.normalize("NFKC") !== item.qualifiedName.split(".").at(-1)
+      || !/^(?:(?:class|def)(?:\s|\\\r?\n)|async(?:\s|\\\r?\n)+def(?:\s|\\\r?\n))/u.test(header.text)
       || !header.text.endsWith(":") || (item.decorated ? !source.text.startsWith("@") : header.start !== source.start)
       || (need.kind === "selected-source" && item.qualifiedName !== need.symbol)) invalid();
     const selection = { path: file.path, fileDigest: file.digest, qualifiedName: item.qualifiedName, kind: item.kind, occurrence: item.occurrence, range: item.range };
@@ -230,6 +243,7 @@ export function preparePythonDeclarations({ query, sources, response, profile })
     || (["missing", "stale-selection", "selection-mismatch", "parse-unsupported"].includes(result.status) && result.total !== 0)) invalid();
   let status = result.status;
   const details = { claimTruth: "unknown", repositoryCompleteness: "not-claimed", staticDeclarationsOnly: true,
+    collectionProfile: compactDeclarationProfile(profile),
     status, total: result.total, omitted: result.omitted, declarations };
   if (need.kind === "selected-source" && status === "ready") {
     const source = exactDeclarationSlice(text, declarations[0].range).text;
