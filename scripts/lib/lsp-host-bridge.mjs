@@ -9,9 +9,6 @@ import {
   LSP_HOST_REAL_LIMITS,
   LSP_HOST_REAL_NORMALIZER_VERSION,
   LSP_HOST_REAL_PROFILE_KIND,
-  LSP_HOST_REFERENCE_WITNESS_NORMALIZER_VERSION,
-  LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND,
-  LSP_HOST_REFERENCE_WITNESS_PROFILE_VERSION,
   LspFrameParser,
   admittedRealDocumentFromUri,
   boundedFixtureCallRanges,
@@ -56,17 +53,6 @@ const REAL_PACKAGE_TRUST = Object.freeze({
     entrypoint: Object.freeze({ path: "lib/tsserver.js", sha256: "e3ccfeec65ec5c470b8ffc5611878a31182650c7e8a062c38a719f83b523edcb" }),
   }),
 });
-const REFERENCE_WITNESS_SOURCE_TRUST = Object.freeze([
-  Object.freeze({ path: "packages/lsp-core/src/mcp.ts", bytes: 3520, sha256: "ac0dd6afb89b8232b16754255dbec81894074fdc5318f1fa0b0c2c59f0857a83" }),
-  Object.freeze({ path: "packages/lsp-core/src/tools.ts", bytes: 34, sha256: "10450f11ea6a25431f85e72cda7d5c280e8a7bb9f612cb5f68bc2b516e380a4b" }),
-  Object.freeze({ path: "packages/lsp-core/src/tools/index.ts", bytes: 577, sha256: "2bc0b412cbab282dbb6523c013afef68c9a7face2c103fdcb5ef9106d117435d" }),
-  Object.freeze({ path: "packages/lsp-core/src/tools/runtime.ts", bytes: 749, sha256: "5c5857d986659dfef442d687c0e87dfe6cbffe25821ffbaf61bbaf62e92bd4bd" }),
-]);
-const REFERENCE_WITNESS_SOURCE_PATHS = Object.freeze(REFERENCE_WITNESS_SOURCE_TRUST.map((record) => record.path));
-const REFERENCE_WITNESS_CONFIG_DIGEST = "e24c379b997642460166073adae173796b7ba7144912deaf9c18bb74fb620161";
-const REFERENCE_WITNESS_CONTROL = "break-tools-barrel-v1";
-const REFERENCE_WITNESS_PREFLIGHT_MAX_ENTRIES = 1024;
-const REFERENCE_WITNESS_AMBIENT_NAMES = new Set(["tsconfig.json", "jsconfig.json", "package.json", "node_modules"]);
 const ALLOWED_SCENARIOS = new Set([
   "barrel", "direct", "false-positive", "wrong-position", "prepare-null", "prepare-empty",
   "hierarchy-null", "hierarchy-empty", "notifications", "notification-flood", "frame-oversize",
@@ -90,48 +76,6 @@ function safeOwnedRoot(qaRoot, ownedRoot) {
 function removeOwnedRoot(qaRoot, ownedRoot) {
   const { candidate } = safeOwnedRoot(qaRoot, ownedRoot);
   if (fs.existsSync(candidate)) fs.rmSync(candidate, { recursive: true, force: false });
-}
-
-function inspectReferenceWitnessQaBoundary(qaRoot) {
-  if (typeof qaRoot !== "string" || !path.isAbsolute(qaRoot)) {
-    throw protocolError("unsupported-profile", "Reference-witness QA boundary must be an absolute directory.");
-  }
-  const rootStat = fs.lstatSync(qaRoot, { throwIfNoEntry: false });
-  if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
-    throw protocolError("unsupported-profile", "Reference-witness QA boundary is missing or reparse-backed.");
-  }
-  const root = fs.realpathSync.native(qaRoot);
-  const pending = [{ directory: root, relativeDirectory: "" }];
-  const candidates = [];
-  let checkedEntries = 0;
-  while (pending.length > 0) {
-    const current = pending.pop();
-    for (const entry of fs.readdirSync(current.directory, { withFileTypes: true })) {
-      checkedEntries += 1;
-      if (checkedEntries > REFERENCE_WITNESS_PREFLIGHT_MAX_ENTRIES) {
-        const sourcePreflight = { status: "blocked", boundary: "qa-root", checkedEntries, candidates, reason: "entry-limit" };
-        throw protocolError("limit-exceeded", "Reference-witness QA preflight exceeded its bounded entry count.", { sourcePreflight });
-      }
-      const relativePath = current.relativeDirectory ? `${current.relativeDirectory}/${entry.name}` : entry.name;
-      const nativePath = path.join(current.directory, entry.name);
-      const stat = fs.lstatSync(nativePath);
-      if (stat.isSymbolicLink()) {
-        candidates.push({ path: relativePath.replaceAll("\\", "/"), kind: "reparse-entry" });
-        continue;
-      }
-      const lowerName = entry.name.toLowerCase();
-      if (REFERENCE_WITNESS_AMBIENT_NAMES.has(lowerName)) {
-        candidates.push({ path: relativePath.replaceAll("\\", "/"), kind: lowerName === "node_modules" ? "dependency-root" : "configuration" });
-        if (lowerName === "node_modules") continue;
-      }
-      if (stat.isDirectory()) pending.push({ directory: nativePath, relativeDirectory: relativePath });
-    }
-  }
-  const sourcePreflight = { status: candidates.length === 0 ? "passed" : "blocked", boundary: "qa-root", checkedEntries, candidates };
-  if (candidates.length > 0) {
-    throw protocolError("unsupported-profile", "Reference-witness QA boundary contains ambient configuration or dependency candidates.", { sourcePreflight });
-  }
-  return Object.freeze(sourcePreflight);
 }
 
 function profileProvenance(profile) {
@@ -422,20 +366,9 @@ const REAL_RESULT_GATE = Object.freeze({
   isolationLevel: "observational-synthetic-fixture-only",
   authority: "ephemeral-host-evidence-only",
 });
-const REFERENCE_WITNESS_DISCLOSURE = Object.freeze({
-  copiedInputCoverage: "exact-four-files",
-  actualTlsProgramCoverage: "not-observable-through-standard-lsp",
-  actualTlsConfigSelection: "bounded-profile-requested-not-mechanically-proven",
-  resolutionMetadataCoverage: "compiler-api-probe-only",
-  dependencyCoverage: "partial-unresolved-external-imports",
-  filesystemReadIsolation: "not-enforced-unknown",
-  provenanceClass: "local-download-unverified",
-});
-
-function realResult({ fixtureId, profileKind = LSP_HOST_REAL_PROFILE_KIND, status, stage, reason, cleanup = {}, observation = {}, execution = {} }) {
+function realResult({ fixtureId, status, stage, reason, cleanup = {}, observation = {}, execution = {} }) {
   return Object.freeze({
-    evidenceKind: profileKind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? "lsp-real-rw-o-observation" : "lsp-real-rq-observation",
-    ...(profileKind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? { profileKind } : {}),
+    evidenceKind: "lsp-real-rq-observation",
     fixtureId,
     status,
     stage,
@@ -445,7 +378,6 @@ function realResult({ fixtureId, profileKind = LSP_HOST_REAL_PROFILE_KIND, statu
     ...observation,
     executionProvenance: execution,
     ...REAL_RESULT_GATE,
-    ...(profileKind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? REFERENCE_WITNESS_DISCLOSURE : {}),
   });
 }
 
@@ -524,7 +456,7 @@ function verifyRealPackage(packageProfile, expectedName) {
   return { ...packageProfile, root };
 }
 
-function verifyRealProfileManifest(manifestFile, { allowReferenceWitness = true } = {}) {
+function verifyRealProfileManifest(manifestFile) {
   if (typeof manifestFile !== "string" || !path.isAbsolute(manifestFile)) throw protocolError("unsupported-profile", "Real profile manifest path is invalid.");
   const manifestStat = fs.lstatSync(manifestFile, { throwIfNoEntry: false });
   if (!manifestStat?.isFile() || manifestStat.isSymbolicLink() || manifestStat.size < 1 || manifestStat.size > 1024 * 1024) {
@@ -537,70 +469,8 @@ function verifyRealProfileManifest(manifestFile, { allowReferenceWitness = true 
   catch { throw protocolError("unsupported-profile", "Real profile manifest is not valid JSON."); }
   const rqIdentity = profile.kind === LSP_HOST_REAL_PROFILE_KIND && profile.normalizerVersion === LSP_HOST_REAL_NORMALIZER_VERSION
     && profile.profileVersion === undefined && profile.direction === undefined;
-  const rwIdentity = profile.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND
-    && profile.normalizerVersion === LSP_HOST_REFERENCE_WITNESS_NORMALIZER_VERSION
-    && profile.profileVersion === LSP_HOST_REFERENCE_WITNESS_PROFILE_VERSION && profile.direction === "outgoing";
-  if (profile.schemaVersion !== 1 || !rqIdentity && !rwIdentity) {
+  if (profile.schemaVersion !== 1 || !rqIdentity) {
     throw protocolError("unsupported-profile", "Real profile manifest does not match the pinned contract.");
-  }
-  if (rwIdentity && !allowReferenceWitness) {
-    throw protocolError("unsupported-profile", "A reference-witness base must be the single pinned RQ profile.");
-  }
-  if (rwIdentity) {
-    const expectedKeys = ["baseProfileManifestDigest", "baseProfileManifestFile", "configDigest", "direction", "kind", "normalizerVersion", "profileVersion", "provenanceClass", "schemaVersion", "sourceManifest"];
-    if (canonicalJson(Object.keys(profile).sort()) !== canonicalJson(expectedKeys)
-      || typeof profile.baseProfileManifestFile !== "string" || !path.isAbsolute(profile.baseProfileManifestFile)
-      || !/^[a-f0-9]{64}$/.test(profile.baseProfileManifestDigest || "") || !/^[a-f0-9]{64}$/.test(profile.configDigest || "")
-      || profile.provenanceClass !== "local-download-unverified" || !Array.isArray(profile.sourceManifest)
-      || profile.sourceManifest.length !== REFERENCE_WITNESS_SOURCE_PATHS.length) {
-      throw protocolError("unsupported-profile", "Reference-witness profile manifest is not the exact bounded overlay contract.");
-    }
-    for (let index = 0; index < REFERENCE_WITNESS_SOURCE_PATHS.length; index += 1) {
-      const record = profile.sourceManifest[index];
-      if (!record || canonicalJson(Object.keys(record).sort()) !== canonicalJson(["bytes", "path", "sha256"])
-        || record.path !== REFERENCE_WITNESS_SOURCE_PATHS[index] || !Number.isSafeInteger(record.bytes) || record.bytes < 1
-        || record.bytes > LSP_HOST_LIMITS.maxDocumentBytes || !/^[a-f0-9]{64}$/.test(record.sha256 || "")) {
-        throw protocolError("unsupported-profile", "Reference-witness source manifest is invalid or out of order.");
-      }
-    }
-    if (canonicalJson(profile.sourceManifest) !== canonicalJson(REFERENCE_WITNESS_SOURCE_TRUST)
-      || profile.configDigest !== REFERENCE_WITNESS_CONFIG_DIGEST) {
-      throw protocolError("unsupported-profile", "Reference-witness source or config identity is not the reviewed exact profile.");
-    }
-    if (path.resolve(profile.baseProfileManifestFile) === path.resolve(manifestPath)) {
-      throw protocolError("unsupported-profile", "A reference-witness profile cannot reference itself as its base.");
-    }
-    const base = verifyRealProfileManifest(profile.baseProfileManifestFile, { allowReferenceWitness: false });
-    if (base.kind !== LSP_HOST_REAL_PROFILE_KIND || base.manifestDigest !== profile.baseProfileManifestDigest) {
-      throw protocolError("profile-drift", "Reference-witness base profile identity changed.");
-    }
-    const semanticProfile = {
-      kind: profile.kind,
-      profileVersion: profile.profileVersion,
-      direction: profile.direction,
-      normalizerVersion: profile.normalizerVersion,
-      sourceManifest: profile.sourceManifest,
-      configDigest: profile.configDigest,
-      provenanceClass: profile.provenanceClass,
-      tls: base.semanticProfile.tls,
-      typescript: base.semanticProfile.typescript,
-    };
-    return Object.freeze({
-      ...base,
-      manifestFile: manifestPath,
-      manifestDigest: sha256(manifestBytes),
-      kind: profile.kind,
-      profileVersion: profile.profileVersion,
-      direction: profile.direction,
-      normalizerVersion: profile.normalizerVersion,
-      semanticProfile,
-      semanticProfileDigest: sha256(canonicalJson(semanticProfile)),
-      baseProfileManifestFile: base.manifestFile,
-      baseProfileManifestDigest: base.manifestDigest,
-      sourceManifest: Object.freeze(profile.sourceManifest.map((record) => Object.freeze({ ...record }))),
-      configDigest: profile.configDigest,
-      provenanceClass: profile.provenanceClass,
-    });
   }
   if (profile.node?.version !== "v24.18.0" || profile.node?.sha256 !== "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de"
     || profile.node?.size !== 92534088) {
@@ -821,12 +691,10 @@ function verifyBridgeRealDocuments(documents, stage) {
   }
 }
 
-function realServerRequestReply(message, { profileKind = LSP_HOST_REAL_PROFILE_KIND } = {}) {
+function realServerRequestReply(message) {
   if (message?.method === "workspace/configuration" && Array.isArray(message.params?.items)
     && message.params.items.length <= LSP_HOST_REAL_LIMITS.maxConfigurationItems) {
-    const result = message.params.items.map((item) => profileKind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND && item?.section === "formattingOptions"
-      ? { tabSize: 4, insertSpaces: true }
-      : null);
+    const result = message.params.items.map(() => null);
     return { response: { jsonrpc: "2.0", id: message.id, result }, unsupported: false, sideEffect: "none" };
   }
   if (message?.method === "workspace/applyEdit") {
@@ -859,13 +727,8 @@ function verifyExternalCancellationControl(request) {
 async function runRealBridge(request) {
   const profile = verifyRealProfileManifest(request?.profileManifestFile);
   if (request?.profileKind !== profile.kind) throw protocolError("mapping-mismatch", "Real profile kind changed across the Host boundary.", { stage: "launch" });
-  const isReferenceWitness = profile.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND;
-  const expectedControl = isReferenceWitness && request.fixtureId === "RW-O-CONTROL" ? REFERENCE_WITNESS_CONTROL : null;
-  if ((request.referenceWitnessControl ?? null) !== expectedControl) {
-    throw protocolError("mapping-mismatch", "Reference-witness control identity is invalid for this fixture.", { stage: "launch" });
-  }
   const documents = request?.documents;
-  const expectedDocumentCount = profile.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? 5 : 4;
+  const expectedDocumentCount = 4;
   if (!Array.isArray(documents) || documents.length !== expectedDocumentCount || !request?.prepare || !request?.deadlines
     || request.profileManifestDigest !== profile.manifestDigest || request.semanticProfileDigest !== profile.semanticProfileDigest) {
     throw protocolError("mapping-mismatch", "Real bridge input does not match its verified profile and admission.", { stage: "launch" });
@@ -969,7 +832,7 @@ async function runRealBridge(request) {
     });
   };
   const replyToServerRequest = (message) => {
-    const reply = realServerRequestReply(message, { profileKind: profile.kind });
+    const reply = realServerRequestReply(message);
     send(reply.response);
     if (reply.unsupported) throw protocolError("unsupported-server-request", "Real LSP requested an unsupported Host operation.", { stage });
   };
@@ -1098,7 +961,7 @@ async function runRealBridge(request) {
   const rawWireDigest = sha256(canonicalJson({ outbound: sha256(outboundWire), server: sha256(serverWire), bridgeInbound: sha256(inboundWire) }));
   const rawEvidence = {
     schemaVersion: 1,
-    kind: profile.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? "lsp-real-rw-o-raw-evidence" : "lsp-real-rq-raw-evidence",
+    kind: "lsp-real-rq-raw-evidence",
     completeness: failure || closed.code !== 0 ? "partial" : "complete",
     outboundWire: { encoding: "base64", bytes: outboundWire.length, sha256: sha256(outboundWire), body: outboundWire.toString("base64") },
     inboundWire: { encoding: "base64", bytes: inboundWire.length, sha256: sha256(inboundWire), body: inboundWire.toString("base64") },
@@ -1149,7 +1012,6 @@ async function runRealBridge(request) {
     rawWireDigest,
     rawEvidenceDigest,
     replayTransform: request.replayTransform || null,
-    ...(profile.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? { referenceWitnessControl: request.referenceWitnessControl || null } : {}),
     stderrDigest: sha256(stderr),
   };
   if (failure || closed.code !== 0) {
@@ -1190,7 +1052,6 @@ async function collectRealOutgoingCallObservation({
   qaRoot,
   fault = null,
   replayTransform = null,
-  referenceWitnessControl = null,
   onProcessEvent = () => {},
 } = {}) {
   const collectionId = `lsp-real-${crypto.randomUUID()}`;
@@ -1198,63 +1059,13 @@ async function collectRealOutgoingCallObservation({
   if (!profileManifestFile) return realResult({ fixtureId, status: "blocked", stage: "discovery", reason: "no-profile" });
   let descriptor;
   let profile;
-  let referenceWitnessPreflight = null;
   try {
     profile = verifyRealProfileManifest(profileManifestFile);
-    const rq = profile.kind === LSP_HOST_REAL_PROFILE_KIND;
-    const fixtureIdValid = rq ? typeof fixtureId === "string" && /^U0[1-7]$/.test(fixtureId)
-      : typeof fixtureId === "string" && /^RW-O-(A|B|CONTROL|FAILURE)$/.test(fixtureId);
-    if (!fixtureIdValid) throw protocolError("invalid-input", "Real fixture ID is invalid for the selected profile kind.");
-    if (!rq) {
-      if (!Array.isArray(sources) || sources.length !== REFERENCE_WITNESS_SOURCE_PATHS.length
-        || sources.some((source, index) => source?.path !== REFERENCE_WITNESS_SOURCE_PATHS[index] || typeof source?.text !== "string")) {
-        throw protocolError("invalid-input", "Reference-witness source paths and text inputs must match the exact bounded profile shape.");
-      }
-      const suppliedSources = Array.isArray(sources) ? sources.map((source) => ({
-        path: source?.path,
-        bytes: typeof source?.text === "string" ? Buffer.byteLength(source.text, "utf8") : null,
-        sha256: typeof source?.text === "string" ? sha256(Buffer.from(source.text, "utf8")) : null,
-      })) : null;
-      if (canonicalJson(suppliedSources) !== canonicalJson(profile.sourceManifest)) {
-        throw protocolError("source-drift", "Reference-witness source bytes do not match the sealed profile manifest.");
-      }
-      if (sha256(Buffer.from(tsconfigText || "", "utf8")) !== profile.configDigest) {
-        throw protocolError("config-drift", "Reference-witness config bytes do not match the sealed profile manifest.");
-      }
-      const expectedControl = fixtureId === "RW-O-CONTROL" ? REFERENCE_WITNESS_CONTROL : null;
-      if ((referenceWitnessControl ?? null) !== expectedControl) {
-        throw protocolError("invalid-input", "Reference-witness control identity is invalid for this fixture.");
-      }
-    } else if (referenceWitnessControl !== null) {
-      throw protocolError("invalid-input", "RQ fixtures do not admit a reference-witness control.");
-    }
-    const effectiveSources = !rq && referenceWitnessControl === REFERENCE_WITNESS_CONTROL
-      ? sources.map((source) => source.path === "packages/lsp-core/src/tools.ts" ? { ...source, text: "export {};\n" } : source)
-      : sources;
-    descriptor = createSnapshotDescriptor({
-      projectId,
-      generationDigest,
-      sources: effectiveSources,
-      tsconfigText,
-      profileIdentity: rq ? null : {
-        schemaVersion: 1,
-        kind: profile.kind,
-        profileVersion: profile.profileVersion,
-        direction: profile.direction,
-        normalizerVersion: profile.normalizerVersion,
-      },
-    });
-    const expectedPaths = rq ? ["target.ts", "barrel.ts", "caller.ts", "tsconfig.json"] : [...REFERENCE_WITNESS_SOURCE_PATHS, "tsconfig.json"];
+    if (typeof fixtureId !== "string" || !/^U0[1-7]$/.test(fixtureId)) throw protocolError("invalid-input", "Real fixture ID is invalid for the selected profile kind.");
+    descriptor = createSnapshotDescriptor({ projectId, generationDigest, sources, tsconfigText });
+    const expectedPaths = ["target.ts", "barrel.ts", "caller.ts", "tsconfig.json"];
     if (canonicalJson(descriptor.documents.map((item) => item.path)) !== canonicalJson(expectedPaths)) throw protocolError("invalid-input", "Real fixture source paths are not exact for the selected profile kind.");
-    if (!rq && referenceWitnessControl === null) {
-      const observedSources = descriptor.documents.filter((item) => item.languageId === "typescript")
-        .map(({ path: relativePath, bytes, digest }) => ({ path: relativePath, bytes, sha256: digest }));
-      const configDigest = descriptor.documents.find((item) => item.path === "tsconfig.json")?.digest;
-      if (canonicalJson(observedSources) !== canonicalJson(profile.sourceManifest)) throw protocolError("source-drift", "Reference-witness source bytes do not match the sealed profile manifest.");
-      if (configDigest !== profile.configDigest) throw protocolError("config-drift", "Reference-witness config bytes do not match the sealed profile manifest.");
-    }
     if (!supervisorSelection || typeof qaRoot !== "string" || !path.isAbsolute(qaRoot) || !fs.existsSync(qaRoot)) throw protocolError("unsupported-profile", "Real fixture requires a verified supervisor and existing QA root.");
-    if (!rq) referenceWitnessPreflight = inspectReferenceWitnessQaBoundary(qaRoot);
   } catch (error) {
     return realResult({
       fixtureId,
@@ -1262,7 +1073,6 @@ async function collectRealOutgoingCallObservation({
       status: ["profile-drift", "source-drift", "config-drift"].includes(error.code) ? "contaminated" : "blocked",
       stage: "discovery",
       reason: error.code || "invalid-input",
-      observation: error.details?.sourcePreflight ? { sourcePreflight: error.details.sourcePreflight } : {},
     });
   }
   let ownedRoot;
@@ -1319,7 +1129,6 @@ async function collectRealOutgoingCallObservation({
       fault,
       externalCancellation,
       replayTransform,
-      ...(profile.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? { referenceWitnessControl } : {}),
       deadlines: { workEpochMs: startedAt + LSP_HOST_REAL_LIMITS.workBudgetMs, closingEpochMs: startedAt + LSP_HOST_REAL_LIMITS.workBudgetMs + LSP_HOST_REAL_LIMITS.gracefulCleanupMs, totalEpochMs: startedAt + LSP_HOST_REAL_LIMITS.totalTimeoutMs },
     };
     const controlFile = path.join(ownedRoot, "supervisor-control.jsonl");
@@ -1383,7 +1192,6 @@ async function collectRealOutgoingCallObservation({
     if (closed.code !== 0) throw protocolError("process-crash", `Real bridge exited ${closed.code}: ${stderr.toString("utf8").slice(0, 512)}`, { stage: "launch" });
     result = Object.freeze({
       ...result,
-      ...(referenceWitnessPreflight ? { sourcePreflight: referenceWitnessPreflight } : {}),
       cleanup: { attempted: true, verified: true, forced },
       transport: { supervisorManifestDigest: supervision.supervisorManifestDigest, ownershipEstablished: supervision.ownershipEstablished, treeCleanupVerified: supervision.treeCleanupVerified, externalCancellationHostEvidence },
     });
@@ -1396,10 +1204,9 @@ async function collectRealOutgoingCallObservation({
       reason: error.code || "launch-failed",
       cleanup: { attempted: Boolean(supervised), verified: supervision?.treeCleanupVerified === true, forced: forced || catchForced },
       publishedCandidateCount: 0,
-      ...(referenceWitnessPreflight ? { sourcePreflight: referenceWitnessPreflight } : {}),
       ...REAL_RESULT_GATE,
     };
-    const expectedEvidenceKind = profile?.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? "lsp-real-rw-o-observation" : "lsp-real-rq-observation";
+    const expectedEvidenceKind = "lsp-real-rq-observation";
     result = result?.evidenceKind === expectedEvidenceKind
       ? Object.freeze({ ...result, ...failureFields, transport: { supervisorManifestDigest: supervision?.supervisorManifestDigest || null, ownershipEstablished: supervision?.ownershipEstablished === true, treeCleanupVerified: supervision?.treeCleanupVerified === true, externalCancellationHostEvidence } })
       : realResult({ fixtureId, profileKind: profile?.kind, ...failureFields });
@@ -1407,21 +1214,7 @@ async function collectRealOutgoingCallObservation({
     clearTimeout(softTimer); clearTimeout(forceTimer); clearInterval(externalCancelTimer);
     closeRealAdmission(admission);
     if (ownedRoot) { try { removeOwnedRoot(qaRoot, ownedRoot); } catch {
-      if (profile?.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND && result?.evidenceKind === "lsp-real-rw-o-observation") {
-        const processCleanup = result.cleanup || { attempted: Boolean(supervised), verified: supervision?.treeCleanupVerified === true, forced: forced || catchForced };
-        result = Object.freeze({
-          ...result,
-          status: "failed",
-          stage: "closed",
-          reason: "cleanup-failed",
-          cleanup: { attempted: true, verified: false, forced: processCleanup.forced === true },
-          processCleanup,
-          ownedFilesystemCleanup: { attempted: true, verified: false },
-          publishedCandidateCount: 0,
-        });
-      } else {
-        result = realResult({ fixtureId, profileKind: profile?.kind, status: "failed", stage: "closed", reason: "cleanup-failed", cleanup: { attempted: true, verified: false, forced: true } });
-      }
+      result = realResult({ fixtureId, status: "failed", stage: "closed", reason: "cleanup-failed", cleanup: { attempted: true, verified: false, forced: true } });
     } }
   }
   return result;

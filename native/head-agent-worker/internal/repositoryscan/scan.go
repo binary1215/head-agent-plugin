@@ -76,7 +76,7 @@ var (
 
 var excludedDirectories = map[string]bool{
 	".cache": true, ".git": true, ".head": true, ".hg": true, ".mypy_cache": true,
-	".next": true, ".nox": true, ".nuxt": true, ".omo": true,
+	".next": true, ".nox": true, ".nuxt": true,
 	".pytest_cache": true, ".ruff_cache": true, ".svn": true, ".tox": true,
 	".uv-cache": true, ".uv-python": true,
 	".venv": true, "__pycache__": true, "build": true, "coverage": true,

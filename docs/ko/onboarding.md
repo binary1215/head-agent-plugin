@@ -143,7 +143,7 @@ Root는 glob이 아니라 정규화된 path이며, 선택은 instruction 또는 
 ```json
 {
   "includeRoots": [],
-  "excludeRoots": [".omo", "bundled-third-party", "generated-copy"]
+  "excludeRoots": [".generated-evidence", "bundled-third-party", "generated-copy"]
 }
 ```
 

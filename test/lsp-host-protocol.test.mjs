@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   LSP_HOST_LIMITS,
   LSP_HOST_REAL_LIMITS,
-  LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND,
   LSP_HOST_REASONS,
   LSP_HOST_STAGES,
   LSP_HOST_STATUSES,
@@ -153,27 +152,10 @@ test("P08/P11 snapshot identity, URI admission, CRLF, and UTF-16 ranges are exac
   assert.throws(() => validateRange(text, { start: { line: 3, character: 0 }, end: { line: 3, character: 1 } }), { code: "invalid-range" });
 });
 
-test("RW-O source4 admission is available only through the exact reference-witness profile kind", () => {
-  const rwSources = [
-    { path: "packages/lsp-core/src/mcp.ts", text: "export const mcp = 1;" },
-    { path: "packages/lsp-core/src/tools.ts", text: "export * from './tools/index.js';" },
-    { path: "packages/lsp-core/src/tools/index.ts", text: "export * from './runtime.js';" },
-    { path: "packages/lsp-core/src/tools/runtime.ts", text: "export const runtime = 1;" },
-  ];
-  const profileIdentity = { schemaVersion: 1, kind: LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND, profileVersion: "rw-o-1", direction: "outgoing", normalizerVersion: "0.3.0" };
-  const rw = createSnapshotDescriptor({ projectId: "rw", generationDigest, sources: rwSources, profileIdentity });
-  assert.equal(rw.documents.length, 5);
-  assert.equal(rw.profileKind, LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND);
-  assert.throws(() => createSnapshotDescriptor({ projectId: "rw", generationDigest, sources: rwSources }), { code: "invalid-input" });
-  assert.throws(() => createSnapshotDescriptor({ projectId: "rw", generationDigest, sources, profileIdentity }), { code: "invalid-input" });
-  assert.throws(() => createSnapshotDescriptor({ projectId: "rw", generationDigest, sources: rwSources, profileIdentity: { ...profileIdentity, profileVersion: "caller-selected" }, maxDocuments: 99 }), { code: "invalid-input" });
-  assert.throws(() => createSnapshotDescriptor({ projectId: "rw", generationDigest, sources: rwSources, profileIdentity: { ...profileIdentity, maxDocuments: 99 } }), { code: "invalid-input" });
-  const rq = createSnapshotDescriptor({ projectId: "rq", generationDigest, sources, maxDocuments: 99 });
-  assert.equal(rq.documents.length, 4);
-  assert.equal(Object.hasOwn(rq, "profileKind"), false);
-});
-
 test("P12 snapshot and JSON resource bounds reject excess", () => {
+  assert.equal(createSnapshotDescriptor({ projectId: "p", generationDigest, sources }).documents.length, 4);
+  assert.throws(() => createSnapshotDescriptor({ projectId: "p", generationDigest, sources: [...sources, { path: "extra.ts", text: "export const extra = 1;" }] }), { code: "invalid-input" });
+  assert.throws(() => createSnapshotDescriptor({ projectId: "p", generationDigest, sources, profileIdentity: { kind: "unsupported" } }), { code: "invalid-input" });
   assert.throws(() => createSnapshotDescriptor({ projectId: "p", generationDigest, sources: sources.slice(0, 2) }), { code: "invalid-input" });
   assert.throws(() => createSnapshotDescriptor({ projectId: "p", generationDigest, sources: sources.map((item, index) => index === 0 ? { ...item, text: "x".repeat(LSP_HOST_LIMITS.maxDocumentBytes + 1) } : item) }), { code: "invalid-input" });
   assert.throws(() => createSnapshotDescriptor({ projectId: "p", generationDigest, sources: [{ path: "../target.ts", text: "x" }, ...sources.slice(1)] }), { code: "invalid-input" });

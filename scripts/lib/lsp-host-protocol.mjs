@@ -4,9 +4,6 @@ export const LSP_HOST_PROTOCOL_VERSION = "0.1.0";
 export const LSP_HOST_NORMALIZER_VERSION = "0.1.0";
 export const LSP_HOST_REAL_NORMALIZER_VERSION = "0.2.0";
 export const LSP_HOST_REAL_PROFILE_KIND = "head-lsp-real-rq-profile-v1";
-export const LSP_HOST_REFERENCE_WITNESS_NORMALIZER_VERSION = "0.3.0";
-export const LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND = "head.lsp.reference-witness.omo-lsp-core-outgoing";
-export const LSP_HOST_REFERENCE_WITNESS_PROFILE_VERSION = "rw-o-1";
 
 export const LSP_HOST_LIMITS = Object.freeze({
   maxDocuments: 4,
@@ -193,17 +190,9 @@ export function normalizeRelativePath(value) {
 export function createSnapshotDescriptor({ projectId, generationDigest, sources, tsconfigText = null, profileIdentity = null } = {}) {
   requireText(projectId, "projectId", 256);
   if (!/^[a-f0-9]{64}$/.test(generationDigest || "")) throw protocolError("invalid-input", "generationDigest must be SHA-256.");
-  const rwIdentity = profileIdentity && profileIdentity.schemaVersion === 1
-    && profileIdentity.kind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND
-    && profileIdentity.profileVersion === LSP_HOST_REFERENCE_WITNESS_PROFILE_VERSION
-    && profileIdentity.direction === "outgoing"
-    && profileIdentity.normalizerVersion === LSP_HOST_REFERENCE_WITNESS_NORMALIZER_VERSION
-    && canonicalJson(Object.keys(profileIdentity).sort()) === canonicalJson(["direction", "kind", "normalizerVersion", "profileVersion", "schemaVersion"]);
-  if (profileIdentity !== null && !rwIdentity) throw protocolError("invalid-input", "Snapshot profile identity is unsupported.");
-  const profileKind = rwIdentity ? LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND : LSP_HOST_REAL_PROFILE_KIND;
-  const expectedSourceCount = rwIdentity ? 4 : 3;
-  if (!Array.isArray(sources) || sources.length !== expectedSourceCount) {
-    throw protocolError("invalid-input", `Exactly ${expectedSourceCount} source documents are required for the selected profile kind.`);
+  if (profileIdentity !== null) throw protocolError("invalid-input", "Snapshot profile identity is unsupported.");
+  if (!Array.isArray(sources) || sources.length !== 3) {
+    throw protocolError("invalid-input", "Exactly 3 source documents are required for the selected profile kind.");
   }
   const fixedTsconfig = tsconfigText ?? canonicalJson({ compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", strict: true, target: "ES2022" }, files: sources.map((item) => normalizeRelativePath(item.path)) });
   const documents = [
@@ -229,7 +218,6 @@ export function createSnapshotDescriptor({ projectId, generationDigest, sources,
     schemaVersion: 1,
     projectId,
     generationDigest,
-    ...(profileKind === LSP_HOST_REFERENCE_WITNESS_PROFILE_KIND ? { profileKind } : {}),
     documents: manifestDocuments,
   };
   const snapshotManifestDigest = sha256(canonicalJson(manifestPayload));

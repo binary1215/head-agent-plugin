@@ -104,13 +104,13 @@ async function verifyExistingProjectPromotion() {
   write(root, "README.md", "# Request Service\n\nObserved repository documentation.\n");
   write(root, "src/service.mjs", "export function serveRequest(value) { return value; }\nexport function closeWindow() { return true; }\nexport function configure_process_logging() { return true; }\n");
   write(root, "tests/service.test.mjs", "export function verifiesDelivery() { return true; }\n");
-  write(root, ".omo/draft.md", "# Draft Internal Model\n\nThis is intentionally outside the selected product source scope.\n");
+  write(root, ".generated-evidence/draft.md", "# Draft Internal Model\n\nThis is intentionally outside the selected product source scope.\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
   const initial = inspectOnboarding({ root });
   assert.equal(initial.status, "initialized");
   assert.equal(initial.sessionRecord.identityBoundary, "project-scoped-head-session-not-provider-conversation");
 
-  const discovery = await startOnboarding({ root, mode: "existing", sourceScope: { excludeRoots: [".omo"] } });
+  const discovery = await startOnboarding({ root, mode: "existing", sourceScope: { excludeRoots: [".generated-evidence"] } });
   assert.equal(discovery.status, "awaiting_onboarding_evidence");
   assert.equal(discovery.candidateSet.candidates.length, 0);
   assert.match(discovery.candidateSet.unknowns[0].statement, /semantic product candidates are required/i);
@@ -124,8 +124,8 @@ async function verifyExistingProjectPromotion() {
   });
   assert.equal(started.status, "awaiting_onboarding_review");
   assert.equal(started.storageSelection.mode, "local");
-  assert.deepEqual(started.sourceScope.excludeRoots, [".omo"]);
-  assert.deepEqual((await runCommand(["source-scope-status", root])).sourceScope.excludeRoots, [".omo"]);
+  assert.deepEqual(started.sourceScope.excludeRoots, [".generated-evidence"]);
+  assert.deepEqual((await runCommand(["source-scope-status", root])).sourceScope.excludeRoots, [".generated-evidence"]);
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "FeatureGroup"), true);
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Capability"), true);
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Feature"), true);
@@ -137,8 +137,8 @@ async function verifyExistingProjectPromotion() {
   assert.equal(normalizeProductModelDocument().features.length, 0);
   const candidateGraph = inspectWorldModel({ root });
   assert.equal(candidateGraph.status, "current");
-  assert.equal(candidateGraph.snapshot.files.some((file) => file.path.startsWith(".omo/")), false);
-  assert.deepEqual(candidateGraph.snapshot.repositoryScan.sourceScope.excludeRoots, [".omo"]);
+  assert.equal(candidateGraph.snapshot.files.some((file) => file.path.startsWith(".generated-evidence/")), false);
+  assert.deepEqual(candidateGraph.snapshot.repositoryScan.sourceScope.excludeRoots, [".generated-evidence"]);
   assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingCandidateSetCount, 2);
   assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingCandidateCount, started.candidateSet.candidates.length);
   assert.equal(candidateGraph.snapshot.temporalProvenanceGraph.summary.onboardingReviewDecisionCount, 0);

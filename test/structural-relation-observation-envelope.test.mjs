@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { readFileSync } from "node:fs";
 import {
   buildStructuralRelationObservationEnvelope,
   verifyStructuralRelationObservationEnvelope,
@@ -151,18 +150,12 @@ test("SEO04 supports aggregate A/B and reject run sources outside admitted subse
   const { document } = build(); assert.equal(document.pairs[0].occurrences.flatMap((entry) => entry.supports).length, 4);
   const value = fixture(); value.draft.runs[0].inputBinding.sourceManifestScope = "subset"; value.draft.runs[0].coverage.admittedSources = [value.draft.runs[0].coverage.admittedSources[0]];
   assert.throws(() => build(value), { code: "STRUCTURAL_RELATION_RUN_SOURCE_MISMATCH" });
-  const golden = JSON.parse(readFileSync(new URL("./fixtures/structural-relation-observation-envelope/accepted-rw-envelope.golden.json", import.meta.url), "utf8"));
-  assert.deepEqual(golden.fixtureProvenance.selectedRows, ["unmodifiedRealA", "unmodifiedRealB"]);
-  assert.equal(golden.fixtureProvenance.rawRepresentation, "canonical JSON bytes of accepted decoded rawEvidence record, not original wire stream");
-  assert.deepEqual(golden.counts, { sources: 4, producerClaims: 1, rawRefs: 2, runs: 2, pairs: 2, occurrences: 2, supports: 4 });
-  assert.equal(golden.envelope.envelopeId, "structural-envelope-c0ae50aacd67101b3bca6dc8");
-  assert.equal(golden.envelope.envelopeHash, "c0ae50aacd67101b3bca6dc8900ba4f3774fede8a6d5654570bbe9c2278f520c");
-  assert.deepEqual(verifyStructuralRelationObservationEnvelope(golden.envelope).verificationReport, golden.structuralReport);
-  assert.equal(golden.strongReport.finalStrongVerification, true);
-  assert.equal(golden.realSupport, false);
-  assert.equal(golden.generalProjectSupport, false);
-  assert.equal(golden.e1bEligible, false);
-  assert.equal(golden.authority, "ephemeral-host-evidence-only");
+  // This check uses the local synthetic sources and raw bytes, not an external capture.
+  const verified = verifyStructuralRelationObservationEnvelope(document, {
+    sourceBytesByPath: fixture().sourceBytesByPath,
+    rawBytesById: verifierRawMap(fixture(), document),
+  });
+  assert.equal(verified.verificationReport.finalStrongVerification, true);
 });
 
 test("SEO05 projection and run/raw/support closure fail closed", () => {

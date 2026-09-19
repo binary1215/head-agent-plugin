@@ -121,7 +121,7 @@ Before indexing, the user may persist a project-relative observation boundary. E
 ```json
 {
   "includeRoots": [],
-  "excludeRoots": [".omo", "bundled-third-party", "generated-copy"]
+  "excludeRoots": [".generated-evidence", "bundled-third-party", "generated-copy"]
 }
 ```
 

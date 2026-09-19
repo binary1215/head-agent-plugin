@@ -148,7 +148,7 @@ The adapter descriptor and physical source path live only in the World Model poi
 - file-level freshness;
 - Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, pre-indexed structural adjacency, bounded ProductContext projections, and separate HEAD-exact `GraphTraversalEvidence` bound to current Project/World/Graph identities. The Compiler no longer selects a temporal anchor from lexical task overlap.
 
-Managed root projections and these directories are excluded: `.head`, `.git`, VCS metadata, dependency/vendor directories, generated build outputs, caches (including uv and pytest caches), virtual environments, coverage outputs, and tool-owned evidence projections such as `.omo`. Symlinks and unsupported/binary or oversized files are skipped and counted. A user-selected source scope may additionally include or exclude normalized project-relative roots without changing Product Canon.
+Managed root projections and these directories are excluded: `.head`, `.git`, VCS metadata, dependency/vendor directories, generated build outputs, caches (including uv and pytest caches), virtual environments, coverage outputs. Other tool-generated evidence is excluded through the existing source scope, for example `excludeRoots: [".generated-evidence"]`; unlisted dot directories such as `.github` remain eligible. Symlinks and unsupported/binary or oversized files are skipped and counted. A user-selected source scope may additionally include or exclude normalized project-relative roots without changing Product Canon.
 
 ## Context Compiler behavior
 

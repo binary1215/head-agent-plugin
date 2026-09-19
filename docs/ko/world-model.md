@@ -142,7 +142,7 @@ node scripts/head.mjs world-index <project> --git-log <host-exported-log-file>
 - 파일 수준 최신 상태;
 - 경로, 다이제스트, 분류, 언어, 심볼, 종속성, 사전 인덱싱된 구조 인접 관계, 제한된 ProductContext와 현재 Project/World/Graph identity에 결속된 별도 HEAD-exact `GraphTraversalEvidence`를 포함하는 Context Compiler 후보. Compiler는 lexical task overlap으로 temporal anchor를 고르지 않습니다.
 
-관리되는 루트 프로젝션과 다음 디렉터리는 제외됩니다. `.head`, `.git`, VCS 메타데이터, 종속성/벤더 디렉터리, 생성된 빌드 출력, 캐시(uv 및 pytest 캐시 포함), 가상 환경, 커버리지 출력, `.omo` 같은 도구 소유 증거 프로젝션입니다. 심볼릭 링크와 지원되지 않는 파일, 바이너리 파일 또는 크기 초과 파일은 건너뛰고 개수에 포함합니다. 사용자가 선택한 소스 범위는 Product Canon을 변경하지 않고도 정규화된 프로젝트 상대 루트를 추가로 포함하거나 제외할 수 있습니다.
+관리되는 루트 프로젝션과 다음 디렉터리는 제외됩니다. `.head`, `.git`, VCS 메타데이터, 종속성/벤더 디렉터리, 생성된 빌드 출력, 캐시(uv 및 pytest 캐시 포함), 가상 환경, 커버리지 출력입니다. 다른 도구가 생성한 증거는 기존 소스 범위(예: `excludeRoots: [".generated-evidence"]`)로 제외하며, 목록에 없는 `.github` 같은 숨김 디렉터리는 계속 수집 대상입니다. 심볼릭 링크와 지원되지 않는 파일, 바이너리 파일 또는 크기 초과 파일은 건너뛰고 개수에 포함합니다. 사용자가 선택한 소스 범위는 Product Canon을 변경하지 않고도 정규화된 프로젝트 상대 루트를 추가로 포함하거나 제외할 수 있습니다.
 
 ## Context Compiler 동작
 

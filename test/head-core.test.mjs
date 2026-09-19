@@ -64,6 +64,7 @@ import {
   verifyRuntimeAdapterContractMatrix,
 } from "../scripts/lib/runtime-adapter.mjs";
 import { WORLD_MODEL_STATUS_MCP_MAX_BYTES, dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { buildRepositorySourceScope } from "../scripts/lib/repository-source-scope.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel, verifyIncrementalRefreshReceipt, verifyIncrementalRefreshRequest } from "../scripts/lib/incremental-refresh.mjs";
 import {
@@ -3272,15 +3273,23 @@ test("routes deterministic repository scan v1 through a replaceable compute adap
 
   const technicalRoot = temporaryProject();
   t.after(() => fs.rmSync(technicalRoot, { recursive: true, force: true }));
-  for (const relative of ["src", ".uv-python/lib", ".uv-cache/archive", ".pytest_cache/state", ".omo/evidence"]) fs.mkdirSync(path.join(technicalRoot, relative), { recursive: true });
+  for (const relative of ["src", ".uv-python/lib", ".uv-cache/archive", ".pytest_cache/state", ".generated-evidence/evidence", ".github", ".custom-source"]) fs.mkdirSync(path.join(technicalRoot, relative), { recursive: true });
   fs.writeFileSync(path.join(technicalRoot, "src", "app.py"), "value = 1\n");
   fs.writeFileSync(path.join(technicalRoot, ".uv-python", "lib", "runtime.py"), "value = 1\n");
   fs.writeFileSync(path.join(technicalRoot, ".uv-cache", "archive", "runtime.py"), "value = 1\n");
   fs.writeFileSync(path.join(technicalRoot, ".pytest_cache", "state", "cache.py"), "value = 1\n");
-  fs.writeFileSync(path.join(technicalRoot, ".omo", "evidence", "copy.py"), "value = 1\n");
-  const technicalScan = scanRepositoryReference(buildRepositoryScanInput({ projectRoot: technicalRoot }));
-  assert.deepEqual(technicalScan.files.map((file) => file.path), ["src/app.py"]);
-  assert.equal(technicalScan.skipped.excludedDirectory, 4);
+  fs.writeFileSync(path.join(technicalRoot, ".generated-evidence", "evidence", "copy.py"), "value = 1\n");
+  fs.writeFileSync(path.join(technicalRoot, ".github", "workflow.yml"), "name: fixture\n");
+  fs.writeFileSync(path.join(technicalRoot, ".custom-source", "module.py"), "value = 2\n");
+  const unscopedScan = scanRepositoryReference(buildRepositoryScanInput({ projectRoot: technicalRoot }));
+  assert.deepEqual(unscopedScan.files.map((file) => file.path), [".custom-source/module.py", ".generated-evidence/evidence/copy.py", ".github/workflow.yml", "src/app.py"]);
+  const technicalScan = scanRepositoryReference(buildRepositoryScanInput({
+    projectRoot: technicalRoot,
+    sourceScope: buildRepositorySourceScope({ excludeRoots: [".generated-evidence"] }),
+  }));
+  assert.deepEqual(technicalScan.files.map((file) => file.path), [".custom-source/module.py", ".github/workflow.yml", "src/app.py"]);
+  assert.equal(technicalScan.skipped.excludedDirectory, 3);
+  assert.equal(technicalScan.skipped.outsideSourceScope, 1);
 
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
