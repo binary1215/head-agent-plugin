@@ -171,14 +171,25 @@ The metric workflow is a thin provider-neutral use of the common contract, not a
 
 ### Optional Python declaration reads
 
-Choose by the evidence needed, not a mandatory lookup sequence. A small file is
-usually simplest to read as source. A known declaration can use selected-source
-when its exact slice and Context inclusion matter. An outline plus selection
-can cost more bytes and time than one whole-file read. If a current World already
-exists, a name-scoped World query plus ordinary range read can be cheaper; count
-World construction separately when it does not exist. That range read does not
-create a Context Capsule and may include trailing lines, unlike the exact slice.
-These are different outputs, not evidence of universal performance superiority.
+The user asks for the task once; HEAD chooses how to inspect it without requesting
+JSON, digests, IDs, parser or budget choices. Keep ordinary file reads or an
+already-current World range read when sufficient; no Context workflow is needed
+just because the file is Python or a declaration name is known. HEAD may choose
+selected-source for useful narrow evidence, exact declaration boundaries or
+task-scoped Context inclusion, without a per-call benchmark, justification form
+or approval. Once chosen, read a known unique name directly; outline is optional.
+Within this workflow, `source` includes file text in Context and is suitable for
+small files or whole-file context; it is not synonymous with ordinary file reading.
+Outline plus selection can cost more than one file read. Count World construction
+separately if needed; ordinary World ranges may include trailing lines and do not
+create a Context Capsule. These outputs do not establish universal performance superiority.
+
+When parsing is unavailable, fails, or evidence drifts, HEAD can re-query or
+continue ordinary reads without pretending that exact boundaries or Context
+inclusion were verified. Never reuse stale selection coordinates. Independent
+work continues; ask only about unresolved user intent or existing authority
+boundaries. Report results and meaningful limitations, not every internal state
+or a repeated menu of lookup choices.
 
 For a local developer comparison, run
 `node scripts/measure-python-declarations.mjs --output <new-absolute-directory>`.
@@ -194,7 +205,8 @@ outline and `selected-source` for a known qualified declaration. The latter need
 no prior outline. CLI uses `--kind`; an unqualified `--symbol` option retains its
 existing outgoing-call meaning. For ambiguous occurrences, HEAD supplies the
 returned exact selection through typed MCP or advanced CLI `--input` needs.
-Users need not author that structure.
+HEAD authors that structure in normal conversation; explicit advanced API/CLI
+requests remain supported.
 
 New declaration Context details include a compact `collectionProfile`: producer,
 Python version, protocols and implementation digests, even without retention.
