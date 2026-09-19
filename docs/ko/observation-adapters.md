@@ -165,6 +165,24 @@ Metric workflow는 공통 계약을 얇게 사용하는 provider-neutral 경로�
 
 ### 선택적인 Python 선언 조회
 
+고정된 조회 순서가 아니라 필요한 증거에 따라 고릅니다. 작은 파일은 전체 source
+읽기가 대체로 간단합니다. 알려진 선언의 정확한 구간과 Context 포함이 필요하면
+selected-source를 사용할 수 있습니다. 목록과 선택을 두 번 요청하면 전체 파일
+한 번 읽기보다 응답량과 시간이 커질 수 있습니다. 이미 최신 World가 있다면 이름을
+좁힌 World 조회와 일반 범위 읽기가 더 저렴할 수 있으며, World가 없을 때는 구축
+비용을 별도로 계산합니다. 일반 범위 읽기는 Context Capsule을 만들지 않고 뒤의
+줄도 포함할 수 있으므로 정확한 선언 구간과 출력이 다릅니다. 이를 보편적인 성능
+우위의 근거로 해석하지 않습니다.
+
+개발용 로컬 비교는
+`node scripts/measure-python-declarations.mjs --output <new-absolute-directory>`로
+실행합니다. 새 프로세스 3회의 최초·프로세스 내 반복 조회, 개별 값과 중앙값, 실제
+dispatch 응답, 정확성 및 프로세스 기록을 남깁니다. 새 프로세스가 OS 캐시 초기화를
+뜻하지는 않습니다. 고정 실행 순서와 계측도 지연에 영향을 주며, 프로세스 내부
+dispatch 직렬화 크기는 stdio 전송량이나 설치 Host 비용이 아닙니다. 실제 provider
+토큰·과금·프롬프트 캐시 절감은 미확인입니다. 이 측정은 선택 사항이지 사용·배포
+관문이 아닙니다.
+
 기존 `head_source_context`에서 `declarations`는 제한된 정적 선언 목록을,
 `selected-source`는 알려진 정규화된 선언 이름의 원문을 조회합니다. 원문 조회 전에
 목록을 읽을 필요는 없습니다. CLI는 `--kind`로 선택하며, 단독 `--symbol`은 기존

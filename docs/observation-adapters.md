@@ -171,6 +171,24 @@ The metric workflow is a thin provider-neutral use of the common contract, not a
 
 ### Optional Python declaration reads
 
+Choose by the evidence needed, not a mandatory lookup sequence. A small file is
+usually simplest to read as source. A known declaration can use selected-source
+when its exact slice and Context inclusion matter. An outline plus selection
+can cost more bytes and time than one whole-file read. If a current World already
+exists, a name-scoped World query plus ordinary range read can be cheaper; count
+World construction separately when it does not exist. That range read does not
+create a Context Capsule and may include trailing lines, unlike the exact slice.
+These are different outputs, not evidence of universal performance superiority.
+
+For a local developer comparison, run
+`node scripts/measure-python-declarations.mjs --output <new-absolute-directory>`.
+It records three fresh-process trials, in-process repeat queries, individual
+values and medians, raw dispatch responses, correctness and process logs. Fresh
+process does not mean cold OS cache. Fixed execution order and instrumentation
+affect latency; serialized in-process dispatch bytes are not stdio wire or
+installed Host cost. Provider tokens, billing and prompt-cache savings remain
+unknown. This measurement is optional, not a usage or deployment gate.
+
 The existing `head_source_context` accepts `declarations` for a bounded static
 outline and `selected-source` for a known qualified declaration. The latter needs
 no prior outline. CLI uses `--kind`; an unqualified `--symbol` option retains its
