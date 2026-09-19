@@ -1,4 +1,5 @@
 node_modules/
+.agent-work/
 /dist/
 test/*
 !test/authority-plane-contract.test.mjs

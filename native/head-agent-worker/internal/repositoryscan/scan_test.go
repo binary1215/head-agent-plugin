@@ -20,7 +20,7 @@ func TestTrackedCorpusMatchesReviewedIdentity(t *testing.T) {
 		t.Fatal(operationFailure)
 	}
 	document := result.(map[string]any)
-	if document["scanId"] != "repository-scan-1794e5d5144e32c68dc7ac38" {
+	if document["scanId"] != "repository-scan-fffbf73bcd59b0d3a21045cb" {
 		t.Fatalf("unexpected scan identity: %v", document["scanId"])
 	}
 	summary := document["summary"].(map[string]any)
@@ -58,6 +58,14 @@ func TestTrackedCorpusHonorsExplicitSourceScope(t *testing.T) {
 
 func TestRepositoryScanExcludesCachesAndExplicitEvidenceScope(t *testing.T) {
 	root := t.TempDir()
+	for _, relative := range []string{".agent-work", "src/.agent-work", "src/nested/.AGENT-WORK"} {
+		if err := os.MkdirAll(filepath.Join(root, relative), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, relative, "evidence.md"), []byte("work evidence"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, relative := range []string{"src", ".uv-python/lib", ".uv-cache/archive", ".pytest_cache/state", ".generated-evidence/evidence", ".github", ".custom-source"} {
 		if err := os.MkdirAll(filepath.Join(root, relative), 0o755); err != nil {
 			t.Fatal(err)
@@ -86,7 +94,7 @@ func TestRepositoryScanExcludesCachesAndExplicitEvidenceScope(t *testing.T) {
 	document := result.(map[string]any)
 	summary := document["summary"].(map[string]any)
 	skipped := document["skipped"].(map[string]any)
-	if summary["fileCount"] != 3 || skipped["excludedDirectory"] != 3 || skipped["outsideSourceScope"] != 1 {
+	if summary["fileCount"] != 3 || skipped["excludedDirectory"] != 6 || skipped["outsideSourceScope"] != 1 {
 		t.Fatalf("technical runtime, cache, or evidence directories entered product evidence: summary=%#v skipped=%#v", summary, skipped)
 	}
 }

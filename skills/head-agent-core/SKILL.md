@@ -267,6 +267,13 @@ provider outcome is never replayed automatically. Read
 
 ## Progressive routing
 
+Keep official HEAD records in existing typed stores and product files in their
+project locations. For retained work evidence without an existing convention,
+prefer `.agent-work/<UTC-timestamp>-<short-kebab-slug>/`. Step, attempt and index
+files are optional; a folder name grants no authority and requires no Run.
+Use the [artifact storage guide](../../docs/artifact-storage.md) when choosing
+names or handing off multiple files, not as a per-task reading ritual.
+
 Load only the reference needed for the current outcome:
 
 - Product onboarding, Product Canon, World Model, GraphDB, Markdown, or source

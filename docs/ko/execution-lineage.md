@@ -16,6 +16,9 @@ Fresh HEAD 검토는 결과가 사용자의 목적과 다음 실제 소비자에
 
 ## 상태 머신
 
+선택적인 작업 근거 정리는 [산출물 저장 가이드](artifact-storage.md)를 참고합니다.
+폴더명이나 Step 번호는 Run 계보나 권한을 만들지 않습니다.
+
 ```text
 Session
   -> verified ExecutionContract

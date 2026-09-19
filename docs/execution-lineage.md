@@ -16,6 +16,9 @@ this lifecycle.
 
 ## State machine
 
+For optional work-evidence organization, see the [artifact storage guide](artifact-storage.md).
+Folder names and Step numbers do not create Run lineage or authority.
+
 ```text
 Session
   -> verified ExecutionContract

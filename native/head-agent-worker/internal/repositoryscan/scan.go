@@ -24,7 +24,7 @@ import (
 const (
 	Operation             = "repository.scan.v1"
 	ProducerName          = "head-agent-core-repository-scan"
-	ProducerVersion       = "0.5.0"
+	ProducerVersion       = "0.5.1"
 	SourceAnalysisVersion = "0.3.0"
 	maximumSymbolsPerFile = 200
 )
@@ -75,7 +75,8 @@ var (
 )
 
 var excludedDirectories = map[string]bool{
-	".cache": true, ".git": true, ".head": true, ".hg": true, ".mypy_cache": true,
+	".agent-work": true,
+	".cache":      true, ".git": true, ".head": true, ".hg": true, ".mypy_cache": true,
 	".next": true, ".nox": true, ".nuxt": true,
 	".pytest_cache": true, ".ruff_cache": true, ".svn": true, ".tox": true,
 	".uv-cache": true, ".uv-python": true,

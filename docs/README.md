@@ -30,6 +30,8 @@ work logs are intentionally excluded from the distribution and are not runtime a
 
 ## Execution, recovery, and coordination
 
+- [Work artifact storage guide](artifact-storage.md)
+
 - [Execution Lineage contract and Run lifecycle](execution-lineage.md)
 - [Provider-neutral ChangeSet and reviewed impact](change-sets.md)
 - [Non-blocking Conformance reconciliation](conformance-reconciliation.md)

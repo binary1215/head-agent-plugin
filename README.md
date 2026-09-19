@@ -915,6 +915,7 @@ Start with these documents:
   Graph/record and non-amplification contract;
 - [Onboarding](docs/onboarding.md) — HEAD semantic proposals, Core verification, and explicit review;
 - [Context Compiler](docs/context-compiler.md) — reproducible task context;
+- [Work artifact storage](docs/artifact-storage.md) — where to save evidence without extra ceremony.
 - [Execution Lineage](docs/execution-lineage.md) — plans, contracts, results,
   review, and recovery;
 - [World Model](docs/world-model.md) — source evidence and graph construction;

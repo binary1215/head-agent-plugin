@@ -26,7 +26,7 @@ import {
   verifyRepositorySourceScope,
 } from "./repository-source-scope.mjs";
 
-export const REPOSITORY_SCAN_VERSION = "0.5.0";
+export const REPOSITORY_SCAN_VERSION = "0.5.1";
 export const REPOSITORY_SCAN_OPERATION = "repository.scan.v1";
 export const REPOSITORY_SCAN_SEMANTIC_PRODUCER = Object.freeze({
   name: "head-agent-core-repository-scan",
@@ -40,7 +40,7 @@ export const REPOSITORY_SCAN_DEFAULTS = Object.freeze({
 });
 
 export const REPOSITORY_SCAN_EXCLUDED_DIRECTORIES = Object.freeze([
-  ".cache", ".git", ".head", ".hg", ".mypy_cache", ".next", ".nox", ".nuxt",
+  ".agent-work", ".cache", ".git", ".head", ".hg", ".mypy_cache", ".next", ".nox", ".nuxt",
   ".pytest_cache", ".ruff_cache", ".svn", ".tox", ".uv-cache", ".uv-python", ".venv",
   "__pycache__", "build", "coverage", "dist", "node_modules", "out", "target",
   "vendor", "venv",
@@ -406,7 +406,8 @@ function validateLineRecord(record, fields, label) {
 }
 
 export function validateRepositoryScanResult(result) {
-  const currentProtocol = result?.protocol?.version === REPOSITORY_SCAN_VERSION;
+  // 0.5.0 has the same declaration schema; only scan eligibility changed.
+  const currentProtocol = [REPOSITORY_SCAN_VERSION, "0.5.0"].includes(result?.protocol?.version);
   const scopedProtocol = currentProtocol || new Set(["0.3.0", "0.4.0"]).has(result?.protocol?.version);
   const legacyProtocol = new Set(["0.2.0", "0.3.0", "0.4.0"]).has(result?.protocol?.version);
   assertFields(result, ["schemaVersion", "kind", "protocol", "sourceAnalysisVersion", "authority", "instructionAuthority", "promotionAuthority", ...(scopedProtocol ? ["sourceScope"] : []), "files", "skipped", "summary", "scanId", "scanHash"], "Repository scan result");

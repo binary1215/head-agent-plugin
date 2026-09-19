@@ -30,6 +30,7 @@
 
 ## 실행, 복구, 역할 조정
 
+- [작업 산출물 저장 가이드](artifact-storage.md)
 - [Execution Lineage 계약과 Run 수명주기](execution-lineage.md)
 - [공급자 중립 ChangeSet과 검토된 영향](change-sets.md)
 - [비차단 Conformance 재정](conformance-reconciliation.md)

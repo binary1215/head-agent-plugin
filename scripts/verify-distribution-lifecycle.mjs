@@ -60,6 +60,11 @@ function copySourceFixture() {
     value.version = upgradedVersion;
     fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   }
+  for (const relative of [".agent-work/review.md", "docs/.agent-work/review.md", "scripts/nested/.agent-work/result.json", "skills/.AGENT-WORK/review.md", "docs/.custom-source/keep.md"]) {
+    const file = path.join(upgradedSource, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "work evidence fixture\n");
+  }
 }
 
 function runNode(args) {
@@ -219,6 +224,11 @@ try {
   ]);
   assert.equal(upgraded.status, "upgraded");
   assert.notEqual(upgraded.releaseId, installed.releaseId);
+  const upgradedReleaseRoot = path.join(installRoot, "releases", upgraded.releaseId);
+  for (const relative of [".agent-work", "docs/.agent-work", "scripts/nested/.agent-work", "skills/.AGENT-WORK"]) {
+    assert.equal(fs.existsSync(path.join(upgradedReleaseRoot, relative)), false);
+  }
+  assert.equal(fs.existsSync(path.join(upgradedReleaseRoot, "docs/.custom-source/keep.md")), true);
   assert.equal(upgraded.project.installationAction, "converged");
   assert.equal(upgraded.project.project.projectId, projectBeforeResume.projectId);
   assert.equal(fs.readFileSync(path.join(projectRoot, "opencode.json"), "utf8").includes(upgraded.releaseId), true);

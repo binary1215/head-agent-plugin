@@ -887,6 +887,7 @@ HEAD Agent Core Plugin은
   권한 비증폭 계약
 - [온보딩](docs/ko/onboarding.md): HEAD semantic proposal, Core 검증과 명시적 검토
 - [Context Compiler](docs/ko/context-compiler.md): 재현 가능한 작업 컨텍스트
+- [작업 산출물 저장](docs/ko/artifact-storage.md): 추가 절차 없이 근거를 저장하고 찾는 방법
 - [실행 계보](docs/ko/execution-lineage.md): 계획, 계약, 결과, 검토, 복구
 - [World Model](docs/ko/world-model.md): 소스 증거와 그래프 구성
 - [런타임 어댑터](docs/ko/runtime-adapters.md): 기능, 호출, 프로세스 소유권
