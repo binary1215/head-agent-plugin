@@ -459,6 +459,7 @@ jobs:
 
           # One strict tar.gz shape keeps installer verification identical on every OS,
           # including Windows binaries cross-compiled on this Linux runner.
+          cp "${GITHUB_WORKSPACE}/native/GO-NOTICES.txt" "${package_root}/GO-NOTICES.txt"
           tar -C "$(dirname "${package_root}")" -czf "${output_root}/${PACKAGE_NAME}.tar.gz" "${RUNTIME_DIRECTORY}"
 
       - name: Upload immutable matrix artifact

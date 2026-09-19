@@ -148,6 +148,7 @@ function extractTarGz(archive, destination, target) {
     ...target.binaries.map((name) => `${target.directory}/${name}`),
   ]);
   const observedFiles = new Set();
+  const noticeFile = `${target.directory}/GO-NOTICES.txt`;
   let offset = 0;
   let terminated = false;
   while (offset + 512 <= tar.length) {
@@ -174,7 +175,7 @@ function extractTarGz(archive, destination, target) {
     if (type === "5") {
       fs.mkdirSync(absolute, { recursive: true });
     } else if (type === "0") {
-      if (!expectedFiles.has(relative) || observedFiles.has(relative)) fail("HEAD_NATIVE_ARCHIVE_CONTENT_INVALID", `Unexpected or duplicate native archive file: ${relative}`);
+      if ((!expectedFiles.has(relative) && relative !== noticeFile) || observedFiles.has(relative)) fail("HEAD_NATIVE_ARCHIVE_CONTENT_INVALID", `Unexpected or duplicate native archive file: ${relative}`);
       fs.mkdirSync(path.dirname(absolute), { recursive: true });
       fs.writeFileSync(absolute, tar.subarray(dataStart, dataEnd), { flag: "wx", mode: target.binaries.some((nameValue) => relative.endsWith(`/${nameValue}`)) ? 0o755 : 0o644 });
       observedFiles.add(relative);
@@ -186,7 +187,7 @@ function extractTarGz(archive, destination, target) {
   if (!terminated || tar.subarray(offset).some((byte) => byte !== 0)) {
     fail("HEAD_NATIVE_ARCHIVE_INVALID", "Native archive termination blocks are invalid.");
   }
-  if (observedFiles.size !== expectedFiles.size || [...expectedFiles].some((file) => !observedFiles.has(file))) {
+  if ([...expectedFiles].some((file) => !observedFiles.has(file))) {
     fail("HEAD_NATIVE_ARCHIVE_CONTENT_INVALID", "Native archive does not contain the exact required file set.");
   }
 }
@@ -284,7 +285,9 @@ export function verifyNativeOverlay({ pluginRoot, platform = process.platform, a
     entries = fs.readdirSync(targetRoot).sort();
   }
   catch { fail("HEAD_NATIVE_OVERLAY_INVALID", "Native overlay target directory is unavailable."); }
-  if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) {
+  // Older archives remain readable; new builds carry this additional notice file.
+  const requiredEntries = entries.filter((entry) => entry !== "GO-NOTICES.txt");
+  if (JSON.stringify(requiredEntries) !== JSON.stringify(expectedEntries)) {
     fail("HEAD_NATIVE_OVERLAY_INVALID", "Native overlay must contain the exact verified target file set.");
   }
   for (const entry of entries) {

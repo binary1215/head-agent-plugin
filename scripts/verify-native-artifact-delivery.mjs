@@ -16,6 +16,7 @@ import { buildClaudeMarketplaceSnapshot, verifyClaudeMarketplaceSnapshot } from 
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json"), "utf8")).version;
+const goNotices = fs.readFileSync(path.join(sourceRoot, "native", "GO-NOTICES.txt"));
 const scratchRoot = path.join(os.tmpdir(), `head-native-delivery-e2e-${process.pid}`);
 const fixtureRoot = path.join(scratchRoot, "fixture");
 const targetMap = {
@@ -64,7 +65,7 @@ function archive(entries) {
   ]), { level: 9, mtime: 0 });
 }
 
-function fixtureArchive(fixtureTarget = target) {
+function fixtureArchive(fixtureTarget = target, { notices = true, extraEntries = [] } = {}) {
   const directory = path.join(fixtureRoot, fixtureTarget.directory);
   fs.mkdirSync(directory, { recursive: true });
   const workerFile = path.join(directory, fixtureTarget.worker);
@@ -78,6 +79,7 @@ function fixtureArchive(fixtureTarget = target) {
   const bridgeManifest = createArcadeDbNativeBridgeManifest({ platform: fixtureTarget.platform, arch: fixtureTarget.arch, binaryFile: bridgeFile, manifestDirectory: directory });
   const metadata = { version, commit: "a".repeat(40), goos: fixtureTarget.goos, goarch: fixtureTarget.goarch, cgoEnabled: false };
   const files = [
+    ...(notices ? [["GO-NOTICES.txt", goNotices, 0o644]] : []),
     ["BUILD-METADATA.json", Buffer.from(`${JSON.stringify(metadata, null, 2)}\n`), 0o644],
     ["WORKER-MANIFEST.json", Buffer.from(`${JSON.stringify(workerManifest, null, 2)}\n`), 0o644],
     ["SUPERVISOR-MANIFEST.json", Buffer.from(`${JSON.stringify(supervisorManifest, null, 2)}\n`), 0o644],
@@ -85,6 +87,7 @@ function fixtureArchive(fixtureTarget = target) {
     [fixtureTarget.worker, fs.readFileSync(workerFile), 0o755],
     [fixtureTarget.supervisor, fs.readFileSync(supervisorFile), 0o755],
     [fixtureTarget.bridge, fs.readFileSync(bridgeFile), 0o755],
+    ...extraEntries,
   ];
   return archive(files.map(([name, bytes, mode]) => ({ name: `${fixtureTarget.directory}/${name}`, bytes, mode })));
 }
@@ -112,6 +115,20 @@ try {
   });
   assert.equal(acquired.status, "verified");
   assert.equal(acquired.assetName, assetName);
+  assert.deepEqual(fs.readFileSync(path.join(acquired.pluginRoot, "dist", target.directory, "GO-NOTICES.txt")), goNotices);
+
+  const legacyArchive = fixtureArchive(target, { notices: false });
+  const legacy = await acquireVerifiedNativeArtifact({ version, mode: "required", fetchImplementation: fetchFixture(assetName, legacyArchive), temporaryParent: scratchRoot });
+  assert.equal(legacy.status, "verified");
+  assert.equal(fs.existsSync(path.join(legacy.pluginRoot, "dist", target.directory, "GO-NOTICES.txt")), false);
+  legacy.cleanup();
+  for (const name of ["GO-NOTICES.txt", "unexpected.txt"]) {
+    const invalidArchive = fixtureArchive(target, { extraEntries: [[name, goNotices, 0o644]] });
+    await assert.rejects(
+      acquireVerifiedNativeArtifact({ version, mode: "required", fetchImplementation: fetchFixture(assetName, invalidArchive), temporaryParent: scratchRoot }),
+      (error) => error.code === "HEAD_NATIVE_ARCHIVE_CONTENT_INVALID",
+    );
+  }
 
   const installRoot = path.join(scratchRoot, "install");
   const binDirectory = path.join(scratchRoot, "bin");
@@ -126,6 +143,8 @@ try {
   const releaseTarget = path.join(installRoot, "releases", installed.releaseId, "dist", target.directory);
   assert.equal(fs.existsSync(path.join(releaseTarget, target.worker)), true);
   assert.equal(fs.existsSync(path.join(releaseTarget, target.bridge)), true);
+  assert.deepEqual(fs.readFileSync(path.join(releaseTarget, "GO-NOTICES.txt")), goNotices);
+  assert.deepEqual(fs.readFileSync(path.join(installRoot, "releases", installed.releaseId, "native", "GO-NOTICES.txt")), goNotices);
   acquired.cleanup();
 
   const unavailable = await acquireVerifiedNativeArtifact({
@@ -184,6 +203,13 @@ try {
   const claudeMarketplace = buildClaudeMarketplaceSnapshot({ sourceRoot, outputRoot: claudeMarketplaceRoot, nativeOverlayRoot: bundleRoot });
   assert.equal(claudeMarketplace.nativeTargetCount, 5);
   assert.equal(verifyClaudeMarketplaceSnapshot({ root: claudeMarketplaceRoot, requireNativeBundle: true }).nativeBundleId, assembled.nativeBundleId);
+  for (const marketplaceRoot of [codexMarketplaceRoot, claudeMarketplaceRoot]) {
+    const pluginRoot = path.join(marketplaceRoot, "plugins", "head-agent-core");
+    assert.deepEqual(fs.readFileSync(path.join(pluginRoot, "native", "GO-NOTICES.txt")), goNotices);
+    for (const fixtureTarget of Object.values(targetMap)) {
+      assert.deepEqual(fs.readFileSync(path.join(pluginRoot, "dist", fixtureTarget.directory, "GO-NOTICES.txt")), goNotices);
+    }
+  }
 
   uninstallDistribution({ installRoot, binDirectory, purge: true });
   process.stdout.write(`${JSON.stringify({
@@ -199,6 +225,8 @@ try {
     missingPlatformFailsClosed: true,
     codexMarketplaceIncludesNativeBundle: true,
     claudeMarketplaceIncludesNativeBundle: true,
+    goNoticesPreservedAcrossArchiveInstallAndMarketplaces: true,
+    legacyArchiveWithoutNoticesReadable: true,
   }, null, 2)}\n`);
 } finally {
   fs.rmSync(scratchRoot, { recursive: true, force: true });

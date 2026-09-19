@@ -978,3 +978,4 @@ Capabilities marked Experimental, Planned, or Deferred above remain outside
 that beta claim.
 
 This project is released under the [MIT License](LICENSE).
+Native binaries also carry [Go runtime and standard-library notices](native/GO-NOTICES.txt).

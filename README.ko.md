@@ -946,3 +946,4 @@ Context Compiler, 실행 계보, 로컬 프로젝션, bounded worker, 검증된 
 계획됨 또는 보류됨으로 표시한 기능은 이 베타 판정의 범위에 포함되지 않습니다.
 
 이 프로젝트는 [MIT License](LICENSE)로 배포됩니다.
+네이티브 바이너리에는 [Go 런타임·표준 라이브러리 고지](native/GO-NOTICES.txt)도 동봉됩니다.

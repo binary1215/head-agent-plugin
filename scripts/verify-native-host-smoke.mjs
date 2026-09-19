@@ -108,6 +108,7 @@ try {
   writeNewJson(path.join(binaryRoot, "SUPERVISOR-MANIFEST.json"), createProcessSupervisorManifest({ ...manifestOptions, binaryFile: path.join(binaryRoot, `head-agent-supervisor${suffix}`) }));
   writeNewJson(path.join(binaryRoot, "ARCADEDB-BRIDGE-MANIFEST.json"), createArcadeDbNativeBridgeManifest({ ...manifestOptions, binaryFile: path.join(binaryRoot, `head-agent-arcadedb-bridge${suffix}`) }));
   writeNewJson(path.join(binaryRoot, "BUILD-METADATA.json"), { version, commit, goos, goarch, cgoEnabled: false });
+  fs.copyFileSync(path.join(sourceRoot, "native", "GO-NOTICES.txt"), path.join(binaryRoot, "GO-NOTICES.txt"), fs.constants.COPYFILE_EXCL);
 
   const locations = { sourceRoot, installRoot, binDirectory };
   const baseline = installDistribution(locations);
