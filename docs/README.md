@@ -39,6 +39,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 - [Session restore and reviewed-result integration](session-recovery.md)
 - [Provider-neutral durable role coordination](role-coordination.md)
 - [Provider-neutral bounded worker launch waves](bounded-worker-wave.md)
+- [Worker context and HEAD integration](worker-context-integration.md)
 - [Optional provider-neutral worker admission](worker-admission.md)
 - [External runtime state evidence](runtime-state.md)
 

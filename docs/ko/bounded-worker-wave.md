@@ -36,7 +36,8 @@ existing BoundedWorkerDispatch[]
   -> explicit BoundedWorkerWaveSeal
   -> WorkerWaveStatusProjection(sealed | completed | failed)
   -> optional BoundedWorkerWaveWaitOutcome
-  -> each result follows ResultPacket -> Fresh HEAD -> ReviewDecision -> P2 integration
+  -> HEAD gathers individual evidence while the Run is valid
+  -> one combined Run ResultPacket -> Fresh HEAD -> ReviewDecision -> P2 integration
 ```
 
 읽기 전용 status 투영은 seal을 생성하지 않습니다. seal하려면 모든 구성원의 lease
@@ -55,8 +56,10 @@ seal/abandon을 시도해도 두 개의 최종 진실을 만들 수 없습니다
 
 wave 완료는 ResultPacket을 적용하거나, Fresh HEAD review를 만들거나,
 `ReviewDecision`을 생성하거나, checkpoint를 통합하지 않습니다. HF-009는 독립 worker
-dispatch와 실행 소유권으로 유지됩니다. HF-010은 각 result를 나중에 명시적으로
-검토하여 통합하는 경로로 유지됩니다.
+dispatch와 실행 소유권으로 유지됩니다. HF-010은 각 fragment가 아니라 Run의
+단일 전체 결과를 명시적으로 검토하여 통합하는 경로입니다.
+컨텍스트 선택, 부분 실행, 단일 worker 적용과 HEAD의 통합 finish 구분은
+[worker 컨텍스트와 통합](worker-context-integration.md)을 참고합니다.
 
 ## CLI와 typed MCP
 

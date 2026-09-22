@@ -286,6 +286,11 @@ Load only the reference needed for the current outcome:
 - Conversation entry, decision cards, and outcome presentation: read
   `references/conversation-ux.md`.
 - Bounded workers or waves: read `../../docs/bounded-worker-wave.md`.
+- When composing a worker brief or combining multiple Run results, read
+  [worker context and HEAD integration](../../docs/worker-context-integration.md).
+  Native context fork is not supported. Set execution context before
+  authorization; do not append to digest-bound input. Multiple fragments need
+  one HEAD-combined Run result, not repeated worker application.
 - Git ref, deployment-result, or release observations: read
   `../../docs/release-observation.md`.
 - Per-environment and per-target applied, failed, or rollback history: read

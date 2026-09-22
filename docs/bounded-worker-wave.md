@@ -35,7 +35,8 @@ existing BoundedWorkerDispatch[]
   -> explicit BoundedWorkerWaveSeal
   -> WorkerWaveStatusProjection(sealed | completed | failed)
   -> optional BoundedWorkerWaveWaitOutcome
-  -> each result follows ResultPacket -> Fresh HEAD -> ReviewDecision -> P2 integration
+  -> HEAD gathers individual evidence while the Run is valid
+  -> one combined Run ResultPacket -> Fresh HEAD -> ReviewDecision -> P2 integration
 ```
 
 The read-only status projection never creates a seal. Seal requires verified
@@ -55,7 +56,10 @@ two terminal truths.
 Wave completion does not apply a ResultPacket, build Fresh HEAD review, create a
 `ReviewDecision`, or integrate a checkpoint. HF-009 remains independent worker
 dispatch and execution ownership. HF-010 remains the later explicit reviewed
-result integration path for each result.
+result integration path for the Run's single whole result, not each fragment.
+For context selection, partial launch and the distinction between single-worker
+application and HEAD's combined finish, see
+[worker context and integration](worker-context-integration.md).
 
 ## CLI and typed MCP
 
