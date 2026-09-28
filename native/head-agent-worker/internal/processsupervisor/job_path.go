@@ -10,7 +10,9 @@ func canonicalJobRequestPath(requestFile string) (string, error) {
 		return "", errors.New("job request path must be absolute")
 	}
 	clean := filepath.Clean(requestFile)
-	resolved, err := filepath.EvalSymlinks(clean)
+	// Resolve before lexical cleaning: link/../file can refer to a different
+	// file than Clean(link/../file), which must not authorize the original path.
+	resolved, err := filepath.EvalSymlinks(requestFile)
 	if err != nil || !jobPathSpellingMatches(clean, resolved) {
 		return "", errors.New("job request path must be canonical")
 	}
