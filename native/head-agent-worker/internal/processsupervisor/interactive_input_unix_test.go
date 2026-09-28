@@ -68,19 +68,29 @@ func assertInteractiveCloseOnExec(t *testing.T, reader *os.File) {
 	if err := raw.Control(func(fd uintptr) {
 		flags, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFD, 0)
 	}); err != nil || errno != 0 || flags&syscall.FD_CLOEXEC == 0 {
-		t.Fatalf("owned duplicate could leak into provider exec: flags=%d errno=%v err=%v", flags, errno, err)
+		t.Fatalf("owned descriptor could leak into provider exec: flags=%d errno=%v err=%v", flags, errno, err)
 	}
 }
 
 func interactiveSocketPair(t *testing.T, kind int) (*os.File, *os.File) {
 	t.Helper()
+	// syscall.Socketpair does not add CLOEXEC. Inheriting the Host writer in
+	// the owner/provider would keep stdin open after the parent closes it.
+	syscall.ForkLock.RLock()
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, kind, 0)
+	if err == nil {
+		syscall.CloseOnExec(fds[0])
+		syscall.CloseOnExec(fds[1])
+	}
+	syscall.ForkLock.RUnlock()
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := os.NewFile(uintptr(fds[0]), "synthetic-stdio-socket")
 	writer := os.NewFile(uintptr(fds[1]), "synthetic-host-socket")
 	t.Cleanup(func() { _ = source.Close(); _ = writer.Close() })
+	assertInteractiveCloseOnExec(t, source)
+	assertInteractiveCloseOnExec(t, writer)
 	return source, writer
 }
 
