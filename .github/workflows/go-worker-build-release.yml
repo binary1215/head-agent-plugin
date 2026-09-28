@@ -284,6 +284,9 @@ jobs:
       - name: Verify Claude Code marketplace snapshot packaging
         run: node scripts/verify-claude-marketplace.mjs
 
+      - name: Verify isolated historical marketplace ownership boundary
+        run: node --test legacy/marketplace-ownership/test/ownership.test.mjs
+
       - name: Verify automatic native artifact delivery contract
         run: node scripts/verify-native-artifact-delivery.mjs
 
@@ -642,7 +645,13 @@ jobs:
                 --expected-repository "${GITHUB_REPOSITORY}" \
                 --expected-marketplace-name "head-agent-plugin" \
                 --allow-legacy-byte-preservation \
-                --allow-legacy-interface-for-ownership
+                --allow-legacy-interface-for-ownership || \
+              node legacy/marketplace-ownership/verify.mjs \
+                --provider codex \
+                --root "${previous_root}" \
+                --expected-repository "${GITHUB_REPOSITORY}" \
+                --expected-marketplace-name "head-agent-plugin" \
+                --expected-snapshot-commit "${expected_sha}"
             fi
           fi
           echo "expected_sha=${expected_sha}" >> "${GITHUB_OUTPUT}"
@@ -740,10 +749,17 @@ jobs:
             previous_root="${RUNNER_TEMP}/previous-head-agent-claude-marketplace"
             mkdir -p "${previous_root}"
             git archive FETCH_HEAD | tar -x -C "${previous_root}"
-            node scripts/verify-claude-marketplace.mjs \
+            if ! node scripts/verify-claude-marketplace.mjs \
               --root "${previous_root}" \
               --expected-repository "${GITHUB_REPOSITORY}" \
-              --expected-marketplace-name "head-agent-plugin"
+              --expected-marketplace-name "head-agent-plugin"; then
+              node legacy/marketplace-ownership/verify.mjs \
+                --provider claude \
+                --root "${previous_root}" \
+                --expected-repository "${GITHUB_REPOSITORY}" \
+                --expected-marketplace-name "head-agent-plugin" \
+                --expected-snapshot-commit "${expected_sha}"
+            fi
           fi
           echo "expected_sha=${expected_sha}" >> "${GITHUB_OUTPUT}"
 
