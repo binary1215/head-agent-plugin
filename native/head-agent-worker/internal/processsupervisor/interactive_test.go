@@ -215,6 +215,12 @@ type interactiveOwner struct {
 }
 
 func startInteractiveOwner(t *testing.T, directory, mode string) *interactiveOwner {
+	return startInteractiveOwnerInput(t, directory, mode, nil, nil)
+}
+
+// A Unix socketpair exercises the same inherited stdin path used by libuv.
+// Keep all process ownership and cleanup in the existing fixture owner.
+func startInteractiveOwnerInput(t *testing.T, directory, mode string, source *os.File, writer io.WriteCloser) *interactiveOwner {
 	t.Helper()
 	owner := &interactiveOwner{done: make(chan struct{})}
 	owner.command = exec.Command(os.Args[0], "-test.run=^TestInteractiveOwnerHelper$")
@@ -222,7 +228,12 @@ func startInteractiveOwner(t *testing.T, directory, mode string) *interactiveOwn
 	owner.command.Env = append(os.Environ(), "HEAD_INTERACTIVE_TEST_OWNER="+mode)
 	owner.command.Stdout, owner.command.Stderr = &owner.stdout, &owner.stderr
 	var err error
-	owner.input, err = owner.command.StdinPipe()
+	if source == nil {
+		owner.input, err = owner.command.StdinPipe()
+	} else {
+		defer source.Close()
+		owner.command.Stdin, owner.input = source, writer
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -133,6 +133,8 @@ jobs:
   javascript:
     name: Full JavaScript regression suite
     runs-on: ubuntu-latest
+    env:
+      HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT: ${{ runner.temp }}/head-agent-test-native
     steps:
       - name: Checkout source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -145,6 +147,25 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           package-manager-cache: false
 
+      - name: Set up Go from the worker module
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: native/head-agent-worker/go.mod
+          cache-dependency-path: native/head-agent-worker/go.mod
+          check-latest: false
+
+      - name: Prepare current-source supervisor fixture
+        shell: bash
+        run: |
+          version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          binary_root="${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}/dist/linux-x64"
+          mkdir -p "${binary_root}"
+          (cd native/head-agent-worker && CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+            -ldflags="-s -w -X main.version=${version} -X main.commit=${GITHUB_SHA}" \
+            -o "${binary_root}/head-agent-supervisor" ./cmd/head-agent-supervisor)
+          node scripts/generate-process-supervisor-manifest.mjs --platform linux --arch x64 \
+            --binary "${binary_root}/head-agent-supervisor" --output "${binary_root}/SUPERVISOR-MANIFEST.json"
+
       - name: Run every JavaScript regression test
         run: npm test
 
@@ -154,6 +175,8 @@ jobs:
     if: ${{ needs.prepare.outputs.enabled == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    env:
+      HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT: ${{ runner.temp }}/head-agent-test-native
     strategy:
       fail-fast: false
       matrix:
@@ -176,6 +199,23 @@ jobs:
           go-version-file: native/head-agent-worker/go.mod
           cache-dependency-path: native/head-agent-worker/go.mod
           check-latest: false
+
+      - name: Prepare current-source supervisor fixture
+        shell: bash
+        run: |
+          version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          platform="$(node -p "process.platform")"
+          arch="$(node -p "process.arch")"
+          goos="$(go env GOOS)"
+          binary_root="${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}/dist/${goos}-${arch}"
+          executable="head-agent-supervisor"
+          if [[ "${goos}" == "windows" ]]; then executable="${executable}.exe"; fi
+          mkdir -p "${binary_root}"
+          (cd native/head-agent-worker && CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+            -ldflags="-s -w -X main.version=${version} -X main.commit=${GITHUB_SHA}" \
+            -o "${binary_root}/${executable}" ./cmd/head-agent-supervisor)
+          node scripts/generate-process-supervisor-manifest.mjs --platform "${platform}" --arch "${arch}" \
+            --binary "${binary_root}/${executable}" --output "${binary_root}/SUPERVISOR-MANIFEST.json"
 
       # These are executed host binaries; the separate build matrix only cross-builds.
       - name: Verify smoke cleanup, exact result application, and World workflows on the actual host

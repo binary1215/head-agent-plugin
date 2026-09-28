@@ -197,10 +197,12 @@ func runRequest(request Request, input []byte, stdout io.Writer, stderr io.Write
 // lifetime. The Host must enforce its own bootstrap/deadline watchdog as well.
 func RunInteractive(reader io.ReadCloser, stdout io.Writer, stderr io.Writer) (int, error) {
 	if file, ok := reader.(*os.File); ok {
-		stat, err := file.Stat()
-		if err != nil || stat.Mode()&os.ModeNamedPipe == 0 {
-			return 2, errors.New("interactive stdin must be a Host-owned pipe")
+		defer file.Close()
+		prepared, err := prepareInteractivePipe(file)
+		if err != nil {
+			return 2, fmt.Errorf("interactive stdin must be a Host-owned pipe or anonymous local stream: %w", err)
 		}
+		reader = prepared
 	}
 	defer reader.Close()
 	buffered := bufio.NewReaderSize(reader, 64*1024)
