@@ -5,6 +5,7 @@ import {
   normalizeRuntimeEvent,
 } from "./runtime-invocation-lifecycle.mjs";
 import { spawnSupervisedProcess } from "./runtime-process-supervisor.mjs";
+import { openRuntimeOutputSpool } from "./runtime-output-spool.mjs";
 
 const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
@@ -24,7 +25,8 @@ function structuredResultExposesRoot(result, roots) {
   const content = canonicalJson(result).toLowerCase();
   return roots.filter(Boolean).some((root) => {
     const resolved = path.resolve(root).toLowerCase();
-    return content.includes(resolved) || content.includes(resolved.replaceAll("\\", "/"));
+    return content.includes(resolved) || content.includes(JSON.stringify(resolved).slice(1, -1))
+      || content.includes(resolved.replaceAll("\\", "/"));
   });
 }
 
@@ -43,6 +45,7 @@ export async function runSupervisedRuntimeOneShot({
   executablePath,
   args,
   projectRoot,
+  executionRoot = projectRoot,
   providerEnvironment,
   authorization,
   input,
@@ -60,6 +63,8 @@ export async function runSupervisedRuntimeOneShot({
   classifyProviderDiagnostics,
   extractStructuredResult,
   completionEventTypes,
+  operationalStateRoot,
+  onNeverStarted = () => {},
 }) {
   if (authorization.runtime !== runtime) {
     const error = new Error("Runtime one-shot authorization does not match its provider adapter.");
@@ -89,8 +94,13 @@ export async function runSupervisedRuntimeOneShot({
   const events = [];
   const providerDiagnosticCodes = new Set();
   const ownershipNonce = crypto.randomBytes(32).toString("hex");
+  const spool = authorization.workerInput ? openRuntimeOutputSpool({ operationalRoot: operationalStateRoot,
+    authorization, callerFenceDigest, supervisorManifestDigest: supervisorSelection.manifest.manifestHash, providerMode }) : null;
+  let streamError = null;
+  let startupError = null;
+  let receipt;
 
-  const receipt = await new Promise((resolve, reject) => {
+  try { receipt = await new Promise((resolve, reject) => {
     let settled = false;
     const rejectOnce = (error) => {
       if (settled) return;
@@ -105,16 +115,19 @@ export async function runSupervisedRuntimeOneShot({
         selection: supervisorSelection,
         executablePath,
         args,
-        cwd: projectRoot,
+        cwd: executionRoot,
         providerEnvironment,
         input,
         controlFile: supervisorControlFile,
         terminationGraceMs: authorization.limits.terminationGraceMs,
-        spawnImplementation,
+        spawnImplementation: (...args) => {
+          try { return spawnImplementation(...args); }
+          catch (error) { onNeverStarted(spawnFailureCode); throw error; }
+        },
         onControlEvent: (event) => {
           if (event.type === "provider.started") {
             inputDigestObserved = digest(input);
-            onProcessEvent({ type: "spawn", pid: event.providerPid, parentPid: child?.pid || process.pid, command: commandLabel, cwd: projectRoot, ports: "none" });
+            onProcessEvent({ type: "spawn", pid: event.providerPid, parentPid: child?.pid || process.pid, command: commandLabel, cwd: executionRoot, ports: "none" });
           } else if (event.type === "provider.exited") {
             onProcessEvent({ type: "exit", pid: event.providerPid, parentPid: child?.pid || process.pid, exitCode: event.exitCode, signal: "none" });
           }
@@ -163,25 +176,32 @@ export async function runSupervisedRuntimeOneShot({
     };
     timer = setTimeout(() => terminate("timeout"), authorization.limits.timeoutMs);
     if (signal) {
-      if (signal.aborted) terminate("cancel");
+      if (signal.aborted) terminate(signal.reason?.code === "CODEX_WORKER_POLICY_TIMEOUT" ? "timeout" : "cancel");
       else {
-        abortHandler = () => terminate("cancel");
+        abortHandler = () => terminate(signal.reason?.code === "CODEX_WORKER_POLICY_TIMEOUT" ? "timeout" : "cancel");
         signal.addEventListener("abort", abortHandler, { once: true });
       }
     }
     child.once("spawn", () => {
       state.childStarted = true;
       childFenceDigest = digest(`${callerFenceDigest}\n${child.pid}\n${ownershipNonce}`);
-      onProcessEvent({ type: "spawn", pid: child.pid, parentPid: process.pid, command: "head-agent process-supervisor", cwd: path.dirname(supervisorSelection.binaryPath), ports: "none" });
+      onProcessEvent({ type: "spawn", pid: child.pid, parentPid: process.pid, command: "head-agent process-supervisor", cwd: executionRoot, ports: "none" });
     });
     child.once("error", (error) => {
-      rejectOnce(Object.assign(new Error(`${commandLabel} child failed: ${error.message}`), { code: spawnFailureCode }));
+      startupError = Object.assign(new Error(`${commandLabel} child failed: ${error.message}`), { code: spawnFailureCode });
+      // Wait for close before releasing ownership. Error after a start is not
+      // evidence of non-start and still requires exact-tree cleanup.
+      if (state.childStarted) terminate("invalid-event");
     });
     child.stdin.on("error", () => {
       inputDigestObserved = digest(Buffer.alloc(0));
     });
     child.stdout.on("data", (chunk) => {
+      if (streamError) return;
+      if (state.outputLimited) return;
       stdout = Buffer.concat([stdout, chunk]);
+      try { if (spool && !spool.append("stdout", chunk)) { terminate("output-limit"); return; } }
+      catch (error) { streamError = error; terminate("invalid-event"); return; }
       if (stdout.length > authorization.limits.maxStdoutBytes) {
         terminate("output-limit");
         return;
@@ -192,7 +212,11 @@ export async function runSupervisedRuntimeOneShot({
       for (const line of lines) consumeLine(line);
     });
     child.stderr.on("data", (chunk) => {
+      if (streamError) return;
+      if (state.outputLimited) return;
       stderr = Buffer.concat([stderr, chunk]);
+      try { if (spool && !spool.append("stderr", chunk)) { terminate("output-limit"); return; } }
+      catch (error) { streamError = error; terminate("invalid-event"); return; }
       if (stderr.length > authorization.limits.maxStderrBytes) terminate("output-limit");
     });
     child.once("close", (code, childSignal) => {
@@ -204,6 +228,13 @@ export async function runSupervisedRuntimeOneShot({
       clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
       if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
+      if (startupError || streamError) {
+        try {
+          if (startupError && !state.childStarted && child.pid == null) onNeverStarted(spawnFailureCode);
+        } catch (error) { reject(error); return; }
+        reject(streamError || startupError);
+        return;
+      }
       const supervision = supervised.finalize({
         exactSupervisorExitObserved: state.childExitObserved,
         terminationRequested: state.terminationRequested,
@@ -255,8 +286,10 @@ export async function runSupervisedRuntimeOneShot({
         providerDiagnosticCodes: [...providerDiagnosticCodes],
         structuredResult: providerResult,
       });
-      resolve({ receipt: receiptDocument, events, providerResult });
+      const result = { receipt: receiptDocument, events, providerResult };
+      try { spool?.complete(result); } catch (error) { reject(error); return; }
+      resolve(result);
     });
-  });
+  }); } finally { spool?.close(); }
   return receipt;
 }

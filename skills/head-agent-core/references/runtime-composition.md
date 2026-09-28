@@ -2,6 +2,80 @@
 
 Use one provider-neutral core and compose it with replaceable boundaries.
 
+## Choose execution means separately from risk
+
+Direct HEAD work is the default. For useful ordinary delegation, use
+only tools exposed by the current Host, with a brief, independent ownership and
+HEAD integration. This does not require the managed runtime described below.
+Observe/Session/Run/Authority describes risk and persistence, not a choice of
+launcher. An active Run may consume Host contributions while retaining its own
+whole-result/review contract. Host handles remain operational; results do not
+become decisions or P2 direction.
+
+For example, ask one worker to investigate the failing parser and another to
+inspect its regression tests, then have HEAD combine both into a verified fix.
+Give each its needed sources and ownership boundary. A shared writable checkout
+is not isolation: overlapping writes require HEAD reconciliation or sequential
+work. Preserve user input, account and cost scope when choosing context. If the Host lacks a required control,
+disclose that limit. Continue the unfinished part directly or sequentially when
+it never started or no effects remain. Preserve completed contributions and
+user edits. Inspect unknown outcomes and overlapping effects before replacement;
+independent work can continue. A cancellation request does not establish exit.
+
+Apply the Skill's fork/fresh guidance per contribution, for example:
+
+- Continue a design fix whose earlier exceptions and user agreements are hard to
+  summarize faithfully: prefer a supported, in-scope fork, and identify the current
+  task so inherited but superseded discussion is not treated as current direction.
+- Review the parser independently against its current requirements and tests:
+  prefer fresh context containing that evidence, without feeding the parent's
+  conclusion as the answer. Include relevant constraints, not merely filenames.
+- Fix a small error message directly; neither a fork nor fresh worker is needed.
+
+These examples do not require a new artifact or selection ceremony. A fork's
+history is context, not proof of current authority or workspace isolation.
+
+## Explicit maintenance of retained managed work
+
+This is a compatibility entry for explicitly maintaining existing approved
+managed tasks, not a recommendation for new work or a Host-failure fallback.
+Use `node <plugin-root>/scripts/head.mjs managed-maintenance <command> ...`
+or the separate `scripts/mcp-managed-maintenance.mjs` stdio server. The ordinary
+server and raw CLI calls exclude managed mutations using the same classification.
+No request argument unlocks the ordinary MCP server. This routing grants no
+permission: every original authorization, lease, lineage and effect check remains.
+History/status/wait/result reads and exact owned cancellation stay on the
+ordinary surface. Shared non-worker runtime, Core, Context, World and Go compute
+remain available. Do not change a user's installed server automatically.
+
+The following preserved API details apply only inside that explicit entry.
+For one managed Session result, use the idle Session's exact
+ExecutionAuthorization and `head_bounded_worker_dispatch`; `worker-execute`
+receives the authorized sessionRequest. Preserve lease, role and scope checks.
+`worker-apply` and waves remain Run-only. A wave groups independent
+authorizations; it is not a shared permission.
+
+For the built-in managed Codex patch-proposal path, HEAD derives task, exact
+model, selected context, source paths and proposal targets, calls
+`head_bounded_worker_prepare`, then `head_bounded_worker_start` with the returned
+task key. Preparation can inspect the local provider backend but makes no model
+turn; it is not account/model readiness proof. Never ask the user for modules,
+JSON, IDs or routine approval. `selected-only` must not silently inherit global
+instructions; select `host-global` only within approved input scope. A missing
+managed backend affects that operation, not ordinary work. Existing unknown
+effects, receipt/basis checks, user-edit protection and owned cleanup still apply.
+
+Public preparation defaults to fresh (one turn). Explicit `context_mode:
+"native-prefix"` uses selected context in a new durable controlled seed plus a
+fork child (two turns); it does not inherit this HEAD conversation. Use it only
+within the existing call/input/persistence scope, inspect `executionPlan`, and
+do not claim the stronger native code-worker guarantees or cache savings.
+When integration or wave status returns `guidance`, HEAD handles the scoped
+inspection/reassessment or individual-job cleanup; do not turn that advice into
+a new user form, approval step, automatic retry or P2 direction.
+
+## Managed adapter architecture
+
 ```text
 HEAD Core
   -> Project canon and authority

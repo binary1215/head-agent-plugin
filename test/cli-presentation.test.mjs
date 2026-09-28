@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { tools, dispatch } from "../scripts/mcp-server.mjs";
 import {
   formatCliResult,
@@ -22,6 +24,33 @@ const authority = {
   consumesContinuation: false,
   attachesProvider: false,
 };
+
+test("real CLI help renders direct default and state-aware ordinary Host delegation", () => {
+  const root = path.resolve(import.meta.dirname, "..");
+  const cli = path.join(root, "scripts/head.mjs");
+  function invoke(args) {
+    const command = process.execPath, fullArgs = [cli, ...args];
+    const record = { command, args: fullArgs, cwd: root, parentPid: process.pid, ports: [] };
+    console.log(JSON.stringify({ event: "planned", ...record }));
+    const child = spawnSync(command, fullArgs, { cwd: root, encoding: "utf8", windowsHide: true, timeout: 20000, maxBuffer: 2 * 1024 * 1024 });
+    console.log(JSON.stringify({ event: "closed", ...record, pid: child.pid, exitCode: child.status, signal: child.signal }));
+    assert.ifError(child.error); assert.equal(child.status, 0, child.stderr); assert.equal(child.stderr, "");
+    return child.stdout;
+  }
+  for (const command of ["help", "help-all"]) {
+    const output = invoke([command]);
+    assert.match(output, /Work directly by default/u);
+    assert.match(output, /available Host tools.*HEAD integrate/u);
+    assert.match(output, /continue directly or sequentially/u);
+    assert.doesNotMatch(output, /optional managed operations|worker-prepare|worker-wave-create/u);
+    assert.match(output, /inspect uncertain work before replacement/u);
+    assert.doesNotMatch(output, /Choose (?:A|B|C)|Enter (?:an? )?(?:authorization|registry|job) ID/u);
+  }
+  const machine = JSON.parse(invoke(["help", "--json"]));
+  assert.equal(machine.executionMeans.default, "head-direct");
+  assert.equal(machine.executionMeans.requiresUserSelection, false);
+  assert.equal(machine.laneRecommendationRequired, false);
+});
 
 test("MCP discovery discloses every operation effect without granting approval", async () => {
   for (const tool of tools) assert.equal(typeof tool.annotations?.readOnlyHint, "boolean", tool.name);

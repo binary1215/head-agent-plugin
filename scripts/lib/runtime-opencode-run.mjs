@@ -17,6 +17,7 @@ import { persistRuntimeInvocationRecord } from "./runtime-invocation-record.mjs"
 import {
   verifyRuntimeExecutionLeaseOwnership,
   withRuntimeExecutionLease,
+  recordRuntimeInvocationStartFailure,
 } from "./runtime-execution-lease.mjs";
 import { resolveVerifiedProcessSupervisor } from "./runtime-process-supervisor.mjs";
 import { runSupervisedRuntimeOneShot } from "./runtime-supervised-one-shot.mjs";
@@ -272,6 +273,7 @@ export async function executeOpenCodeRuntimeInvocation({
   persist = true,
 } = {}, { preConsumeGate = null } = {}) {
   const verified = verifyRuntimeInvocationAuthorization(authorization);
+  if (verified.workerInput?.executionBoundary) fail("Selected-workspace execution requires a verified policy adapter; this attached adapter cannot fall back to the canonical root.", "WORKER_JOB_POLICY_UNAVAILABLE");
   if (!new Set(["actual-provider", "protocol-fixture"]).has(evidenceMode)) fail("OpenCode execution evidence mode is invalid.", "INVALID_OPENCODE_RUN_EVIDENCE_MODE");
   const prepared = prepareRuntimeInvocationExecution({ root, authorization: verified, sessionRequest });
   const { target } = verifyCurrentOpenCodeTarget({
@@ -312,6 +314,8 @@ export async function executeOpenCodeRuntimeInvocation({
       controlState = createOperationalControlState(operationalStateRoot, verified);
       return await runSupervisedRuntimeOneShot({
         runtime: "opencode",
+        operationalStateRoot,
+        onNeverStarted: (errorCode) => recordRuntimeInvocationStartFailure({ projectRoot: prepared.projectRoot, authorization: verified, lease, consumption, errorCode }),
         executablePath: target.executablePath,
         args: providerArguments === null ? opencodeArguments({
           projectRoot: prepared.projectRoot,

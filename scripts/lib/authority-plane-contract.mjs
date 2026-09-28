@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.7.0";
+export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.8.0";
 
 const fail = (message, code = "AUTHORITY_PLANE_ERROR") => {
   const error = new Error(message);
@@ -87,6 +87,13 @@ const ARTIFACT_PLANES = Object.freeze({
   BoundedWorkerWave: "P3",
   BoundedWorkerWaveSeal: "P3",
   BoundedWorkerWaveAbandonment: "P3",
+  WorkerPatchIntegrationIntent: "P3",
+  WorkerIntegrationEffectClaim: "P3",
+  WorkerIntegrationEffectAttempt: "P3",
+  WorkerIntegrationEffectReceipt: "P3",
+  WorkerIntegrationIncompleteSettlement: "P3",
+  WorkerIntegrationVerification: "P3",
+  WorkerIntegrationResultApplication: "P3",
   ObservationTypeDescriptor: "P3",
   ObservationRecord: "P3",
   DerivedObservationRecord: "P3",
@@ -195,7 +202,7 @@ export function artifactAuthorityBoundary(kind) {
 
 export function verifyArtifactAuthorityBoundary(kind, boundary) {
   const contractVersion = boundary?.contractVersion;
-  if (!new Set(["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", AUTHORITY_PLANE_CONTRACT_VERSION]).has(contractVersion)) {
+  if (!new Set(["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", AUTHORITY_PLANE_CONTRACT_VERSION]).has(contractVersion)) {
     fail(`${kind} authority-plane contract version is invalid.`, "INVALID_ARTIFACT_AUTHORITY_BOUNDARY");
   }
   const expected = boundaryPayload(kind, contractVersion);

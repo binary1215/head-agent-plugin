@@ -2,6 +2,7 @@
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isManagedMutation, requireOperationSurface, requireSurface } from "./lib/managed-maintenance-surface.mjs";
 import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
 import { prepareContextWorkflow, previewContextWorkflow } from "./lib/context-workflow.mjs";
@@ -19,7 +20,7 @@ import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refres
 import { inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision } from "./lib/document-change-review.mjs";
 import { activateArcadeDbGraphProjection, inspectArcadeDbCredentialPreflight, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
 import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from "./lib/arcadedb-database-lifecycle.mjs";
-import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization } from "./lib/runtime-invocation-lifecycle.mjs";
+import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization, reconcileWorkerMember } from "./lib/runtime-invocation-lifecycle.mjs";
 import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectProductPolicyStatus, proposeProductPolicy, readProductPolicyCandidate, readProductPolicyReviewDecision, reviewProductPolicy } from "./lib/product-policy.mjs";
@@ -56,10 +57,37 @@ import {
   waitForBoundedWorkerWave,
 } from "./lib/bounded-worker-wave.mjs";
 import fs from "node:fs";
+import { startBoundedWorkerJob, readBoundedWorkerJob, cancelBoundedWorkerJob, reconcileBoundedWorkerJob, readBoundedWorkerPatch } from "./lib/bounded-worker-job.mjs";
+import { operateWorkerIntegration, inspectWorkerIntegration } from "./lib/worker-integration-workflow.mjs";
+import { prepareLocalBoundedWorker, startLocalBoundedWorker } from "./lib/local-worker-host.mjs";
 
 const protocolVersion = "2024-11-05";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageVersion = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8")).version;
+const workerIntegrationIdSchema = { type: "string", pattern: "^worker-integration-[a-f0-9]{24}--[a-f0-9]{24}$" };
+const workerIntegrationVerificationIdSchema = { type: "string", pattern: "^worker-integration-verification-[a-f0-9]{24}$" };
+const workerIntegrationActionFields = {
+  prepare: ["authorization_ids", "max_bytes"],
+  apply: ["integration_id"],
+  reconcile: ["integration_id"],
+  "settle-incomplete": ["integration_id", "basis_digest", "reason"],
+  "prepare-result": ["integration_id", "basis_digest", "outcome", "evidence", "verification"],
+  "publish-result": ["integration_id", "verification_id"],
+};
+const workerIntegrationOptionalFields = { apply: ["basis_digest", "retry_known_no_write"], "prepare-result": ["plan_delta", "impact_radius", "unknowns"] };
+const workerIntegrationFieldNames = { action: "action", integration_id: "integrationId", authorization_ids: "authorizationIds",
+  max_bytes: "maxBytes", basis_digest: "basisDigest", reason: "reason", verification_id: "verificationId", outcome: "outcome",
+  evidence: "evidence", verification: "verification", plan_delta: "planDelta", impact_radius: "impactRadius", unknowns: "unknowns", retry_known_no_write: "retryKnownNoWrite" };
+function workerIntegrationInput(args) {
+  if (typeof args.project_root !== "string" || !args.project_root.trim()) throw new Error("Worker integration requires project_root.");
+  const request = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (key === "project_root") continue;
+    if (!Object.hasOwn(workerIntegrationFieldNames, key)) throw new Error(`Unsupported worker integration fields: ${key}.`);
+    request[workerIntegrationFieldNames[key]] = value;
+  }
+  return request;
+}
 const observationFieldSchema = {
   type: "object",
   properties: {
@@ -256,7 +284,7 @@ const supplementalReadOnlyHints = {
   head_product_outcome_observe: false,
   head_delivery_observe: false,
 };
-export const tools = [
+const allTools = [
   {
     name: "head_core_contract",
     description: "Read the active HEAD Agent Core roles, runtimes, and capability boundary.",
@@ -1008,6 +1036,98 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: "head_worker_integration",
+    description: "HEAD combines exact completed worker patches, explicitly applies or reconciles bounded file effects, settles a quiescent incomplete attempt, or prepares/publishes one verified whole-Run result. HEAD supplies the structured fields from its task and evidence; do not ask the user to author JSON. prepare-result needs the current basis_digest and HEAD verification; publish-result needs that exact verification_id. Published results still require Fresh HEAD review; this never creates ReviewDecision, Product Canon or checkpoint direction. No provider is launched and no Host executable or transport is accepted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        action: { type: "string", enum: Object.keys(workerIntegrationActionFields) },
+        authorization_ids: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" } },
+        max_bytes: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: "Bound combined raw preimage/postimage bytes for prepare; not a semantic sufficiency budget." },
+        integration_id: workerIntegrationIdSchema,
+        basis_digest: { type: "string", pattern: "^[a-f0-9]{64}$", description: "Exact current status basis after HEAD reassessment, never a user confirmation token." },
+        retry_known_no_write: { type: "boolean", default: false, description: "Only for apply: HEAD may explicitly retry an exact, quiescent, inspected known-no-write attempt. Unknown effects are never retried." },
+        reason: { type: "string", minLength: 1, maxLength: 4000 },
+        verification_id: workerIntegrationVerificationIdSchema,
+        outcome: { type: "string", minLength: 1 },
+        evidence: { type: "array", minItems: 1, items: { type: "object" } },
+        verification: { type: "array", minItems: 1, items: { type: "object" } },
+        plan_delta: { type: "string" },
+        impact_radius: { type: "array", items: { type: "string", minLength: 1 } },
+        unknowns: { type: "array", items: { type: "string", minLength: 1 } },
+      },
+      required: ["project_root", "action"], additionalProperties: false,
+      oneOf: Object.entries(workerIntegrationActionFields).map(([action, required]) => ({
+        properties: { ...Object.fromEntries(["project_root", ...required, ...(workerIntegrationOptionalFields[action] || [])].map(key => [key, {}])), action: { const: action } },
+        required, additionalProperties: false,
+      })),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_worker_integration_status",
+    description: "Read verified integration history, current dependency/file-effect basis, outstanding overlapping effects and whole-result state in one non-persisted view. Repeated reads create no artifacts, invoke no provider and repair no state. Raw patch bytes are omitted, while exact member and evidence identities remain available. Source or Session drift is not rewritten as success or recovery direction.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, integration_id: workerIntegrationIdSchema,
+      verification_id: workerIntegrationVerificationIdSchema,
+    }, required: ["project_root", "integration_id"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_prepare",
+    description: "Optional managed path only, not a prerequisite for ordinary Host delegation. Prepare a bounded read-only patch-proposal worker through the built-in local Host without calling a model. HEAD supplies task, exact model, selected context and source/proposal paths from the conversation; never ask the user to write a module, JSON or IDs. Reuses current Session or active Run authority and an identical preparation. Does not apply patches, create a Run, approve results, inspect an account or start a worker. Host-global instruction selection is explicit input scope, not an enforcement assertion; selected-only is the default.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, task: { type: "string", minLength: 1 }, model: { type: "string", minLength: 1 },
+      task_key: { type: "string", pattern: "^[a-z][a-z0-9-]{0,95}$" }, role: { type: "string", enum: ["developer", "coder", "reviewer"] },
+      outcome: { type: "string", minLength: 1 }, selected_context: { type: "string" },
+      source_paths: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
+      proposal_paths: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
+      runtime: { type: "string", enum: ["codex", "claude", "opencode"] },
+      timeout_ms: { type: "integer", minimum: 1000, maximum: 3600000 },
+      instruction_scope: { type: "string", enum: ["selected-only", "host-global"] },
+      context_mode: { type: "string", enum: ["fresh", "native-prefix"], description: "Default fresh uses one model turn. Explicit native-prefix uses selected_context in a new durable controlled seed and then a fork child (two turns total); not a fork of the current conversation or a stronger code-worker sandbox. HEAD must keep both calls and seed persistence within the existing authorized scope." },
+    }, required: ["project_root", "task", "model"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_bounded_worker_start",
+    description: "Start an optional managed worker, not a general Host spawn. Start a prepared worker by its task key or exact authorization using the built-in local Host and bounded native owner. Embedding Hosts remain supported. Repeated start never relaunches an uncertain job; no runner, environment or enforcement assertion is accepted.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 },
+      authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
+      task_key: { type: "string", pattern: "^[a-z][a-z0-9-]{0,95}$" },
+      role: { type: "string", enum: ["developer", "coder", "reviewer"] },
+    }, required: ["project_root"], oneOf: [{ required: ["authorization_id"], not: { required: ["task_key"] } },
+      { required: ["task_key"], not: { required: ["authorization_id"] } }], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  ...["status", "reconcile", "cancel", "patch"].map((operation) => ({
+    name: operation === "cancel" ? "head_bounded_worker_cancel" : `head_bounded_worker_job_${operation}`,
+    description: operation === "cancel" ? "Request cancellation of one exact owned bounded job. A request is not proof of cleanup; inspect until terminal and owner exit are verified. No arbitrary PID or path is accepted."
+      : operation === "patch" ? "Read exact owner-frozen workspace patch evidence bound to native terminal output and invocation lineage. This never applies edits, approves them or changes P2; later child edits cannot replace the frozen candidate."
+      : operation === "reconcile" ? "Reconcile an exited worker against exact cleanup, durable lease and bounded provider output. Restore only missing matching P3 invocation evidence; never infer a release, relaunch, apply a result, or change P2."
+        : "Read the same immutable bounded worker job after frontend loss. This does not relaunch, repair P2, or infer success from a spool alone.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, authorization_id: { type: "string", pattern: "^execution-authorization-[a-f0-9]{24}$" },
+    }, required: ["project_root", "authorization_id"], additionalProperties: false },
+    annotations: { readOnlyHint: operation === "status" || operation === "patch", destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  })),
+  {
+    name: "head_bounded_worker_reconcile",
+    description: "Recover a current logical worker's exact frozen authorization after interrupted publication, without recapturing changed or missing source files. This repairs only missing lookup records; it never launches, retries, grants new authority, or changes P2 recovery direction.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_root: { type: "string", minLength: 1 },
+        task_key: { type: "string", pattern: "^[a-z][a-z0-9-]{0,95}$" },
+      },
+      required: ["project_root", "task_key"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: "head_bounded_worker_dispatch",
     description: "Create or verify one P3 non-HEAD worker ownership record bound to an exact current Run or idle Session ExecutionAuthorization. Execute via CLI worker-execute; for Session pass --input with the exact sessionRequest. This cannot change WholePlan, recovery direction, or review state.",
     inputSchema: {
@@ -1538,10 +1658,10 @@ export const tools = [
   },
   {
     name: "head_operating_lane_recommend",
-    description: "Recommend the lightest safe Observe, Session, Run, or Authority lane without creating authority or project artifacts.",
+    description: "Optional risk/persistence advice for Observe, Session, Run, or Authority, not selection of an execution mechanism. Direct HEAD is default; useful ordinary delegation uses available Host tools. Worker count is not dependency_count; a Run does not require every delegate to be managed. Creates no authority or artifacts; do not ask the user for a lane form.",
     inputSchema: { type: "object", properties: {
-      project_root: { type: "string", minLength: 1 }, intent: { type: "string", enum: ["observe", "execute"], default: "observe" }, workspace_effect: { type: "string", enum: ["none", "reversible", "consequential"], default: "none" }, dependency_count: { type: "integer", minimum: 0, maximum: 32, default: 0 },
-      provider_invocation: { type: "boolean", default: false }, handoff: { type: "boolean", default: false }, context_replacement: { type: "boolean", default: false }, independent_review: { type: "boolean", default: false }, failure_branches: { type: "boolean", default: false }, human_decision_during_execution: { type: "boolean", default: false }, irreversible: { type: "boolean", default: false }, external_write: { type: "boolean", default: false }, uses_credentials: { type: "boolean", default: false }, authorization_status: { type: "string", enum: ["unknown", "within-approved-scope", "requires-user-decision"], default: "unknown", description: "HEAD assessment of existing scope, not a permission grant." }, product_canon_mutation: { type: "boolean", default: false }, product_initiative_decision: { type: "boolean", default: false }, recovery_checkpoint_replacement: { type: "boolean", default: false },
+      project_root: { type: "string", minLength: 1 }, intent: { type: "string", enum: ["observe", "execute"], default: "observe" }, workspace_effect: { type: "string", enum: ["none", "reversible", "consequential"], default: "none" }, dependency_count: { type: "integer", minimum: 0, maximum: 32, default: 0, description: "Actual dependent outcomes requiring durable lineage, not the number of independent workers." },
+      provider_invocation: { type: "boolean", default: false, description: "A provider call may need Session-level scope, but does not by itself require managed ExecutionAuthorization." }, handoff: { type: "boolean", default: false }, context_replacement: { type: "boolean", default: false }, independent_review: { type: "boolean", default: false }, failure_branches: { type: "boolean", default: false, description: "Durable recovery branches, not merely a possible Host error or sequential fallback." }, human_decision_during_execution: { type: "boolean", default: false }, irreversible: { type: "boolean", default: false }, external_write: { type: "boolean", default: false }, uses_credentials: { type: "boolean", default: false }, authorization_status: { type: "string", enum: ["unknown", "within-approved-scope", "requires-user-decision"], default: "unknown", description: "HEAD assessment of existing scope, not a permission grant." }, product_canon_mutation: { type: "boolean", default: false }, product_initiative_decision: { type: "boolean", default: false }, recovery_checkpoint_replacement: { type: "boolean", default: false },
     }, required: ["project_root"], additionalProperties: false },
   },
   {
@@ -1781,11 +1901,17 @@ export const tools = [
   },
 ];
 
-for (const tool of tools) {
+for (const tool of allTools) {
   if (tool.annotations?.readOnlyHint === undefined && Object.hasOwn(supplementalReadOnlyHints, tool.name)) {
     tool.annotations = { ...tool.annotations, readOnlyHint: supplementalReadOnlyHints[tool.name] };
   }
 }
+
+export function toolsForSurface(surface = "ordinary") {
+  requireSurface(surface);
+  return allTools.filter(tool => surface === "managed-maintenance" || !isManagedMutation(tool.name));
+}
+export const tools = toolsForSurface();
 
 const success = (id, result) => ({ jsonrpc: "2.0", id, result });
 const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, message } });
@@ -2031,16 +2157,27 @@ function continueSessionFromMcp(args, coordinationWorkspaceHost) {
   });
 }
 
-export async function dispatch(request, { graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, signal, onProcess } = {}) {
+function localWorkerInput(args, start = false) {
+  if (typeof args.project_root !== "string" || !args.project_root.trim()) throw new Error("An exact project_root is required.");
+  const fields = start ? { authorization_id: "authorizationId", task_key: "taskKey", role: "role" }
+    : { task: "task", task_key: "taskKey", role: "role", outcome: "outcome", selected_context: "selectedContext",
+      source_paths: "sourcePaths", proposal_paths: "proposalPaths", model: "model", runtime: "runtime", timeout_ms: "timeoutMs", instruction_scope: "instructionScope", context_mode: "contextMode" };
+  if (Object.keys(args).some(key => key !== "project_root" && !Object.hasOwn(fields, key))) throw new Error("Worker surface does not accept Host configuration.");
+  return Object.fromEntries(Object.entries(args).filter(([key]) => key !== "project_root").map(([key, value]) => [fields[key], value]));
+}
+
+export async function dispatch(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
+  requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
       return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: packageVersion } });
   }
   if (request.method === "notifications/initialized") return null;
-  if (request.method === "tools/list") return success(id, { tools });
+  if (request.method === "tools/list") return success(id, { tools: toolsForSurface(surface) });
   if (request.method !== "tools/call") return failure(id, "Method not found");
   try {
     const name = request.params?.name;
+    requireOperationSurface(name, surface);
     const args = request.params?.arguments || {};
     const value = await (name === "head_core_contract"
       ? {
@@ -2247,6 +2384,24 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
                   ? restoreSessionFromArtifacts({ root: args.project_root, checkpointId: args.checkpoint_id || null })
                   : name === "head_session_continue"
                     ? continueSessionFromMcp(args, coordinationWorkspaceHost)
+                    : name === "head_worker_integration"
+                      ? operateWorkerIntegration(workerIntegrationInput(args), { root: args.project_root, onProcess })
+                    : name === "head_worker_integration_status"
+                      ? inspectWorkerIntegration(workerIntegrationInput(args), { root: args.project_root })
+                    : name === "head_bounded_worker_prepare"
+                      ? await prepareLocalBoundedWorker(localWorkerInput(args), { root: args.project_root, supervisorSelection: workerJobSupervisor, protocolFixtureBackend: workerPreparationBackend, signal, onProcess })
+                    : name === "head_bounded_worker_start"
+                      ? await startLocalBoundedWorker({ root: args.project_root, ...localWorkerInput(args, true) }, { host: workerJobHost, supervisorSelection: workerJobSupervisor, onProcess })
+                    : name === "head_bounded_worker_job_status"
+                      ? readBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
+                    : name === "head_bounded_worker_job_patch"
+                      ? readBoundedWorkerPatch({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
+                    : name === "head_bounded_worker_cancel"
+                      ? cancelBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
+                    : name === "head_bounded_worker_job_reconcile"
+                      ? reconcileBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
+                    : name === "head_bounded_worker_reconcile"
+                    ? reconcileWorkerMember({ root: args.project_root, taskKey: args.task_key })
                   : name === "head_bounded_worker_dispatch"
                     ? createBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id, role: args.role })
                   : name === "head_bounded_worker_status"
@@ -2450,7 +2605,8 @@ export async function dispatch(request, { graphDbTransport = null, coordinationW
   }
 }
 
-export function serveMcp({ coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null } = {}) {
+export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null } = {}) {
+  requireSurface(surface);
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   const sourceRequests = new Map();
   const abortSources = () => { for (const controller of sourceRequests.values()) controller.abort(); };
@@ -2474,7 +2630,7 @@ export function serveMcp({ coordinationWorkspaceHost = null, observationRegistry
         if (sourceRequests.has(sourceRequestId)) throw new Error("Duplicate active source request id.");
         controller = new AbortController(); sourceRequests.set(sourceRequestId, controller); ownsSourceRequest = true;
       }
-      response = await dispatch(request, { coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost,
+      response = await dispatch(request, { surface, coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor,
         signal: controller?.signal, onProcess: (event) => process.stderr.write(`${JSON.stringify({ sourceProcess: event })}\n`) });
     }
     catch (error) { response = failure(null, `Parse error: ${error.message}`); }

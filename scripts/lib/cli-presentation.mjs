@@ -51,13 +51,18 @@ export function formatHelp(value) {
     "HEAD Agent Core",
     "In a supported coding conversation, describe the task in ordinary language; HEAD handles the internal setup.",
     "Core-first by default. Product, World, Graph, durable Runs, and workers stay explicit.",
-    "",
   ];
+  if (value.executionMeans?.default === "head-direct") {
+    lines.push("Work directly by default; use available Host tools for useful delegation, then let HEAD integrate the results.",
+      "If delegation never started or has no remaining effects, continue directly or sequentially; inspect uncertain work before replacement.");
+  }
+  if (value.surface === "managed-maintenance") lines.push("Retained managed-work maintenance: original authorization and effect checks still apply. Not an automatic failure fallback.");
+  lines.push("");
   for (const [name, commands] of Object.entries(groups)) {
     if (!commands.length) continue;
     lines.push(`${name}:`, ...commands.map((command) => `  ${command}`), "");
   }
-  if (value.advancedCompatibilityCommand) lines.push(`All compatibility commands: ${value.advancedCompatibilityCommand}`);
+  if (value.advancedCompatibilityCommand) lines.push(`Advanced ordinary commands: ${value.advancedCompatibilityCommand}`);
   lines.push("Machine-readable output: add --json");
   return `${lines.join("\n").trimEnd()}\n`;
 }
@@ -576,6 +581,9 @@ export function formatDeliveryStatus(value) {
 }
 
 export function formatMcpToolContent(name, value) {
+  if (name === "head_bounded_worker_prepare") return formatWorkerPreparation(value);
+  if (["head_worker_integration_status", "head_worker_integration"].includes(name)) return formatWorkerGuidance(value);
+  if (["head_bounded_worker_wave_status", "head_bounded_worker_wave_wait"].includes(name)) return formatWorkerGuidance(value);
   if (name === "head_source_context") return formatSourceContext(value);
   if (name === "head_project_status") return formatProjectStatus(value);
   if (name === "head_project_initialize_or_resume") return formatProjectBootstrap(value);
@@ -609,6 +617,8 @@ export function formatCliError(error) {
 }
 
 export function formatCliResult(command, value) {
+  if (command === "worker-prepare") return formatWorkerPreparation(value);
+  if (["worker-integration-status", "worker-integrate", "worker-wave-status", "worker-wave-wait"].includes(command)) return formatWorkerGuidance(value);
   if (command === "source-context") return formatSourceContext(value);
   if (["help", "--help", "-h", "help-all"].includes(command)) return formatHelp(value);
   if (command === "status" || command === "doctor") return formatProjectStatus(value, { doctor: command === "doctor" });
@@ -628,6 +638,32 @@ export function formatCliResult(command, value) {
   if (command === "checkpoint-diagnose") return formatCheckpointDiagnosis(value);
   if (command === "checkpoint-sync") return formatCheckpointSync(value);
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function formatWorkerPreparation(value) {
+  if (value?.status !== "unavailable_for_selected_scope") return `${JSON.stringify(value, null, 2)}\n`;
+  return [
+    "Managed worker not prepared: selected-only input conflicts with existing CLI global instructions.",
+    "This limits this optional preparation, not HEAD or the entire provider backend. No model or account call was made by this preparation.",
+    value.guidance.nextStep,
+    value.guidance.scopeChange,
+    "No authorization or automatic fallback is supplied by this guidance. Technical details: --json", "",
+  ].join("\n");
+}
+
+function formatWorkerGuidance(value) {
+  const view = value?.projection || value?.application || value;
+  const guidance = view?.guidance;
+  if (!guidance) return `${JSON.stringify(value, null, 2)}\n`;
+  const counts = view.counts;
+  const lines = [counts ? `Worker group: ${view.state}; ${counts.started}/${counts.requested} started, ${counts.succeeded} succeeded, ${counts.failed} failed, ${counts.waiting} waiting.`
+    : `Worker integration: ${view.status}; HEAD action: ${guidance.action}.`];
+  for (const entry of (guidance.unavailable || []).slice(0, 8)) lines.push(`${compactText(entry.path, 160)} (${entry.role}): ${compactText(entry.reason, 120)}`);
+  if (guidance.unavailable?.length > 8) lines.push(`${guidance.unavailable.length - 8} additional dependency issues in structured details.`);
+  lines.push(guidance.nextStep);
+  if (counts) lines.push("Group state and wait completion do not prove worker process cleanup.");
+  lines.push("Unrelated ordinary work remains available. No routine user approval is added.", "Technical details: --json");
+  return `${lines.join("\n")}\n`;
 }
 
 function formatSourceContext(value) {

@@ -133,9 +133,9 @@ function verifiedDispatchForAuthorization(inspected, authorizationId) {
   try { document = JSON.parse(fs.readFileSync(file, "utf8")); }
   catch (error) { fail(`Bounded worker dispatch is invalid JSON: ${error.message}`, "INVALID_BOUNDED_WORKER_DISPATCH"); }
   const dispatch = verifyBoundedWorkerDispatch(document);
-  workerRole(inspected, dispatch.workerRole);
   const authorization = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId }).authorization;
-  if (dispatch.projectId !== inspected.project.projectId || dispatch.headSessionId !== inspected.state.sessionId
+  if (dispatch.projectId !== inspected.project.projectId || dispatch.headSessionId !== authorization.headSessionId
+    || authorization.workerInput && dispatch.workerRole !== authorization.workerInput.role
     || dispatch.authorizationHash !== authorization.authorizationHash || dispatch.runtime !== authorization.runtime
     || dispatch.authorizationId !== authorization.authorizationId || dispatch.runId !== authorization.scope.runId
     || dispatch.wholePlanId !== authorization.scope.wholePlanId
@@ -150,6 +150,9 @@ export function createBoundedWorkerDispatch({ root = ".", authorizationId, role 
   const inspected = ready(root, "a bounded worker is dispatched");
   const selectedRole = workerRole(inspected, role);
   const authorization = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId }).authorization;
+  if (authorization.workerInput && selectedRole !== authorization.workerInput.role) {
+    fail("Worker role differs from its authorized input.", "BOUNDED_WORKER_DISPATCH_OWNERSHIP_CONFLICT");
+  }
   currentScope(inspected, authorization);
   const dispatch = verifyBoundedWorkerDispatch(identify({
     schemaVersion: 1,
@@ -199,7 +202,10 @@ export function createBoundedWorkerDispatch({ root = ".", authorizationId, role 
 }
 
 export function readBoundedWorkerDispatch({ root = ".", authorizationId } = {}) {
-  const inspected = ready(root, "a bounded worker dispatch is read");
+  // Historical ownership evidence is independent of current managed role-file
+  // drift. New dispatch/execution/application retain their own current gates.
+  const inspected = inspectProject(root);
+  if (inspected.status === "not_initialized") fail("Project must be initialized before a bounded worker dispatch is read.", "PROJECT_NOT_READY");
   return { status: "verified", ...verifiedDispatchForAuthorization(inspected, authorizationId) };
 }
 

@@ -6,11 +6,33 @@ history or validation fixtures.
 
 Status: active, executable contract
 
-Protocol version: `0.7.0`
+Protocol version: `0.8.0`
 
-Digest-valid `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, and `0.6.0` embedded boundaries remain readable for upgrade continuity;
-new builders emit `0.7.0`. The only legacy classification retained by the reader
+Digest-valid `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0`, and `0.7.0` embedded boundaries remain readable for upgrade continuity;
+new builders emit `0.8.0`. The only legacy classification retained by the reader
 is the former generic Feature/Policy naming, never used to promote a new artifact.
+
+`WorkerPatchIntegrationIntent` is P3: exact dispatch, authorization, settled
+receipt, and owner-frozen patch provenance for one HEAD-selected combination.
+It does not reserve paths, apply files, authorize new execution, complete a Run,
+or write recovery direction. Its history remains readable after source/Session
+drift without requiring surviving Host temporary files. Current execution and
+file-effect checks are separate from that historical evidence read.
+
+Application adds P3 `WorkerIntegrationEffectClaim`, `WorkerIntegrationEffectAttempt`,
+and `WorkerIntegrationEffectReceipt`: bounded evidence that an exact file effect
+may have started, not another execution authorization. Outstanding actual paths
+are checked across Runs and Sessions; read dependencies and unchanged ownership
+do not reserve paths. A P3 `WorkerIntegrationIncompleteSettlement` records an
+explicit incomplete handoff only after effect-owner quiescence is established.
+It neither rewrites an unknown attempt as success nor authorizes its replay.
+Native journals, process identities and live ownership remain P5.
+
+`WorkerIntegrationVerification` freezes HEAD's assessment of the observed combined
+basis. `WorkerIntegrationResultApplication` links the one whole ResultPacket to
+the existing Run finish and Fresh HEAD review. Both are P3; neither produces a
+ReviewDecision or integrates a P2 checkpoint. A changed basis requires renewed
+HEAD assessment, not a new user approval ceremony or a permanent source lock.
 
 ## Why this boundary exists
 

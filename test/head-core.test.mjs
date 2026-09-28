@@ -2322,7 +2322,7 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   assert.equal(runCommand(["help"]).surface, "light-default");
   assert.equal(runCommand(["help"]).laneRecommendationRequired, false);
   assert.equal(runCommand(["help-all"]).commands.includes("head world-graph-remote-activate <project>"), true);
-  assert.equal(runCommand(["help-all"]).surface, "complete-compatibility");
+  assert.equal(runCommand(["help-all"]).surface, "ordinary-complete");
   assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_projection_status"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_database_initialize"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_projection_activate"), true);

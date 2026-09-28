@@ -123,10 +123,16 @@ try {
   assert.equal(doctor.native, "verified");
   assert.equal(doctor.activeReleaseId, installed.releaseId);
   assert.equal(await launcherVersion(), version);
-  // Native health, real scan parity, cancellation, and descendant cleanup are asserted
+  // Native health, real scan parity, interactive EOF, cancellation, and descendant cleanup are asserted
   // by existing verifiers against the installed bytes, without any live provider account.
   await run(process.execPath, [path.join(installedRoot, "scripts", "verify-go-worker.mjs"), "--plugin-root", installedRoot, "--repository-root", path.join(sourceRoot, "benchmarks", "repository-scan-v1", "basic")]);
-  await run(process.execPath, [path.join(installedRoot, "scripts", "verify-process-supervisor.mjs"), "--plugin-root", installedRoot]);
+  const supervisor = JSON.parse(await run(process.execPath, [path.join(installedRoot, "scripts", "verify-process-supervisor.mjs"), "--plugin-root", installedRoot]));
+  assert.equal(supervisor.interactive.platform, process.platform);
+  assert.equal(supervisor.interactive.arch, process.arch);
+  assert.equal(supervisor.interactive.bidirectionalRoundTripVerified, true);
+  assert.equal(supervisor.interactive.gracefulEofVerified, true);
+  assert.equal(supervisor.interactive.treeCleanupVerified, true);
+  assert.equal(supervisor.interactive.providerSessionCreated, false);
   const rolledBack = rollbackDistribution({ installRoot, binDirectory });
   assert.equal(rolledBack.activeReleaseId, baseline.releaseId);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).native, "javascript-fallback");
@@ -141,6 +147,7 @@ try {
     hostNativeExecution: true, crossBuildOnly: false, installedReleaseId: installed.releaseId,
     doctorVerified: true, nativeHealthVerified: true, nativeScanParityVerified: true,
     supervisorCancellationAndDescendantCleanupVerified: true, rollbackVerified: true,
+    supervisorInteractiveRoundTripAndEofVerified: true,
     launcherWithSpacesVerified: true, uninstallVerified: true,
     providerSessionCreated: false, projectAuthorityChanged: false,
   }, null, 2)}\n`);

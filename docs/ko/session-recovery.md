@@ -232,6 +232,12 @@ receipt는 통합이 ReviewDecision을 생성하지 않았고 ResultPacket은 �
 
 ## 공개 표면
 
+아래 worker 변경은 기존에 승인된 관리형 작업의 명시적 유지관리만을 위해 보존하며
+일반 복구나 새로운 위임 절차가 아닙니다. 일반 작업은 HEAD 직접 수행 또는 현재 Host
+도구를 사용합니다. Typed MCP 변경 도구는 별도 `scripts/mcp-managed-maintenance.mjs`
+서버에만 있고, read/status/wait와 정확히 소유한 작업 취소는 일반 표면에 남습니다.
+복구 API가 관리형 실행을 선택하거나 사용자의 설치된 서버를 변경하지 않습니다.
+
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
 head checkpoint-basis <project>
@@ -239,15 +245,15 @@ head checkpoint-diagnose <project>
 head checkpoint-sync <project> --input <head-direction.json>
 head session-restore <project> [--checkpoint <checkpoint-id>]
 head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
-head worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
+head managed-maintenance worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
 head worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
-head worker-execute <project> --authorization <authorization-id> --role <non-head-role>
-head worker-apply <project> --authorization <authorization-id>
-head worker-wave-create <project> --input <wave.json>
-head worker-wave-seal <project> --wave <bounded-worker-wave-id>
+head managed-maintenance worker-execute <project> --authorization <authorization-id> --role <non-head-role>
+head managed-maintenance worker-apply <project> --authorization <authorization-id>
+head managed-maintenance worker-wave-create <project> --input <wave.json>
+head managed-maintenance worker-wave-seal <project> --wave <bounded-worker-wave-id>
 head worker-wave-status <project> --wave <bounded-worker-wave-id>
 head worker-wave-wait <project> --wave <bounded-worker-wave-id>
-head worker-wave-abandon <project> --input <abandonment.json>
+head managed-maintenance worker-wave-abandon <project> --input <abandonment.json>
 head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```

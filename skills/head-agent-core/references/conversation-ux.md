@@ -26,6 +26,27 @@ Do not initialize an uninitialized repository merely because an ordinary coding
 request happens to match this Skill. Product, World, Graph, durable Run, worker,
 and provider capabilities remain optional.
 
+## Direct work and ordinary delegation
+
+Do not turn risk-lane advice into a mandatory launcher choice. HEAD works
+directly unless independently reviewable contributions help. Then use the
+Host's existing delegation tools with a short brief and ownership boundary;
+do not prepare a managed worker or wave for ordinary parallel work. Two workers
+alone are not two durable dependencies.
+
+When one contribution fails, retain usable evidence and continue independent
+work. Continue the unfinished portion directly or sequentially only after
+confirming it never started or has no remaining effects; disclose missing evidence. Integrate current
+results and preserve intervening user changes. Unknown side effects still need
+reconciliation, not automatic replay. Missing managed metadata or an auxiliary
+job label does not invalidate otherwise verified ordinary Host work. Report the
+combined outcome and limitations without requiring a new approval click, except
+at an actual protected transition or existing active Run contract.
+
+Do not suggest managed maintenance as a fallback. It exists separately for
+explicitly settling retained managed work with all original checks. Existing
+history/status and exact owned cancellation remain ordinary diagnostics.
+
 ## Recovery presentation
 
 The presence of `.head/` does not prove that a current restorable checkpoint

@@ -112,6 +112,16 @@ The record/review/observe commands rebuild the local World Model and Product Gra
 
 ## MCP
 
+Operating-lane advice describes risk and persistence, not execution means.
+HEAD works directly by default, uses existing Host delegation when useful, and
+selects managed execution only for required managed guarantees. In
+`dependencyCount` count genuinely dependent outcomes requiring durable lineage,
+not independent workers; `failureBranches` describes durable recovery branches,
+not ordinary error handling. A Run does not make every helper managed.
+`minimumContracts` does not require managed authorization for an ordinary Host
+call; the separate `executionMeans` advice lists managed-only requirements.
+Neither projection grants permission or creates a new user form or approval.
+
 The typed MCP surface is:
 
 - `head_operating_lane_recommend`

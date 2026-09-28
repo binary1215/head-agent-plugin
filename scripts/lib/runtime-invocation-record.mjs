@@ -60,7 +60,9 @@ export function writeRuntimeInvocationArtifactExclusive(file, content) {
 function verifyRecordLineage({ authorization, receipt, draft, events }) {
   const verifiedAuthorization = verifyRuntimeInvocationAuthorization(authorization);
   const verifiedReceipt = verifyRuntimeInvocationLifecycleReceipt(receipt);
-  const verifiedDraft = verifyRuntimeResultPacketDraft(draft);
+  const verifiedDraft = verifyRuntimeResultPacketDraft(draft, { authorization: verifiedAuthorization });
+  const result = verifiedDraft.providerResult;
+  const resultJson = result === null ? "" : canonicalJson(result);
   const verifiedEvents = events.map((event) => verifyRuntimeEventEnvelope(event));
   const eventIds = verifiedEvents.map((event) => event.eventId).sort(compareText);
   const eventSequences = verifiedEvents.map((event) => event.sequence);
@@ -73,9 +75,14 @@ function verifyRecordLineage({ authorization, receipt, draft, events }) {
     || verifiedReceipt.executionContractId !== verifiedAuthorization.scope.executionContractId
     || verifiedDraft.authorizationId !== verifiedAuthorization.authorizationId
     || verifiedDraft.lifecycleReceiptId !== verifiedReceipt.receiptId
+    || verifiedDraft.executionLeaseConsumptionId !== verifiedReceipt.executionLeaseConsumptionId
     || verifiedDraft.scopeKind !== verifiedAuthorization.scope.kind
     || verifiedDraft.runId !== verifiedAuthorization.scope.runId
     || verifiedDraft.executionContractId !== verifiedAuthorization.scope.executionContractId
+    || verifiedReceipt.providerBoundary.structuredResultObserved !== (result !== null)
+    || verifiedReceipt.providerBoundary.structuredResultDigest !== (result === null ? "" : crypto.createHash("sha256").update(resultJson).digest("hex"))
+    || verifiedReceipt.providerBoundary.structuredResultBytes !== Buffer.byteLength(resultJson)
+    || verifiedAuthorization.protocolVersion === "0.7.0" && verifiedReceipt.status === "completed" && result === null
     || canonicalJson(eventIds) !== canonicalJson(verifiedReceipt.eventIds)
     || canonicalJson(verifiedDraft.evidence[0].eventIds) !== canonicalJson(verifiedReceipt.eventIds)
     || verifiedEvents.some((event) => event.authorizationId !== verifiedAuthorization.authorizationId

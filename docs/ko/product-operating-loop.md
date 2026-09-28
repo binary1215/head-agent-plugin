@@ -112,6 +112,15 @@ record/review/observe 명령은 동일한 작업에서 로컬 World Model과 Pro
 
 ## MCP
 
+Operating-lane 권고는 위험과 지속성을 나타내며 실행 수단을 선택하지 않습니다.
+HEAD 직접 작업이 기본이고, 유용하면 기존 Host 위임을 사용하며, 관리형 보장이
+필요할 때만 관리형 실행을 선택합니다. `dependencyCount`에는 독립 워커 수가 아닌
+영속 계보가 필요한 실제 의존 결과를, `failureBranches`에는 일반 오류 처리가 아닌
+지속 복구 분기를 반영합니다. Run이 모든 보조 작업을 관리형으로 만들지는 않습니다.
+`minimumContracts`는 일반 Host 호출에 관리형 권한을 요구하지 않으며, 별도
+`executionMeans` 안내가 관리형 전용 요구를 구분합니다. 어느 투영도 권한을 부여하거나
+새 사용자 폼·승인 단계를 만들지 않습니다.
+
 타입이 지정된 MCP 표면은 다음과 같습니다.
 
 - `head_operating_lane_recommend`

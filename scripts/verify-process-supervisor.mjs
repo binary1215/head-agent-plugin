@@ -47,6 +47,138 @@ if (mode === 'normal') setTimeout(() => process.exit(0), 50);
 else setInterval(() => {}, 1000);
 `;
 
+const INTERACTIVE_PROVIDER_FIXTURE = String.raw`
+const { spawn } = require('node:child_process');
+const { createInterface } = require('node:readline');
+const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+  shell: false, windowsHide: true, stdio: 'ignore',
+});
+process.stdout.write(JSON.stringify({ type: 'ready', providerPid: process.pid, descendantPid: descendant.pid }) + '\n');
+const lines = createInterface({ input: process.stdin });
+lines.on('line', line => process.stdout.write(JSON.stringify({ type: 'echo', value: line }) + '\n'));
+lines.on('close', () => process.stdout.write(JSON.stringify({ type: 'eof' }) + '\n', () => process.exit(0)));
+`;
+
+async function runInteractiveScenario(selection) {
+  let supervised;
+  let providerPid = null;
+  let descendantPid = null;
+  let closed = false;
+  let failure = null;
+  let pending = "";
+  let outputBytes = 0;
+  let errorOutput = "";
+  const records = [];
+  const recordDescendant = () => {
+    if (descendantPid || !providerPid) return;
+    const ready = records.find(record => record.type === "ready" && record.providerPid === providerPid
+      && Number.isSafeInteger(record.descendantPid) && record.descendantPid > 0);
+    if (!ready) return;
+    descendantPid = ready.descendantPid;
+    process.stderr.write(`NESTED_CHILD_START pid=${descendantPid} parent=${providerPid} command=${JSON.stringify([process.execPath, "-e", "setInterval(() => {}, 1000)"])} cwd=${repositoryRoot} ports=none\n`);
+  };
+  const controlFile = path.join(path.dirname(selection.manifestPath), `.interactive-control-${process.pid}-${crypto.randomUUID()}.jsonl`);
+  try {
+    process.stderr.write(`CHILD_PREPARE parent=${process.pid} command=${JSON.stringify([selection.binaryPath, "--interactive"])} cwd=${repositoryRoot} ports=none\n`);
+    process.stderr.write(`CHILD_PREPARE parent=supervisor command=${JSON.stringify([process.execPath, "-e", INTERACTIVE_PROVIDER_FIXTURE])} cwd=${repositoryRoot} ports=none\n`);
+    supervised = spawnSupervisedProcess({
+      selection, executablePath: process.execPath, args: ["-e", INTERACTIVE_PROVIDER_FIXTURE],
+      cwd: repositoryRoot,
+      providerEnvironment: { SystemRoot: process.env.SystemRoot || process.env.SYSTEMROOT || "", PATH: process.env.PATH || "" },
+      input: Buffer.alloc(0), controlFile, terminationGraceMs: 500,
+      interactive: { timeoutMs: 15_000 },
+      onControlEvent: event => {
+        if (event.type === "provider.started") {
+          providerPid = event.providerPid;
+          process.stderr.write(`NESTED_CHILD_START pid=${providerPid} parent=${supervised?.child.pid || process.pid} command=node-interactive-fixture cwd=${repositoryRoot} ports=none\n`);
+          recordDescendant();
+        }
+        if (event.type === "provider.exited") {
+          process.stderr.write(`NESTED_CHILD_END pid=${event.providerPid} parent=${supervised?.child.pid || process.pid} exit=${event.exitCode} signal=none\n`);
+        }
+      },
+    });
+    process.stderr.write(`NESTED_CHILD_START pid=${supervised.child.pid} parent=${process.pid} command=head-agent-process-supervisor--interactive cwd=${repositoryRoot} ports=none\n`);
+    const completion = new Promise(resolve => {
+      supervised.child.once("error", error => { failure ||= error; });
+      supervised.child.once("close", (code, signal) => {
+        closed = true;
+        process.stderr.write(`NESTED_CHILD_END pid=${supervised.child.pid} parent=${process.pid} exit=${code ?? "null"} signal=${signal || "none"}\n`);
+        resolve({ code, signal });
+      });
+    });
+    for (const stream of [supervised.child.stdout, supervised.child.stderr]) {
+      stream.on("error", error => { failure ||= error; });
+    }
+    supervised.child.stdout.on("data", chunk => {
+      outputBytes += chunk.length;
+      if (outputBytes > 64 * 1024) { failure ||= new Error("Interactive fixture exceeded its output bound."); return; }
+      pending += chunk.toString("utf8");
+      const lines = pending.split(/\r?\n/u);
+      pending = lines.pop() || "";
+      for (const line of lines) {
+        try {
+          const record = JSON.parse(line);
+          if (!record || typeof record !== "object" || Array.isArray(record)) throw new Error("Invalid fixture record.");
+          records.push(record);
+        }
+        catch { failure ||= new Error("Interactive fixture emitted an invalid record."); }
+      }
+      recordDescendant();
+    });
+    supervised.child.stderr.on("data", chunk => {
+      if (Buffer.byteLength(errorOutput) + chunk.length > 64 * 1024) failure ||= new Error("Interactive fixture exceeded its error-output bound.");
+      else errorOutput += chunk.toString("utf8");
+    });
+    const waitFor = async predicate => {
+      const deadline = Date.now() + 5_000;
+      while (!predicate() && !failure && !closed && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+      if (failure) throw failure;
+      assert(predicate(), `Interactive fixture did not complete its current exchange: ${errorOutput.trim() || "no supervisor stderr"}`);
+    };
+    await waitFor(() => providerPid && descendantPid);
+    for (const value of ["first interactive exchange", "second interactive exchange"]) {
+      await supervised.writeInput(Buffer.from(`${value}\n`));
+      await waitFor(() => records.some(record => record.type === "echo" && record.value === value));
+    }
+    assert(!closed && supervised.child.exitCode === null, "Interactive input ended before the explicit EOF.");
+    await supervised.endInput();
+    await waitFor(() => closed);
+    const outcome = await completion;
+    assert(outcome.code === 0 && outcome.signal === null && records.some(record => record.type === "eof") && !pending,
+      "Interactive fixture did not exit normally after explicit EOF.");
+    const boundary = supervised.finalize({ exactSupervisorExitObserved: true, terminationRequested: false });
+    assert(boundary.ownershipEstablished && boundary.treeCleanupVerified && boundary.providerChildExitObserved,
+      "Interactive fixture did not prove exact provider exit and tree cleanup.");
+    assert(await waitForExit(supervised.child.pid) && await waitForExit(providerPid) && await waitForExit(descendantPid),
+      "Interactive fixture left an owned process alive.");
+    process.stderr.write(`NESTED_CHILD_END pid=${descendantPid} parent=${providerPid} exit=null signal=supervised-tree-cleanup\n`);
+    return {
+      mode: "interactive", platform: process.platform, arch: process.arch,
+      bidirectionalRoundTripVerified: true, gracefulEofVerified: true,
+      ownershipEstablished: boundary.ownershipEstablished, treeCleanupVerified: boundary.treeCleanupVerified,
+      providerExitObserved: boundary.providerChildExitObserved, providerSessionCreated: false,
+    };
+  } finally {
+    if (supervised?.child && processExists(supervised.child.pid)) {
+      void supervised.endInput().catch(() => {});
+      if (!await waitForExit(supervised.child.pid)) {
+        supervised.terminate(false);
+        if (!await waitForExit(supervised.child.pid)) { supervised.terminate(true); await waitForExit(supervised.child.pid); }
+      }
+    }
+    for (const pid of [providerPid, descendantPid]) {
+      if (!processExists(pid)) continue;
+      try { process.kill(pid, "SIGTERM"); } catch {}
+      if (!await waitForExit(pid)) { try { process.kill(pid, "SIGKILL"); } catch {} await waitForExit(pid); }
+    }
+    assert(!processExists(supervised?.child?.pid) && !processExists(providerPid) && !processExists(descendantPid),
+      "Interactive fixture cleanup left an owned process alive.");
+    if (descendantPid) process.stderr.write(`NESTED_CHILD_END pid=${descendantPid} parent=${providerPid} exit=null signal=interactive-cleanup-verified\n`);
+    if (fs.existsSync(controlFile)) fs.unlinkSync(controlFile);
+  }
+}
+
 async function runScenario(selection, mode) {
   let descendantPid = null;
   let providerPid = null;
@@ -228,12 +360,14 @@ async function main() {
   const selection = resolveVerifiedProcessSupervisor({ pluginRoot });
   const normal = await runScenario(selection, "normal");
   const cancelled = await runScenario(selection, "cancel");
+  const interactive = await runInteractiveScenario(selection);
   const interrupted = await runBoundedControlScenario(selection, "codex", "interrupt");
   const closed = await runBoundedControlScenario(selection, "opencode", "close");
   process.stdout.write(`${JSON.stringify({
     status: "process_supervisor_verified",
     manifestId: selection.manifest.manifestId,
     scenarios: [normal, cancelled],
+    interactive,
     boundedRuntimeControl: [interrupted, closed],
     rawPidPersisted: false,
     shellInterpretation: false,

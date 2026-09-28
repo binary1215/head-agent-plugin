@@ -5,6 +5,21 @@ export const OPERATING_LANE_POLICY_VERSION = "0.2.0";
 const LANES = Object.freeze(["observe", "session", "run", "authority"]);
 const WORKSPACE_EFFECTS = Object.freeze(["none", "reversible", "consequential"]);
 
+// Risk/persistence lanes do not select a launcher or grant Host permissions.
+// Return fresh advice; callers cannot mutate shared policy through a projection.
+export function operatingExecutionGuidance() {
+  return {
+    default: "head-direct",
+    delegation: "existing-host-tools-when-useful",
+    laneSelectsExecutionMeans: false,
+    requiresUserSelection: false,
+    hostFallback: ["head-direct", "sequential"],
+    fallbackCondition: "not-started-or-confirmed-no-remaining-effects",
+    uncertainOutcome: "inspect-affected-work-before-replacement",
+    grantsPermission: false,
+  };
+}
+
 function fail(message, code = "INVALID_OPERATING_LANE_INPUT") {
   const error = new Error(message);
   error.code = code;
@@ -82,6 +97,7 @@ export function recommendOperatingLane({
   ]);
   const runReasons = uniqueSorted([
     input.workspaceEffect === "consequential" && "consequential-workspace-effect",
+    // Actual dependent outcomes/recovery branches, never a count of workers.
     input.dependencyCount >= 2 && "multiple-dependent-results",
     input.failureBranches && "failure-recovery-branches",
     input.humanDecisionDuringExecution && "mid-run-human-decision",
@@ -103,7 +119,7 @@ export function recommendOperatingLane({
   const contracts = executionLane === "observe"
     ? []
     : executionLane === "session"
-      ? ["exact-session-request", "session-scoped-execution-authorization-if-provider-invoked", ...(input.handoff || input.contextReplacement ? ["optional-context-capsule"] : [])]
+      ? ["exact-session-request", ...(input.handoff || input.contextReplacement ? ["optional-context-capsule"] : [])]
       : ["WholePlanSnapshot", "ExecutionContract", "ContextCapsule", "ResultPacket", "FreshHeadReview"];
   if (authorityReasons.length) contracts.push("explicit-user-decision-at-affected-boundary");
 
@@ -118,6 +134,7 @@ export function recommendOperatingLane({
     reasons: selectedReasons,
     input,
     minimumContracts: contracts,
+    executionMeans: operatingExecutionGuidance(),
     persistence: executionLane === "observe" ? "none-by-default" : executionLane === "session" ? "session-position-and-execution-evidence-only" : "recoverable-lineage-required",
     automaticEscalation: {
       toSession: ["provider-invocation", "bounded-independent-review", "external-effect", "reversible-workspace-effect", "handoff", "context-replacement"],

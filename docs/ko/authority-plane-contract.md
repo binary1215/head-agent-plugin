@@ -6,9 +6,30 @@
 
 상태: 활성 실행 가능 계약
 
-프로토콜 버전: `0.7.0`
+프로토콜 버전: `0.8.0`
 
-다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.7.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
+다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0`, `0.7.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.8.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
+
+`WorkerPatchIntegrationIntent`는 P3입니다. HEAD가 선택한 조합의 정확한 dispatch,
+authorization, 종료된 receipt, owner가 동결한 patch 출처를 연결합니다. 경로를
+예약하거나 파일을 적용하거나 새 실행을 승인하거나 Run을 완료하거나 복구 방향을
+작성하지 않습니다. 소스·Session이 변경되고 Host 임시 파일이 없어져도 과거 증거는
+읽을 수 있습니다. 현재 실행·파일 효과 검사는 과거 증거 조회와 별개입니다.
+
+적용 단계의 `WorkerIntegrationEffectClaim`, `WorkerIntegrationEffectAttempt`,
+`WorkerIntegrationEffectReceipt`는 P3입니다. 정확한 파일 효과가 시작됐을 수
+있다는 제한된 증거이며 새 실행 승인이 아닙니다. 실제 효과 경로의 미완료 상태는
+Run·Session을 넘어 확인하지만 읽기 의존성이나 변경하지 않은 소유 경로는 예약하지
+않습니다. P3 `WorkerIntegrationIncompleteSettlement`는 효과 소유자가 더 이상
+쓸 수 없음이 확인된 뒤 명시적으로 미완료를 인계합니다. 불명확한 시도를 성공으로
+고치거나 재실행을 승인하지 않습니다. native journal·프로세스 식별자·실시간 소유권은
+P5에 남습니다.
+
+`WorkerIntegrationVerification`은 현재 통합 상태에 대한 HEAD의 판단을 동결합니다.
+`WorkerIntegrationResultApplication`은 하나의 전체 ResultPacket을 기존 Run 완료와
+Fresh HEAD 검토에 연결합니다. 둘 다 P3이며 ReviewDecision이나 P2 checkpoint 통합을
+생성하지 않습니다. 근거가 바뀌면 HEAD가 다시 판단하지만 사용자 승인 절차를 추가하거나
+소스를 영구적으로 잠그지는 않습니다.
 
 ## 이 경계가 존재하는 이유
 

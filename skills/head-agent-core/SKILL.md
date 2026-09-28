@@ -128,7 +128,11 @@ outcome contract.
   protected state transition.
 
 `head_operating_lane_recommend` is advisory. Risk and reversibility decide the
-lane; tool availability does not.
+lane; tool availability does not. This risk/persistence lane is separate from
+execution means: direct HEAD or ordinary Host delegation. Two independent
+workers are not `dependencyCount: 2`; an ordinary
+Host failure/fallback is not a durable recovery branch. A Run does not require
+every delegate to use managed authorization/lease/wave machinery.
 
 ## Context and execution
 
@@ -177,17 +181,54 @@ not proof that objections exist or are absent. HEAD decides relevance and reuses
 current readings; a changed task can make a previously acknowledged objection
 important again. Do not query every pointer by default or suppress it globally.
 
-For one independently consumable worker result, use an idle Session's existing
-ExecutionAuthorization and `head_bounded_worker_dispatch`; a Run, plan, contract and
-persisted Capsule are not compulsory. The Host executes `worker-execute` with
-`--input` containing the exact authorized `sessionRequest`. Read/wait through
-the existing worker tools and consume the result as evidence, not approval or
-P2 advancement. Keep role, scope, authorization lease and cleanup checks.
-`worker-apply` and worker waves remain Run-only. An independent second opinion
-alone does not require a Run; actual dependent results, recovery branches or
-consequential effects can. Lane advice never grants permission; credentials
-alone are not a new user decision and approved external effects do not by
-themselves require a full Run.
+Work directly by default. When independently reviewable contributions would
+help, use ordinary delegation through the current Host's available
+fork/spawn, wait/read and cancel tools. HEAD supplies a short brief with outcome,
+allowed context, file ownership, constraints and useful completion evidence.
+For small tasks, work directly. If delegation never started or is confirmed to
+have no remaining effects, continue directly or sequentially. Do not ask the
+user for a lane, registry, ID or JSON.
+
+HEAD chooses fork or fresh for each contribution's outcome and context needs:
+use only supported mechanisms within the authorized input scope; the preferences
+below do not relax that boundary or add an approval step. Prefer fork when
+carrying prior design reasons, exceptions or user agreements avoids material
+summary loss. Prefer fresh when current requirements, files and completion
+criteria suffice, when an independent review should be less influenced by the
+parent's conclusions, or when history is largely irrelevant or stale. Preserve
+semantically sufficient context; weigh selection effort and omission risk against
+unnecessary history transfer rather than trimming for its own sake. Observed
+cache reuse may inform the choice, but fork does not imply a cache hit and fresh
+is not inherently cheaper or faster.
+
+These are flexible judgments, not a scorecard, token threshold, mandatory
+checklist or extra user choice/approval. A short reason in the existing brief is
+enough when useful; no new record is required. Context inheritance transfers
+neither user approval, Canon/P2 authority nor file isolation. Fork/fresh is
+independent of persistence and risk; it does not grant new execution rights.
+See `references/runtime-composition.md` for examples.
+
+HEAD checks returned work against the current files, preserves user edits,
+resolves overlap and integrates contributions into one useful result. Ordinary delegation does not
+call `head_bounded_worker_prepare` or manufacture a managed authorization,
+lease, receipt or wave. Do not claim stronger isolation, durable reattachment
+or at-most-once effects than the Host actually provides. Wait for or cancel owned
+work and verify its end; do not blindly replay a call with unknown effects.
+
+Preserve completed contributions and continue only the unfinished portion.
+After timeout, lost contact or uncertain cancellation, inspect that exact work
+and overlapping effects before replacement. A cancel request is not proof of
+termination. Independent work can continue. Compare current files before
+integration; do not overwrite user changes or repeat an already present effect,
+and do not infer who applied it merely from matching content.
+
+Existing managed records, unresolved effects and active Run contracts remain
+binding. Read their exact status or cancel an exact owned job when needed; do
+not scan all history for every ordinary task. Only when explicitly maintaining
+an existing managed task, read `references/runtime-composition.md` for the
+separate maintenance entry. Never select it automatically after Host failure,
+ask for an unlock ceremony, or treat it as new authorization. Ordinary file work
+adds no review click; actual Canon/P2 transitions retain their existing rules.
 
 For a durable Run, preserve this sequence:
 
@@ -285,10 +326,12 @@ Load only the reference needed for the current outcome:
 - Session restore: read `../../docs/session-recovery.md`.
 - Conversation entry, decision cards, and outcome presentation: read
   `references/conversation-ux.md`.
-- Bounded workers or waves: read `../../docs/bounded-worker-wave.md`.
-- When composing a worker brief or combining multiple Run results, read
+- For existing bounded-worker/wave diagnostics, read `../../docs/bounded-worker-wave.md`.
+- Only for explicit maintenance of retained managed work, read
   [worker context and HEAD integration](../../docs/worker-context-integration.md).
-  Native context fork is not supported. Set execution context before
+  In that managed path, fresh one-shot context is the default. Use native fork through
+  a verified Host adapter with an exact completed-turn cutoff, policy and owned
+  cleanup; an app fork alone is not bounded execution. Set context before
   authorization; do not append to digest-bound input. Multiple fragments need
   one HEAD-combined Run result, not repeated worker application.
 - Git ref, deployment-result, or release observations: read

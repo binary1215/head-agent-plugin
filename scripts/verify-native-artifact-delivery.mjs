@@ -7,7 +7,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { createGoWorkerManifest } from "./lib/go-worker-adapter.mjs";
-import { createProcessSupervisorManifest } from "./lib/runtime-process-supervisor.mjs";
+import { createProcessSupervisorManifest, PROCESS_SUPERVISOR_MANIFEST_VERSION, PROCESS_SUPERVISOR_INTERACTIVE_PROTOCOL_VERSION } from "./lib/runtime-process-supervisor.mjs";
 import { createArcadeDbNativeBridgeManifest } from "./lib/arcadedb-native-bridge.mjs";
 import { acquireVerifiedNativeArtifact, assembleVerifiedNativeBundle, verifyNativeBundleOverlay } from "./lib/native-artifact-delivery.mjs";
 import { installDistribution, inspectDistribution, uninstallDistribution } from "./lib/distribution-lifecycle.mjs";
@@ -116,6 +116,21 @@ try {
   assert.equal(acquired.status, "verified");
   assert.equal(acquired.assetName, assetName);
   assert.deepEqual(fs.readFileSync(path.join(acquired.pluginRoot, "dist", target.directory, "GO-NOTICES.txt")), goNotices);
+  const acquiredSupervisorBytes = fs.readFileSync(path.join(acquired.pluginRoot, "dist", target.directory, "SUPERVISOR-MANIFEST.json"));
+  const acquiredSupervisor = JSON.parse(acquiredSupervisorBytes);
+  assert.equal(acquiredSupervisor.manifestVersion, PROCESS_SUPERVISOR_MANIFEST_VERSION);
+  assert.equal(acquiredSupervisor.manifestVersion, "0.3.0");
+  assert.equal(acquiredSupervisor.capabilities.declarationOnly, true);
+  assert.deepEqual(acquiredSupervisor.capabilities.processSupervision, {
+    oneShotProtocolVersion: "0.1.0", jobProtocolVersion: "0.1.0",
+    detachedJobAvailability: "runtime-platform-preflight-required",
+    interactiveProtocolVersion: PROCESS_SUPERVISOR_INTERACTIVE_PROTOCOL_VERSION,
+    interactiveTransport: "bounded-bootstrap-line-streaming-stdio",
+  });
+  assert.equal(acquiredSupervisor.processModel.transport, "single-request-stdio-with-control-fd3");
+  assert.equal(acquiredSupervisor.authority.grantsExecutionAuthorization, false);
+  assert.equal(acquiredSupervisor.authority.grantsWriteAuthorization, false);
+  assert.equal(acquiredSupervisor.authority.recoveryAuthority, false);
 
   const legacyArchive = fixtureArchive(target, { notices: false });
   const legacy = await acquireVerifiedNativeArtifact({ version, mode: "required", fetchImplementation: fetchFixture(assetName, legacyArchive), temporaryParent: scratchRoot });
@@ -143,6 +158,7 @@ try {
   const releaseTarget = path.join(installRoot, "releases", installed.releaseId, "dist", target.directory);
   assert.equal(fs.existsSync(path.join(releaseTarget, target.worker)), true);
   assert.equal(fs.existsSync(path.join(releaseTarget, target.bridge)), true);
+  assert.deepEqual(fs.readFileSync(path.join(releaseTarget, "SUPERVISOR-MANIFEST.json")), acquiredSupervisorBytes);
   assert.deepEqual(fs.readFileSync(path.join(releaseTarget, "GO-NOTICES.txt")), goNotices);
   assert.deepEqual(fs.readFileSync(path.join(installRoot, "releases", installed.releaseId, "native", "GO-NOTICES.txt")), goNotices);
   acquired.cleanup();
@@ -208,6 +224,8 @@ try {
     assert.deepEqual(fs.readFileSync(path.join(pluginRoot, "native", "GO-NOTICES.txt")), goNotices);
     for (const fixtureTarget of Object.values(targetMap)) {
       assert.deepEqual(fs.readFileSync(path.join(pluginRoot, "dist", fixtureTarget.directory, "GO-NOTICES.txt")), goNotices);
+      assert.deepEqual(fs.readFileSync(path.join(pluginRoot, "dist", fixtureTarget.directory, "SUPERVISOR-MANIFEST.json")),
+        fs.readFileSync(path.join(bundleRoot, "dist", fixtureTarget.directory, "SUPERVISOR-MANIFEST.json")));
     }
   }
 
@@ -226,6 +244,8 @@ try {
     codexMarketplaceIncludesNativeBundle: true,
     claudeMarketplaceIncludesNativeBundle: true,
     goNoticesPreservedAcrossArchiveInstallAndMarketplaces: true,
+    supervisorCapabilityDeclarationPreservedWithoutWriteOrRecoveryAuthority: true,
+    supervisorInteractiveDeclarationPreservedWithoutProviderAuthorization: true,
     legacyArchiveWithoutNoticesReadable: true,
   }, null, 2)}\n`);
 } finally {

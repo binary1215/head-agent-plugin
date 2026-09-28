@@ -131,7 +131,7 @@ product decision. See [Feature mapping](docs/feature-mapping.md).
 | A graph or generated document becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable views over verified records. |
 | A large repository overwhelms the prompt | Source Scope and bounded compilation keep unrelated generated, vendored, or copied material out of normal task context. |
 | Several agents blur responsibility | Bounded execution, result evidence, and independent review stay distinct while HEAD integrates them into one outcome. |
-| Parallel workers are hard to scan at a glance | A provider-neutral launch wave shows requested, started, returned, waiting, succeeded, and failed workers without merging their authorizations or treating wave completion as approval. |
+| Existing managed parallel work is hard to inspect | Retained wave diagnostics show requested, started, returned, waiting, succeeded, and failed workers without merging their authorizations or treating wave completion as approval. Ordinary Host delegation does not create a wave. |
 | Git and deployment history must be typed by hand | Provider-neutral observations turn current product refs and host-reported deployment results into immutable P3 evidence, while only an approved successful exact-commit/ref match becomes a non-authoritative ReleaseObservation. |
 | Every product exposes different operational data | A Project-bound Host registry lets HEAD collect a configured source by opaque ID, while product-specific adapters normalize it into one evidence-only contract and Core proves coverage and replay. |
 | Code and reviewed policy drift apart between releases | Provider HEAD proposes evidence-linked Conformance Findings into a non-blocking queue; Core verifies exact anchors and replay while only the user can disposition or accept a fresh resolution. Missing Graph or connector data remains a disclosure, not a gate on ordinary work. |
@@ -203,6 +203,25 @@ Prepare only the code and decision evidence needed for this change, then proceed
 ```text
 Keep one overall plan and use parallel workers only for the independent parts.
 ```
+
+HEAD normally works directly. When delegation helps, it uses the current Host's
+available fork/spawn and wait/cancel tools, gives each worker a short brief and
+ownership boundary, then checks and combines the results. If the Host cannot
+delegate, HEAD continues directly or sequentially. Forked context must fit your
+input scope; otherwise HEAD uses supported fresh context. You do not configure
+a worker registry or supply IDs.
+
+If a delegate fails, HEAD keeps completed work and continues only the unfinished
+part after checking whether anything is still running or already applied. It
+preserves your edits and checks uncertain overlapping effects before replacement;
+independent work can continue. No extra worker setup or approval ceremony is added.
+
+Existing managed jobs keep their history, status and exact cancellation tools.
+Their mutation APIs are retained behind an explicit
+[maintenance entry](skills/head-agent-core/references/runtime-composition.md#explicit-maintenance-of-retained-managed-work),
+not suggested as a fallback or ordinary workflow. Original authorization and
+effect checks still apply. A Run describes risk and recovery needs, not a
+requirement that every helper use a managed launcher.
 
 HEAD checks or resumes the project, chooses the lightest safe operating lane,
 and prepares durable context or recovery artifacts only when the task needs

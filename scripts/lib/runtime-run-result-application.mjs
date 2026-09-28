@@ -6,6 +6,7 @@ import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { finishRun, getPendingReviewContext } from "./run-lineage.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
+import { isWorkerPatchProposalMode } from "./worker-patch-proposal.mjs";
 import {
   readRuntimeInvocationRecord,
   runtimeInvocationRecordDirectory,
@@ -100,6 +101,10 @@ export function normalizeRuntimeRunResultTextProjection({ outcome, planDelta, im
 
 function canonicalRunResultFields(record) {
   const { authorization, receipt, draft } = record;
+  if (authorization.protocolVersion === "0.7.0"
+    && isWorkerPatchProposalMode(authorization.workerInput?.executionBoundary?.mode)) {
+    fail("A read-only patch proposal is not an applied Run result; use worker-integrate for HEAD application and whole-result verification.", "RUNTIME_PATCH_PROPOSAL_INTEGRATION_REQUIRED");
+  }
   const lifecycleEvidence = draft.evidence[0];
   const lifecycleVerification = draft.verification[0];
   if (draft.scopeKind !== "run" || !draft.providerResult || draft.freshHeadReviewRequired !== true

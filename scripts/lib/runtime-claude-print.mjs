@@ -14,7 +14,7 @@ import {
   RUNTIME_STRUCTURED_RESULT_VERSION,
 } from "./runtime-invocation-lifecycle.mjs";
 import { persistRuntimeInvocationRecord } from "./runtime-invocation-record.mjs";
-import { verifyRuntimeExecutionLeaseOwnership, withRuntimeExecutionLease } from "./runtime-execution-lease.mjs";
+import { verifyRuntimeExecutionLeaseOwnership, withRuntimeExecutionLease, recordRuntimeInvocationStartFailure } from "./runtime-execution-lease.mjs";
 import { resolveVerifiedProcessSupervisor } from "./runtime-process-supervisor.mjs";
 import { runSupervisedRuntimeOneShot } from "./runtime-supervised-one-shot.mjs";
 
@@ -237,6 +237,7 @@ export async function executeClaudeRuntimeInvocation({
   onProcessEvent = () => {}, evidenceMode = "actual-provider", persist = true,
 } = {}, { preConsumeGate = null } = {}) {
   const verified = verifyRuntimeInvocationAuthorization(authorization);
+  if (verified.workerInput?.executionBoundary) fail("Selected-workspace execution requires a verified policy adapter; this attached adapter cannot fall back to the canonical root.", "WORKER_JOB_POLICY_UNAVAILABLE");
   if (!new Set(["actual-provider", "protocol-fixture"]).has(evidenceMode)) fail("Claude execution evidence mode is invalid.", "INVALID_CLAUDE_PRINT_EVIDENCE_MODE");
   const prepared = prepareRuntimeInvocationExecution({ root, authorization: verified, sessionRequest });
   const { target } = verifyCurrentClaudeTarget({
@@ -257,7 +258,8 @@ export async function executeClaudeRuntimeInvocation({
     try {
       controlState = createOperationalControlState(operationalStateRoot, verified);
       return await runSupervisedRuntimeOneShot({
-        runtime: "claude", executablePath: target.executablePath,
+        runtime: "claude", executablePath: target.executablePath, operationalStateRoot,
+        onNeverStarted: (errorCode) => recordRuntimeInvocationStartFailure({ projectRoot: prepared.projectRoot, authorization: verified, lease, consumption, errorCode }),
         args: providerArguments === null ? buildClaudePrintArguments({
           workspaceMode: verified.workspaceMode, model: verified.runtimeSelection?.model || null,
         }) : providerArguments,

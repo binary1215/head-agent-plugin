@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withProjectMutation } from "./project-mutation-lock.mjs";
+import { requireCurrentWorkerMember } from "./worker-member-registry.mjs";
 
 export const RUNTIME_EXECUTION_LEASE_VERSION = "0.3.0";
 export const RUNTIME_OPERATIONAL_STATE_VERSION = "0.1.0";
@@ -321,6 +323,43 @@ function verifySafeLockDirectory(operationalStateRoot, projectId, authorizationI
   return directory;
 }
 
+// Inspection can overlap mkdir -> owner publication or owner unlink -> rmdir.
+// An incomplete observation never proves owner absence or permits lease replay.
+// Mutation and dead-owner recovery continue to use the strict reader above.
+function observeLockOwner(operationalStateRoot, projectId, authorizationId) {
+  const directory = lockDirectory(operationalStateRoot, projectId, authorizationId);
+  const file = ownerFile(operationalStateRoot, projectId, authorizationId);
+  let stat;
+  try { stat = fs.lstatSync(directory); }
+  catch (error) {
+    if (error?.code === "ENOENT" && error.path === directory) return { owner: null, incomplete: false };
+    throw error;
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) fail("Runtime operational lease lock path is unsafe.", "UNSAFE_RUNTIME_OPERATIONAL_STATE");
+  let content;
+  try {
+    const entries = fs.readdirSync(directory).sort(compareText);
+    if (entries.some((entry) => entry !== "owner.json")) fail("Runtime operational lease lock contains unexpected files.", "UNSAFE_RUNTIME_OPERATIONAL_STATE");
+    const resolved = fs.realpathSync(directory);
+    if (!isWithin(operationalStateRoot, resolved)) fail("Runtime operational lease lock escaped its host-local root.", "UNSAFE_RUNTIME_OPERATIONAL_STATE");
+    if (!entries.length) return { owner: null, incomplete: true };
+    const ownerStat = fs.lstatSync(file);
+    if (!ownerStat.isFile() || ownerStat.isSymbolicLink() || ownerStat.nlink !== 1) {
+      fail("Runtime operational lease owner path is unsafe.", "UNSAFE_RUNTIME_OPERATIONAL_STATE");
+    }
+    content = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT" && (error.path === directory || error.path === file)) {
+      return { owner: null, incomplete: true };
+    }
+    throw error;
+  }
+  let owner;
+  try { owner = JSON.parse(content); }
+  catch (error) { fail(`Runtime execution lease owner is invalid JSON: ${error.message}`, "INVALID_RUNTIME_EXECUTION_LEASE"); }
+  return { owner: verifyOwner(owner), incomplete: false };
+}
+
 function removeEmptyOperationalParents(operationalStateRoot, projectId, authorizationId) {
   const candidates = [
     operationalLeaseDirectory(operationalStateRoot, projectId, authorizationId),
@@ -360,6 +399,22 @@ function recoverDeadOwner(operationalStateRoot, authorization) {
   }
   removeOwnedLock(operationalStateRoot, authorization, owner);
   return true;
+}
+
+export function reconcileUnconsumedWorkerLease({ projectRoot, authorization }) {
+  const verified = requireAuthorizationShape(authorization);
+  if (!verified.workerInput) fail("Worker lease reconciliation requires member identity.", "INVALID_RUNTIME_EXECUTION_LEASE_INSPECTION");
+  return withProjectMutation({ root: projectRoot, scope: "worker-member-authorization" }, () => {
+    verifyPersistedAuthorization(projectRoot, verified);
+    requireCurrentWorkerMember(projectRoot, verified);
+    const state = inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId });
+    if (state.status !== "claimed" || state.singleUseConsumed) return state;
+    const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: false });
+    // Only exact proven-absent owners are reclaimed. The public
+    // stale-or-unknown label is never sufficient evidence of owner death.
+    recoverDeadOwner(operationalStateRoot, verified);
+    return inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId });
+  });
 }
 
 function acquire({ projectRoot, operationalStateRoot, authorization, ownerFenceDigest }) {
@@ -484,6 +539,16 @@ export function verifyRuntimeExecutionLeaseConsumption(document) {
 }
 
 function consume(projectRoot, authorization, owner) {
+  if (authorization.workerInput) {
+    return withProjectMutation({ root: projectRoot, scope: "worker-member-authorization" }, () => {
+      requireCurrentWorkerMember(projectRoot, authorization);
+      return consumeCurrent(projectRoot, authorization, owner);
+    });
+  }
+  return consumeCurrent(projectRoot, authorization, owner);
+}
+
+function consumeCurrent(projectRoot, authorization, owner) {
   verifyRuntimeExecutionLeaseOwnership({ projectRoot, authorization, lease: owner });
   const payload = {
     schemaVersion: 1,
@@ -642,7 +707,13 @@ export async function withRuntimeExecutionLease(
   }
   const verified = requireAuthorizationShape(authorization);
   const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: true });
-  const owner = acquire({ projectRoot, operationalStateRoot, authorization: verified, ownerFenceDigest });
+  const acquireCurrent = () => {
+    requireCurrentWorkerMember(projectRoot, verified);
+    return acquire({ projectRoot, operationalStateRoot, authorization: verified, ownerFenceDigest });
+  };
+  const owner = verified.workerInput
+    ? withProjectMutation({ root: projectRoot, scope: "worker-member-authorization" }, acquireCurrent)
+    : acquireCurrent();
   let consumption;
   let result;
   let operationError;
@@ -710,6 +781,34 @@ export async function withRuntimeExecutionLease(
   return { result, consumption, release };
 }
 
+export function recordRuntimeInvocationStartFailure({ projectRoot, authorization, lease, consumption, errorCode }) {
+  verifyRuntimeExecutionLeaseOwnership({ projectRoot, authorization, lease, consumption });
+  const payload = { kind: "RuntimeInvocationStartFailure", authorizationId: authorization.authorizationId,
+    authorizationHash: authorization.authorizationHash, consumptionId: consumption.consumptionId,
+    errorCodeDigest: digest(String(errorCode)), providerStarted: false, authority: "operational-start-evidence-only" };
+  const record = identify(payload, "runtime-start-failure", "failureId", "failureHash");
+  atomicWriteExclusive(path.join(durableLeaseDirectory(projectRoot, authorization.authorizationId), "start-failure.json"), json(record));
+  return record;
+}
+
+export function verifyRuntimeInvocationNeverStarted({ projectRoot, authorization }) {
+  const lease = inspectRuntimeExecutionLease({ projectRoot, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
+  if (lease.status !== "consumed-released" || lease.release?.operationStatus !== "threw") return false;
+  // Inspection is a bounded public projection; compare private evidence against
+  // the verified durable release rather than relying on omitted fields.
+  const release = verifyRuntimeExecutionLeaseRelease(readJson(releaseFile(projectRoot, authorization.authorizationId), "Runtime execution lease release"));
+  if (release.releaseId !== lease.release.releaseId) return false;
+  const file = path.join(durableLeaseDirectory(projectRoot, authorization.authorizationId), "start-failure.json");
+  if (!fs.existsSync(file)) return false;
+  const record = readJson(file, "Runtime start failure");
+  assertFields(record, ["kind", "authorizationId", "authorizationHash", "consumptionId", "errorCodeDigest", "providerStarted", "authority", "failureId", "failureHash"], "Runtime start failure");
+  verifyIdentity(record, { prefix: "runtime-start-failure", idKey: "failureId", hashKey: "failureHash", code: "INVALID_RUNTIME_START_FAILURE" });
+  return record.kind === "RuntimeInvocationStartFailure" && record.authorizationId === authorization.authorizationId
+    && record.authorizationHash === authorization.authorizationHash && record.consumptionId === lease.consumption.consumptionId
+    && record.errorCodeDigest === release.errorCodeDigest && record.providerStarted === false
+    && record.authority === "operational-start-evidence-only";
+}
+
 export function inspectRuntimeExecutionLease({ projectRoot, projectId, authorizationId }) {
   if (!/^head-[a-f0-9]{20}$/.test(projectId || "")
     || !/^execution-authorization-[a-f0-9]{24}$/.test(authorizationId || "")) {
@@ -729,7 +828,6 @@ export function inspectRuntimeExecutionLease({ projectRoot, projectId, authoriza
   const consumptionPath = consumptionFile(projectRoot, authorizationId);
   const releasePath = releaseFile(projectRoot, authorizationId);
   const operationalDirectory = operationalLeaseDirectory(operationalStateRoot, projectId, authorizationId);
-  const lockPath = lockDirectory(operationalStateRoot, projectId, authorizationId);
   if (fs.existsSync(operationalDirectory)) verifyConfinedOperationalLeaseDirectory(operationalStateRoot, projectId, authorizationId);
   const consumption = durableStateExists && fs.existsSync(consumptionPath)
     ? verifyRuntimeExecutionLeaseConsumption(readJson(consumptionPath, "Runtime execution lease consumption")) : null;
@@ -737,9 +835,9 @@ export function inspectRuntimeExecutionLease({ projectRoot, projectId, authoriza
     ? verifyRuntimeExecutionLeaseRelease(readJson(releasePath, "Runtime execution lease release")) : null;
   let ownerStatus = "none";
   let holdDeadlineExceeded = false;
-  if (fs.existsSync(lockPath)) {
-    verifySafeLockDirectory(operationalStateRoot, projectId, authorizationId);
-    const owner = verifyOwner(readOwner(operationalStateRoot, projectId, authorizationId));
+  const { owner, incomplete } = observeLockOwner(operationalStateRoot, projectId, authorizationId);
+  if (incomplete) ownerStatus = "stale-or-unknown";
+  if (owner) {
     if (owner.projectId !== projectId || owner.authorizationId !== authorizationId) {
       fail("Runtime execution lease belongs to another project or authorization.", "RUNTIME_EXECUTION_LEASE_PROJECT_MISMATCH");
     }
@@ -763,7 +861,7 @@ export function inspectRuntimeExecutionLease({ projectRoot, projectId, authoriza
     status,
     authorizationId,
     singleUseConsumed: Boolean(consumption),
-    replayAllowed: !consumption,
+    replayAllowed: !consumption && !incomplete,
     ownerStatus,
     holdDeadlineExceeded,
     operationalState: {
@@ -788,4 +886,21 @@ export function inspectRuntimeExecutionLease({ projectRoot, projectId, authoriza
       exactOwnerLockRemoved: release.releaseBoundary.exactOwnerLockRemoved,
     } : null,
   };
+}
+
+// Historical settlement evidence only. This never repairs an owner lock,
+// consumes a lease, infers a release, or rechecks current execution direction.
+export function readRuntimeExecutionSettlement({ projectRoot, authorization }) {
+  const verified = verifyPersistedAuthorization(projectRoot, authorization);
+  const status = inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId });
+  if (status.status !== "consumed-released") return null;
+  const consumption = verifyRuntimeExecutionLeaseConsumption(readJson(consumptionFile(projectRoot, verified.authorizationId), "Runtime consumption"));
+  const release = verifyRuntimeExecutionLeaseRelease(readJson(releaseFile(projectRoot, verified.authorizationId), "Runtime release"));
+  if (consumption.authorizationHash !== verified.authorizationHash || consumption.headSessionId !== verified.headSessionId
+    || consumption.scopeKind !== verified.scope.kind || consumption.runId !== verified.scope.runId
+    || consumption.executionContractId !== verified.scope.executionContractId
+    || consumption.consumptionId !== status.consumption.consumptionId || release.releaseId !== status.release.releaseId) {
+    fail("Historical settlement does not match exact authorization.", "RUNTIME_EXECUTION_LEASE_AUTHORIZATION_MISMATCH");
+  }
+  return { consumption, release };
 }

@@ -251,6 +251,13 @@ does not change the checkpoint or restore projection's next direction.
 
 ## Public surfaces
 
+Worker mutations below are retained only for explicit maintenance of existing
+approved managed work, not normal recovery or new delegation. Ordinary work uses
+direct HEAD or current Host tools. Typed MCP exposes those mutations only on the
+separate `scripts/mcp-managed-maintenance.mjs` server; read/status/wait and exact
+owned cancellation remain on the ordinary surface. Recovery APIs do not select
+managed execution or change the user's installed server.
+
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
 head checkpoint-basis <project>
@@ -258,15 +265,15 @@ head checkpoint-diagnose <project>
 head checkpoint-sync <project> --input <head-direction.json>
 head session-restore <project> [--checkpoint <checkpoint-id>]
 head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
-head worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
+head managed-maintenance worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
 head worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
-head worker-execute <project> --authorization <authorization-id> --role <non-head-role>
-head worker-apply <project> --authorization <authorization-id>
-head worker-wave-create <project> --input <wave.json>
-head worker-wave-seal <project> --wave <bounded-worker-wave-id>
+head managed-maintenance worker-execute <project> --authorization <authorization-id> --role <non-head-role>
+head managed-maintenance worker-apply <project> --authorization <authorization-id>
+head managed-maintenance worker-wave-create <project> --input <wave.json>
+head managed-maintenance worker-wave-seal <project> --wave <bounded-worker-wave-id>
 head worker-wave-status <project> --wave <bounded-worker-wave-id>
 head worker-wave-wait <project> --wave <bounded-worker-wave-id>
-head worker-wave-abandon <project> --input <abandonment.json>
+head managed-maintenance worker-wave-abandon <project> --input <abandonment.json>
 head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```

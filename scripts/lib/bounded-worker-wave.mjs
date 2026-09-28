@@ -128,7 +128,7 @@ function currentLineage(inspected) {
 function verifyLineageMatches(wave, inspected) {
   const current = currentLineage(inspected);
   const fields = [
-    "projectId", "headSessionId", "sessionPointerHash", "runId", "runHash", "wholePlanId",
+    "projectId", "headSessionId", "runId", "runHash", "wholePlanId",
     "executionContractId", "contextCapsuleId", "contextCapsuleHash",
   ];
   if (fields.some((field) => wave[field] !== current[field])) {
@@ -235,7 +235,24 @@ function verifiedWave(inspected, waveId) {
   if (!fs.existsSync(file)) fail(`Bounded worker wave not found: ${waveId}.`, "BOUNDED_WORKER_WAVE_NOT_FOUND");
   const wave = verifyBoundedWorkerWave(readJson(file, "BoundedWorkerWave", "INVALID_BOUNDED_WORKER_WAVE"));
   if (wave.waveId !== waveId) fail("Bounded worker wave file identity is invalid.", "BOUNDED_WORKER_WAVE_DIGEST_MISMATCH");
-  verifyLineageMatches(wave, inspected);
+  // Historical evidence is bound to its stored lineage, not the current
+  // execution pointer. Reading evidence must not authorize another effect.
+  const root = inspected.project.projectRoot;
+  if (wave.projectId !== inspected.project.projectId) {
+    fail("Bounded worker wave belongs to another project.", "BOUNDED_WORKER_WAVE_LINEAGE_DRIFT");
+  }
+  const plan = readLineageArtifact({ root, artifactId: wave.wholePlanId }).artifact;
+  const contract = readLineageArtifact({ root, artifactId: wave.executionContractId }).artifact;
+  const capsule = readContextCapsule({ root, capsuleId: wave.contextCapsuleId }).capsule;
+  const run = readJson(path.join(root, ".head", "sessions", "runs", wave.runId, "run.json"),
+    "Recorded Run", "INVALID_BOUNDED_WORKER_WAVE_LINEAGE");
+  if (plan.kind !== "WholePlanSnapshot" || contract.kind !== "ExecutionContract"
+    || contract.wholePlanId !== wave.wholePlanId || contract.capsuleId !== wave.contextCapsuleId
+    || capsule.capsuleHash !== wave.contextCapsuleHash || run.runId !== wave.runId
+    || run.wholePlanId !== wave.wholePlanId || run.executionContractId !== wave.executionContractId
+    || run.capsuleId !== wave.contextCapsuleId) {
+    fail("Bounded worker wave stored lineage is inconsistent.", "BOUNDED_WORKER_WAVE_LINEAGE_DRIFT");
+  }
   for (const member of wave.members) {
     const { dispatch } = readBoundedWorkerDispatch({ root: inspected.project.projectRoot, authorizationId: member.authorizationId });
     if (!memberMatchesDispatch(member, dispatch)
@@ -486,6 +503,19 @@ function buildStatusProjection({ root, wave, seal = null, abandonment = null, ad
     state,
     counts,
     members,
+    guidance: {
+      ordinaryWorkBlocked: false, userActionRequired: false, aggregateAvailable: Boolean(seal) && !abandonment,
+      canSeal: !seal && !abandonment && counts.started === counts.requested,
+      unsettledMemberAuthorizationIds: members.filter(member => member.started && !member.releaseId).map(member => member.authorizationId),
+      groupStateProvesProcessCleanup: false, abandonCancelsMembers: false, waitAbortCancelsMembers: false,
+      nextStep: abandonment ? "Preserve returned evidence and inspect or cancel each owned unfinished member; abandonment does not stop workers."
+        : !seal ? counts.started === counts.requested ? "All members have start evidence, but this wave is not sealed. Inspect individual results; status never seals or selects a maintenance mutation."
+          : "Inspect the existing individual jobs and preserve returned evidence. This partial wave cannot provide aggregate wait/results without a seal; it does not request more launches or block independent work."
+          : counts.failed > 0 ? "Preserve useful results and inspect or cancel unfinished owned members. One failure does not mean every worker stopped; reconcile unknown effects before retry."
+            : state === "completed" ? "HEAD reviews the combined results and verifies owned process cleanup. Group success is not approval or P2 integration."
+              : "Observe individual members or use bounded aggregate wait. Ending a wait does not cancel workers.",
+      persisted: false, grantsPermission: false,
+    },
     persisted: false,
     completionAuthority: false,
     recoveryAuthority: false,
@@ -523,6 +553,7 @@ export function readBoundedWorkerWaveStatus({ root = ".", waveId, admissionHost 
 
 export function sealBoundedWorkerWave({ root = ".", waveId } = {}) {
   const read = readBoundedWorkerWave({ root, waveId });
+  verifyLineageMatches(read.wave, ready(root, "a bounded worker wave is sealed"));
   if (read.abandonment) fail("An abandoned bounded worker wave cannot be sealed.", "BOUNDED_WORKER_WAVE_ABANDONED");
   if (read.seal) return { status: "existing", seal: read.seal, wave: read.wave };
   const members = read.wave.members.map((member) => memberOperationalStatus(path.resolve(root), read.wave.projectId, member));
@@ -589,6 +620,7 @@ function normalizeReasonSummary(value) {
 
 export function abandonBoundedWorkerWave({ root = ".", waveId, reasonCode, reasonSummary = "" } = {}) {
   const read = readBoundedWorkerWave({ root, waveId });
+  verifyLineageMatches(read.wave, ready(root, "a bounded worker wave is abandoned"));
   if (read.seal) fail("A sealed bounded worker wave cannot be abandoned.", "BOUNDED_WORKER_WAVE_ALREADY_SEALED");
   const normalizedCode = String(reasonCode || "").trim();
   if (!ABANDON_REASON_CODES.has(normalizedCode)) fail("Bounded worker wave abandonment reason code is invalid.", "INVALID_BOUNDED_WORKER_WAVE_ABANDON_REASON");
@@ -679,7 +711,7 @@ function buildResultProjection(statusProjection) {
 
 export function readBoundedWorkerWaveResults({ root = ".", waveId } = {}) {
   const read = readBoundedWorkerWave({ root, waveId });
-  if (!read.seal || read.abandonment) fail("Bounded worker wave results require a verified seal.", "BOUNDED_WORKER_WAVE_NOT_SEALED");
+  if (!read.seal || read.abandonment) fail("Aggregate results require a verified seal. Read individual jobs and wave status; HEAD may seal after every member started, or abandon a partial launch without cancelling its members.", "BOUNDED_WORKER_WAVE_NOT_SEALED");
   const projection = buildStatusProjection({ root: path.resolve(root), wave: read.wave, seal: read.seal, abandonment: null });
   return { status: "worker_wave_results_verified", projection: buildResultProjection(projection) };
 }
@@ -697,6 +729,7 @@ function waitOutcome(statusProjection, timedOut) {
     state: timedOut ? "timed-out" : statusProjection.state,
     counts: statusProjection.counts,
     timedOut,
+    guidance: statusProjection.guidance,
     persisted: false,
     reviewDecisionCreated: false,
     recoveryDirectionWritable: false,
@@ -717,10 +750,10 @@ export async function waitForBoundedWorkerWave({
     fail("Bounded worker wave wait limits are invalid.", "INVALID_BOUNDED_WORKER_WAVE_WAIT");
   }
   const initial = readBoundedWorkerWave({ root, waveId });
-  if (!initial.seal || initial.abandonment) fail("Bounded worker wave wait requires a verified seal.", "BOUNDED_WORKER_WAVE_NOT_SEALED");
+  if (!initial.seal || initial.abandonment) fail("Aggregate wait requires a verified seal. Read individual jobs and wave status; partial launch is not completion and abandonment does not cancel members.", "BOUNDED_WORKER_WAVE_NOT_SEALED");
   const startedAt = Date.now();
   while (true) {
-    if (signal?.aborted) fail("Bounded worker wave wait was aborted.", "BOUNDED_WORKER_WAVE_WAIT_ABORTED");
+    if (signal?.aborted) fail("Wave wait was aborted; workers were not cancelled. Inspect or cancel each owned unfinished member and verify cleanup.", "BOUNDED_WORKER_WAVE_WAIT_ABORTED");
     const status = readBoundedWorkerWaveStatus({ root, waveId }).projection;
     if (new Set(["completed", "failed"]).has(status.state)) {
       return { status: `bounded_worker_wave_${status.state}`, projection: status, waitOutcome: waitOutcome(status, false) };

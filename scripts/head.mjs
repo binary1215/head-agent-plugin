@@ -2,7 +2,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { commandEntry, isManagedMutation, requireOperationSurface, requireSurface } from "./lib/managed-maintenance-surface.mjs";
 import { inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
+import { startBoundedWorkerJob, readBoundedWorkerJob, cancelBoundedWorkerJob, reconcileBoundedWorkerJob, readBoundedWorkerPatch } from "./lib/bounded-worker-job.mjs";
+import { operateWorkerIntegration, inspectWorkerIntegration } from "./lib/worker-integration-workflow.mjs";
+import { prepareLocalBoundedWorker, startLocalBoundedWorker } from "./lib/local-worker-host.mjs";
 import { compileContext, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
 import { prepareContextWorkflow, previewContextWorkflow } from "./lib/context-workflow.mjs";
 import { prepareSourceContext, inspectSourceObservation } from "./lib/source-context-workflow.mjs";
@@ -24,6 +28,7 @@ import {
   buildRuntimeInvocationAuthorization,
   inspectRuntimeInvocationExecutionLease,
   readRuntimeInvocationAuthorization,
+  reconcileWorkerMember,
 } from "./lib/runtime-invocation-lifecycle.mjs";
 import { executeRuntimeInvocation } from "./lib/runtime-one-shot-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
@@ -40,7 +45,7 @@ import { diffGraphLineage, inspectGraphLineage, traceGraphLineage } from "./lib/
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
 import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
-import { recommendOperatingLane } from "./lib/operating-lane.mjs";
+import { recommendOperatingLane, operatingExecutionGuidance } from "./lib/operating-lane.mjs";
 import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, inspectRecoveryCheckpointBasis, prepareCompaction, syncRecoveryCheckpoint, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
@@ -86,7 +91,8 @@ export function parse(argv) {
   return { command, root, options };
 }
 
-export function usage({ all = false } = {}) {
+export function usage({ all = false, surface = "ordinary" } = {}) {
+  requireSurface(surface);
   const allCommands = [
       "head init <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>]",
       "head resume <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>]",
@@ -96,6 +102,7 @@ export function usage({ all = false } = {}) {
       "head runtime-adapters <project>",
       "head runtime-invocation-authorize <project> --input <authorization.json>",
       "head runtime-invocation-read <project> --authorization <execution-authorization-id>",
+      "head worker-reconcile <project> --task-key <stable-task-key>",
       "head runtime-invocation-lease-status <project> --authorization <execution-authorization-id>",
       "head runtime-invocation-execute <project> --authorization <execution-authorization-id> [--input <execution.json>]",
       "head runtime-invocation-result <project> --authorization <execution-authorization-id>",
@@ -104,7 +111,12 @@ export function usage({ all = false } = {}) {
       "head worker-read <project> --authorization <execution-authorization-id>",
       "head worker-wait <project> --authorization <execution-authorization-id> [--wait-timeout-ms <0..600000>]",
       "head worker-execute <project> --authorization <execution-authorization-id> --role <developer|coder|reviewer> [--input <session-request.json>]",
+      "head worker-prepare <project> --task <text> --model <exact-model> [--task-key <member>] [--source <path,...>] [--propose <path,...>] [--context <text>] [--context-mode fresh|native-prefix]",
+      "head worker-start <project> --task-key <member> | --authorization <execution-authorization-id> [--role <developer|coder|reviewer>]",
+      "head worker-job-status|worker-job-reconcile|worker-job-patch|worker-cancel <project> --authorization <execution-authorization-id>",
       "head worker-apply <project> --authorization <execution-authorization-id>",
+      "head worker-integrate <project> --input <head-integration-request.json>",
+      "head worker-integration-status <project> --integration <worker-integration-id> [--verification <worker-integration-verification-id>]",
       "head worker-wave-create <project> --input <wave.json>",
       "head worker-wave-read <project> --wave <bounded-worker-wave-id>",
       "head worker-wave-seal <project> --wave <bounded-worker-wave-id>",
@@ -256,9 +268,12 @@ export function usage({ all = false } = {}) {
     "head help-all  # advanced, compatibility, audit, and recovery commands",
   ];
   return {
-    surface: all ? "complete-compatibility" : "light-default",
-    commands: all ? allCommands : defaultCommands,
+    surface: surface === "managed-maintenance" ? surface : all ? "ordinary-complete" : "light-default",
+    commands: surface === "managed-maintenance"
+      ? allCommands.map(line => line.replace(/^head /u, "head managed-maintenance "))
+      : all ? allCommands.filter(line => !isManagedMutation(line.split(" ")[1])) : defaultCommands,
     laneRecommendationRequired: false,
+    executionMeans: operatingExecutionGuidance(),
     durableProductRecordCommandsAreDefault: false,
     advancedCompatibilityCommand: all ? null : "head help-all",
   };
@@ -299,10 +314,25 @@ function evidenceNeedsInput(options) {
   return Array.isArray(value) ? value : value?.evidenceNeeds ?? value;
 }
 
-export function runCommand(argv = process.argv.slice(2), { observationRegistry = null, compactionLifecycleHost = null, signal, onProcess } = {}) {
-  const { command, root, options } = parse(argv);
-  if (command === "help" || command === "--help" || command === "-h") return usage();
-  if (command === "help-all") return usage({ all: true });
+function requireRuntimeSurface(command, surface, root, authorization) {
+  if (surface === "managed-maintenance") return;
+  // Older managed dispatches can reference a shared authorization without
+  // workerInput. Inspect this exact record, never scan all project history.
+  let workerBound = authorization.workerInput != null;
+  if (!workerBound) {
+    try { readBoundedWorkerDispatch({ root, authorizationId: authorization.authorizationId }); workerBound = true; }
+    catch (error) { if (error.code !== "BOUNDED_WORKER_DISPATCH_NOT_FOUND") throw error; }
+  }
+  requireOperationSurface(command, surface, { workerBound });
+}
+
+export function runCommand(argv = process.argv.slice(2), { observationRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
+  const entry = commandEntry(argv);
+  const { surface } = entry;
+  const { command, root, options } = parse(entry.argv);
+  requireOperationSurface(command, surface);
+  if (command === "help" || command === "--help" || command === "-h") return usage({ surface });
+  if (command === "help-all") return usage({ all: true, surface });
   if (command === "--version" || command === "version") return { name: "head-agent-core", version: packageMetadata.version };
   if (command === "init" || command === "resume") return initializeOrResumeProject({
     root,
@@ -315,7 +345,8 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (command === "runtime-adapters") return inspectRuntimeAdapters(root);
   if (command === "runtime-invocation-authorize") {
     const input = inputJson(options, "Runtime invocation authorization");
-    const allowed = new Set(["runtime", "scope", "workspaceMode", "runtimeSelection", "limits"]);
+    requireOperationSurface(command, surface, { workerBound: input.worker != null });
+    const allowed = new Set(["runtime", "scope", "workspaceMode", "runtimeSelection", "worker", "retry", "limits"]);
     const unexpected = Object.keys(input).filter((key) => !allowed.has(key));
     if (unexpected.length) throw new Error(`Runtime invocation authorization contains unsupported fields: ${unexpected.sort().join(", ")}`);
     return inspectRuntimeAdapters(root).then((runtimeStatus) => buildRuntimeInvocationAuthorization({
@@ -327,9 +358,31 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
     }));
   }
   if (command === "runtime-invocation-read") return readRuntimeInvocationAuthorization({ root, authorizationId: options.authorization });
+  if (command === "worker-reconcile") return reconcileWorkerMember({ root, taskKey: options["task-key"] });
+  if (command === "worker-prepare") {
+    const allowed = new Set(["input", "task", "task-key", "role", "outcome", "context", "source", "propose", "model", "runtime", "timeout-ms", "instruction-scope", "context-mode"]);
+    if (Object.keys(options).some(key => !allowed.has(key)) || options.input && Object.keys(options).length > 1) throw new Error("Worker preparation accepts one bounded task description, not Host configuration.");
+    return prepareLocalBoundedWorker(options.input ? inputJson(options, "Worker preparation") : {
+      task: options.task, taskKey: options["task-key"], role: options.role, outcome: options.outcome, selectedContext: options.context, contextMode: options["context-mode"],
+      sourcePaths: options.source ? options.source.split(",") : [], proposalPaths: options.propose ? options.propose.split(",") : [],
+      model: options.model, runtime: options.runtime, timeoutMs: options["timeout-ms"] == null ? undefined : Number(options["timeout-ms"]),
+      instructionScope: options["instruction-scope"],
+    }, { root, supervisorSelection: workerJobSupervisor, protocolFixtureBackend: workerPreparationBackend, signal, onProcess });
+  }
+  if (command === "worker-start") {
+    if (Object.keys(options).some(key => !["task-key", "authorization", "role"].includes(key))) throw new Error("Worker start does not accept Host configuration.");
+    return startLocalBoundedWorker({ root, authorizationId: options.authorization, taskKey: options["task-key"], role: options.role }, { host: workerJobHost, supervisorSelection: workerJobSupervisor, onProcess });
+  }
+  if (command === "worker-job-status") return readBoundedWorkerJob({ root, authorizationId: options.authorization }, { onProcess, inspectorSelection: workerJobSupervisor });
+  if (command === "worker-job-patch") return readBoundedWorkerPatch({ root, authorizationId: options.authorization }, { onProcess, inspectorSelection: workerJobSupervisor });
+  if (command === "worker-cancel") return cancelBoundedWorkerJob({ root, authorizationId: options.authorization }, { onProcess, inspectorSelection: workerJobSupervisor });
+  if (command === "worker-job-reconcile") return reconcileBoundedWorkerJob({ root, authorizationId: options.authorization }, { onProcess, inspectorSelection: workerJobSupervisor });
+  if (command === "worker-integrate") return operateWorkerIntegration(inputJson(options, "Worker integration"), { root, onProcess });
+  if (command === "worker-integration-status") return inspectWorkerIntegration({ integrationId: options.integration, ...(options.verification ? { verificationId: options.verification } : {}) }, { root });
   if (command === "runtime-invocation-lease-status") return inspectRuntimeInvocationExecutionLease({ root, authorizationId: options.authorization });
   if (command === "runtime-invocation-execute") {
     const authorization = readRuntimeInvocationAuthorization({ root, authorizationId: options.authorization }).authorization;
+    requireRuntimeSurface(command, surface, root, authorization);
     const input = optionalInputJson(options, "Runtime invocation execution");
     const unexpected = Object.keys(input).filter((key) => key !== "sessionRequest");
     if (unexpected.length) throw new Error(`Runtime invocation execution contains unsupported fields: ${unexpected.sort().join(", ")}`);
@@ -337,13 +390,19 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
       root,
       authorization,
       sessionRequest: input.sessionRequest || "",
+      signal,
+      onProcessEvent: onProcess,
       protocolEvidence: runtimeStatus.protocolEvidence,
       projectBinding: runtimeStatus.projectBinding,
       persist: true,
     }));
   }
   if (command === "runtime-invocation-result") return readRuntimeInvocationResult({ root, authorizationId: options.authorization });
-  if (command === "runtime-invocation-apply-run-result") return applyRuntimeRunResult({ root, authorizationId: options.authorization });
+  if (command === "runtime-invocation-apply-run-result") {
+    const authorization = readRuntimeInvocationAuthorization({ root, authorizationId: options.authorization }).authorization;
+    requireRuntimeSurface(command, surface, root, authorization);
+    return applyRuntimeRunResult({ root, authorizationId: options.authorization });
+  }
   if (command === "worker-dispatch") return createBoundedWorkerDispatch({ root, authorizationId: options.authorization, role: options.role });
   if (command === "worker-read") return readBoundedWorkerDispatch({ root, authorizationId: options.authorization });
   if (command === "worker-wait") return waitForBoundedWorkerDispatch({
@@ -361,6 +420,8 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
       role: options.role,
       execution: {
         sessionRequest: input.sessionRequest ?? "",
+        signal,
+        onProcessEvent: onProcess,
         protocolEvidence: runtimeStatus.protocolEvidence,
         projectBinding: runtimeStatus.projectBinding,
       },
@@ -714,10 +775,12 @@ if (invokedDirectly) {
   const directArgs = process.argv.slice(2);
   const jsonOutput = directArgs.includes("--json");
   const normalizedArgs = directArgs.filter((item) => item !== "--json");
-  const directCommand = normalizedArgs[0] || "help";
+  const directCommand = commandEntry(normalizedArgs).argv[0] || "help";
   const sourceController = new AbortController();
   const abortSource = () => sourceController.abort();
-  if (directCommand === "source-context") { process.on("SIGINT", abortSource); process.on("SIGTERM", abortSource); }
+  if (["source-context", "worker-execute", "runtime-invocation-execute"].includes(directCommand)) {
+    process.on("SIGINT", abortSource); process.on("SIGTERM", abortSource);
+  }
   Promise.resolve().then(() => runCommand(normalizedArgs, { signal: sourceController.signal,
     onProcess: (event) => process.stderr.write(`${JSON.stringify({ sourceProcess: event })}\n`) })).then((result) => {
     process.stdout.write(jsonOutput ? `${JSON.stringify(result, null, 2)}\n` : formatCliResult(directCommand, result));

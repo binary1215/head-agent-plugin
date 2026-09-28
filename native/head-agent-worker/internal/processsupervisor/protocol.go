@@ -1,6 +1,7 @@
 package processsupervisor
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -16,9 +17,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 const ProtocolVersion = "0.1.0"
+const InteractiveProtocolVersion = "0.1.0"
 
 const (
 	maxRequestBytes = 8 * 1024 * 1024
@@ -35,6 +38,12 @@ type Request struct {
 	InputBase64        string            `json:"inputBase64"`
 	ControlFile        string            `json:"controlFile"`
 	TerminationGraceMS int               `json:"terminationGraceMs"`
+}
+
+type interactiveRequest struct {
+	Request
+	InteractiveProtocolVersion string `json:"interactiveProtocolVersion"`
+	TimeoutMS                  int    `json:"timeoutMs"`
 }
 
 type controlEvent struct {
@@ -67,13 +76,20 @@ type platformController interface {
 type eventWriter struct {
 	mu      sync.Mutex
 	encoder *json.Encoder
+	sync    func() error
 }
 
 func (writer *eventWriter) emit(event controlEvent) error {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
 	event.ProtocolVersion = ProtocolVersion
-	return writer.encoder.Encode(event)
+	if err := writer.encoder.Encode(event); err != nil {
+		return err
+	}
+	if writer.sync != nil {
+		return writer.sync()
+	}
+	return nil
 }
 
 func validateRequest(request Request) ([]byte, error) {
@@ -165,6 +181,133 @@ func Run(reader io.Reader, stdout io.Writer, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	return runRequest(request, input, stdout, stderr, nil, nil)
+}
+
+func runRequest(request Request, input []byte, stdout io.Writer, stderr io.Writer, stop <-chan string, onStop func(string)) (int, error) {
+	return runRequestInput(request, bytes.NewReader(input), nil, stdout, stderr, stop, onStop)
+}
+
+// RunInteractive owns reader until the exact direct provider exits. Closing
+// reader must unblock a pending Read (Host-piped os.Stdin/io.PipeReader do this).
+// Console/file stdin is not accepted as a streaming Host transport. The
+// bootstrap is one bounded line, not part of provider stdin; already-buffered
+// following bytes remain in the very same reader. Total stream/output budgets
+// belong to the authorized Host; this owner bounds buffering and post-bootstrap
+// lifetime. The Host must enforce its own bootstrap/deadline watchdog as well.
+func RunInteractive(reader io.ReadCloser, stdout io.Writer, stderr io.Writer) (int, error) {
+	if file, ok := reader.(*os.File); ok {
+		stat, err := file.Stat()
+		if err != nil || stat.Mode()&os.ModeNamedPipe == 0 {
+			return 2, errors.New("interactive stdin must be a Host-owned pipe")
+		}
+	}
+	defer reader.Close()
+	buffered := bufio.NewReaderSize(reader, 64*1024)
+	header := make([]byte, 0, 64*1024)
+	for {
+		fragment, err := buffered.ReadSlice('\n')
+		if len(header)+len(fragment) > maxRequestBytes {
+			return 2, errors.New("interactive bootstrap exceeds its bound")
+		}
+		header = append(header, fragment...)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return 2, errors.New("interactive bootstrap requires one complete newline-terminated frame")
+		}
+	}
+	request, err := decodeInteractiveRequest(header)
+	if err != nil {
+		return 2, err
+	}
+	stop := make(chan string, 1)
+	timer := time.AfterFunc(time.Duration(request.TimeoutMS)*time.Millisecond, func() { stop <- "timeout" })
+	defer timer.Stop()
+	return runRequestInput(request.Request, buffered, reader, stdout, stderr, stop, nil)
+}
+
+func decodeInteractiveRequest(data []byte) (interactiveRequest, error) {
+	invalid := errors.New("interactive bootstrap is invalid")
+	if !utf8.Valid(data) || uniqueInteractiveJSON(data) != nil {
+		return interactiveRequest{}, invalid
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil || len(fields) != 11 {
+		return interactiveRequest{}, invalid
+	}
+	for _, key := range []string{"schemaVersion", "protocolVersion", "executable", "arguments", "workingDirectory", "environment", "inputBase64", "controlFile", "terminationGraceMs", "interactiveProtocolVersion", "timeoutMs"} {
+		if _, exists := fields[key]; !exists {
+			return interactiveRequest{}, invalid
+		}
+	}
+	var request interactiveRequest
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || decoder.Decode(&struct{}{}) != io.EOF ||
+		request.InteractiveProtocolVersion != InteractiveProtocolVersion || request.InputBase64 != "" ||
+		request.TimeoutMS < 100 || request.TimeoutMS > 3_600_000 {
+		return interactiveRequest{}, invalid
+	}
+	if _, err := validateRequest(request.Request); err != nil {
+		return interactiveRequest{}, err
+	}
+	return request, nil
+}
+
+// Unlike a free-form provider frame, bootstrap names and null/duplicate values
+// cannot be ambiguous. This strict path does not change one-shot decoding.
+func uniqueInteractiveJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var readValue func(int) error
+	readValue = func(depth int) error {
+		if depth > 16 {
+			return errors.New("interactive bootstrap is too deep")
+		}
+		token, err := decoder.Token()
+		if err != nil || token == nil {
+			return errors.New("interactive bootstrap contains an invalid value")
+		}
+		if delimiter, ok := token.(json.Delim); ok {
+			switch delimiter {
+			case '{':
+				seen := map[string]bool{}
+				for decoder.More() {
+					key, err := decoder.Token()
+					name, ok := key.(string)
+					if err != nil || !ok || seen[name] {
+						return errors.New("interactive bootstrap contains duplicate names")
+					}
+					seen[name] = true
+					if err := readValue(depth + 1); err != nil {
+						return err
+					}
+				}
+			case '[':
+				for decoder.More() {
+					if err := readValue(depth + 1); err != nil {
+						return err
+					}
+				}
+			default:
+				return errors.New("interactive bootstrap contains an unexpected delimiter")
+			}
+			_, err = decoder.Token()
+		}
+		return err
+	}
+	if err := readValue(0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("interactive bootstrap contains trailing values")
+	}
+	return nil
+}
+
+func runRequestInput(request Request, input io.Reader, interactiveInput io.Closer, stdout io.Writer, stderr io.Writer, stop <-chan string, onStop func(string)) (int, error) {
 	controlFile, err := os.OpenFile(request.ControlFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return 2, fmt.Errorf("supervisor control file could not be created: %w", err)
@@ -174,7 +317,7 @@ func Run(reader io.Reader, stdout io.Writer, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 2, fmt.Errorf("process-tree ownership could not be established: %w", err)
 	}
-	events := &eventWriter{encoder: json.NewEncoder(controlFile)}
+	events := &eventWriter{encoder: json.NewEncoder(controlFile), sync: controlFile.Sync}
 	if err := events.emit(controlEvent{
 		Type:                     "supervisor.ready",
 		Strategy:                 controller.Strategy(),
@@ -186,9 +329,37 @@ func Run(reader io.Reader, stdout io.Writer, stderr io.Writer) (int, error) {
 	command := exec.Command(request.Executable, request.Arguments...)
 	command.Dir = request.WorkingDirectory
 	command.Env = environmentList(request.Environment)
-	command.Stdin = bytes.NewReader(input)
+	var inputPipe io.WriteCloser
+	var inputDone chan error
+	var inputFailed chan string
+	inputClosing := make(chan struct{})
+	var inputCloseOnce sync.Once
+	closeInteractiveInput := func() {
+		if interactiveInput != nil {
+			inputCloseOnce.Do(func() {
+				close(inputClosing)
+				_ = interactiveInput.Close()
+				_ = inputPipe.Close()
+			})
+		}
+	}
+	if interactiveInput == nil {
+		command.Stdin = input
+	} else {
+		inputPipe, err = command.StdinPipe()
+		if err != nil {
+			return 2, errors.New("interactive provider stdin could not be prepared")
+		}
+		defer inputPipe.Close()
+		inputDone = make(chan error, 1)
+		inputFailed = make(chan string, 1)
+	}
 	command.Stdout = stdout
 	command.Stderr = stderr
+	// A descendant may inherit stdout/stderr after the direct provider exits.
+	// Do not wait forever for EOF before the native owner can exit and trigger
+	// its kernel tree cleanup boundary.
+	command.WaitDelay = time.Duration(request.TerminationGraceMS) * time.Millisecond
 	controller.Configure(command)
 	if err := command.Start(); err != nil {
 		return 2, fmt.Errorf("provider process could not start: %w", err)
@@ -200,9 +371,30 @@ func Run(reader io.Reader, stdout io.Writer, stderr io.Writer) (int, error) {
 		TreeOwnershipEstablished: true,
 		ProviderPID:              providerPID,
 	}); err != nil {
+		closeInteractiveInput()
 		_ = controller.Terminate(providerPID, true)
 		_ = command.Wait()
 		return 2, errors.New("supervisor control channel rejected provider ownership evidence")
+	}
+	if interactiveInput != nil {
+		go func() {
+			_, copyErr := io.Copy(inputPipe, input)
+			select {
+			case <-inputClosing:
+				// Only a known Close-unblock error caused by our shutdown is
+				// ignorable. Preserve every other delivery error even when the
+				// provider Wait and inputFailed channels become ready together.
+				if errors.Is(copyErr, os.ErrClosed) || errors.Is(copyErr, io.ErrClosedPipe) {
+					copyErr = nil
+				}
+			default:
+			}
+			_ = inputPipe.Close() // Parent EOF is graceful provider stdin EOF.
+			inputDone <- copyErr
+			if copyErr != nil {
+				inputFailed <- "input-error"
+			}
+		}()
 	}
 
 	waitChannel := make(chan error, 1)
@@ -213,10 +405,20 @@ func Run(reader io.Reader, stdout io.Writer, stderr io.Writer) (int, error) {
 	terminationRequested := false
 	forceUsed := false
 	var waitError error
+	var requestedReason string
 	select {
 	case waitError = <-waitChannel:
 	case <-signalChannel:
+		requestedReason = "signal"
+	case requestedReason = <-stop:
+	case requestedReason = <-inputFailed:
+	}
+	if requestedReason != "" {
+		if onStop != nil {
+			onStop(requestedReason)
+		}
 		terminationRequested = true
+		closeInteractiveInput()
 		_ = controller.Terminate(providerPID, false)
 		select {
 		case waitError = <-waitChannel:
@@ -224,6 +426,16 @@ func Run(reader io.Reader, stdout io.Writer, stderr io.Writer) (int, error) {
 			forceUsed = true
 			_ = controller.Terminate(providerPID, true)
 			waitError = <-waitChannel
+		}
+	}
+	inputIncomplete := false
+	if interactiveInput != nil {
+		closeInteractiveInput()
+		select {
+		case inputErr := <-inputDone:
+			inputIncomplete = inputErr != nil
+		case <-time.After(time.Duration(request.TerminationGraceMS) * time.Millisecond):
+			inputIncomplete = true
 		}
 	}
 
@@ -243,6 +455,12 @@ func Run(reader io.Reader, stdout io.Writer, stderr io.Writer) (int, error) {
 		KernelCleanupOnExit: cleanup.KernelCleanupOnExit,
 	}); err != nil {
 		return 2, errors.New("supervisor control channel rejected cleanup evidence")
+	}
+	if errors.Is(waitError, exec.ErrWaitDelay) {
+		return 1, errors.New("provider output remained open after exit; output is incomplete")
+	}
+	if inputIncomplete || requestedReason == "input-error" {
+		return 1, errors.New("interactive provider input is incomplete")
 	}
 	return exitCode, nil
 }

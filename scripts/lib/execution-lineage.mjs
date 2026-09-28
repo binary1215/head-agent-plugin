@@ -217,8 +217,12 @@ function verifiedFreshHeadReview(review) {
   return review;
 }
 
-export function buildFreshHeadReview({ root = ".", wholePlanId, resultPacketId, sessionId = "", runId = "" } = {}) {
-  const project = projectForWrite(root);
+export function buildFreshHeadReview({ root = ".", wholePlanId, resultPacketId, sessionId = "", runId = "", historical = false } = {}) {
+  if (typeof historical !== "boolean") fail("Historical review projection mode must be explicit.", "INVALID_FRESH_HEAD_REVIEW");
+  // Recompute immutable historical P4 evidence without requiring current role
+  // projections or Session readiness. This never applies a ReviewDecision;
+  // ordinary review/action callers retain the existing ready-project boundary.
+  const project = historical ? projectForRead(root) : projectForWrite(root);
   const planId = requiredText(wholePlanId, "Whole-plan id");
   const resultId = requiredText(resultPacketId, "Result Packet id");
   const plan = requireArtifact(project.projectRoot, planId, "WholePlanSnapshot");

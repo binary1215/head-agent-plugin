@@ -4,8 +4,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 export const PROCESS_SUPERVISOR_PROTOCOL_VERSION = "0.1.0";
-export const PROCESS_SUPERVISOR_MANIFEST_VERSION = "0.1.0";
+export const PROCESS_SUPERVISOR_MANIFEST_VERSION = "0.3.0";
+export const PROCESS_SUPERVISOR_INTERACTIVE_PROTOCOL_VERSION = "0.1.0";
 export const RUNTIME_ONE_SHOT_CONTROL_VERSION = "0.1.0";
+// P5 provenance only: a serialized/copy-shaped handle cannot acquire control of
+// another process. Existing callers need no ownership binding.
+const supervisedProcessHandles = new WeakMap();
 
 const TARGETS = Object.freeze({
   "darwin-arm64": Object.freeze({ platform: "darwin", arch: "arm64", directory: "darwin-arm64", executable: "head-agent-supervisor" }),
@@ -52,9 +56,46 @@ function assertFields(value, fields, label) {
   }
 }
 
+function declaredCapabilities() {
+  // Build metadata describes entry points. It does not prove that an operation
+  // is supported for the current OS, filesystem, path, or requested effect.
+  return {
+    declarationOnly: true,
+    processSupervision: {
+      oneShotProtocolVersion: PROCESS_SUPERVISOR_PROTOCOL_VERSION,
+      jobProtocolVersion: "0.1.0",
+      detachedJobAvailability: "runtime-platform-preflight-required",
+      interactiveProtocolVersion: PROCESS_SUPERVISOR_INTERACTIVE_PROTOCOL_VERSION,
+      interactiveTransport: "bounded-bootstrap-line-streaming-stdio",
+    },
+    fileEffects: {
+      transport: "single-request-stdio",
+      transportProtocolVersion: "0.1.0",
+      imageProtocolVersion: "0.1.0",
+      operations: ["probe", "inspect", "edit", "retry", "image-preflight", "image-apply", "image-inspect", "image-retry"],
+      availability: "runtime-platform-and-target-preflight-required",
+    },
+  };
+}
+
+function operationalAuthority() {
+  return {
+    kind: "bounded-operational-process-and-file-effects",
+    instructionAuthority: false,
+    promotionAuthority: false,
+    recoveryAuthority: false,
+    grantsExecutionAuthorization: false,
+    grantsWriteAuthorization: false,
+    // No semantic Canon transition is authorized by this manifest. The helper
+    // has physical file-writing capabilities; Core must authorize and bind the
+    // exact effects, and the platform adapter must verify current capability.
+    mutatesCanon: false,
+  };
+}
+
 function manifestPayload({ target, binary }) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "HeadAgentProcessSupervisorManifest",
     manifestVersion: PROCESS_SUPERVISOR_MANIFEST_VERSION,
     supervisorProtocolVersion: PROCESS_SUPERVISOR_PROTOCOL_VERSION,
@@ -66,12 +107,8 @@ function manifestPayload({ target, binary }) {
       posixTreeOwnership: "isolated-process-group",
       shellInterpretation: false,
     },
-    authority: {
-      kind: "operational-process-control-only",
-      instructionAuthority: false,
-      promotionAuthority: false,
-      mutatesCanon: false,
-    },
+    capabilities: declaredCapabilities(),
+    authority: operationalAuthority(),
   };
 }
 
@@ -98,15 +135,18 @@ export function createProcessSupervisorManifest({ platform, arch, binaryFile, ma
 export function verifyProcessSupervisorManifest(manifest, { platform = process.platform, arch = process.arch } = {}) {
   assertFields(manifest, [
     "schemaVersion", "kind", "manifestVersion", "supervisorProtocolVersion", "target", "binary",
-    "processModel", "authority", "manifestId", "manifestHash",
+    "processModel", "capabilities", "authority", "manifestId", "manifestHash",
   ], "Process supervisor manifest");
   assertFields(manifest.target, ["platform", "arch", "directory"], "Process supervisor target");
   assertFields(manifest.binary, ["relativePath", "sha256", "size"], "Process supervisor binary");
   assertFields(manifest.processModel, ["transport", "windowsTreeOwnership", "posixTreeOwnership", "shellInterpretation"], "Process supervisor process model");
-  assertFields(manifest.authority, ["kind", "instructionAuthority", "promotionAuthority", "mutatesCanon"], "Process supervisor authority");
+  assertFields(manifest.capabilities, ["declarationOnly", "processSupervision", "fileEffects"], "Process supervisor capabilities");
+  assertFields(manifest.capabilities.processSupervision, ["oneShotProtocolVersion", "jobProtocolVersion", "detachedJobAvailability", "interactiveProtocolVersion", "interactiveTransport"], "Process supervision declaration");
+  assertFields(manifest.capabilities.fileEffects, ["transport", "transportProtocolVersion", "imageProtocolVersion", "operations", "availability"], "File effect declaration");
+  assertFields(manifest.authority, ["kind", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "grantsExecutionAuthorization", "grantsWriteAuthorization", "mutatesCanon"], "Process supervisor authority");
   const target = targetFor(platform, arch);
   const expectedTarget = { platform: target.platform, arch: target.arch, directory: target.directory };
-  if (manifest.schemaVersion !== 1 || manifest.kind !== "HeadAgentProcessSupervisorManifest"
+  if (manifest.schemaVersion !== 2 || manifest.kind !== "HeadAgentProcessSupervisorManifest"
     || manifest.manifestVersion !== PROCESS_SUPERVISOR_MANIFEST_VERSION
     || manifest.supervisorProtocolVersion !== PROCESS_SUPERVISOR_PROTOCOL_VERSION
     || canonicalJson(manifest.target) !== canonicalJson(expectedTarget)
@@ -118,9 +158,8 @@ export function verifyProcessSupervisorManifest(manifest, { platform = process.p
       posixTreeOwnership: "isolated-process-group",
       shellInterpretation: false,
     })
-    || canonicalJson(manifest.authority) !== canonicalJson({
-      kind: "operational-process-control-only", instructionAuthority: false, promotionAuthority: false, mutatesCanon: false,
-    })) {
+    || canonicalJson(manifest.capabilities) !== canonicalJson(declaredCapabilities())
+    || canonicalJson(manifest.authority) !== canonicalJson(operationalAuthority())) {
     fail("Process supervisor manifest contract is invalid.", "INVALID_PROCESS_SUPERVISOR_MANIFEST");
   }
   const payload = { ...manifest };
@@ -249,12 +288,35 @@ export function spawnSupervisedProcess({
   terminationGraceMs,
   spawnImplementation = spawn,
   onControlEvent = () => {},
+  ownershipBinding = null,
+  interactive = null,
 } = {}) {
   if (!selection?.manifest || !selection?.binaryPath) fail("A verified process supervisor selection is required.", "PROCESS_SUPERVISOR_SELECTION_REQUIRED");
   verifyProcessSupervisorManifest(selection.manifest);
-  const request = boundedSupervisorRequest({ executablePath, args, cwd, providerEnvironment, input, controlFile, terminationGraceMs });
-  const child = spawnImplementation(selection.binaryPath, [], {
-    cwd: path.dirname(selection.binaryPath),
+  if (ownershipBinding !== null) {
+    // A proof-bearing handle must come from the exact verified native binary,
+    // not merely from an object carrying a valid but unrelated manifest.
+    if (typeof selection.manifestPath !== "string" || !path.isAbsolute(selection.manifestPath)) fail("Owned supervisor manifest path is unavailable.", "RUNTIME_SUPERVISOR_HANDLE_OWNERSHIP_MISMATCH");
+    const current = resolveVerifiedProcessSupervisor({ pluginRoot: path.dirname(selection.manifestPath), manifestFile: selection.manifestPath });
+    if (current.binaryPath !== selection.binaryPath || current.manifest.manifestHash !== selection.manifest.manifestHash) {
+      fail("Owned supervisor binary differs from its verified manifest.", "RUNTIME_SUPERVISOR_HANDLE_OWNERSHIP_MISMATCH");
+    }
+  }
+  let request = boundedSupervisorRequest({ executablePath, args, cwd, providerEnvironment, input, controlFile, terminationGraceMs });
+  if (interactive !== null) {
+    if (!interactive || Object.keys(interactive).some(key => key !== "timeoutMs")
+      || !Number.isSafeInteger(interactive.timeoutMs) || interactive.timeoutMs < 100 || interactive.timeoutMs > 3_600_000
+      || input.length !== 0) fail("Interactive supervisor requires an empty bounded bootstrap and lifetime.", "INVALID_PROCESS_SUPERVISOR_REQUEST");
+    request = Buffer.from(`${canonicalJson({ ...JSON.parse(request), interactiveProtocolVersion: PROCESS_SUPERVISOR_INTERACTIVE_PROTOCOL_VERSION, timeoutMs: interactive.timeoutMs })}\n`);
+    if (request.length > 8 * 1024 * 1024) fail("Interactive bootstrap exceeds its bound.", "PROCESS_SUPERVISOR_REQUEST_LIMIT");
+  }
+  const provenance = { actualSpawn: spawnImplementation === spawn,
+    executablePathDigest: controlDigest(path.resolve(executablePath)), executionRootDigest: controlDigest(path.resolve(cwd)),
+    supervisorManifestDigest: selection.manifest.manifestHash,
+    ownershipBinding: ownershipBinding === null ? null : canonicalControlJson(ownershipBinding) };
+  const createdAt = Date.now();
+  const child = spawnImplementation(process.platform === "win32" ? path.toNamespacedPath(selection.binaryPath) : selection.binaryPath, interactive === null ? [] : ["--interactive"], {
+    cwd,
     env: minimalSupervisorEnvironment(),
     shell: false,
     windowsHide: true,
@@ -321,10 +383,76 @@ export function spawnSupervisedProcess({
     clearInterval(controlPoll);
     readControlFile();
   });
-  child.once("spawn", () => {
-    child.stdin.end(request, () => { state.requestWritten = true; });
-  });
+  let writeInput;
+  let endInput;
+  if (interactive === null) {
+    child.once("spawn", () => { child.stdin.end(request, () => { state.requestWritten = true; }); });
+  } else {
+    let ended = false;
+    let guardedInput = false;
+    let readyResolve;
+    let readyReject;
+    let queue = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+    queue.catch(() => {});
+    child.once("error", readyReject);
+    child.stdin.on("error", readyReject);
+    child.once("spawn", () => {
+      child.stdin.write(request, error => {
+        if (error) readyReject(error);
+        else { state.requestWritten = true; readyResolve(); }
+      });
+    });
+    writeInput = (bytes, { beforeWrite = null, signal = null, deadlineAt = null } = {}) => {
+      let writeAttempted = false;
+      const guarded = beforeWrite !== null || signal !== null || deadlineAt !== null;
+      const inputError = code => Object.assign(new Error(code), { code });
+      let delivery;
+      if (ended || !Buffer.isBuffer(bytes) || bytes.length > 8 * 1024 * 1024) {
+        delivery = Promise.reject(inputError("PROCESS_SUPERVISOR_INPUT_CLOSED"));
+      } else if (beforeWrite !== null && typeof beforeWrite !== "function" || deadlineAt !== null && !Number.isSafeInteger(deadlineAt)) {
+        delivery = Promise.reject(inputError("PROCESS_SUPERVISOR_INPUT_GUARD_INVALID"));
+      } else {
+        guardedInput ||= guarded;
+        delivery = queue.then(() => new Promise((resolve, reject) => {
+          try {
+            if (guarded) {
+              // Run after bootstrap and all preceding write callbacks, not when
+              // enqueued. A guard may synchronously close/cancel this stream.
+              const returned = beforeWrite?.();
+              if (returned && typeof returned.then === "function") {
+                Promise.resolve(returned).catch(() => {});
+                throw inputError("PROCESS_SUPERVISOR_SYNCHRONOUS_INPUT_GUARD_REQUIRED");
+              }
+              if (signal?.aborted) throw inputError("PROCESS_SUPERVISOR_INPUT_CANCELLED");
+              if (deadlineAt !== null && deadlineAt <= Date.now()) throw inputError("PROCESS_SUPERVISOR_INPUT_DEADLINE");
+              if (ended || terminationRequested || child.exitCode !== null || child.signalCode !== null
+                || child.stdin.destroyed || child.stdin.writableEnded || !child.stdin.writable) throw inputError("PROCESS_SUPERVISOR_INPUT_CLOSED");
+            }
+            // Local P5 observation only: entering write may partially deliver
+            // bytes even if its callback later fails. It is not authority proof.
+            writeAttempted = true;
+            child.stdin.write(bytes, error => error ? reject(error) : resolve());
+          } catch (cause) { reject(cause); }
+        }));
+        queue = delivery;
+      }
+      Object.defineProperty(delivery, "writeAttempted", { get: () => writeAttempted });
+      delivery.catch(() => {});
+      return delivery;
+    };
+    endInput = () => {
+      if (ended) return queue;
+      ended = true;
+      // A rejected guarded write still needs graceful EOF. Keep that write's
+      // rejection and preserve existing unguarded drain-before-EOF semantics.
+      queue = (guardedInput ? queue.catch(() => {}) : queue).then(() => new Promise((resolve, reject) => child.stdin.end(error => error ? reject(error) : resolve())));
+      queue.catch(() => {});
+      return queue;
+    };
+  }
+  let terminationRequested = false;
   const terminate = (force = false) => {
+    terminationRequested = true;
     const signal = force ? "SIGKILL" : "SIGTERM";
     processGroupSignal(state.providerPid, signal);
     if (child.exitCode === null && child.signalCode === null) {
@@ -353,7 +481,25 @@ export function spawnSupervisedProcess({
       controlInvalid: state.controlInvalid,
     });
   };
-  return { child, state, terminate, finalize };
+  const handle = { child, state, terminate, finalize, ...(interactive === null ? {} : { writeInput, endInput }) };
+  supervisedProcessHandles.set(handle, { child, terminate, finalize, createdAt, terminationRequested: () => terminationRequested, ...provenance });
+  return handle;
+}
+
+export function verifyRuntimeProcessSupervisorHandle(handle, { ownershipBinding, executablePathDigest,
+  executionRootDigest, supervisorManifestDigest, notBefore = 0, requireActualSpawn = true } = {}) {
+  const owner = supervisedProcessHandles.get(handle);
+  if (!owner || handle.child !== owner.child || handle.terminate !== owner.terminate || handle.finalize !== owner.finalize
+    || !ownershipBinding || owner.ownershipBinding !== canonicalControlJson(ownershipBinding)
+    || executablePathDigest !== undefined && owner.executablePathDigest !== executablePathDigest
+    || executionRootDigest !== undefined && owner.executionRootDigest !== executionRootDigest
+    || supervisorManifestDigest !== undefined && owner.supervisorManifestDigest !== supervisorManifestDigest || !Number.isSafeInteger(notBefore)
+    || owner.createdAt < notBefore || requireActualSpawn && !owner.actualSpawn) {
+    fail("Process supervisor handle is not the exact owned invocation transport.", "RUNTIME_SUPERVISOR_HANDLE_OWNERSHIP_MISMATCH");
+  }
+  // Without target expectations this establishes only exact task ownership for
+  // protective cleanup. Execution must also supply all three target digests.
+  return Object.freeze({ createdAt: owner.createdAt, pid: owner.child.pid, actualSpawn: owner.actualSpawn, terminationRequested: owner.terminationRequested() });
 }
 
 function canonicalControlValue(value) {

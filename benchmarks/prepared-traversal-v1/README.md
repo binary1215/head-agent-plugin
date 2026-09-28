@@ -5,6 +5,22 @@ performance measurement. Run `npm run benchmark:prepared-traversal -- --iteratio
 The ordinary JavaScript regression suite also runs the actual benchmark entrypoint
 and checks that a different query still fails its exact fixture identity check.
 
+## Reviewed identity update (2026-09-23)
+
+The authority contract label changes from 0.7 to 0.8 to classify
+`WorkerPatchIntegrationIntent` as P3 evidence. The graph's authority boundary
+therefore changes its content hash and the dependent result, request and cost
+identities. Restoring only that version constant to 0.7 in an isolated in-memory
+module load reproduces every previous expectation exactly.
+
+The 64 source records, all 274 nodes and 480 edges, source snapshot, traversal
+query, graph manifest, and complete bounded expansion are byte-equivalent after
+canonical serialization, without node or edge normalization. Only the authority
+version and its dependent IDs/hashes differ. The selected 6 nodes and 7 edges,
+boundary sample, payload component lengths, and costs in the table below are
+unchanged. This update replaces only the eight expected ID/hash fields; it does
+not relax the exact identity, query-drift or receipt-replay checks.
+
 ## Reviewed identity update (2026-09-12)
 
 The previous expectation was produced at `4b16fee92bb781b99026575f90261aecbd89006b`.

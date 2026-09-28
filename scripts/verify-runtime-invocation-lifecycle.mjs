@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { readRuntimeOutputSpool } from "./lib/runtime-output-spool.mjs";
 import { initializeProject, inspectProject } from "./lib/head-core.mjs";
 import { compileContext } from "./lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "./lib/execution-lineage.mjs";
@@ -1181,6 +1182,7 @@ async function main() {
       protocolEvidence,
       projectBinding,
       limits: { timeoutMs: 5_000, maxEvents: 4_092 },
+      worker: { taskKey: "provider-output-spool", role: "coder", outcome: "Return the synthetic bounded result", selectedContext: "Use the selected fixture evidence only." },
       persist: true,
     }).authorization;
     const workerDispatch = createBoundedWorkerDispatch({
@@ -1236,6 +1238,26 @@ async function main() {
     assert(workerExecution.result.receipt.status === "completed"
       && workerExecution.result.descendantTreeOwnershipValidated === true,
     "Native-supervised bounded worker execution did not complete and clean up.");
+    const workerSpool = readRuntimeOutputSpool({ operationalRoot: resolveRuntimeOperationalStateRoot({ projectRoot: resolvedRoot, create: false }), authorization: workerAuthorization });
+    assert(workerSpool.status === "terminal-recorded"
+      && workerSpool.terminal.result.receipt.receiptHash === workerExecution.result.receipt.receiptHash
+      && workerSpool.terminal.ownerExitRequired === true
+      && workerSpool.outputs.stdout.length > 0,
+    "Provider production output did not reach the bounded durable Host spool.");
+    const retryOptions = { root: resolvedRoot, runtime: "codex", protocolEvidence, projectBinding,
+      worker: { taskKey: "provider-prestart-retry", role: "coder", outcome: "Verify retry", selectedContext: "Synthetic no-start fixture" } };
+    const prestart = buildRuntimeInvocationAuthorization(retryOptions).authorization;
+    let prestartFailed = false;
+    try {
+      await executeCodexRuntimeInvocation({ root: resolvedRoot, authorization: prestart, protocolEvidence, projectBinding,
+        targetResolver: () => ({ executablePath: process.execPath, observation: codexObservation.executable }),
+        supervisorSelection, providerArguments: ["-e", BOUNDED_WORKER_RUN_PROTOCOL_FIXTURE], evidenceMode: "protocol-fixture",
+        spawnImplementation: () => { throw Object.assign(new Error("Synthetic OS spawn failure"), { code: "EAGAIN" }); } });
+    } catch (error) { prestartFailed = error.code === "CODEX_EXEC_SPAWN_FAILED"; }
+    assert(prestartFailed, "Provider no-start fixture unexpectedly ran.");
+    const followup = buildRuntimeInvocationAuthorization({ ...retryOptions, retry: true }).authorization;
+    assert(followup.workerInput.previousAuthorizationId === prestart.authorizationId,
+      "Actual adapter path did not preserve a verified no-start retry.");
     const completedWorker = await waitForBoundedWorkerDispatch({
       root: resolvedRoot,
       authorizationId: workerAuthorization.authorizationId,
@@ -1413,18 +1435,20 @@ async function main() {
     const driftedState = JSON.parse(currentStateBytes);
     driftedState.updatedAt = new Date(Date.parse(driftedState.updatedAt) + 1_000).toISOString();
     fs.writeFileSync(stateFile, `${JSON.stringify(driftedState, null, 2)}\n`);
-    assert(await rejectsWithCode(
-      () => readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
-      "BOUNDED_WORKER_WAVE_LINEAGE_DRIFT",
-    ), "Session pointer drift did not stale the wave.");
+    assert(readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }).projection.waveId === createdWave.wave.waveId,
+      "An unrelated Session pointer update hid verified wave evidence.");
+    assert(sealBoundedWorkerWave({ root: resolvedRoot, waveId: createdWave.wave.waveId }).status === "existing",
+      "An unrelated Session pointer update invalidated unchanged execution lineage.");
     fs.writeFileSync(stateFile, currentStateBytes);
     const contractDriftState = JSON.parse(currentStateBytes);
     contractDriftState.activeExecutionContractId = `execution-contract-${"0".repeat(24)}`;
     fs.writeFileSync(stateFile, `${JSON.stringify(contractDriftState, null, 2)}\n`);
     assert(await rejectsWithCode(
-      () => readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
+      () => sealBoundedWorkerWave({ root: resolvedRoot, waveId: createdWave.wave.waveId }),
       "BOUNDED_WORKER_WAVE_LINEAGE_DRIFT",
     ), "A new ExecutionContract pointer did not stale the wave.");
+    assert(readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }).projection.waveId === createdWave.wave.waveId,
+      "ExecutionContract pointer drift hid historical evidence.");
     fs.writeFileSync(stateFile, currentStateBytes);
     const capsulePath = path.join(resolvedRoot, ".head", "context", "capsules", `${createdWave.wave.contextCapsuleId}.json`);
     const capsuleBytes = fs.readFileSync(capsulePath);
@@ -1567,6 +1591,8 @@ async function main() {
         competingOwnerRejected,
         duplicateWorkerConsumptionRejected,
         fixtureApplicationRejected,
+        providerOutputSpoolVerified: true,
+        providerPrestartRetryVerified: true,
       },
       boundedWorkerWave: {
         waveId: createdWave.wave.waveId,
@@ -1581,7 +1607,8 @@ async function main() {
         cliMcpParityVerified: true,
         authorityNonMutationVerified: true,
       },
-      rawTranscriptPersisted: false,
+      rawTranscriptPersistedInProject: false,
+      boundedRawProviderOutputPersistedInHost: true,
       actualProviderInvoked: false,
       providerControlEnabled: false,
     }, null, 2)}\n`);
