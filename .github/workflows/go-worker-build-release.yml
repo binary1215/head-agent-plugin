@@ -133,8 +133,6 @@ jobs:
   javascript:
     name: Full JavaScript regression suite
     runs-on: ubuntu-latest
-    env:
-      HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT: ${{ runner.temp }}/head-agent-test-native
     steps:
       - name: Checkout source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -157,6 +155,8 @@ jobs:
       - name: Prepare current-source supervisor fixture
         shell: bash
         run: |
+          HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${RUNNER_TEMP}/head-agent-test-native"
+          echo "HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT=${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}" >> "${GITHUB_ENV}"
           version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
           binary_root="${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}/dist/linux-x64"
           mkdir -p "${binary_root}"
@@ -175,8 +175,6 @@ jobs:
     if: ${{ needs.prepare.outputs.enabled == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    env:
-      HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT: ${{ runner.temp }}/head-agent-test-native
     strategy:
       fail-fast: false
       matrix:
@@ -207,6 +205,8 @@ jobs:
           platform="$(node -p "process.platform")"
           arch="$(node -p "process.arch")"
           goos="$(go env GOOS)"
+          HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${RUNNER_TEMP}/head-agent-test-native"
+          echo "HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT=${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}" >> "${GITHUB_ENV}"
           binary_root="${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}/dist/${goos}-${arch}"
           executable="head-agent-supervisor"
           if [[ "${goos}" == "windows" ]]; then executable="${executable}.exe"; fi
