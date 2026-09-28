@@ -132,12 +132,9 @@ func readJobRequest(requestFile string) (JobRequest, []byte, []byte, string, err
 	invalid := func(err error) (JobRequest, []byte, []byte, string, error) {
 		return JobRequest{}, nil, nil, "", err
 	}
-	if !filepath.IsAbs(requestFile) {
-		return invalid(errors.New("job request path must be absolute"))
-	}
-	resolved, err := filepath.EvalSymlinks(requestFile)
-	if err != nil || resolved != filepath.Clean(requestFile) {
-		return invalid(errors.New("job request path must be canonical"))
+	resolved, err := canonicalJobRequestPath(requestFile)
+	if err != nil {
+		return invalid(err)
 	}
 	f, err := os.Open(requestFile)
 	if err != nil {

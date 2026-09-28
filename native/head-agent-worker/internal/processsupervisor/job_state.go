@@ -33,8 +33,8 @@ func exactOwnerState(pid int, expected string, observe func(int) (string, string
 func InspectJobOwner(requestFile string) error {
 	// Read-only historical inspection must not require the old Node executable
 	// or execution cwd to remain installed. Never pass this path to execution.
-	resolved, err := filepath.EvalSymlinks(requestFile)
-	if err != nil || !filepath.IsAbs(requestFile) || resolved != filepath.Clean(requestFile) {
+	resolved, err := canonicalJobRequestPath(requestFile)
+	if err != nil {
 		return errors.New("invalid inspection request path")
 	}
 	request, err := os.Open(resolved)
