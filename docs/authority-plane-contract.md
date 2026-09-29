@@ -206,6 +206,13 @@ boundary, not permission to discard evidence in normal operation.
 
 ## Causal projection and no self-reference
 
+Document application may retain a narrow P3 Evidence basis binding one verified
+review hash to the before-World identity. It copies neither approval nor document
+bodies, never supplies P2 fields, and cannot authorize a mutation by itself.
+The same durable accept or reject decision resumes derived publication from
+existing preimage/target artifacts. Projection failure does not erase an already
+applied approved Canon or grant permission to overwrite later user edits.
+
 A receipt cannot be part of the GraphSnapshot that the receipt itself names.
 Document Canon application therefore uses this causal order:
 

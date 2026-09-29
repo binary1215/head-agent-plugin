@@ -206,7 +206,15 @@ checklist or extra user choice/approval. A short reason in the existing brief is
 enough when useful; no new record is required. Context inheritance transfers
 neither user approval, Canon/P2 authority nor file isolation. Fork/fresh is
 independent of persistence and risk; it does not grant new execution rights.
-See `references/runtime-composition.md` for examples.
+See [runtime composition](references/runtime-composition.md) for examples.
+
+For follow-up delegation, lead with relevant changes when the recipient still
+has sufficient current context. Otherwise supply the missing context without
+requiring a new user form or approval. See
+[follow-up handoffs](references/runtime-composition.md#follow-up-handoffs).
+For meaningful waits, review findings and final results, follow
+[conversation UX](references/conversation-ux.md). These are communication
+practices, not new execution states or prerequisites.
 
 HEAD checks returned work against the current files, preserves user edits,
 resolves overlap and integrates contributions into one useful result. Ordinary delegation does not

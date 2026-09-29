@@ -3,6 +3,8 @@ package arcadedbbridge
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,52 @@ import (
 	"testing"
 	"time"
 )
+
+type faultTransport func(*http.Request) (*http.Response, error)
+
+func (f faultTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type brokenBody struct{}
+
+func (brokenBody) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func (brokenBody) Close() error             { return nil }
+
+type closeFaultBody struct{ io.Reader }
+
+func (closeFaultBody) Close() error { return errors.New("synthetic close failure") }
+
+func TestBodyFailuresAreStructuredAndNotMalformedSuccess(t *testing.T) {
+	t.Setenv("HEAD_TEST_BODY_USER", "synthetic")
+	t.Setenv("HEAD_TEST_BODY_PASSWORD", "synthetic")
+	input := `{"protocol":{"name":"head-agent-core-arcadedb-query-batch","version":"0.1.0"},"endpoint":"https://synthetic.invalid","database":"fixture","operation":"query-batch","timeoutMs":1000,"secretReferenceNames":{"username":"HEAD_TEST_BODY_USER","password":"HEAD_TEST_BODY_PASSWORD"},"queries":[{"language":"sql","command":"SELECT 1","params":{}}]}`
+	for _, item := range []struct {
+		name   string
+		body   io.ReadCloser
+		status int
+		code   string
+		exit   int
+	}{
+		{"reset", brokenBody{}, 200, "ARCADEDB_TRANSPORT_UNAVAILABLE", 2},
+		{"close", closeFaultBody{strings.NewReader(`{"result":[]}`)}, 200, "ARCADEDB_TRANSPORT_UNAVAILABLE", 2},
+		{"auth", brokenBody{}, 401, "ARCADEDB_AUTHENTICATION_FAILED", 1},
+		{"malformed", io.NopCloser(strings.NewReader("not JSON")), 200, "ARCADEDB_REMOTE_RESPONSE_INVALID", 1},
+		{"empty", io.NopCloser(strings.NewReader("")), 200, "ARCADEDB_REMOTE_RESPONSE_INVALID", 1},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			closed := &http.Client{Transport: faultTransport(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: item.status, Body: item.body, Header: make(http.Header)}, nil
+			})}
+			var output bytes.Buffer
+			if exit := Run(strings.NewReader(input), &output, closed); exit != item.exit {
+				t.Fatalf("exit=%d output=%s", exit, output.String())
+			}
+			var answer response
+			if err := json.Unmarshal(output.Bytes(), &answer); err != nil || answer.OK || answer.Error == nil || answer.Error.Code != item.code {
+				t.Fatalf("invalid failure: %v %s", err, output.String())
+			}
+		})
+	}
+}
 
 func TestRunExecutesBoundedQueryBatchWithoutReturningCredentials(t *testing.T) {
 	const usernameEnvironment = "HEAD_TEST_ARCADEDB_USERNAME"

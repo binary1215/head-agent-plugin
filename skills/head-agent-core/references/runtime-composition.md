@@ -35,6 +35,25 @@ Apply the Skill's fork/fresh guidance per contribution, for example:
 These examples do not require a new artifact or selection ceremony. A fork's
 history is context, not proof of current authority or workspace isolation.
 
+## Follow-up handoffs
+
+For a continuing contribution, lead with what changed, what is already usable,
+and the remaining question or outcome. Include relevant constraints, ownership
+changes and evidence references. Reuse sufficient context already available to
+the recipient; do not resend the full history by default. When the recipient is
+new, has lost context, or has a materially outdated basis, supply the missing
+current requirements and reasoning. Delta-first is not delta-only.
+
+Do not require an acknowledgement handshake, context token or new artifact merely
+to send an ordinary brief. A handoff does not grant additional authority or
+replace recovery records. After context loss, follow existing artifact-first
+recovery where that contract applies before using the handoff as supporting
+context. As described in [recovery presentation](conversation-ux.md#recovery-presentation),
+a Session with no current checkpoint continues ordinary work with sufficient
+current context; this handoff convention requires no new checkpoint, Run or
+recovery gate. Do not edit digest-bound managed input through this ordinary
+follow-up convention.
+
 ## Explicit maintenance of retained managed work
 
 This is a compatibility entry for explicitly maintaining existing approved

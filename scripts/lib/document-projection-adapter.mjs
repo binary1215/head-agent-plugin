@@ -889,24 +889,66 @@ export function materializeReviewedMarkdownProjection({ projectRoot, graph, cand
     || new Set(partition).size !== partition.length) {
     fail("Document-change ReviewDecision does not partition the candidate set.", "DOCUMENT_CHANGE_REVIEW_SELECTION_MISMATCH");
   }
-  verifyDocumentChangeCandidateSetAgainstPublished({ projectRoot, candidateSet: verified, adapter });
+  return { ...resumeReviewedMarkdownProjection({ projectRoot, graph, adapter,
+    baseProjectionId: verified.documentProjectionId, candidateSet: verified }),
+    reviewDecisionId: reviewDecision.reviewDecisionId, candidateSetId: verified.candidateSetId };
+}
+
+// Internal application primitive. The caller verifies the durable ReviewDecision.
+// Both original and target contents already live in immutable artifacts.
+export function resumeReviewedMarkdownProjection({ projectRoot, graph, adapter = null, baseProjectionId, candidateSet = null }) {
   const selected = createDocumentProjectionAdapter({ projectRoot, adapter });
   const current = loadCurrentProjection(selected);
+  const baseEntry = selected.readProjection(baseProjectionId);
+  if (!baseEntry) fail("Reviewed document base is missing.", "DOCUMENT_PROJECTION_MISSING");
+  const base = verifyDocumentProjection(baseEntry.document);
   const next = buildMarkdownDocumentProjection(graph);
-  const publishedBefore = selected.readPublishedDocuments();
-  const pointerBefore = current.pointer;
-  try {
-    const materialized = persistMarkdownProjection({ selected, graph, next, current });
-    return { ...materialized, reviewDecisionId: reviewDecision.reviewDecisionId, candidateSetId: verified.candidateSetId };
-  } catch (error) {
-    const after = selected.readPublishedDocuments();
-    const beforePaths = new Set(publishedBefore.map((item) => item.relativePath));
-    selected.publishDocuments(publishedBefore.map((item) => ({ relativePath: item.relativePath, content: item.content })), {
-      removeRelativePaths: after.map((item) => item.relativePath).filter((relativePath) => !beforePaths.has(relativePath)),
-    });
-    if (pointerBefore) selected.writePointer(pointerBefore);
-    throw error;
+  if (current.projection && ![base.documentProjectionId, next.documentProjectionId].includes(current.projection.documentProjectionId)) {
+    fail("A later document pointer must be preserved.", "DOCUMENT_CHANGE_CANDIDATE_BASE_DRIFT");
   }
+  const preimage = new Map(base.documents.map((item) => [item.relativePath, item.content]));
+  if (candidateSet) {
+    verifyDocumentChangeCandidateSet(candidateSet);
+    if (candidateSet.documentProjectionId !== base.documentProjectionId || candidateSet.documentProjectionHash !== base.documentProjectionHash) {
+      fail("Candidate document base differs.", "DOCUMENT_CHANGE_CANDIDATE_BASE_DRIFT");
+    }
+    for (const item of candidateSet.candidates) {
+      if (item.proposedContent === null) preimage.delete(item.relativePath);
+      else preimage.set(item.relativePath, item.proposedContent);
+    }
+  }
+  const target = new Map(next.documents.map((item) => [item.relativePath, item.content]));
+  const check = () => {
+    const actual = new Map(selected.readPublishedDocuments().map((item) => [item.relativePath, item.content]));
+    for (const name of new Set([...preimage.keys(), ...target.keys(), ...actual.keys()])) {
+      if (actual.get(name) !== preimage.get(name) && actual.get(name) !== target.get(name)) {
+        fail(`Later document edits must be preserved: ${name}`, "DOCUMENT_CHANGE_CANDIDATE_PUBLISHED_DRIFT");
+      }
+    }
+    if (documentProjectionCanonicalJson(selected.readPointer()?.document || null) !== documentProjectionCanonicalJson(current.pointer)) {
+      fail("Document pointer changed during application.", "DOCUMENT_CHANGE_CANDIDATE_BASE_DRIFT");
+    }
+    return actual;
+  };
+  check();
+  const stored = selected.writeProjection(next.documentProjectionId, clone(next));
+  verifyDocumentProjection(stored.document, graph);
+  if (documentProjectionCanonicalJson(stored.document) !== documentProjectionCanonicalJson(next)) fail("Target projection differs.", "DOCUMENT_PROJECTION_CONFLICT");
+  for (const item of next.documents) {
+    if (check().get(item.relativePath) !== item.content) selected.publishDocuments([clone(item)]);
+  }
+  for (const name of preimage.keys()) {
+    if (!target.has(name) && check().has(name)) selected.publishDocuments([], { removeRelativePaths: [name] });
+  }
+  const published = selected.readPublishedDocuments();
+  if (publishedDrift(next, published).length) fail("Document publication is incomplete.", "DOCUMENT_PROJECTION_PUBLISH_MISMATCH");
+  check();
+  const pointer = pointerFor(next);
+  if (current.pointer?.documentProjectionId !== next.documentProjectionId) {
+    const written = selected.writePointer(clone(pointer));
+    verifyDocumentProjectionPointer(written.document, next);
+  }
+  return { status: "projected", projection: next, pointer, adapter: selected.describe() };
 }
 
 export function verifyDocumentProjectionAdapterConformance({ projectRoot, graph, referenceAdapter, candidateAdapter } = {}) {

@@ -234,9 +234,12 @@ test("mixed Policy evidence keeps exact anchor mapping while exact replay repair
   const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
   const candidateNode = graph.nodes.find((node) => node.nodeId === proposed.candidate.candidateId);
   assert.ok(candidateNode);
-  assert.notDeepEqual(candidateNode.evidenceNodeIds, [...candidateNode.evidenceNodeIds].sort(), "fixture must exercise anchor order different from evidence-id order");
   const evidenceNodes = graph.nodes.filter((node) => node.kind === "ProductPolicyEvidence" && node.candidateId === proposed.candidate.candidateId);
   assert.equal(evidenceNodes.length, proposed.candidate.evidenceAnchors.length);
+  // Project-derived hashes can coincidentally already be sorted. Assert the
+  // actual anchor-to-ID mapping, not a probabilistic property of fixture IDs.
+  assert.deepEqual(candidateNode.evidenceNodeIds, proposed.candidate.evidenceAnchors.map((anchor) => evidenceNodes.find((node) =>
+    node.evidenceKind === anchor.kind && node.reference === anchor.reference && node.contentDigest === anchor.digest && node.summary === anchor.summary)?.nodeId));
   for (const anchor of proposed.candidate.evidenceAnchors) {
     const evidence = evidenceNodes.find((node) => node.evidenceKind === anchor.kind
       && node.reference === anchor.reference && node.contentDigest === anchor.digest && node.summary === anchor.summary);

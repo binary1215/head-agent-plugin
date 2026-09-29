@@ -65,8 +65,11 @@ type response struct {
 }
 
 type bridgeError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code           string `json:"code"`
+	Message        string `json:"message"`
+	Phase          string `json:"phase,omitempty"`
+	OperationClass string `json:"operationClass,omitempty"`
+	EffectState    string `json:"effectState,omitempty"`
 }
 
 func decodeStrict(data []byte, value any) error {
@@ -200,18 +203,25 @@ func runWithWireLimit(input io.Reader, output io.Writer, client *http.Client, wi
 		}
 		bodyBytes, readErr := io.ReadAll(io.LimitReader(httpResponse.Body, remaining+1))
 		closeErr := httpResponse.Body.Close()
-		if readErr != nil || closeErr != nil || int64(len(bodyBytes)) > remaining {
+		if int64(len(bodyBytes)) > remaining {
 			_ = writeResponse(output, response{OK: false, Error: &bridgeError{Code: "ARCADEDB_REQUEST_FAILED", Message: "ArcadeDB response could not be read."}})
 			return 1
 		}
+		if readErr != nil || closeErr != nil {
+			code, exit := "ARCADEDB_TRANSPORT_UNAVAILABLE", 2
+			if httpResponse.StatusCode == 401 || httpResponse.StatusCode == 403 {
+				code, exit = "ARCADEDB_AUTHENTICATION_FAILED", 1
+			}
+			_ = writeResponse(output, response{OK: false, Error: &bridgeError{Code: code, Message: "ArcadeDB response was not completed.", Phase: "body", OperationClass: "read", EffectState: "not-applicable"}})
+			return exit
+		}
 		responseBytes += int64(len(bodyBytes))
 		var body any
-		if len(bodyBytes) > 0 && json.Unmarshal(bodyBytes, &body) != nil {
-			message := string(bodyBytes)
-			if len(message) > 1000 {
-				message = message[:1000]
+		if len(bodyBytes) == 0 || json.Unmarshal(bodyBytes, &body) != nil {
+			if httpResponse.StatusCode >= 200 && httpResponse.StatusCode <= 299 {
+				_ = writeResponse(output, response{OK: false, Error: &bridgeError{Code: "ARCADEDB_REMOTE_RESPONSE_INVALID", Message: "ArcadeDB response is not valid JSON.", Phase: "decode", OperationClass: "read", EffectState: "not-applicable"}})
+				return 1
 			}
-			body = map[string]any{"message": message}
 		}
 		if httpResponse.StatusCode < 200 || httpResponse.StatusCode > 299 {
 			failedIndex := index

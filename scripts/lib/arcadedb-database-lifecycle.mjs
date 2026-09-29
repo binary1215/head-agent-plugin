@@ -1,13 +1,14 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { inspectRequiredIndex } from "./arcadedb-schema-contract.mjs";
 import {
   ARCADEDB_GRAPH_RESERVED_SCHEMA,
   ArcadeDbHttpTransport,
   inspectArcadeDbGraphProjectionActivation,
 } from "./graph-projection-adapter.mjs";
 
-export const ARCADEDB_DATABASE_LIFECYCLE_VERSION = "0.1.0";
+export const ARCADEDB_DATABASE_LIFECYCLE_VERSION = "0.2.0";
 const RECEIPT_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "database-lifecycle", "receipts");
 const AUDIT_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "database-lifecycle", "audits");
 const CURRENT_RECEIPT = path.join(".head", "graph-projection", "arcadedb", "database-lifecycle", "current.json");
@@ -81,6 +82,9 @@ function compatibilityFor(records) {
     byName.set(record.name, record);
   }
   const conflicts = [];
+  const unverifiable = [];
+  const indexChecks = [];
+  let missingIndexCount = 0;
   const reservedTypesPresent = [];
   let missingPropertyCount = 0;
   for (const expected of ARCADEDB_GRAPH_RESERVED_SCHEMA) {
@@ -88,11 +92,35 @@ function compatibilityFor(records) {
     if (!observed) continue;
     reservedTypesPresent.push(expected.name);
     const observedType = String(observed.type || "").toLowerCase();
+    // Bind only metadata used for HEAD's reserved write contract. Array order
+    // is immaterial for definitions, but the order of a composite key is not.
+    const fieldEvidence = (value, fields) => Object.fromEntries(fields.map((key) => [key, value?.[key] ?? null]));
+    const sortEvidence = (items) => items.sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
+    const schemaEvidence = {
+      type: observedType,
+      indexes: Array.isArray(observed.indexes) ? sortEvidence(observed.indexes.map((index) => fieldEvidence(index, ["properties", "unique", "status"]))) : null,
+      properties: Array.isArray(observed.properties) ? sortEvidence(observed.properties.map((property) => fieldEvidence(property, ["name", "type", "mandatory", "notNull", "readonly", "readOnly", "min", "max", "regexp"]))) : null,
+    };
+    const index = inspectRequiredIndex(observed);
+    indexChecks.push({ reservedType: expected.name, ...index, schemaEvidence });
     if (observedType !== expected.type) {
       conflicts.push({ reservedType: expected.name, field: "type", expected: expected.type, observed: observedType || "missing" });
       continue;
     }
     const properties = normalizedProperties(observed.properties);
+    if (!Array.isArray(observed.properties) || properties.size !== observed.properties.length) unverifiable.push({ reservedType: expected.name, reason: "property-metadata-incomplete" });
+    if (index.status === "missing") missingIndexCount++;
+    if (index.status === "unverifiable") unverifiable.push({ reservedType: expected.name, reason: index.reason });
+    if (index.status === "conflict") conflicts.push({ reservedType: expected.name, field: "unique-index", expected: "exact-head-key-unique", observed: index.reason });
+    for (const property of Array.isArray(observed.properties) ? observed.properties : []) {
+      if (!property || typeof property.name !== "string") continue;
+      const supplied = Object.hasOwn(expected.properties, property.name);
+      if ((!supplied && (property.mandatory === true || property.notNull === true))
+        || (supplied && (property.readonly === true || property.readOnly === true))) {
+        conflicts.push({ reservedType: expected.name, field: `constraint:${property.name}`, expected: "head-write-compatible", observed: "required-extra-field-or-readonly-head-field" });
+      }
+      if (supplied && ["min", "max", "regexp"].some((key) => property[key] != null)) unverifiable.push({ reservedType: expected.name, reason: `write-constraint:${property.name}` });
+    }
     for (const [propertyName, propertyType] of Object.entries(expected.properties)) {
       if (!properties.has(propertyName)) missingPropertyCount += 1;
       else if (properties.get(propertyName) !== propertyType) {
@@ -104,6 +132,9 @@ function compatibilityFor(records) {
   reservedTypesPresent.sort();
   return {
     conflicts,
+    unverifiable,
+    indexChecks,
+    missingIndexCount,
     reservedTypesPresent,
     missingReservedTypeCount: ARCADEDB_GRAPH_RESERVED_SCHEMA.length - reservedTypesPresent.length,
     missingPropertyCount,
@@ -123,10 +154,13 @@ export function verifyArcadeDbDatabaseCompatibilityAudit(document) {
     || typeof document.projectId !== "string" || !document.projectId
     || !/^onboarding-storage-[a-f0-9]{24}$/.test(document.storageSelectionId || "")
     || !/^[a-f0-9]{64}$/.test(document.storageSelectionHash || "")
-    || !new Set(["database-missing", "compatible-empty-reserved-schema", "compatible-partial-reserved-schema", "compatible-complete-reserved-schema", "incompatible-reserved-schema"]).has(document.status)
+    || !new Set(["database-missing", "compatible-empty-reserved-schema", "compatible-partial-reserved-schema", "compatible-complete-reserved-schema", "incompatible-reserved-schema", "unverifiable-reserved-schema"]).has(document.status)
     || typeof document.databaseExists !== "boolean" || typeof document.canActivateWithoutReset !== "boolean"
     || typeof document.resetEligible !== "boolean" || !Array.isArray(document.conflicts)
     || !Array.isArray(document.reservedTypesPresent)
+    || !Array.isArray(document.unverifiable) || !Array.isArray(document.indexChecks)
+    || !Number.isInteger(document.missingIndexCount) || document.missingIndexCount < 0
+    || document.canActivateNow !== (document.status === "compatible-complete-reserved-schema")
     || !Number.isInteger(document.missingReservedTypeCount) || document.missingReservedTypeCount < 0
     || !Number.isInteger(document.missingPropertyCount) || document.missingPropertyCount < 0
     || !Number.isInteger(document.unrelatedTypeCount) || document.unrelatedTypeCount < 0
@@ -143,6 +177,8 @@ export function verifyArcadeDbDatabaseCompatibilityAudit(document) {
   const reservedNames = new Set(ARCADEDB_GRAPH_RESERVED_SCHEMA.map((item) => item.name));
   if (document.databaseExists !== expectedExists || document.canActivateWithoutReset !== compatible
     || document.resetEligible !== expectedResetEligible
+    || (document.status === "unverifiable-reserved-schema" && (document.unverifiable.length === 0 || document.conflicts.length !== 0))
+    || (document.status === "compatible-complete-reserved-schema" && (document.missingIndexCount || document.missingReservedTypeCount || document.missingPropertyCount || document.unverifiable.length))
     || (expectedResetEligible !== (document.conflicts.length > 0))
     || new Set(document.reservedTypesPresent).size !== document.reservedTypesPresent.length
     || document.reservedTypesPresent.some((name) => !reservedNames.has(name))
@@ -170,6 +206,7 @@ export function inspectArcadeDbDatabaseCompatibility({ root = ".", transport = n
   const exists = selectedTransport.databaseExists();
   const compatibility = exists ? compatibilityFor(selectedTransport.readSchemaTypes()) : {
     conflicts: [],
+    unverifiable: [], indexChecks: [], missingIndexCount: 0,
     reservedTypesPresent: [],
     missingReservedTypeCount: ARCADEDB_GRAPH_RESERVED_SCHEMA.length,
     missingPropertyCount: Object.values(ARCADEDB_GRAPH_RESERVED_SCHEMA).reduce((sum, item) => sum + Object.keys(item.properties).length, 0),
@@ -179,9 +216,11 @@ export function inspectArcadeDbDatabaseCompatibility({ root = ".", transport = n
     ? "database-missing"
     : compatibility.conflicts.length > 0
       ? "incompatible-reserved-schema"
+      : compatibility.unverifiable.length > 0
+        ? "unverifiable-reserved-schema"
       : compatibility.reservedTypesPresent.length === 0
         ? "compatible-empty-reserved-schema"
-        : compatibility.missingReservedTypeCount > 0 || compatibility.missingPropertyCount > 0
+        : compatibility.missingReservedTypeCount > 0 || compatibility.missingPropertyCount > 0 || compatibility.missingIndexCount > 0
           ? "compatible-partial-reserved-schema"
           : "compatible-complete-reserved-schema";
   return auditIdentity({
@@ -193,7 +232,9 @@ export function inspectArcadeDbDatabaseCompatibility({ root = ".", transport = n
     storageSelectionHash: storageSelection.storageSelectionHash,
     status,
     databaseExists: exists,
-    canActivateWithoutReset: exists && compatibility.conflicts.length === 0,
+    // Compatibility here permits bounded provisioning, not immediate writes.
+    canActivateWithoutReset: status.startsWith("compatible-"),
+    canActivateNow: status === "compatible-complete-reserved-schema",
     resetEligible: exists && compatibility.conflicts.length > 0,
     ...compatibility,
     credentialValuesPersisted: false,
@@ -304,6 +345,7 @@ export function initializeArcadeDbDatabase({ root = ".", resetIncompatible = fal
   const storageSelection = configuredSelection(projectRoot);
   const selectedTransport = assertLifecycleTransport(transport || new ArcadeDbHttpTransport({ storageSelection }));
   const before = inspectArcadeDbDatabaseCompatibility({ root: projectRoot, transport: selectedTransport });
+  if (before.status === "unverifiable-reserved-schema") fail("Inspect the required HEAD schema metadata; uncertainty does not justify database reset.", "ARCADEDB_SCHEMA_UNVERIFIED");
   let action = "reused-compatible-database";
   let invalidatedPointers = [];
   if (before.status === "database-missing") {
@@ -312,7 +354,7 @@ export function initializeArcadeDbDatabase({ root = ".", resetIncompatible = fal
     action = "created-missing-database";
   } else if (before.status === "incompatible-reserved-schema") {
     if (resetIncompatible !== true) {
-      fail("ArcadeDB reserved schema is incompatible; explicit reset confirmation is required.", "ARCADEDB_DATABASE_RESET_CONFIRMATION_REQUIRED");
+      fail("Inspect or repair the conflicting HEAD reserved schema without changing unrelated data. A full reset requires a separate exact-target destructive request.", "ARCADEDB_DATABASE_RESET_CONFIRMATION_REQUIRED");
     }
     if (typeof confirmDatabase !== "string" || confirmDatabase !== storageSelection.graphdb.database) {
       fail("ArcadeDB reset confirmation does not exactly match the selected database.", "ARCADEDB_DATABASE_RESET_TARGET_MISMATCH");

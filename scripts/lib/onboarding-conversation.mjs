@@ -1,5 +1,5 @@
 import { inspectProject } from "./head-core.mjs";
-import { inspectOnboarding } from "./onboarding.mjs";
+import { inspectOptionalOnboarding } from "./onboarding.mjs";
 import { inspectWorldGraphProjection, inspectWorldMarkdownProjection } from "./world-model.mjs";
 
 export const ONBOARDING_CONVERSATION_PROTOCOL_VERSION = "0.1.0";
@@ -86,6 +86,15 @@ function choicesFor(status) {
   return [];
 }
 
+function optionalProjection(read) {
+  try { return read(); }
+  catch (error) {
+    if (!/^(?:INVALID_)?(?:GRAPH_|DOCUMENT_|PUBLISHED_|ARCADEDB|WORLD_MODEL|TEMPORAL_)/.test(error.code || "")
+      && !["ENOENT", "EACCES", "EPERM", "EISDIR"].includes(error.code)) throw error;
+    return { status: "integrity_attention", reasonCode: error.code };
+  }
+}
+
 export function inspectConversationalOnboarding({ root = ".", candidateLimit = 25 } = {}) {
   const limit = boundedLimit(candidateLimit);
   const project = inspectProject(root);
@@ -108,7 +117,18 @@ export function inspectConversationalOnboarding({ root = ".", candidateLimit = 2
     },
   };
 
-  const onboarding = inspectOnboarding({ root });
+  const onboarding = inspectOptionalOnboarding({ root });
+  if (onboarding.status === "integrity_attention") return {
+    schemaVersion: 1, kind: "ConversationalOnboardingProjection",
+    protocolVersion: ONBOARDING_CONVERSATION_PROTOCOL_VERSION,
+    status: onboarding.status, reasonCode: onboarding.reasonCode,
+    nextAction: "inspect_product_governance", materialChoicesRequired: [],
+    ordinaryWorkBlocked: false, userReviewRequired: false,
+    project: { projectId: project.project.projectId, sessionId: project.state.sessionId },
+    review: { candidateCount: null, candidates: [], verification: "unverified" },
+    readiness: { world: "unverified", graph: "unverified", documents: "unverified" },
+    authority: { conversationProjection: "non-authoritative-guidance" },
+  };
   if (onboarding.status === "migration_required") return {
     schemaVersion: 1,
     kind: "ConversationalOnboardingProjection",
@@ -128,8 +148,8 @@ export function inspectConversationalOnboarding({ root = ".", candidateLimit = 2
   };
 
   const availableWorld = onboarding.worldModel && onboarding.worldModel.status !== "unavailable";
-  const graph = availableWorld ? inspectWorldGraphProjection({ root }) : null;
-  const documents = availableWorld ? inspectWorldMarkdownProjection({ root }) : null;
+  const graph = availableWorld ? optionalProjection(() => inspectWorldGraphProjection({ root })) : null;
+  const documents = availableWorld ? optionalProjection(() => inspectWorldMarkdownProjection({ root })) : null;
   const nextAction = actionFor({ status: onboarding.status, world: onboarding.worldModel, graph, documents });
   return {
     schemaVersion: 1,
@@ -166,6 +186,8 @@ export function inspectConversationalOnboarding({ root = ".", candidateLimit = 2
       graphSnapshotId: onboarding.worldModel?.graphSnapshotId || null,
       documents: documents?.status || "missing",
       documentProjectionId: documents?.projection?.documentProjectionId || null,
+      ...(graph?.reasonCode ? { graphReasonCode: graph.reasonCode } : {}),
+      ...(documents?.reasonCode ? { documentsReasonCode: documents.reasonCode } : {}),
     },
     reviewPolicy: {
       allowedDispositions: ["accept-all", "accept-selection", "revise", "reject"],

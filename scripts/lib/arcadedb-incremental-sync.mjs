@@ -404,16 +404,14 @@ function parseRemoteJson(value, label) {
   catch { fail(`${label} is invalid JSON.`, "ARCADEDB_INCREMENTAL_SYNC_REMOTE_DOCUMENT_INVALID"); }
 }
 
-function retry(operation, maxRetries) {
-  let attempt = 0;
-  for (;;) {
-    try { return operation(); }
-    catch (error) {
-      if (error.code !== "ARCADEDB_TRANSPORT_UNAVAILABLE" || attempt >= maxRetries) throw error;
-      const delay = Math.min(400, 50 * (2 ** attempt));
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
-      attempt += 1;
-    }
+function writeOnce(operation, confirm) {
+  try { return operation(); }
+  catch (error) {
+    if (!["ARCADEDB_TRANSPORT_UNAVAILABLE", "ARCADEDB_WRITE_OUTCOME_UNKNOWN"].includes(error.code)) throw error;
+    // UNIQUE is not enough to make SET/UPSERT replay safe. Observe the effect,
+    // never repeat it. Absence/partial/unreadable is not proof of non-execution.
+    try { if (confirm()) return; } catch { /* retain uncertainty */ }
+    fail("Remote write outcome is unknown; reconcile this effect before retrying.", "ARCADEDB_WRITE_OUTCOME_UNKNOWN");
   }
 }
 
@@ -426,7 +424,9 @@ export function executeArcadeDbIncrementalSync({ transport, manifest, baseGraph 
   }
   selected.ensureSyncSchema();
   const existingManifestJson = selected.readSyncManifest(verifiedManifest.projectId, verifiedManifest.syncId);
-  if (existingManifestJson == null) selected.writeSyncManifest(verifiedManifest.projectId, verifiedManifest.syncId, incrementalSyncCanonicalJson(verifiedManifest));
+  if (existingManifestJson == null) writeOnce(
+    () => selected.writeSyncManifest(verifiedManifest.projectId, verifiedManifest.syncId, incrementalSyncCanonicalJson(verifiedManifest)),
+    () => incrementalSyncCanonicalJson(parseRemoteJson(selected.readSyncManifest(verifiedManifest.projectId, verifiedManifest.syncId), "Sync manifest")) === incrementalSyncCanonicalJson(verifiedManifest));
   else if (incrementalSyncCanonicalJson(parseRemoteJson(existingManifestJson, "ArcadeDB sync manifest")) !== incrementalSyncCanonicalJson(verifiedManifest)) {
     fail("ArcadeDB incremental sync manifest conflicts with remote content.", "ARCADEDB_INCREMENTAL_SYNC_MANIFEST_CONFLICT");
   }
@@ -449,28 +449,35 @@ export function executeArcadeDbIncrementalSync({ transport, manifest, baseGraph 
       fail("ArcadeDB incremental sync batch references missing target records.", "ARCADEDB_INCREMENTAL_SYNC_TARGET_MISMATCH");
     }
     const prior = remoteCheckpoints.get(batch.batchId);
-    if (prior) {
-      verifyArcadeDbIncrementalSyncCheckpoint(prior, { manifest: verifiedManifest, batch, expectedRecords: expected });
-      checkpoints.push(prior);
-      resumedBatchCount += 1;
-      continue;
-    }
-    let attempts = 0;
-    retry(() => {
-      attempts += 1;
-      return selected.applySyncBatch(verifiedManifest.projectId, verifiedManifest, batch);
-    }, maxRetries);
-    retryCount += Math.max(0, attempts - 1);
-    const observed = selected.readSyncBatchRecords(verifiedManifest.projectId, verifiedManifest.targetGraphSnapshotId, batch)
+    if (prior) verifyArcadeDbIncrementalSyncCheckpoint(prior, { manifest: verifiedManifest, batch, expectedRecords: expected });
+    const readObserved = () => selected.readSyncBatchRecords(verifiedManifest.projectId, verifiedManifest.targetGraphSnapshotId, batch)
       .map((value) => typeof value === "string" ? parseRemoteJson(value, "ArcadeDB sync batch record") : value)
       .sort(compareById(batch.recordKind));
+    // A missing checkpoint says nothing about execution. Reconcile every batch,
+    // including checkpointed batches, before any new effect. Transport writes
+    // must be create-only: the pre-read is not a lock against a concurrent writer.
+    const before = readObserved();
+    const exact = incrementalSyncCanonicalJson(before) === incrementalSyncCanonicalJson(expected);
+    if (!exact) {
+      const id = batch.recordKind === "node" ? "nodeId" : "edgeId";
+      const expectedById = new Map(expected.map((record) => [record[id], incrementalSyncCanonicalJson(record)]));
+      if (before.some((record) => expectedById.get(record[id]) !== incrementalSyncCanonicalJson(record))) {
+        fail("Remote batch contains different content; preserve it.", "ARCADEDB_INCREMENTAL_SYNC_BATCH_CONTENT_MISMATCH");
+      }
+      if (before.length || prior) fail("Remote batch is partial or lost; reconcile without replay.", "ARCADEDB_WRITE_OUTCOME_UNKNOWN");
+      writeOnce(() => selected.applySyncBatch(verifiedManifest.projectId, verifiedManifest, batch),
+        () => incrementalSyncCanonicalJson(readObserved()) === incrementalSyncCanonicalJson(expected));
+      appliedBatchCount += 1;
+    } else resumedBatchCount += 1;
+    const observed = readObserved();
     if (incrementalSyncCanonicalJson(observed) !== incrementalSyncCanonicalJson(expected)) {
       fail("ArcadeDB incremental sync batch verification failed.", "ARCADEDB_INCREMENTAL_SYNC_BATCH_CONTENT_MISMATCH");
     }
+    if (prior) { checkpoints.push(prior); continue; }
     const checkpoint = buildCheckpoint({ manifest: verifiedManifest, batch, verifiedRecords: observed });
-    selected.writeSyncCheckpoint(verifiedManifest.projectId, verifiedManifest.syncId, batch.batchId, incrementalSyncCanonicalJson(checkpoint));
+    writeOnce(() => selected.writeSyncCheckpoint(verifiedManifest.projectId, verifiedManifest.syncId, batch.batchId, incrementalSyncCanonicalJson(checkpoint)),
+      () => selected.readSyncCheckpoints(verifiedManifest.projectId, verifiedManifest.syncId).some((value) => incrementalSyncCanonicalJson(parseRemoteJson(value, "Sync checkpoint")) === incrementalSyncCanonicalJson(checkpoint)));
     checkpoints.push(checkpoint);
-    appliedBatchCount += 1;
   }
   const confirmed = new Map(selected.readSyncCheckpoints(verifiedManifest.projectId, verifiedManifest.syncId).map((value) => {
     const checkpoint = parseRemoteJson(value, "ArcadeDB sync checkpoint");

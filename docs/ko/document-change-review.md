@@ -94,13 +94,13 @@ CLI는 엄격한 JSON 객체를 받습니다.
 - 완전한 결과 Product Model이 엄격한 키, 참조, 계층 및 순환 검증을 통과함;
 - 하나의 후보 집합이 충돌하는 ReviewDecisions를 받을 수 없음.
 
-적용 전에는 후보/게시 바이트 검증을 반복하고, 검토 및 대상 Product Model 리비전을 검증하며, 현재 World Model을 요구하고, Product Canon 드리프트를 다시 확인합니다.
+적용 전에는 저장된 검토와 대상 Product Model 리비전을 검증하고, 검토 당시 Canon·정확한 승인 결과·무관한 후속 Canon을 구분합니다. 문서와 무관한 소스 드리프트는 여전히 조정이 필요하지만, 해당 승인 결과 때문에 바뀐 파생 입력은 재구축할 수 있습니다. 게시 파일은 검토된 변경 전 내용 또는 정확한 목표 내용만 허용하므로, 후속 사용자 편집을 덮어쓰지 않고 부분 게시를 재개합니다.
 
 수락된 적용은 검토된 Product Model만 쓰고, 리비전 부모를 파생하며, 자식 SourceSnapshot 및 GraphSnapshot을 빌드하고 검증한 다음, 검토된 게시 드리프트를 해당 그래프에서 생성한 결정적 Markdown으로 교체합니다. 거부는 Canon을 변경하지 않습니다. 어느 결과이든 그 후에는 불변 영수증을 후속 감사 자식 GraphSnapshot에 프로젝션하고 결정적 Markdown 뷰를 해당 감사 그래프로 전진시킵니다.
 
 영수증은 의도적으로 감사 전 적용 결과를 지칭합니다. 영수증을 포함하는 동일한 GraphSnapshot을 지칭할 수는 없습니다. 그렇게 하면 콘텐츠 해시 순환이 생기기 때문입니다. 이후 감사 그래프는 파생된 증거일 뿐이며, 불변 ReviewDecision과 적용 영수증이 권한 있는 전이 기록으로 남습니다.
 
-Canon, World Model, 그래프 프로젝션 또는 Markdown 조정에 실패하면 현재 포인터, Canon 바이트 및 게시 문서를 복원합니다. 불변 검토 증거는 진단과 재시도를 위해 남습니다. 롤백 전에 쓰인 새로운 불변 스냅샷은 도달할 수 없는 파생 증거로 남을 수 있지만 현재 권한이 될 수는 없습니다. Canon 교체는 고정된 temporary path를 배타적으로 획득하고 생성 성공 뒤에만 소유권을 기록합니다. 부분 쓰기 실패 시 그 호출이 소유한 temporary만 닫고 제거하며, 기존 `EEXIST` temporary는 보존합니다. 따라서 같은 process는 다른 operation의 증거를 삭제하지 않고 자기 부분 쓰기 실패 뒤에 재시도할 수 있습니다.
+실패해도 이미 반영된 승인 Canon을 롤백하거나 문서를 일괄 복원하지 않습니다. 부분 게시 뒤의 거부 결정을 포함해 같은 저장된 결정으로 남은 프로젝션을 재개하며 재승인을 요구하지 않습니다. 상태는 Canon 반영과 프로젝션 준비를 구분합니다. 좁은 P3 Evidence basis에는 검토 해시와 적용 전 World 식별자만 연결하고 승인이나 문서 본문을 복제하지 않습니다. 이 basis가 없는 과거 중단 작업도 검증된 검토 당시 그래프에서 재구성할 수 있습니다. 변경 전·목표 바이트는 기존 후보와 불변 목표 프로젝션을 재사용합니다. 후속 Canon·문서 포인터·다른 편집은 보존합니다. 과거 영수증은 과거 성공 증거이지 현재 프로젝션 준비 완료 주장이 아닙니다. Canon 교체는 고정 temporary path를 배타적으로 획득하며 부분 쓰기 실패 시 그 호출 소유 temporary만 제거합니다. 기존 `EEXIST` temporary는 보존합니다.
 
 ## 아티팩트
 
@@ -110,6 +110,7 @@ Canon, World Model, 그래프 프로젝션 또는 Markdown 조정에 실패하�
   review-decisions/<document-change-review-decision-id>.json
   product-model-revisions/<product-model-id>.json
   applications/<document-change-application-id>.json
+  application-bases/<document-change-review-decision-id>.json
 ```
 
 적용 영수증은 다음을 결속합니다.

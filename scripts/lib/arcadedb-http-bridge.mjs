@@ -2,8 +2,8 @@
 import fs from "node:fs";
 
 const MAXIMUM_WIRE_BYTES = 64 * 1024 * 1024;
-const fail = (message, code, exitCode = 1) => {
-  fs.writeSync(1, JSON.stringify({ ok: false, error: { code, message } }));
+const fail = (message, code, exitCode = 1, details = {}) => {
+  fs.writeSync(1, JSON.stringify({ ok: false, error: { code, message, ...details } }));
   process.exit(exitCode);
 };
 
@@ -86,6 +86,21 @@ const headers = {
 };
 const readOnlyGet = operation === "ready" || operation === "exists";
 const operationSignal = AbortSignal.timeout(timeoutMs);
+const operationClass = ["command", "create-database", "drop-database"].includes(operation) ? "write" : "read";
+const effectState = operationClass === "write" ? "maybe-applied" : "not-applicable";
+function transportFailure(error) {
+  return ["TimeoutError", "AbortError"].includes(error?.name)
+    || ["ECONNRESET", "ECONNREFUSED", "EPIPE", "ETIMEDOUT", "ENOTFOUND", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(error?.code)
+    || (error?.cause && transportFailure(error.cause));
+}
+function requestFailure(error, phase, status = 0) {
+  const auth = status === 401 || status === 403;
+  const unavailable = !auth && transportFailure(error);
+  const code = auth ? "ARCADEDB_AUTHENTICATION_FAILED" : operationClass === "write" ? "ARCADEDB_WRITE_OUTCOME_UNKNOWN"
+    : unavailable ? "ARCADEDB_TRANSPORT_UNAVAILABLE" : "ARCADEDB_REQUEST_FAILED";
+  fail(auth ? "ArcadeDB authentication failed." : "ArcadeDB response was not completed.", code, unavailable && operationClass === "read" ? 2 : 1,
+    { phase, operationClass, effectState, ...(status ? { httpStatus: status } : {}) });
+}
 let responseWireBytes = 0;
 async function readBoundedResponseText(response) {
   if (!response.body) return "";
@@ -109,18 +124,21 @@ async function performRequest({ requestPath, requestBody = null, method = "POST"
   let response;
   try { response = await fetch(`${endpoint}${requestPath}`, request); }
   catch (error) {
-    const unavailable = error?.name === "TimeoutError" || error?.name === "AbortError" || error instanceof TypeError;
-    fail(
-      unavailable ? "ArcadeDB transport is unavailable." : "ArcadeDB request failed.",
-      unavailable ? "ARCADEDB_TRANSPORT_UNAVAILABLE" : "ARCADEDB_REQUEST_FAILED",
-      unavailable ? 2 : 1,
-    );
+    requestFailure(error, "headers");
   }
-  const responseText = await readBoundedResponseText(response);
+  let responseText;
+  try { responseText = await readBoundedResponseText(response); }
+  catch (error) { requestFailure(error, "body", response.status); }
   let body = null;
+  if (!responseText && response.ok && ["query", "query-batch"].includes(operation)) {
+    fail("ArcadeDB query response is empty.", "ARCADEDB_REMOTE_RESPONSE_INVALID", 1, { phase: "decode", operationClass, effectState });
+  }
   if (responseText) {
     try { body = JSON.parse(responseText); }
-    catch { body = { message: responseText.slice(0, 1000) }; }
+    catch {
+      if (response.ok) fail("ArcadeDB response is not valid JSON.", "ARCADEDB_REMOTE_RESPONSE_INVALID", 1, { phase: "decode", operationClass, effectState });
+      body = null;
+    }
   }
   return { ok: response.ok, status: response.status, body };
 }

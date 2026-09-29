@@ -50,7 +50,8 @@ test("discovery separates exactly the managed mutations, retaining every origina
   const ordinary = (await dispatch({ id: 1, method: "tools/list" })).result.tools;
   const retained = (await dispatch({ id: 2, method: "tools/list" }, { surface: "managed-maintenance" })).result.tools;
   assert.deepEqual(ordinary, tools); assert.deepEqual(retained, toolsForSurface("managed-maintenance"));
-  assert.equal(retained.length, 129); assert.equal(ordinary.length, 119);
+  assert.equal(retained.length, 130); assert.equal(ordinary.length, 120);
+  assert(ordinary.some(tool => tool.name === "head_onboarding_candidate_restore"));
   assert.deepEqual(retained.filter(tool => !ordinary.some(item => item.name === tool.name)).map(tool => tool.name).sort(), mutations.map(pair => pair[1]).filter(Boolean).sort());
   for (const name of ["head_bounded_worker_status", "head_bounded_worker_wait", "head_bounded_worker_job_status", "head_bounded_worker_job_patch", "head_bounded_worker_cancel", "head_worker_integration_status", "head_bounded_worker_wave_read", "head_bounded_worker_wave_status", "head_bounded_worker_wave_results", "head_bounded_worker_wave_wait", "head_context_preview", "head_world_model", "head_conversation_enter"]) {
     assert(ordinary.some(tool => tool.name === name), name);

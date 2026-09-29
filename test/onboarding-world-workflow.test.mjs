@@ -181,7 +181,7 @@ test("mapping preserves real source drift and digest failures without preliminar
   fs.writeFileSync(canonFile, JSON.stringify(changedCanon));
   before = bytes(root);
   await assert.rejects(() => startFeatureMapping({ root, semanticProposal: input }), { code: "FEATURE_MAPPING_SOURCE_DRIFT" });
-  await assert.rejects(() => statusParity(root), { code: "ONBOARDING_PRODUCT_CANON_DRIFT" });
+  assert.equal((await statusParity(root)).readiness.product.state, "integrity_attention");
   assert.deepEqual(bytes(root), before);
   fs.writeFileSync(canonFile, canonBytes);
   const pointer = JSON.parse(fs.readFileSync(path.join(root, ".head/world-model/current.json"), "utf8"));
@@ -192,7 +192,7 @@ test("mapping preserves real source drift and digest failures without preliminar
   before = bytes(root);
   assert.throws(() => inspectWorldModel({ root }));
   await assert.rejects(() => startFeatureMapping({ root, semanticProposal: input }));
-  await assert.rejects(() => statusParity(root));
+  assert.equal((await statusParity(root)).readiness.product.state, "integrity_attention");
   assert.deepEqual(bytes(root), before);
 });
 

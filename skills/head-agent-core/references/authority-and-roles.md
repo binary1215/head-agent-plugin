@@ -23,6 +23,12 @@ Coder implements a fully decided bounded scope: one Session request or a Run con
 
 Reviewer provides an independent evaluation when useful, including a bounded second opinion. Reviewer tests options and assumptions against evidence appropriate to the user's question but does not implement or choose the final direction.
 
+Completing a review completes that contribution, not the reviewed implementation.
+A favorable verdict remains evidence; it does not create a ReviewDecision or
+authorize a new scope. HEAD integrates findings under the existing user request
+and applicable Run contract. Do not add another approval step for ordinary fixes
+already authorized by the user.
+
 ## Invariants
 
 - Provider session identifiers are not HEAD Session or Run identifiers.

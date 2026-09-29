@@ -393,6 +393,60 @@ export function readOnboardingCandidateSet({ root = ".", candidateSetId } = {}) 
   return { status: "verified", file, candidateSet: verifyCandidateSet(readJson(file, "Onboarding candidate set"), inspected.project.projectId) };
 }
 
+function candidateBytes(projectRoot, id) {
+  const file = candidateSetFile(projectRoot, id);
+  if (!fs.existsSync(file)) return null;
+  if (!fs.lstatSync(file).isFile() || fs.statSync(file).size > 8 * 1024 * 1024) {
+    fail("Candidate repair requires a bounded regular file.", "ONBOARDING_RECOVERY_FILE_INVALID");
+  }
+  return fs.readFileSync(file);
+}
+
+const rawHash = (bytes) => bytes === null ? null : crypto.createHash("sha256").update(bytes).digest("hex");
+
+function preserveCandidateBytes(projectRoot, id, bytes) {
+  if (bytes === null) return null;
+  const file = relativeFile(projectRoot, `.head/onboarding/recovery-custody/${id}--${rawHash(bytes)}.bin`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  try { fs.writeFileSync(file, bytes, { flag: "wx" }); }
+  catch (error) { if (error.code !== "EEXIST") throw error; }
+  if (!fs.readFileSync(file).equals(bytes)) fail("Candidate custody backup differs.", "ONBOARDING_RECOVERY_CUSTODY_CONFLICT");
+  return file;
+}
+
+export function restoreOnboardingCandidate({ root = ".", candidateSetId, sourceContent, expectedRawHash } = {}) {
+  return withProjectMutation({ root, scope: "onboarding-promotion" }, () => {
+    const inspected = readyProject(root, "exact candidate restoration");
+    const projectRoot = inspected.project.projectRoot;
+    const file = candidateSetFile(projectRoot, candidateSetId);
+    if (typeof sourceContent !== "string" || Buffer.byteLength(sourceContent) > 8 * 1024 * 1024
+      || !(expectedRawHash === null || /^[a-f0-9]{64}$/.test(expectedRawHash || ""))) {
+      fail("Restoration requires bounded original content and an exact observed raw hash (null for missing).", "ONBOARDING_RECOVERY_INPUT_INVALID");
+    }
+    let source;
+    try { source = JSON.parse(sourceContent); }
+    catch { fail("Restoration source is not JSON.", "ONBOARDING_RECOVERY_SOURCE_INVALID"); }
+    verifyCandidateSet(source, inspected.project.projectId);
+    if (source.candidateSetId !== candidateSetId) fail("Restoration source is not the requested candidate.", "ONBOARDING_RECOVERY_SOURCE_MISMATCH");
+    const before = candidateBytes(projectRoot, candidateSetId);
+    // Semantic identity is independent of whitespace. Never rewrite a healthy file.
+    if (before !== null) {
+      try {
+        const current = verifyCandidateSet(JSON.parse(before), inspected.project.projectId);
+        if (current.candidateSetHash === source.candidateSetHash) return { status: "already-restored", candidateSetId, candidateSetHash: source.candidateSetHash, rawHash: rawHash(before), sourceRawBytesEqual: before.equals(Buffer.from(sourceContent)) };
+      } catch { /* The exact corrupt bytes remain guarded below. */ }
+    }
+    if (rawHash(before) !== expectedRawHash) fail("Candidate changed before restoration.", "ONBOARDING_RECOVERY_CONFLICT");
+    const custodyFile = preserveCandidateBytes(projectRoot, candidateSetId, before);
+    if (rawHash(candidateBytes(projectRoot, candidateSetId)) !== expectedRawHash) fail("Candidate changed during restoration.", "ONBOARDING_RECOVERY_CONFLICT");
+    atomicWrite(file, sourceContent);
+    readOnboardingCandidateSet({ root: projectRoot, candidateSetId });
+    return { status: "restored", candidateSetId, candidateSetHash: source.candidateSetHash,
+      rawHash: rawHash(Buffer.from(sourceContent)), sourceRawBytesEqual: true, custodyFile,
+      canonicalContentVerified: true, priorRawBytesEqualityClaimed: false, canonChanged: false, recoveryChanged: false };
+  });
+}
+
 function normalizedBrief(brief) {
   if (brief == null) return null;
   if (!brief || typeof brief !== "object" || Array.isArray(brief)) fail("Onboarding brief must be an object.", "INVALID_ONBOARDING_BRIEF");
@@ -584,7 +638,8 @@ export async function proposeOnboardingSemanticRefresh(options = {}) {
   return withProjectMutationAsync({ root: options.root ?? ".", scope: "onboarding-promotion" }, () => proposeOnboardingSemanticRefreshLocked(options));
 }
 
-async function proposeOnboardingSemanticRefreshLocked({ root = ".", semanticProposal } = {}) {
+async function proposeOnboardingSemanticRefreshLocked({ root = ".", semanticProposal, recoveryBasis = null } = {}) {
+  if (recoveryBasis) return recoverableCandidateRefresh({ root, semanticProposal, recoveryBasis });
   const inspected = readyProject(root, "historical onboarding semantic refresh");
   if (inspected.state.activeRunId || inspected.state.pendingReview) fail("Semantic refresh cannot change product authority while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
   const projectRoot = inspected.project.projectRoot;
@@ -741,11 +796,37 @@ async function startOnboardingLocked({ root = ".", mode = "existing", storage = 
 }
 
 export async function refreshOnboardingCandidates(options = {}) {
-  return withProjectMutationAsync({ root: options.root ?? ".", scope: "onboarding-promotion" }, () => refreshOnboardingCandidatesLocked(options));
+  return withProjectMutationAsync({ root: options.root ?? ".", scope: "onboarding-promotion" }, () => recoverableCandidateRefresh(options));
 }
 
-async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal = null } = {}) {
-  const recovered = await recoverOnboardingPromotionLocked({ root });
+// The exact caller-observed pointer/raw digest also identifies custody after a
+// process died between relocation and publication. Never restore over a later
+// pointer or an existing file. This restores bytes, not their validity/authority.
+function restoreRefreshCustody({ root = ".", recoveryBasis } = {}) {
+  if (!recoveryBasis || !/^[a-f0-9]{64}$/.test(recoveryBasis.rawHash || "")) return;
+  const inspected = readyProject(root), projectRoot = inspected.project.projectRoot;
+  const state = ensureOnboardingState(inspected);
+  if (state.pointerHash !== recoveryBasis.pointerHash || candidateBytes(projectRoot, state.candidateSetId) !== null) return;
+  const custody = relativeFile(projectRoot, `.head/onboarding/recovery-custody/${state.candidateSetId}--${recoveryBasis.rawHash}.bin`);
+  if (!fs.existsSync(custody)) return;
+  if (!fs.lstatSync(custody).isFile() || fs.statSync(custody).size > 8 * 1024 * 1024) fail("Invalid recovery custody file.", "ONBOARDING_RECOVERY_CUSTODY_CONFLICT");
+  const bytes = fs.readFileSync(custody);
+  if (rawHash(bytes) !== recoveryBasis.rawHash) fail("Custody digest differs.", "ONBOARDING_RECOVERY_CUSTODY_CONFLICT");
+  fs.writeFileSync(candidateSetFile(projectRoot, state.candidateSetId), bytes, { flag: "wx" });
+}
+
+async function recoverableCandidateRefresh(options) {
+  restoreRefreshCustody(options);
+  try { return await refreshOnboardingCandidatesLocked(options); }
+  catch (error) {
+    try { restoreRefreshCustody(options); }
+    catch (restoreError) { error.custodyRecoveryCode = restoreError.code || "ONBOARDING_RECOVERY_CUSTODY_CONFLICT"; }
+    throw error;
+  }
+}
+
+async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal = null, recoveryBasis = null } = {}) {
+  const recovered = recoveryBasis ? null : await recoverOnboardingPromotionLocked({ root });
   if (recovered) return { ...recovered, refreshed: false };
   const inspected = readyProject(root, "onboarding candidate refresh");
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
@@ -756,14 +837,52 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
   if (!new Set(["awaiting-review", "revision-required"]).has(state.phase)) {
     fail("Onboarding candidate refresh requires a review-pending candidate set.", "ONBOARDING_REFRESH_NOT_AVAILABLE");
   }
-  const previousSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
   const productCanon = readProductModelCanon({ projectRoot });
+  if (productCanon.model.productModelId !== state.productModelId) {
+    fail("Product Canon changed after candidate proposal; candidate evidence cannot refresh automatically.", "ONBOARDING_PRODUCT_CANON_DRIFT");
+  }
+  let previousSet;
+  let damagedBytes = null;
+  if (recoveryBasis) {
+    if (recoveryBasis.pointerHash !== state.pointerHash || !Object.hasOwn(recoveryBasis, "rawHash") || !semanticProposal) {
+      fail("Candidate recovery requires the current pointer basis and a HEAD semantic proposal.", "ONBOARDING_RECOVERY_CONFLICT");
+    }
+    damagedBytes = candidateBytes(projectRoot, state.candidateSetId);
+    if (rawHash(damagedBytes) !== recoveryBasis.rawHash) fail("Damaged candidate changed.", "ONBOARDING_RECOVERY_CONFLICT");
+    if (damagedBytes) {
+      let valid = false;
+      try { verifyCandidateSet(JSON.parse(damagedBytes), inspected.project.projectId); valid = true; } catch {}
+      if (valid) fail("Use normal refresh for a verified candidate.", "ONBOARDING_RECOVERY_NOT_REQUIRED");
+    }
+    // Unreadable reviews are unknown, never evidence of absence of approval.
+    const reviewDir = relativeFile(projectRoot, ONBOARDING_REVIEW_DIRECTORY);
+    for (const name of fs.existsSync(reviewDir) ? fs.readdirSync(reviewDir) : []) {
+      if (!name.endsWith(".json")) continue;
+      const review = verifyReviewDecision(readJson(relativeFile(projectRoot, `${ONBOARDING_REVIEW_DIRECTORY}/${name}`), "ReviewDecision"), inspected.project.projectId);
+      if (review.candidateSetId === state.candidateSetId) fail("A reviewed candidate requires exact restoration, not replacement.", "ONBOARDING_RECOVERY_REVIEWED");
+    }
+    if (onboardingStateLatestReviewDecisionId(state)) fail("Review lineage requires exact restoration.", "ONBOARDING_RECOVERY_REVIEWED");
+    const candidateDir = relativeFile(projectRoot, ONBOARDING_CANDIDATE_DIRECTORY);
+    for (const name of fs.existsSync(candidateDir) ? fs.readdirSync(candidateDir) : []) {
+      if (!name.endsWith(".json") || name === `${state.candidateSetId}.json`) continue;
+      const other = verifyCandidateSet(readJson(relativeFile(projectRoot, `${ONBOARDING_CANDIDATE_DIRECTORY}/${name}`), "Candidate"), inspected.project.projectId);
+      if (other.parentCandidateSetIds.includes(state.candidateSetId)) fail("Referenced historical candidate requires exact restoration.", "ONBOARDING_RECOVERY_REFERENCED");
+    }
+    previousSet = { candidateSetId: state.candidateSetId, productModelId: state.productModelId,
+      inputMode: "existing", storageSelectionId: state.storageSelectionId, sourceSnapshotId: state.sourceSnapshotId };
+    // Validate meaning and current cited bytes before relocating damaged evidence.
+    candidatesFromSemanticProposal(semanticProposal, readWorldModelSnapshot({ root, worldModelId: state.worldModelId }).snapshot, projectRoot);
+    preserveCandidateBytes(projectRoot, state.candidateSetId, damagedBytes);
+    if (rawHash(candidateBytes(projectRoot, state.candidateSetId)) !== recoveryBasis.rawHash) fail("Candidate changed before custody relocation.", "ONBOARDING_RECOVERY_CONFLICT");
+    if (damagedBytes) fs.unlinkSync(candidateSetFile(projectRoot, state.candidateSetId));
+  } else previousSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
   if (productCanon.model.productModelId !== state.productModelId || productCanon.model.productModelId !== previousSet.productModelId) {
     fail("Product Canon changed after candidate proposal; candidate evidence cannot refresh automatically.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
   let currentWorld;
   try {
-    currentWorld = await reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet: previousSet, world: inspectWorldModel({ root: projectRoot }) });
+    currentWorld = recoveryBasis ? await buildWorldModel({ root: projectRoot, persist: true })
+      : await reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet: previousSet, world: inspectWorldModel({ root: projectRoot }) });
   } catch (error) {
     if (!ABSENT_WORLD_CODES.has(error.code)) throw error;
     // Explicit Product resume may reconstruct a missing view, never a decision.
@@ -798,7 +917,7 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
     candidates: semantic.candidates,
     evidence: semantic.evidence,
     unknowns: semantic.unknowns,
-    parentCandidateSetIds: [previousSet.candidateSetId],
+    parentCandidateSetIds: recoveryBasis ? [] : [previousSet.candidateSetId],
   });
   const projectedWorld = await rebuildWithOnboardingProjection({
     projectRoot,
@@ -808,6 +927,13 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
     additionalCandidateSets: [candidateSet],
   });
   persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId), candidateSet, "Onboarding candidate set");
+  if (recoveryBasis) {
+    const final = readyProject(root);
+    if (final.state.sessionId !== inspected.state.sessionId || final.state.activeRunId || final.state.pendingReview
+      || ensureOnboardingState(final).pointerHash !== state.pointerHash) {
+      fail("Onboarding lineage changed during recovery proposal.", "ONBOARDING_RECOVERY_CONFLICT");
+    }
+  }
   const phase = candidateSet.candidates.length ? "awaiting-review" : "awaiting-evidence";
   const nextState = writeState(projectRoot, state, {
     phase,
@@ -1611,6 +1737,24 @@ function verifyCurrentOnboardingReviewLineage({ projectRoot, state, candidateSet
     latestReviewDecisionId,
     producerReviewDecision,
   };
+}
+
+// A diagnostic boundary, never a replacement for strict promotion validation.
+// Core/P2 validation deliberately remains outside the optional capability catch.
+export function inspectOptionalOnboarding({ root = "." } = {}) {
+  readyProject(root, "optional Product inspection");
+  try { return inspectOnboarding({ root }); }
+  catch (error) {
+    if (!/^(?:INVALID_)?(?:ONBOARDING|WORLD_MODEL|GRAPH_|TEMPORAL_|PRODUCT_MODEL|PRODUCT_CANON|DOCUMENT_|ARCADEDB|HISTORICAL_|STORAGE_SELECTION|SESSION_RECORD)/.test(error.code || "")
+      && !new Set(["ENOENT", "EACCES", "EPERM", "EISDIR"]).has(error.code)) throw error;
+    return {
+      status: "integrity_attention",
+      reasonCode: error.code,
+      ordinaryWorkBlocked: false,
+      userReviewRequired: false,
+      nextAction: "inspect_product_governance",
+    };
+  }
 }
 
 export function inspectOnboarding({ root = "." } = {}) {

@@ -92,13 +92,13 @@ Before recording a review, the implementation verifies:
 - the complete resulting Product Model passes strict keys, references, hierarchy, and cycle validation;
 - one candidate set cannot receive conflicting ReviewDecisions.
 
-Before application, it repeats candidate/published-byte validation, verifies the review and target Product Model revision, requires a current World Model, and rechecks Product Canon drift.
+Before application, it verifies the durable review and target Product Model revision and distinguishes the reviewed Canon, its exact approved result, and a later unrelated Canon. Non-document source drift still requires reconciliation; drift caused by this exact approved Canon can be rebuilt. Publication accepts only each reviewed preimage or exact target content, so partial publication can resume without overwriting later user edits.
 
 An accepted application writes only the reviewed Product Model, derives revision parents, builds and verifies a child SourceSnapshot and GraphSnapshot, and then replaces the reviewed published drift with deterministic Markdown from that graph. A rejection does not mutate Canon. After either outcome, the immutable receipt is projected into a subsequent audit child GraphSnapshot and the deterministic Markdown view is advanced to that audit graph.
 
 The receipt deliberately names the pre-audit application outcome. It cannot name the same GraphSnapshot that contains it because that would create a content-hash cycle. The later audit graph is derived evidence only; the immutable ReviewDecision and application receipt remain the authoritative transition records.
 
-If Canon, World Model, graph projection, or Markdown reconciliation fails, current pointers, Canon bytes, and published documents are restored. Immutable review evidence remains available for diagnosis and retry. New immutable snapshots written before a rollback may remain as unreachable derived evidence but cannot become current authority. Canon replacement acquires its fixed temporary path exclusively and records ownership only after successful creation. A partial write failure closes and removes only that call's owned temporary; a pre-existing `EEXIST` temporary is preserved. The same process can therefore retry after its own failed partial write without deleting another operation's evidence.
+Failure does not roll back an already applied approved Canon or blanket-restore documents. The same durable decision resumes missing projections, including rejection after partial publication; no second approval is required. Status separates Canon application from projection readiness. A narrow P3 Evidence basis binds the review hash to the before-World identity, without copying approval or document bodies. Older interrupted work without that basis can reconstruct from the verified reviewed graph rather than demand reapproval. The existing candidate and immutable target projection supply preimage/target bytes. Later Canon, document pointers, and third-party edits are preserved; an old receipt is historical success, not a claim that current projections are ready. Canon replacement acquires its fixed temporary path exclusively and removes only that call's owned temporary after a partial write failure; a pre-existing `EEXIST` temporary is preserved.
 
 ## Artifacts
 
@@ -108,6 +108,7 @@ If Canon, World Model, graph projection, or Markdown reconciliation fails, curre
   review-decisions/<document-change-review-decision-id>.json
   product-model-revisions/<product-model-id>.json
   applications/<document-change-application-id>.json
+  application-bases/<document-change-review-decision-id>.json
 ```
 
 The application receipt binds:

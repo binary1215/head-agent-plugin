@@ -6,7 +6,7 @@ import {
   ArcadeDbHttpTransport,
   buildGraphProjectionPointer,
 } from "./lib/graph-projection-adapter.mjs";
-import { buildArcadeDbIncrementalSyncManifest, buildArcadeDbIncrementalSyncReceipt } from "./lib/arcadedb-incremental-sync.mjs";
+import { buildArcadeDbIncrementalSyncManifest, buildArcadeDbIncrementalSyncReceipt, executeArcadeDbIncrementalSync } from "./lib/arcadedb-incremental-sync.mjs";
 import { buildStorageSelection } from "./lib/onboarding-contract.mjs";
 import { buildTemporalProvenanceGraph } from "./lib/temporal-provenance.mjs";
 
@@ -23,6 +23,7 @@ class MemorySyncTransport {
     this.topologies = new Map();
     this.manifests = new Map();
     this.checkpoints = new Map();
+    this.batchCalls = new Map();
   }
 
   describe() { return { protocol: "arcadedb-http-json", credentialsPersisted: false }; }
@@ -88,6 +89,7 @@ class MemorySyncTransport {
     return existing == null;
   }
   applySyncBatch(projectId, manifest, batch) {
+    this.batchCalls.set(batch.batchId, (this.batchCalls.get(batch.batchId) || 0) + 1);
     const targetKey = `${projectId}:${manifest.targetGraphSnapshotId}`;
     const target = this.topologies.get(targetKey) || { topologyJson: null, nodeJsons: [], edgeJsons: [] };
     const base = manifest.baseGraphSnapshotId == null
@@ -112,6 +114,7 @@ class MemorySyncTransport {
           ? { ...source, [idField]: record[idField], sourceSnapshotId: manifest.sourceSnapshotId }
           : record;
       if (!value) throw Object.assign(new Error("missing source"), { code: "ARCADEDB_INCREMENTAL_SYNC_BASE_MISSING" });
+      if (targetById.has(record[idField])) throw Object.assign(new Error("create-only conflict"), { code: "ARCADEDB_WRITE_OUTCOME_UNKNOWN" });
       targetById.set(record[idField], clone(value));
     }
     target[field] = [...targetById.values()].sort((left, right) => left[idField].localeCompare(right[idField]))
@@ -192,7 +195,7 @@ assert.equal(receipt.atomicPointerTransitionVerified, true);
 
 const interruptedTransport = new MemorySyncTransport({ failCheckpointAfter: 1 });
 const interrupted = adapter(interruptedTransport);
-assert.throws(() => interrupted.writeSnapshot(targetGraph.graphSnapshotId, targetGraph), { code: "ARCADEDB_TRANSPORT_UNAVAILABLE" });
+assert.throws(() => interrupted.writeSnapshot(targetGraph.graphSnapshotId, targetGraph), { code: "ARCADEDB_WRITE_OUTCOME_UNKNOWN" });
 assert.equal(interruptedTransport.readPointer(projectId), null);
 const resumed = adapter(interruptedTransport);
 resumed.writeSnapshot(targetGraph.graphSnapshotId, targetGraph);
@@ -244,6 +247,39 @@ assert.match(pointerMutationCommands[1].command, /^UPDATE HeadAgentGraphPointer/
 assert.equal(pointerMutationCommands.some((call) => call.language === "sqlscript" || call.command.includes("LET current")), false);
 
 const initialManifest = buildArcadeDbIncrementalSyncManifest({ targetGraph: baseGraph });
+// Public call retry after a lost checkpoint must not reapply exact effects or
+// overwrite a later value. Also model a competing writer after the pre-read.
+for (const fault of ["exact", "foreign", "partial", "race"]) {
+  const remote = new MemorySyncTransport({ failCheckpointAfter: 0 });
+  const batch = initialManifest.batches[0];
+  const key = `${projectId}:${baseGraph.graphSnapshotId}`;
+  const field = batch.recordKind === "node" ? "nodeJsons" : "edgeJsons";
+  if (fault === "race") {
+    const original = remote.applySyncBatch.bind(remote);
+    remote.applySyncBatch = (project, manifest, requested) => {
+      remote.topologies.set(key, { topologyJson: null, nodeJsons: [], edgeJsons: [], [field]: [JSON.stringify({ ...batch.records[0], foreign: true })] });
+      return original(project, manifest, requested);
+    };
+  }
+  assert.throws(() => executeArcadeDbIncrementalSync({ transport: remote, manifest: initialManifest, targetGraph: baseGraph }), { code: "ARCADEDB_WRITE_OUTCOME_UNKNOWN" });
+  const topology = remote.topologies.get(key);
+  if (fault === "foreign") topology[field][0] = JSON.stringify({ ...JSON.parse(topology[field][0]), foreign: true });
+  if (fault === "partial") { assert.ok(topology[field].length > 1); topology[field].pop(); }
+  const before = JSON.stringify(topology[field]);
+  if (fault === "exact") executeArcadeDbIncrementalSync({ transport: remote, manifest: initialManifest, targetGraph: baseGraph });
+  else assert.throws(() => executeArcadeDbIncrementalSync({ transport: remote, manifest: initialManifest, targetGraph: baseGraph }), {
+    code: fault === "partial" ? "ARCADEDB_WRITE_OUTCOME_UNKNOWN" : "ARCADEDB_INCREMENTAL_SYNC_BATCH_CONTENT_MISMATCH",
+  });
+  assert.equal(remote.batchCalls.get(batch.batchId), 1);
+  assert.equal(JSON.stringify(remote.topologies.get(key)[field]), before);
+}
+const nodeBatch = initialManifest.batches.find((batch) => batch.recordKind === "node");
+httpContract.applySyncBatch(projectId, initialManifest, nodeBatch);
+assert.match(httpContract.commands.at(-1).command, /INSERT INTO HeadAgentGraphNode/);
+assert.doesNotMatch(httpContract.commands.at(-1).command, /UPSERT|UPDATE HeadAgentGraphNode|COMMIT RETRY/);
+// Legacy/full-topology publication has the same post-read race boundary.
+const transportSource = fs.readFileSync(new URL("./lib/graph-projection-adapter.mjs", import.meta.url), "utf8");
+assert.doesNotMatch(transportSource, /UPDATE \$\{ARCADEDB_NODE_TYPE\}.*UPSERT/);
 const parallelPairs = new Map();
 for (const edge of baseGraph.edges) {
   const key = `${edge.from}:${edge.to}`;
@@ -263,7 +299,7 @@ assert.equal(bridgeSource.includes("process.exitCode = response.ok ? 0 : 3"), tr
 
 process.stdout.write(`${JSON.stringify({
   status: "arcadedb_incremental_sync_verified",
-  scenarios: ["initial-upload", "no-change", "semantic-rebase-delta", "checkpoint-resume", "pointer-conflict", "receipt", "http-cas-contract", "parallel-edge-command-contract", "bridge-graceful-exit-contract"],
+  scenarios: ["initial-upload", "no-change", "semantic-rebase-delta", "checkpoint-resume", "pointer-conflict", "receipt", "http-cas-contract", "parallel-edge-command-contract", "bridge-graceful-exit-contract", "exact-no-reapply", "foreign-preserved", "partial-unknown", "post-read-race-create-only"],
   initialBatchCount: initialState.manifest.batchCount,
   deltaBatchCount: deltaState.manifest.batchCount,
   rebasedNodeCount: deltaState.manifest.nodeDelta.rebased.count,

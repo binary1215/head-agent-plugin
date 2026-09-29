@@ -55,6 +55,12 @@ export function buildAttentionProjection(experience) {
     summary: "Product candidates need an explicit review before Product Canon promotion.",
     blockedOperations: ["product-canon-promotion"],
   }));
+  if (product.state === "integrity_attention") items.push(item({
+    id: "product-integrity", owner: "HEAD", severity: "integrity",
+    actionability: "when-product-governance-is-in-scope",
+    summary: `Inspect optional Product evidence (${product.reasonCode}); ordinary Core work remains available.`,
+    blockedOperations: ["product-governance-dependent-work"],
+  }));
   if (["evidence_required", "refresh_required", "migration_required"].includes(product.state)) items.push(item({
     id: "product-governance-follow-up",
     owner: "HEAD",

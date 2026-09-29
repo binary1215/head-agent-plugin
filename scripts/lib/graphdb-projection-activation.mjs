@@ -113,6 +113,10 @@ export function activateArcadeDbGraphProjection({ root = ".", transport = null }
     baseGraph: localBase,
   });
   remoteAdapter.ensureSchema();
+  remoteAdapter.ensureTopologySchema();
+  remoteAdapter.transport.ensureSyncSchema();
+  const provisionedAudit = inspectArcadeDbDatabaseCompatibility({ root: world.snapshot.projectRoot, transport: remoteAdapter.transport });
+  if (!provisionedAudit.canActivateNow) fail("Required HEAD schema was not verified after provisioning.", "ARCADEDB_SCHEMA_UNVERIFIED");
   activationStage("incremental-snapshot-sync", () => remoteAdapter.writeSnapshot(graph.graphSnapshotId, graph));
   const topology = remoteAdapter.pendingIncrementalSync?.topology;
   if (!topology) fail("Incremental GraphDB sync did not produce verified topology evidence.", "ARCADEDB_INCREMENTAL_SYNC_TOPOLOGY_MISSING");

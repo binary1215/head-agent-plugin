@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
-import { inspectOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
+import { inspectOnboarding, inspectOptionalOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "./recovery-checkpoint-diagnosis.mjs";
 import { actionability, withExperienceProjections } from "./experience-projection.mjs";
@@ -45,6 +45,10 @@ function validateProfile(value) {
 }
 
 function onboardingSummary(inspected) {
+  if (inspected.status === "integrity_attention") return {
+    status: inspected.status, reasonCode: inspected.reasonCode,
+    candidateSetId: null, candidateCount: null, verification: "unverified",
+  };
   const latestReviewDecisionId = inspected.state.latestReviewDecisionId ?? inspected.state.reviewDecisionId ?? null;
   return {
     status: inspected.status,
@@ -63,6 +67,11 @@ function onboardingSummary(inspected) {
 
 function productReadiness(status) {
   const states = {
+    integrity_attention: {
+      state: "integrity_attention", status: "product_integrity_attention",
+      action: "inspect_product_governance",
+      summary: "Core remains available. Inspect optional Product evidence before work that depends on it; no automatic repair or new review is performed.",
+    },
     initialized: {
       state: "not_activated",
       status: "core_ready",
@@ -142,6 +151,10 @@ function contextReadiness({ coreState, productState, onboardingInspection = null
     repositoryEvidence: "blocked-until-core-ready",
     worldModelId: null,
     entrypoint,
+  };
+  if (productState === "integrity_attention") return {
+    state: "curated-only", repositoryEvidence: "unverified-excluded",
+    worldModelId: null, entrypoint,
   };
   if (onboardingInspection?.worldModel?.status === "current") return {
     state: "repository-ready",
@@ -425,8 +438,9 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
       core: { state: coreState, managedProjectionDriftCount: projectInspection.drift.length },
       product: {
         state: product.state,
-        governanceActivated: onboardingInspection ? !["initialized", "migration_required"].includes(onboardingInspection.status) : null,
+        governanceActivated: onboardingInspection && onboardingInspection.status !== "integrity_attention" ? !["initialized", "migration_required"].includes(onboardingInspection.status) : null,
         onboardingStatus: onboardingInspection?.status || null,
+        ...(onboardingInspection?.reasonCode ? { reasonCode: onboardingInspection.reasonCode } : {}),
       },
       context,
       recovery,
@@ -445,7 +459,7 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
 export function inspectProjectExperience({ root = ".", recoveryOverride = null } = {}) {
   const project = inspectProject(root);
   if (project.status !== "ready") return projectExperience(project, null, recoveryOverride);
-  return projectExperience(project, inspectOnboarding({ root }), recoveryOverride);
+  return projectExperience(project, inspectOptionalOnboarding({ root }), recoveryOverride);
 }
 
 function bootstrapResponse({ root, profile, before, installation, onboardingAction, inputDisposition, inspected, extra = {} }) {
@@ -492,7 +506,7 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   }
 
   if (profile === "product") await recoverOnboardingPromotion({ root });
-  let current = inspectOnboarding({ root });
+  let current = profile === "core" ? inspectOptionalOnboarding({ root }) : inspectOnboarding({ root });
   if (profile === "core") {
     const productGovernanceActivated = !["initialized", "migration_required"].includes(current.status);
     return bootstrapResponse({

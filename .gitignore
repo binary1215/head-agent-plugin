@@ -17,6 +17,7 @@ test/*
 !test/head-core.test.mjs
 !test/product-operating-loop.test.mjs
 !test/operating-execution-means.test.mjs
+!test/skill-reference-links.test.mjs
 !test/managed-maintenance-surface.test.mjs
 !test/release-observation.test.mjs
 !test/session-recovery-integration.test.mjs
@@ -81,3 +82,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 /docs/ULTIMATE_GOAL.md
+!test/document-change-recovery.test.mjs
+!test/arcadedb-http-bridge.test.mjs
+!test/helpers/arcadedb-fetch-fault-fixture.mjs

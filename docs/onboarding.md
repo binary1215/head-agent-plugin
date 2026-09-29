@@ -344,3 +344,11 @@ It covers existing code, a new-project brief, empty evidence, revision followed 
 - dedicated imported-backlog connectors beyond an explicit structured brief;
 - general relationship promotion beyond the separate Feature/code/test mapping review scope;
 - automatic semantic promotion, document synchronization, and merge/conflict resolution.
+
+## Optional integrity and candidate recovery
+
+Known Product/World/Graph integrity errors appear in existing readiness and Attention views; they do not block healthy Core entry, conversation recovery or ordinary work. The affected Product operation still verifies its evidence strictly. HEAD handles diagnostics rather than asking users to fill recovery forms.
+
+For a damaged or missing candidate with a verified original, use `head_onboarding_candidate_restore` (CLI `onboarding-candidate-restore`). HEAD supplies exact Project/candidate identity, original content and the observed raw digest. The operation preserves damaged bytes in recovery custody, checks concurrent changes and atomically replaces only the exact target. Equal canonical content is not a claim of identical raw bytes. Restoration creates no approval, Canon change or P2 direction.
+
+Without an original, only a damaged unreviewed/unreferenced current candidate can use the existing semantic refresh with `recoveryBasis`. HEAD supplies a fresh evidence-linked proposal; Core never invents product meaning or inherits old approval. Canon and lineage preconditions are checked before relocation. Damaged bytes remain in digest-addressed custody; a failed call restores them only if the pointer is unchanged and the original path is absent. After process loss, repeating the same pointer/raw basis recovers that exact custody before resuming. Other files, later pointers and new edits are never rolled back. Reviewed candidates require exact restoration rather than semantic replacement.

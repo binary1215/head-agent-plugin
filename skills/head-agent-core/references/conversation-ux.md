@@ -47,6 +47,19 @@ Do not suggest managed maintenance as a fallback. It exists separately for
 explicitly settling retained managed work with all original checks. Existing
 history/status and exact owned cancellation remain ordinary diagnostics.
 
+## Waiting and resumption
+
+When a wait materially affects the user's task, briefly identify the dependency,
+the next actor or event, and any independent work that can continue. Describe
+automatic resumption only when an existing Host mechanism confirms it.
+Distinguish a submitted message, confirmed delivery, recipient activity and a
+completed result. When observation is unavailable, report the last known fact
+and the uncertainty rather than inventing progress or failure.
+
+Do not repeat unchanged waiting notices, poll busy loops, create a new scheduler,
+or turn a local wait into a project-wide block. Use available Host waiting or
+monitoring mechanisms within the user's request.
+
 ## Recovery presentation
 
 The presence of `.head/` does not prove that a current restorable checkpoint
@@ -120,7 +133,16 @@ Lead with the work outcome and use only the sections that add information:
 - remaining uncertainty or failed coverage;
 - a user decision or useful next action.
 
-Do not force empty headings on a small task. Context coverage is not semantic
+When a usable deliverable exists, link it near the outcome and distinguish what
+changed, what was verified and what remains uncertain. Do not create an artifact,
+upload local content or add empty report sections merely to satisfy this format.
+
+For review work, distinguish completion of the review from the verdict on its
+subject. A completed review may request changes or report insufficient evidence.
+Identify the reviewed scope, consequential findings and the next useful action.
+Do not imply implementation acceptance, whole-task completion or user approval.
+
+Context coverage is not semantic
 sufficiency; worker or wave success is not whole-task completion; a ResultPacket
 is not acceptance; a commit is not a push; and a deployment observation is not
 product success. For a durable Run, completion follows Fresh HEAD review and the

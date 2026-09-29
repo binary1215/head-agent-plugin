@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { ARCADEDB_GRAPH_RESERVED_SCHEMA } from "../scripts/lib/graph-projection-adapter.mjs";
+import { ARCADEDB_REQUIRED_KEYS } from "../scripts/lib/arcadedb-schema-contract.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -2123,7 +2125,9 @@ class MockArcadeDbTransport {
   databaseExists() { this.check(); return true; }
   createDatabase() { this.check(); return true; }
   dropDatabase() { this.check(); return true; }
-  readSchemaTypes() { this.check(); return []; }
+  readSchemaTypes() { this.check(); return ARCADEDB_GRAPH_RESERVED_SCHEMA.map((type) => ({ name: type.name, type: type.type,
+    properties: Object.entries(type.properties).map(([name, type]) => ({ name, type })),
+    indexes: [{ properties: [...ARCADEDB_REQUIRED_KEYS[type.name]], unique: true }] })); }
   readPointer(projectId) { this.check(); this.readPointerCount += 1; return this.pointers.get(projectId) ?? null; }
   readSnapshot(projectId, id) { this.check(); this.readSnapshotCount += 1; return this.snapshots.get(`${projectId}:${id}`) ?? null; }
   writePointer(projectId, pointerJson) { this.check(); this.pointers.set(projectId, pointerJson); }
@@ -2364,6 +2368,15 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   }, { graphDbTransport: transport });
   assert.match(activateWithoutConfirmation.error.message, /explicit user confirmation/i);
 
+  const partialBefore = JSON.stringify([...transport.topologies]);
+  const partialResponse = await dispatchMcp({
+    jsonrpc: "2.0", id: "graphdb-partial-unknown", method: "tools/call",
+    params: { name: "head_graphdb_projection_activate", arguments: { project_root: root, confirm_remote_write: true } },
+  }, { graphDbTransport: transport });
+  assert.match(partialResponse.error.message, /incremental-snapshot-sync/i);
+  assert.equal(JSON.stringify([...transport.topologies]), partialBefore, "partial effects must not be replayed");
+  // Separate clean fixture path; production must not silently clear remote data.
+  transport.topologies.delete(`${onboarding.storageSelection.projectId}:${preActivationGraph.graphSnapshotId}`);
   const activatedResponse = await dispatchMcp({
     jsonrpc: "2.0",
     id: "graphdb-activate",
@@ -2399,7 +2412,7 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   });
   assert.throws(
     () => interruptedAdapter.writeSnapshot(preActivationGraph.graphSnapshotId, preActivationGraph),
-    { code: "ARCADEDB_TRANSPORT_UNAVAILABLE" },
+    { code: "ARCADEDB_WRITE_OUTCOME_UNKNOWN" },
   );
   assert.equal(interruptedTransport.readPointer(onboarding.storageSelection.projectId), null);
   const resumedAdapter = new ArcadeDbGraphProjectionAdapter({

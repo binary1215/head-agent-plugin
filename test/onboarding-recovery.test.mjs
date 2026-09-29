@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
-import { inspectOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, reviewOnboarding, startOnboarding } from "../scripts/lib/onboarding.mjs";
+import { inspectOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, restoreOnboardingCandidate, reviewOnboarding, startOnboarding } from "../scripts/lib/onboarding.mjs";
+import crypto from "node:crypto";
 import { inspectConversationalOnboarding } from "../scripts/lib/onboarding-conversation.mjs";
 import { enterConversationRecovery } from "../scripts/lib/compaction-lifecycle.mjs";
 import { readProductModelCanon } from "../scripts/lib/product-model.mjs";
@@ -37,6 +38,118 @@ function authorityBytes(root) {
   return [".head/project.json", ".head/sessions/current.json", canonPath, statePath]
     .map((relative) => fs.readFileSync(path.join(root, relative), "utf8"));
 }
+
+test("optional candidate damage cannot block public Core entry or resume", async () => {
+  const { root, request } = await fixture();
+  try {
+    const file = path.join(root, ".head/onboarding/candidate-sets", `${request.candidateSetId}.json`);
+    const original = fs.readFileSync(file);
+    const p2 = authorityBytes(root).slice(0, 2);
+    for (const fault of ["schema", "parse", "missing"]) {
+      if (fault === "missing") fs.unlinkSync(file);
+      else fs.writeFileSync(file, fault === "parse" ? "{" : JSON.stringify({ ...JSON.parse(original), schemaVersion: 99 }));
+      const status = inspectProjectExperience({ root });
+      assert.equal(status.readiness.core.state, "ready");
+      assert.equal(status.readiness.product.state, "integrity_attention");
+      assert.equal(status.attention.ordinaryWorkBlocked, false);
+      assert.equal(status.attention.userDecisionRequired, false);
+      assert.equal(enterConversationRecovery({ root }).status, "conversation_ready");
+      assert.equal((await initializeOrResumeProject({ root, pluginRoot, profile: "core" })).readiness.core.state, "ready");
+      assert.equal(inspectConversationalOnboarding({ root }).status, "integrity_attention");
+      await assert.rejects(() => reviewOnboarding(request));
+      assert.deepEqual(authorityBytes(root).slice(0, 2), p2);
+      fs.writeFileSync(file, original);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("exact candidate restoration preserves damaged bytes and does not repeat approval", async () => {
+  const { root, request } = await fixture();
+  try {
+    await reviewOnboarding(request);
+    const file = path.join(root, ".head/onboarding/candidate-sets", `${request.candidateSetId}.json`);
+    const sourceContent = fs.readFileSync(file, "utf8");
+    const p1p2 = authorityBytes(root);
+    const damaged = Buffer.from("{broken");
+    fs.writeFileSync(file, damaged);
+    const expectedRawHash = crypto.createHash("sha256").update(damaged).digest("hex");
+    assert.throws(() => restoreOnboardingCandidate({ ...request, sourceContent, expectedRawHash: "0".repeat(64) }), { code: "ONBOARDING_RECOVERY_CONFLICT" });
+    assert.deepEqual(fs.readFileSync(file), damaged);
+    const result = restoreOnboardingCandidate({ ...request, sourceContent, expectedRawHash });
+    assert.equal(result.status, "restored");
+    assert.deepEqual(fs.readFileSync(result.custodyFile), damaged);
+    assert.deepEqual(authorityBytes(root), p1p2);
+    const replay = restoreOnboardingCandidate({ ...request, sourceContent: JSON.stringify(JSON.parse(sourceContent)), expectedRawHash });
+    assert.equal(replay.status, "already-restored");
+    assert.equal(replay.sourceRawBytesEqual, false);
+    assert.equal(fs.readFileSync(file, "utf8"), sourceContent);
+    fs.unlinkSync(file);
+    assert.equal(restoreOnboardingCandidate({ ...request, sourceContent, expectedRawHash: null }).status, "restored");
+    assert.equal(inspectOnboarding({ root }).status, "ready");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("damaged unreviewed candidate uses existing semantic refresh without inheriting authority", async () => {
+  const { root, request } = await fixture();
+  try {
+    const state = inspectOnboarding({ root }).state;
+    const world = inspectWorldModel({ root }).snapshot;
+    const file = path.join(root, ".head/onboarding/candidate-sets", `${request.candidateSetId}.json`);
+    const damaged = Buffer.from("{broken");
+    fs.writeFileSync(file, damaged);
+    const p1p2 = authorityBytes(root).slice(0, 3);
+    const semanticProposal = { schemaVersion: 1, sourceSnapshotId: world.temporalProvenanceGraph.sourceSnapshotId,
+      candidates: [{ productKind: "Capability", proposedEntity: { key: "dispatch", name: "Dispatch", description: "Deliver reviewed messages." },
+        explanation: "The project README describes message delivery.", confidence: 0.8, evidence: [{ path: "README.md", line: 1 }] }] };
+    const result = await refreshOnboardingCandidates({ root, semanticProposal,
+      recoveryBasis: { pointerHash: state.pointerHash, rawHash: crypto.createHash("sha256").update(damaged).digest("hex") } });
+    assert.notEqual(result.candidateSet.candidateSetId, request.candidateSetId);
+    assert.deepEqual(result.candidateSet.parentCandidateSetIds, []);
+    assert.equal(result.state.latestReviewDecisionId, null);
+    assert.deepEqual(authorityBytes(root).slice(0, 3), p1p2);
+    assert.equal(inspectOnboarding({ root }).status, "awaiting_review");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("semantic recovery preserves failed preconditions and resumes exact custody after interruption", async () => {
+  for (const fault of ["canon-drift", "throw-after-unlink", "crash-after-unlink"]) {
+    const { root, request } = await fixture();
+    try {
+      const state = inspectOnboarding({ root }).state, world = inspectWorldModel({ root }).snapshot;
+      const file = path.join(root, ".head/onboarding/candidate-sets", `${request.candidateSetId}.json`);
+      const damaged = Buffer.from("{broken");
+      fs.writeFileSync(file, damaged);
+      const options = { root, recoveryBasis: { pointerHash: state.pointerHash, rawHash: crypto.createHash("sha256").update(damaged).digest("hex") },
+        semanticProposal: { schemaVersion: 1, sourceSnapshotId: world.temporalProvenanceGraph.sourceSnapshotId,
+          candidates: [{ productKind: "Capability", proposedEntity: { key: "dispatch", name: "Dispatch", description: "Deliver messages." },
+            explanation: "README describes delivery.", confidence: 0.8, evidence: [{ path: "README.md", line: 1 }] }] } };
+      if (fault === "canon-drift") {
+        fs.writeFileSync(path.join(root, canonPath), JSON.stringify({ schemaVersion: 1, featureGroups: [], capabilities: [{ key: "later", name: "Later", description: "Later approved value." }], features: [], requirements: [], constraints: [], decisions: [] }));
+        const before = authorityBytes(root);
+        await assert.rejects(() => refreshOnboardingCandidates(options), { code: "ONBOARDING_PRODUCT_CANON_DRIFT" });
+        assert.deepEqual(authorityBytes(root), before);
+        assert.deepEqual(fs.readFileSync(file), damaged);
+        assert.equal(fs.existsSync(path.join(root, ".head/onboarding/recovery-custody")), false);
+        continue;
+      }
+      const before = authorityBytes(root);
+      const source = `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+        const original=fs.unlinkSync;fs.unlinkSync=function(file){const result=original.apply(this,arguments);if(String(file)===${JSON.stringify(file)}){${fault === "crash-after-unlink" ? "process.exit(44)" : "throw Object.assign(new Error('injected'),{code:'TEST_INJECTED'})"};}return result;};syncBuiltinESMExports();
+        const {refreshOnboardingCandidates}=await import(${JSON.stringify(moduleUrl)});
+        try{await refreshOnboardingCandidates(${JSON.stringify(options)});}catch(error){if(error.code!=='TEST_INJECTED')throw error;}`;
+      const child = spawnSync(process.execPath, ["--input-type=module", "-e", source], { cwd: pluginRoot, encoding: "utf8", timeout: 45000, windowsHide: true });
+      assert.equal(child.error, undefined);
+      assert.equal(child.status, fault === "crash-after-unlink" ? 44 : 0, child.stderr);
+      if (fault === "throw-after-unlink") assert.deepEqual(fs.readFileSync(file), damaged);
+      else assert.equal(fs.existsSync(file), false);
+      assert.deepEqual(authorityBytes(root), before);
+      const result = await refreshOnboardingCandidates(options);
+      assert.equal(result.status, "onboarding_candidates_refreshed");
+      assert.deepEqual(authorityBytes(root).slice(0, 3), before.slice(0, 3));
+      assert.deepEqual(result.candidateSet.parentCandidateSetIds, []);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
 
 // Inject a process exit immediately after a real durable rename. The production
 // modules and source are unchanged; no test-only crash switch exists in Core.
@@ -403,7 +516,9 @@ test("optional World availability does not conceal snapshot tampering", async ()
     snapshot.worldModelId = "tampered";
     fs.writeFileSync(filename, JSON.stringify(snapshot));
     assert.throws(() => inspectOnboarding({ root }), (error) => !["WORLD_MODEL_NOT_BUILT", "WORLD_MODEL_SNAPSHOT_MISSING"].includes(error.code));
-    await assert.rejects(() => initializeOrResumeProject({ root, pluginRoot, profile: "core" }));
+    const core = await initializeOrResumeProject({ root, pluginRoot, profile: "core" });
+    assert.equal(core.readiness.core.state, "ready");
+    assert.equal(core.readiness.product.state, "integrity_attention");
     fs.unlinkSync(filename);
     const pointerFile = path.join(root, ".head/world-model/current.json");
     const pointer = JSON.parse(fs.readFileSync(pointerFile, "utf8"));

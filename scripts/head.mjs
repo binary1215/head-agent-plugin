@@ -15,7 +15,7 @@ import { GitLogFileHistoryAdapter } from "./lib/git-history.mjs";
 import { RuntimeStateFileAdapter } from "./lib/runtime-state.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "./lib/run-lineage.mjs";
 import { buildWorldModel, captureWorldMarkdownChanges, inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModel, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
-import { inspectOnboarding, proposeOnboardingSemanticRefresh, readOnboardingCandidateSet, readOnboardingReviewDecision, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
+import { inspectOnboarding, proposeOnboardingSemanticRefresh, readOnboardingCandidateSet, readOnboardingReviewDecision, restoreOnboardingCandidate, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
 import { inspectFeatureMapping, readFeatureMappingCandidateSet, readFeatureMappingReviewDecision, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
 import { attachVcsEvidence, inspectChangeSets, readChangeImpactCandidateSet, readChangeImpactReviewDecision, readChangeSet, readVcsEvidence, recordChangeSet, reviewChangeImpact } from "./lib/change-set.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel } from "./lib/incremental-refresh.mjs";
@@ -126,6 +126,7 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       "head worker-wave-abandon <project> --input <abandonment.json>",
       "head onboarding-start <project> [--input <onboarding.json>]",
       "head onboarding-semantic-refresh <project> --input <semantic-proposal.json>",
+      "head onboarding-candidate-restore <project> --input <exact-restoration.json>",
       "head onboarding-status <project>",
       "head onboarding-review <project> --input <review.json>",
       "head onboarding-candidates <project> --candidate-set <onboarding-candidate-set-id>",
@@ -451,8 +452,11 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
     return abandonBoundedWorkerWave({ root, waveId: input.waveId, reasonCode: input.reasonCode, reasonSummary: input.reasonSummary || "" });
   }
   if (command === "onboarding-start") return startOnboarding({ ...optionalInputJson(options, "Onboarding start"), root });
-  if (command === "onboarding-semantic-refresh") return proposeOnboardingSemanticRefresh({ root,
-    semanticProposal: inputJson(options, "Fresh onboarding semantic proposal") });
+  if (command === "onboarding-semantic-refresh") {
+    const input = inputJson(options, "Fresh onboarding semantic proposal");
+    return proposeOnboardingSemanticRefresh({ root, semanticProposal: input.semanticProposal || input, recoveryBasis: input.recoveryBasis || null });
+  }
+  if (command === "onboarding-candidate-restore") return restoreOnboardingCandidate({ ...inputJson(options, "Exact candidate restoration"), root });
   if (command === "onboarding-status") return inspectOnboarding({ root });
   if (command === "onboarding-review") return reviewOnboarding({ ...inputJson(options, "Onboarding ReviewDecision"), root });
   if (command === "onboarding-candidates") return readOnboardingCandidateSet({ root, candidateSetId: options["candidate-set"] });

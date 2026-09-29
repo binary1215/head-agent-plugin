@@ -10,7 +10,7 @@ import { prepareSourceContext, inspectSourceObservation } from "./lib/source-con
 import { readLineageArtifact } from "./lib/execution-lineage.mjs";
 import { getPendingReviewContext } from "./lib/run-lineage.mjs";
 import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
-import { inspectOnboarding, proposeOnboardingSemanticRefresh, reviewOnboarding } from "./lib/onboarding.mjs";
+import { inspectOnboarding, proposeOnboardingSemanticRefresh, restoreOnboardingCandidate, reviewOnboarding } from "./lib/onboarding.mjs";
 import { inspectConversationalOnboarding } from "./lib/onboarding-conversation.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
 import { inspectFeatureMapping, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
@@ -223,6 +223,7 @@ const supplementalReadOnlyHints = {
   head_runtime_invocation_result: true,
   head_onboarding_status: true,
   head_onboarding_semantic_refresh: false,
+  head_onboarding_candidate_restore: false,
   head_product_policy_status: true,
   head_product_policy_candidate: true,
   head_product_policy_review_decision: true,
@@ -429,9 +430,23 @@ const allTools = [
       properties: {
         project_root: { type: "string", minLength: 1 },
         semantic_proposal: onboardingSemanticProposalSchema,
+        recovery_basis: { type: "object", properties: { pointerHash: { type: "string", pattern: "^[a-f0-9]{64}$" }, rawHash: { type: ["string", "null"], pattern: "^[a-f0-9]{64}$" } }, required: ["pointerHash", "rawHash"], additionalProperties: false },
       },
       required: ["project_root", "semantic_proposal"],
       additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_onboarding_candidate_restore",
+    description: "Restore verified original candidate content after preserving damaged bytes. Changes no Canon, decision or P2 direction; HEAD supplies exact observed raw hash, not a new user approval.",
+    inputSchema: {
+      type: "object", properties: {
+        project_root: { type: "string", minLength: 1 },
+        candidate_set_id: { type: "string", pattern: "^onboarding-candidates-[a-f0-9]{24}$" },
+        source_content: { type: "string", minLength: 1, maxLength: 8388608 },
+        expected_raw_hash: { type: ["string", "null"], pattern: "^[a-f0-9]{64}$" },
+      }, required: ["project_root", "candidate_set_id", "source_content", "expected_raw_hash"], additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -2207,7 +2222,9 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
           onboarding: onboardingInputFromMcp(args),
         })
       : name === "head_onboarding_semantic_refresh"
-        ? proposeOnboardingSemanticRefresh({ root: args.project_root, semanticProposal: args.semantic_proposal })
+        ? proposeOnboardingSemanticRefresh({ root: args.project_root, semanticProposal: args.semantic_proposal, recoveryBasis: args.recovery_basis || null })
+      : name === "head_onboarding_candidate_restore"
+        ? restoreOnboardingCandidate({ root: args.project_root, candidateSetId: args.candidate_set_id, sourceContent: args.source_content, expectedRawHash: args.expected_raw_hash })
       : name === "head_onboarding_review"
         ? compactReviewResult(await reviewOnboarding({
           root: args.project_root,

@@ -411,3 +411,11 @@ legacy migration, 읽기 전용 status MCP, 그리고 Git, GraphDB 또는 Go bin
 - 명시적 structured brief 범위를 넘어서는 dedicated imported-backlog connector
 - 별도의 Feature/code/test mapping review scope를 넘어서는 general relationship promotion
 - automatic semantic promotion, document synchronization 및 merge/conflict resolution
+
+## 선택적 무결성 오류와 후보 복구
+
+알려진 Product/World/Graph 무결성 오류는 기존 readiness와 Attention에 표시하며, 정상 Core 진입·대화 복구·일반 작업을 차단하지 않습니다. 해당 Product 작업의 엄격한 근거 검증은 유지합니다. HEAD가 진단을 맡으며 사용자에게 복구 양식을 작성하게 하지 않습니다.
+
+손상되거나 누락된 후보의 검증된 원본이 있으면 `head_onboarding_candidate_restore`(CLI `onboarding-candidate-restore`)를 사용합니다. HEAD가 정확한 Project/후보 식별자·원본 내용·관찰한 raw digest를 전달합니다. 작업은 손상 바이트를 recovery custody에 보존하고 동시 변경을 검사한 뒤 정확한 대상만 원자적으로 교체합니다. canonical content가 같아도 raw bytes가 동일하다는 뜻은 아닙니다. 복원은 승인·Canon 변경·P2 방향을 만들지 않습니다.
+
+원본이 없으면 손상된 현재 후보 중 미승인·다른 후보의 참조 대상이 아닌 경우에만 기존 semantic refresh의 `recoveryBasis`를 사용합니다. HEAD가 새로운 근거 연결 제안을 작성하며 Core는 의미를 추론하거나 과거 승인을 승계하지 않습니다. 보존 위치로 옮기기 전에 Canon과 계보 사전조건을 검사합니다. 손상 바이트는 digest 주소의 custody에 남고, 실패 시 포인터가 그대로이며 원래 경로가 비어 있을 때만 복원합니다. 프로세스 중단 후에는 같은 pointer/raw basis를 다시 전달해 해당 custody를 정확히 복구하고 재개합니다. 다른 파일·후속 포인터·새 편집은 롤백하지 않습니다. 검토된 후보는 의미 대체가 아니라 정확한 원본 복원이 필요합니다.

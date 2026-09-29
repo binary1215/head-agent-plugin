@@ -44,6 +44,12 @@ if (providedRoot) {
     const built = buildCodexMarketplaceSnapshot({ sourceRoot: path.resolve("."), outputRoot: snapshotRoot });
     const verified = verifyCodexMarketplaceSnapshot({ root: snapshotRoot });
     assert.deepEqual(verified, built);
+    const skillFiles = ["SKILL.md", "references/runtime-composition.md", "references/conversation-ux.md", "references/authority-and-roles.md"];
+    for (const file of skillFiles) {
+      const relative = path.join("skills", "head-agent-core", file);
+      assert.deepEqual(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, relative)),
+        fs.readFileSync(path.resolve(relative)), `Generated Codex skill bytes differ: ${file}`);
+    }
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, "test")), false);
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, "node_modules")), false);
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, ".git")), false);
@@ -146,6 +152,7 @@ if (providedRoot) {
       sourceAllowlistOnly: true,
       authorityEffect: "none",
       mitLicensePackaged: true,
+      exactSkillFilesVerified: skillFiles,
     }, null, 2)}\n`);
   } finally {
     const resolvedTemporaryRoot = path.resolve(temporaryRoot);
