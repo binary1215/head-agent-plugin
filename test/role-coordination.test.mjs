@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { coreContract, initializeProject } from "../scripts/lib/head-core.mjs";
 import { runCommand } from "../scripts/head.mjs";
-import { dispatch, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { dispatch, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 import {
   inspectRoleCoordination,
   issueCoordinationRoleBinding,

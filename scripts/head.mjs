@@ -263,8 +263,7 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
     "head init <project> [--runtime claude,codex,opencode]  # small Core is the default",
     "head resume <project> [--runtime claude,codex,opencode]",
     "head status <project>",
-    "head context-prepare <project> --task <exact-task>",
-    "head resume <project> --profile product  # explicit Product/World activation",
+    "head checkpoint-diagnose <project>  # only when recovery needs attention",
     "head compact-status <project>",
     "head help-all  # advanced, compatibility, audit, and recovery commands",
   ];
@@ -276,6 +275,9 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
     laneRecommendationRequired: false,
     executionMeans: operatingExecutionGuidance(),
     durableProductRecordCommandsAreDefault: false,
+    contextPreparationRequired: false,
+    contextGuidance: "Read needed files directly; compile only for reproducible selected-context handoff, durable Run or recovery needs.",
+    compatibilityDiagnostics: all ? ["operating-lane-recommend", "product-note"] : [],
     advancedCompatibilityCommand: all ? null : "head help-all",
   };
 }

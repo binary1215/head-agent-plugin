@@ -93,8 +93,11 @@ World Model은 아티팩트를 `ProductSignal`, `ProductHypothesis`, `ProductIni
 
 ## CLI
 
-`head help`는 아래의 가벼운 기본값을 보여 줍니다. `operating-lane-recommend`는
-선택적 자문 도구이며 실행 게이트가 아닙니다. 영속 Signal/Hypothesis, 감사, 호환성 및 복구 표면을 찾으려면 `head help-all`을 사용합니다.
+`head help`는 Core 작업과 복구를 보여 줍니다. 위험은 HEAD가 직접 판단하고,
+임시 사실·가설·추론과 근거는 대화에서 구분합니다. 영속 Signal/Hypothesis,
+감사나 복구가 필요할 때 `head help-all`로 찾습니다. 기존
+`operating-lane-recommend`와 `product-note`는 명시적인 호환 진단으로 남으며,
+권장 작업 단계나 권한 판단이 아닙니다.
 
 ```text
 head operating-lane-recommend <project> --input <risk.json>
@@ -121,10 +124,8 @@ HEAD 직접 작업이 기본이고, 유용하면 기존 Host 위임을 사용하
 `executionMeans` 안내가 관리형 전용 요구를 구분합니다. 어느 투영도 권한을 부여하거나
 새 사용자 폼·승인 단계를 만들지 않습니다.
 
-타입이 지정된 MCP 표면은 다음과 같습니다.
+선택적인 typed MCP 목록에는 다음 도구가 있습니다.
 
-- `head_operating_lane_recommend`
-- `head_product_note`
 - `head_product_signal_record`
 - `head_product_hypothesis_record`
 - `head_product_initiative_propose`
@@ -133,6 +134,17 @@ HEAD 직접 작업이 기본이고, 유용하면 기존 Host 위임을 사용하
 - `head_product_operating_status`
 - `head_continuity_snapshot`
 
-기본 대화형 표면은 선택적 `head_operating_lane_recommend`, `head_product_note`, 영속적인 제품 조치가 필요할 때의 Initiative 제안/검토, 그리고 상태입니다. 기존의 일곱 record/observe/read 도구는 의무적인 절차가 아니라 호환성을 갖춘 명시적 표면으로 남습니다.
+기본 MCP 목록은 Core와 복구에 집중합니다. 필요한 스키마는
+`head_tools_discover`의 정확한 이름이나 반환된 prefix로 찾고, 반환된
+`invokeWith`에 따라 `head_tools_read` 또는 `head_tools_call`로 호출합니다.
+상태를 저장하지 않는 이 경로는 기존 dispatch·권한 검사·결과를 그대로 사용하며
+등록·활성화·추가 사용자 승인을 만들지 않습니다. 읽기 전용 경로는 별도로 유지하고,
+HEAD가 계약을 이미 알면 사전 탐색을 생략할 수 있습니다. 관리형 변경은 기존
+작업을 정리하는 별도 maintenance 진입과 원래 검사를 유지합니다.
+
+`head_operating_lane_recommend`와 `head_product_note`는 명시적인 호환 진단
+탐색이나 알려진 직접 호출로만 사용합니다. 임시 메모 형식화는 근거를 검증하지
+않고, 과거 lane 조언은 기존 승인 방향 내 checkpoint 갱신을 통제하지 않습니다.
+실제 보호 전이의 권한 검사를 따릅니다.
 
 Initiative 검토에는 `confirm_user_review: true`가 필요합니다. 이 확인은 사용자가 소유한 검토 권한을 기록합니다. MCP를 사용할 수 있다는 사실만으로 그 권한이 부여되지는 않습니다.

@@ -17,6 +17,12 @@ explains state and collects user choices; Core validates and performs every
 transaction. Do not ask the user to discover or manually run repository scripts
 for the normal path.
 
+On the small default MCP surface, find an optional tool with `head_tools_discover`
+using its exact name or returned prefix. Invoke its unchanged schema through the
+returned `head_tools_read`/`head_tools_call` route. This is discovery, not a new
+user choice, activation, approval or requirement to author JSON. Existing direct
+tool calls remain available to hosts that expose them.
+
 ## Start or resume
 
 1. Confirm the request is for the optional Product/World governance path, then
@@ -141,10 +147,11 @@ After a ready review:
 
 1. call `head_world_model` for its bounded, fully verified status projection and
    `head_graph_projection_status`; never request the complete World Model through MCP;
-2. call `head_context_prepare` with only a concrete user task, author any
+2. only when a concrete task needs reproducible selected context, a durable Run
+   or recovery Capsule, call `head_context_prepare` and author any
    task-required EvidenceNeeds as HEAD, then call `head_context_preview` with
    the byte-identical task and a bounded budget; never ask the user to write
-   structured Context input;
+   structured Context input. Otherwise continue ordinary work with needed files;
 3. call `head_markdown_projection_build`, then
    `head_markdown_projection_status`;
 4. call `head_onboarding_guide` once more and report its Project/Session IDs,

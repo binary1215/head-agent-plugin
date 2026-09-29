@@ -11,7 +11,7 @@ import {
   processCompactionLifecycle,
 } from "../scripts/lib/compaction-lifecycle.mjs";
 import { formatCliResult } from "../scripts/lib/cli-presentation.mjs";
-import { dispatch, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { dispatch, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");

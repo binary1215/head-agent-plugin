@@ -14,7 +14,7 @@ import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib
 import { formatCheckpointDiagnosis, formatMcpToolContent } from "../scripts/lib/cli-presentation.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "../scripts/lib/recovery-checkpoint-diagnosis.mjs";
 import { finishRun, startRun } from "../scripts/lib/run-lineage.mjs";
-import { dispatch, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { dispatch, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
@@ -323,7 +323,7 @@ test("CLI, typed MCP, project readiness, and human presentation share the bounde
   });
   assert.deepEqual(mcp.result.structuredContent, direct);
   assert.equal(mcp.result.content[0].text, formatMcpToolContent("head_checkpoint_diagnose", direct));
-  assert.equal(runCommand(["help"]).commands.some((command) => command.includes("checkpoint-diagnose")), false);
+  assert.equal(runCommand(["help"]).commands.some((command) => command.includes("checkpoint-diagnose")), true);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("checkpoint-diagnose")), true);
 
   const output = formatCheckpointDiagnosis(direct);

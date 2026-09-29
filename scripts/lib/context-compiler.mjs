@@ -9,9 +9,8 @@ import { loadObservationProjection } from "./observation-projection.mjs";
 
 export const CONTEXT_COMPILER_VERSION = "0.21.0";
 export const CONTEXT_COVERAGE_VERSION = "1.3.0";
-export const CONTEXT_BUDGET_PROTOCOL_VERSION = "1.0.0";
-export const CONTEXT_BUDGET_TIERS = Object.freeze([32_768, 65_536, 131_072, 262_144, 524_288]);
-export const DEFAULT_CONTEXT_BUDGET = CONTEXT_BUDGET_TIERS[0];
+import { CONTEXT_BUDGET_PROTOCOL_VERSION, CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET } from "./context-budget.mjs";
+export { CONTEXT_BUDGET_PROTOCOL_VERSION, CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET };
 export const EVIDENCE_NEED_KINDS = Object.freeze([
   "claim",
   "decision",

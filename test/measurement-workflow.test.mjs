@@ -18,7 +18,7 @@ import {
 import { queryTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
 import { inspectWorldModel } from "../scripts/lib/world-model.mjs";
 import { runCommand } from "../scripts/head.mjs";
-import { dispatch, tools } from "../scripts/mcp-server.mjs";
+import { dispatch, catalogTools as tools } from "../scripts/mcp-server.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();

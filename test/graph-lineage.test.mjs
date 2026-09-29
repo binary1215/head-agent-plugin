@@ -13,7 +13,7 @@ import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs"
 import { buildTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { runCommand } from "../scripts/head.mjs";
-import { dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { dispatch as dispatchMcp, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 

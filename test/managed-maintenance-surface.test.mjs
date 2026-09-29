@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { runCommand, usage } from "../scripts/head.mjs";
-import { dispatch, tools, toolsForSurface } from "../scripts/mcp-server.mjs";
+import { dispatch, tools, catalogTools, toolsForSurface } from "../scripts/mcp-server.mjs";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProtocolEvidence, buildRuntimeProjectBinding } from "../scripts/lib/runtime-protocol-evidence.mjs";
@@ -46,15 +46,18 @@ function snapshot(root) {
   });
 }
 
-test("discovery separates exactly the managed mutations, retaining every original tool in maintenance", async () => {
+test("small default discovery keeps all optional contracts discoverable and managed mutations separate", async () => {
   const ordinary = (await dispatch({ id: 1, method: "tools/list" })).result.tools;
   const retained = (await dispatch({ id: 2, method: "tools/list" }, { surface: "managed-maintenance" })).result.tools;
   assert.deepEqual(ordinary, tools); assert.deepEqual(retained, toolsForSurface("managed-maintenance"));
-  assert.equal(retained.length, 130); assert.equal(ordinary.length, 120);
-  assert(ordinary.some(tool => tool.name === "head_onboarding_candidate_restore"));
-  assert.deepEqual(retained.filter(tool => !ordinary.some(item => item.name === tool.name)).map(tool => tool.name).sort(), mutations.map(pair => pair[1]).filter(Boolean).sort());
+  assert.equal(ordinary.length, 16); assert.equal(retained.length, 131);
+  assert(catalogTools.some(tool => tool.name === "head_onboarding_candidate_restore"));
+  const routers = new Set(["head_tools_discover", "head_tools_read", "head_tools_call"]);
+  assert.deepEqual(retained.filter(tool => !routers.has(tool.name) && !catalogTools.some(item => item.name === tool.name)).map(tool => tool.name).sort(), mutations.map(pair => pair[1]).filter(Boolean).sort());
   for (const name of ["head_bounded_worker_status", "head_bounded_worker_wait", "head_bounded_worker_job_status", "head_bounded_worker_job_patch", "head_bounded_worker_cancel", "head_worker_integration_status", "head_bounded_worker_wave_read", "head_bounded_worker_wave_status", "head_bounded_worker_wave_results", "head_bounded_worker_wave_wait", "head_context_preview", "head_world_model", "head_conversation_enter"]) {
-    assert(ordinary.some(tool => tool.name === name), name);
+    assert(catalogTools.some(tool => tool.name === name), name);
+    const found = await dispatch(request("head_tools_discover", { name }));
+    assert.equal(found.result.structuredContent.tools[0].name, name);
   }
 });
 

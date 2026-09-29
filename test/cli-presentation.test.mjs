@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { tools, dispatch } from "../scripts/mcp-server.mjs";
+import { catalogTools as tools, dispatch } from "../scripts/mcp-server.mjs";
 import {
   formatCliResult,
   formatChangeSetStatus,
@@ -61,7 +61,8 @@ test("MCP discovery discloses every operation effect without granting approval",
     assert.equal(tools.find((tool) => tool.name === name).annotations.readOnlyHint, false);
   }
   const response = await dispatch({ jsonrpc: "2.0", id: "effects", method: "tools/list" });
-  assert.deepEqual(response.result.tools, tools);
+  assert(response.result.tools.length < tools.length);
+  assert(response.result.tools.some(tool => tool.name === "head_tools_discover"));
 });
 
 function projectExperience({ recoveryState = "no-current-checkpoint", recoveryAttention = false, productState = "not_activated" } = {}) {

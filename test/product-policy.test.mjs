@@ -13,7 +13,7 @@ import { withProjectMutationAsync } from "../scripts/lib/project-mutation-lock.m
 import { buildWorldModel, inspectWorldModel, queryWorldTemporalGraph } from "../scripts/lib/world-model.mjs";
 import { traceGraphLineage } from "../scripts/lib/graph-lineage.mjs";
 import { runCommand } from "../scripts/head.mjs";
-import { dispatch, tools } from "../scripts/mcp-server.mjs";
+import { dispatch, catalogTools as tools } from "../scripts/mcp-server.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");

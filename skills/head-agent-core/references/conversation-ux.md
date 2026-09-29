@@ -18,7 +18,7 @@ a HEAD Project, use this sequence:
 3. read its composed project status, recovery readiness, Attention, version,
    and presentation policy;
 4. use the verified restored direction when one exists;
-5. select the lightest sufficient lane;
+5. judge the needed persistence and risk directly, without a recommendation API;
 6. continue the original task in the same turn unless a real authority, scope,
    integrity, or destructive-action boundary needs the user.
 
@@ -175,6 +175,16 @@ exists. The explicit Product operation still presents its real review card.
 
 Read only the part needed for the current outcome. These are optional paths,
 not a sequence to perform for every task.
+
+Keep ephemeral learning in the conversation: separate fact, hypothesis and inference
+and cite actual evidence. A ProductLearningNote formatting call adds no verification
+and is not a step in this flow. Persist through existing Observation/Signal contracts
+only when durable audit, cross-Run reuse or product-state work requires it.
+
+If an optional tool is absent from the default MCP list, use `head_tools_discover`
+to inspect its exact schema, then its returned `invokeWith` route. No user unlock,
+new approval or persistent activation is involved; the original operation still
+enforces its own authority and effect checks.
 
 Use the common Observation surface only when a current task actually needs a
 durable cross-Run, rebuttal/audit, handoff, or context-loss record of structured

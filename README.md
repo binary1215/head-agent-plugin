@@ -363,8 +363,9 @@ package versions, and technical details. The structured projection separates
 `readiness.core`, `readiness.product`, and `readiness.context`, names one
 `nextAction`, and lists optional capabilities with their real prerequisites.
 For example, Product appears as `available-not-activated`, while bounded workers
-appear as `requires-session-or-run-authorization`. One bounded second opinion
-can use a Session; durable coordinated work retains the Run flow. This is a non-persisted advisory
+appear as `requires-session-or-run-authorization` for retained managed work.
+Ordinary second opinions use available Host delegation; worker count alone does
+not require a Run. This is a non-persisted advisory
 projection: reading it never activates Product, creates a Run, grants authority,
 or repairs drift. `profile` remains a choice for one initialize/resume operation,
 not a hidden project mode.
@@ -376,15 +377,23 @@ state remains visible under `readiness.product.onboardingStatus`.
 
 ### Conversational Context preparation and preview
 
-In conversation, describe the task once. The HEAD Skill calls
-`head_context_prepare`, performs semantic repository inspection, authors any
-task-required `EvidenceNeed[]`, and calls `head_context_preview` without asking
+In conversation, describe the task once. Ordinary reading and editing use the
+needed files directly. Only when reproducible selected-context handoff, a durable
+Run or recovery actually needs a Capsule does the HEAD Skill call
+`head_context_prepare`, perform semantic repository inspection, author any
+task-required `EvidenceNeed[]`, and call `head_context_preview` without asking
 the user to operate those steps. Missing or stale optional World evidence does
 not block direct work, and justified budget expansion is automatic.
 The final preview includes one explanation card with included evidence by kind,
 intentional omissions by reason, and remaining uncertainty. It does not add a
 new gate: mechanical coverage still belongs to Core and semantic sufficiency
 still belongs to HEAD.
+
+The default MCP list stays focused on Core work, recovery and retained-work
+status/cancellation. HEAD can find optional Product, Graph, Observation or Context
+schemas with `head_tools_discover`, then use the returned read-only or effectful
+route. You do not need to unlock capabilities, select a profile on every request
+or type JSON. Discovery adds no authority; existing operation checks still apply.
 
 The same Core operations remain available from the CLI for automation and
 diagnosis:
@@ -662,14 +671,15 @@ Signal → Hypothesis → Initiative candidate → user ReviewDecision
 
 This is not one automatic promotion chain. Evidence remains evidence,
 hypotheses remain hypotheses, and a reviewed Initiative remains distinct from
-Product Canon. `head-agent operating-lane-recommend` can advise the lightest safe lane
-without creating authority:
+Product Canon. HEAD judges risk and persistence directly, without a recommendation
+API or a note-formatting call:
 
 - Observe for read and reasoning work;
 - Session for one bounded, reversible result;
 - Run for dependent or recovery-sensitive work;
-- Authority for Canon, initiative decisions, external writes, credentials, or
-  recovery-canon changes.
+- Explicit authority for Canon, initiative decisions or effects outside the current
+  approved scope. Updating a useful checkpoint within already approved direction
+  is not a new user decision.
 
 See [Product Operating Loop](docs/product-operating-loop.md).
 Git ref and deployment plumbing is documented in

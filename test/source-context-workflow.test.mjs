@@ -210,7 +210,10 @@ async function stdioSource(root, mode, options = {}) {
     timer = setTimeout(() => { child.kill("SIGTERM"); forceTimer = setTimeout(() => child.kill("SIGKILL"), 1000); }, 10_000);
   });
   child.stdin.on("error", () => {});
-  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_source_context", arguments: { project_root: root, task: "Inspect", needs: [need], ...options } } }) + '\n');
+  const sourceArgs = { project_root: root, task: "Inspect", needs: [need], ...options };
+  const params = mode === "normal" ? { name: "head_source_context", arguments: sourceArgs }
+    : { name: "head_tools_call", arguments: { name: "head_source_context", arguments: sourceArgs } };
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params }) + '\n');
   return completion;
 }
 

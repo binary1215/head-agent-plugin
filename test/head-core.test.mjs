@@ -65,7 +65,7 @@ import {
   verifyRuntimeAdapterComposition,
   verifyRuntimeAdapterContractMatrix,
 } from "../scripts/lib/runtime-adapter.mjs";
-import { WORLD_MODEL_STATUS_MCP_MAX_BYTES, dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { WORLD_MODEL_STATUS_MCP_MAX_BYTES, dispatch as dispatchMcp, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 import { buildRepositorySourceScope } from "../scripts/lib/repository-source-scope.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel, verifyIncrementalRefreshReceipt, verifyIncrementalRefreshRequest } from "../scripts/lib/incremental-refresh.mjs";
@@ -419,12 +419,15 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(humanHelp.status, 0, humanHelp.stderr);
   assert.match(humanHelp.stdout, /Core-first by default/u);
   assert.match(humanHelp.stdout, /describe the task in ordinary language/u);
-  assert.match(humanHelp.stdout, /head context-prepare/u);
+  assert.doesNotMatch(humanHelp.stdout, /head context-prepare/u);
+  assert.match(humanHelp.stdout, /Read needed files directly/u);
   assert.equal(humanHelp.stdout.trimStart().startsWith("{"), false);
 
   const jsonHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help", "--json"], { encoding: "utf8" });
   assert.equal(jsonHelp.status, 0, jsonHelp.stderr);
   assert.equal(JSON.parse(jsonHelp.stdout).surface, "light-default");
+  assert.equal(JSON.parse(jsonHelp.stdout).contextPreparationRequired, false);
+  assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("context-prepare")), true);
 
   const humanFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root], { encoding: "utf8" });
   assert.notEqual(humanFailure.status, 0);

@@ -4,62 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isManagedMutation, requireOperationSurface, requireSurface } from "./lib/managed-maintenance-surface.mjs";
 import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
-import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET, readContextCapsule } from "./lib/context-compiler.mjs";
-import { prepareContextWorkflow, previewContextWorkflow } from "./lib/context-workflow.mjs";
-import { prepareSourceContext, inspectSourceObservation } from "./lib/source-context-workflow.mjs";
-import { readLineageArtifact } from "./lib/execution-lineage.mjs";
-import { getPendingReviewContext } from "./lib/run-lineage.mjs";
-import { inspectWorldGraphProjection, inspectWorldMarkdownProjection, inspectWorldModelStatus, materializeWorldMarkdownProjection, queryWorldHistory, queryWorldModel, queryWorldRuntimeState, queryWorldTemporalGraph, readWorldDocumentChangeCandidateSet } from "./lib/world-model.mjs";
-import { inspectOnboarding, proposeOnboardingSemanticRefresh, restoreOnboardingCandidate, reviewOnboarding } from "./lib/onboarding.mjs";
-import { inspectConversationalOnboarding } from "./lib/onboarding-conversation.mjs";
-import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
-import { inspectFeatureMapping, reviewFeatureMapping, startFeatureMapping } from "./lib/feature-mapping.mjs";
-import { inspectChangeSets, readVcsEvidence } from "./lib/change-set.mjs";
-import { inspectIncrementalRefresh, inspectPostRefreshProjectionStatus, readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt } from "./lib/incremental-refresh.mjs";
-import { inspectRefreshTriggers, readRefreshTriggerDelivery } from "./lib/refresh-trigger.mjs";
-import { inspectDocumentChangeReviewStatus, readDocumentChangeApplicationReceipt, readDocumentChangeReviewDecision } from "./lib/document-change-review.mjs";
-import { activateArcadeDbGraphProjection, inspectArcadeDbCredentialPreflight, inspectArcadeDbGraphProjectionStatus } from "./lib/graphdb-projection-activation.mjs";
-import { initializeArcadeDbDatabase, inspectArcadeDbDatabaseCompatibility } from "./lib/arcadedb-database-lifecycle.mjs";
-import { inspectRuntimeInvocationExecutionLease, readRuntimeInvocationAuthorization, reconcileWorkerMember } from "./lib/runtime-invocation-lifecycle.mjs";
-import { readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
-import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
-import { inspectProductPolicyStatus, proposeProductPolicy, readProductPolicyCandidate, readProductPolicyReviewDecision, reviewProductPolicy } from "./lib/product-policy.mjs";
-import { assessMetricComparison, compareMetricObservations, defineMetric, inspectMeasurements, proposeMetricFollowUp, recordMetricObservation, traceMeasurementLineage } from "./lib/measurement-workflow.mjs";
-import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
-import { inspectDeliveryState, recordDeliveryObservation } from "./lib/delivery-observation.mjs";
-import { collectRegisteredObservation, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
-import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
-import { diffGraphLineage, inspectGraphLineage, traceGraphLineage } from "./lib/graph-lineage.mjs";
-import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
-import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
-import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
-import { recommendOperatingLane } from "./lib/operating-lane.mjs";
+import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET } from "./lib/context-budget.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
-import { abortCompaction, continueCompaction, inspectCompaction, inspectRecoveryCheckpointBasis, prepareCompaction, syncRecoveryCheckpoint, verifyCompaction } from "./lib/compaction-recovery.mjs";
-import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
-import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
-import { inspectRecoveryCheckpointDiagnosis } from "./lib/recovery-checkpoint-diagnosis.mjs";
 import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
-import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
-import {
-  applyBoundedWorkerDispatchResult,
-  createBoundedWorkerDispatch,
-  readBoundedWorkerDispatch,
-  waitForBoundedWorkerDispatch,
-} from "./lib/bounded-worker-dispatch.mjs";
-import {
-  abandonBoundedWorkerWave,
-  createBoundedWorkerWave,
-  readBoundedWorkerWave,
-  readBoundedWorkerWaveResults,
-  readBoundedWorkerWaveStatus,
-  sealBoundedWorkerWave,
-  waitForBoundedWorkerWave,
-} from "./lib/bounded-worker-wave.mjs";
 import fs from "node:fs";
-import { startBoundedWorkerJob, readBoundedWorkerJob, cancelBoundedWorkerJob, reconcileBoundedWorkerJob, readBoundedWorkerPatch } from "./lib/bounded-worker-job.mjs";
-import { operateWorkerIntegration, inspectWorkerIntegration } from "./lib/worker-integration-workflow.mjs";
-import { prepareLocalBoundedWorker, startLocalBoundedWorker } from "./lib/local-worker-host.mjs";
 
 const protocolVersion = "2024-11-05";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1922,11 +1870,87 @@ for (const tool of allTools) {
   }
 }
 
+// Stateless discovery, not a registration store or permission/activation system.
+const compatibilityTools = new Set(["head_operating_lane_recommend", "head_product_note"]);
+const defaultToolNames = new Set([
+  "head_core_contract", "head_project_initialize_or_resume", "head_conversation_enter",
+  "head_project_status", "head_checkpoint_diagnose", "head_checkpoint_basis",
+  "head_checkpoint_sync", "head_session_restore", "head_pending_review",
+  "head_runtime_invocation_lease_status", "head_bounded_worker_job_status",
+  "head_bounded_worker_cancel", "head_worker_integration_status",
+]);
+const routedInputSchema = {
+  type: "object", properties: {
+    name: { type: "string", description: "Exact tool name from discovery or a known HEAD contract." },
+    arguments: { type: "object", description: "Arguments following that tool's returned inputSchema; HEAD supplies them, not a user form." },
+  }, required: ["name", "arguments"], additionalProperties: false,
+};
+const discoveryTools = [
+  {
+    name: "head_tools_discover",
+    description: "Read optional HEAD capability prefixes, or exact schemas by name/prefix. No Project, registration, activation or approval needed. Use only when the task needs Product, Graph, Observation, Context or retained-work diagnostics; page with nextOffset. Compatibility advice is explicit-only via prefix compatibility.",
+    inputSchema: { type: "object", properties: {
+      name: { type: "string", description: "One exact tool name; mutually exclusive with prefix." },
+      prefix: { type: "string", description: "A returned tool prefix, or compatibility for old advisory diagnostics." },
+      offset: { type: "integer", minimum: 0, default: 0 },
+      limit: { type: "integer", minimum: 1, maximum: 20, default: 8 },
+    }, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_tools_read",
+    description: "Call a discovered read-only HEAD tool using its exact inputSchema. Returns the original result and errors. No discovery prerequisite, Project activation or authority change; independent work remains available if an optional capability fails.",
+    inputSchema: routedInputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "head_tools_call",
+    description: "Call a discovered HEAD operation using its exact inputSchema within existing user scope. Original authority, current-basis, ownership, replay and maintenance checks still apply. Discovery grants no authorization. Prefer head_tools_read for read-only operations.",
+    inputSchema: routedInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  },
+];
+// Complete ordinary schemas for programmatic consumers; tools/list stays small.
+export const catalogTools = allTools.filter(tool => !isManagedMutation(tool.name) && !compatibilityTools.has(tool.name));
 export function toolsForSurface(surface = "ordinary") {
   requireSurface(surface);
-  return allTools.filter(tool => surface === "managed-maintenance" || !isManagedMutation(tool.name));
+  return [...allTools.filter(tool => surface === "managed-maintenance"
+    ? !compatibilityTools.has(tool.name) : defaultToolNames.has(tool.name)), ...discoveryTools];
 }
 export const tools = toolsForSurface();
+
+export function discoverTools({ name, prefix, offset = 0, limit = 8 } = {}, surface = "ordinary") {
+  requireSurface(surface);
+  if ((name != null && typeof name !== "string") || (prefix != null && typeof prefix !== "string")
+      || (name != null && prefix != null) || !Number.isInteger(offset) || offset < 0
+      || !Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error("Invalid tool discovery selector or page.");
+  const available = allTools.filter(tool => surface === "managed-maintenance" || !isManagedMutation(tool.name));
+  const scope = { surface, persisted: false, grantsAuthorization: false,
+    maintenanceEntry: "scripts/mcp-managed-maintenance.mjs (retained managed work only; original checks apply)" };
+  if (name == null && prefix == null) {
+    const counts = new Map();
+    for (const tool of available.filter(tool => !compatibilityTools.has(tool.name))) {
+      const key = `head_${tool.name.split("_")[1]}_`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return { ...scope, prefixes: [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([prefix, count]) => ({ prefix, count })),
+      compatibility: "Explicit diagnostic lookup only; not a recommended workflow.", nextOffset: null };
+  }
+  const matches = available.filter(tool => name != null ? tool.name === name : prefix === "compatibility"
+    ? compatibilityTools.has(tool.name) : !compatibilityTools.has(tool.name) && tool.name.startsWith(prefix));
+  if (name != null && !matches.length) throw new Error(`Unknown or unavailable tool on ${surface}: ${name}`);
+  return { ...scope, total: matches.length, offset, nextOffset: offset + limit < matches.length ? offset + limit : null,
+    tools: matches.slice(offset, offset + limit).map(tool => ({ ...tool,
+      invokeWith: tool.annotations?.readOnlyHint === true ? "head_tools_read" : "head_tools_call",
+      ...(compatibilityTools.has(tool.name) ? { compatibilityDiagnostic: true,
+        guidance: "Historical formatting/advice only; reason directly as HEAD. Not a decision or evidence verifier." } : {}),
+    })) };
+}
+
+function requestedToolName(request) {
+  return request.params?.name === "head_tools_read" || request.params?.name === "head_tools_call"
+    ? request.params?.arguments?.name : request.params?.name;
+}
 
 const success = (id, result) => ({ jsonrpc: "2.0", id, result });
 const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, message } });
@@ -2112,13 +2136,13 @@ function mcpCoordinationBindingToken() {
   throw error;
 }
 
-function initializeGraphDbFromMcp(args, transport) {
+async function initializeGraphDbFromMcp(args, transport) {
   requireMcpConfirmation(
     args.confirm_initialize,
     "ArcadeDB database initialization requires explicit user confirmation.",
     "ARCADEDB_DATABASE_INITIALIZE_CONFIRMATION_REQUIRED",
   );
-  return initializeArcadeDbDatabase({
+  return (await import("./lib/arcadedb-database-lifecycle.mjs")).initializeArcadeDbDatabase({
     root: args.project_root,
     resetIncompatible: args.reset_incompatible === true,
     confirmDatabase: args.confirm_database || "",
@@ -2126,13 +2150,13 @@ function initializeGraphDbFromMcp(args, transport) {
   });
 }
 
-function activateGraphDbFromMcp(args, transport) {
+async function activateGraphDbFromMcp(args, transport) {
   requireMcpConfirmation(
     args.confirm_remote_write,
     "ArcadeDB graph projection activation requires explicit user confirmation.",
     "ARCADEDB_PROJECTION_ACTIVATION_CONFIRMATION_REQUIRED",
   );
-  return activateArcadeDbGraphProjection({ root: args.project_root, transport });
+  return (await import("./lib/graphdb-projection-activation.mjs")).activateArcadeDbGraphProjection({ root: args.project_root, transport });
 }
 
 function coordinationHostCall({ root, bindingToken, coordinationWorkspaceHost }) {
@@ -2158,12 +2182,12 @@ function coordinationHostCall({ root, bindingToken, coordinationWorkspaceHost })
   });
 }
 
-function continueSessionFromMcp(args, coordinationWorkspaceHost) {
+async function continueSessionFromMcp(args, coordinationWorkspaceHost) {
   const bindingToken = String(process.env[COORDINATION_BINDING_ENV] || "").trim() || null;
   if (bindingToken && coordinationWorkspaceHost) {
     coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost });
   }
-  return continueSessionFromArtifacts({
+  return (await import("./lib/runtime-session-continuation.mjs")).continueSessionFromArtifacts({
     root: args.project_root,
     checkpointId: args.checkpoint_id || null,
     runtime: args.runtime,
@@ -2191,9 +2215,21 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
   if (request.method === "tools/list") return success(id, { tools: toolsForSurface(surface) });
   if (request.method !== "tools/call") return failure(id, "Method not found");
   try {
-    const name = request.params?.name;
+    let name = request.params?.name;
+    let args = request.params?.arguments || {};
+    if (name === "head_tools_discover") {
+      const value = discoverTools(args, surface);
+      return success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+    }
+    if (name === "head_tools_read" || name === "head_tools_call") {
+      const selected = allTools.find(tool => tool.name === args.name);
+      if (!selected || !args.arguments || typeof args.arguments !== "object" || Array.isArray(args.arguments)
+          || Object.keys(args).some(key => !["name", "arguments"].includes(key))) throw new Error("An exact HEAD tool name and arguments object are required; routing cannot be nested.");
+      if (name === "head_tools_read" && selected.annotations?.readOnlyHint !== true) throw new Error("The selected tool is not read-only; use its declared effectful route within existing authority.");
+      name = selected.name;
+      args = args.arguments;
+    }
     requireOperationSurface(name, surface);
-    const args = request.params?.arguments || {};
     const value = await (name === "head_core_contract"
       ? {
         ...coreContract(),
@@ -2210,11 +2246,11 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
         },
       }
       : name === "head_project_status"
-        ? inspectProjectExperience({ root: args.project_root })
+        ? (await import("./lib/project-bootstrap.mjs")).inspectProjectExperience({ root: args.project_root })
       : name === "head_onboarding_guide"
-        ? inspectConversationalOnboarding({ root: args.project_root, candidateLimit: args.candidate_limit ?? 25 })
+        ? (await import("./lib/onboarding-conversation.mjs")).inspectConversationalOnboarding({ root: args.project_root, candidateLimit: args.candidate_limit ?? 25 })
       : name === "head_project_initialize_or_resume"
-        ? initializeOrResumeProject({
+        ? (await import("./lib/project-bootstrap.mjs")).initializeOrResumeProject({
           root: args.project_root,
           pluginRoot,
           runtimes: args.runtimes || null,
@@ -2222,11 +2258,11 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
           onboarding: onboardingInputFromMcp(args),
         })
       : name === "head_onboarding_semantic_refresh"
-        ? proposeOnboardingSemanticRefresh({ root: args.project_root, semanticProposal: args.semantic_proposal, recoveryBasis: args.recovery_basis || null })
+        ? (await import("./lib/onboarding.mjs")).proposeOnboardingSemanticRefresh({ root: args.project_root, semanticProposal: args.semantic_proposal, recoveryBasis: args.recovery_basis || null })
       : name === "head_onboarding_candidate_restore"
-        ? restoreOnboardingCandidate({ root: args.project_root, candidateSetId: args.candidate_set_id, sourceContent: args.source_content, expectedRawHash: args.expected_raw_hash })
+        ? (await import("./lib/onboarding.mjs")).restoreOnboardingCandidate({ root: args.project_root, candidateSetId: args.candidate_set_id, sourceContent: args.source_content, expectedRawHash: args.expected_raw_hash })
       : name === "head_onboarding_review"
-        ? compactReviewResult(await reviewOnboarding({
+        ? compactReviewResult(await (await import("./lib/onboarding.mjs")).reviewOnboarding({
           root: args.project_root,
           candidateSetId: args.candidate_set_id,
           disposition: args.disposition,
@@ -2237,7 +2273,7 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
           rationale: args.rationale,
         }))
       : name === "head_product_policy_propose"
-        ? proposeProductPolicy({
+        ? (await import("./lib/product-policy.mjs")).proposeProductPolicy({
           root: args.project_root,
           operation: args.operation,
           key: args.key,
@@ -2250,17 +2286,17 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
           explanation: args.explanation || "",
         })
       : name === "head_product_policy_review"
-        ? reviewProductPolicy({ root: args.project_root, candidateId: args.candidate_id, disposition: args.disposition, rationale: args.rationale })
+        ? (await import("./lib/product-policy.mjs")).reviewProductPolicy({ root: args.project_root, candidateId: args.candidate_id, disposition: args.disposition, rationale: args.rationale })
       : name === "head_product_policy_status"
-        ? inspectProductPolicyStatus({ root: args.project_root, candidateId: args.candidate_id })
+        ? (await import("./lib/product-policy.mjs")).inspectProductPolicyStatus({ root: args.project_root, candidateId: args.candidate_id })
       : name === "head_product_policy_candidate"
-        ? readProductPolicyCandidate({ root: args.project_root, candidateId: args.candidate_id })
+        ? (await import("./lib/product-policy.mjs")).readProductPolicyCandidate({ root: args.project_root, candidateId: args.candidate_id })
       : name === "head_product_policy_review_decision"
-        ? readProductPolicyReviewDecision({ root: args.project_root, reviewDecisionId: args.review_decision_id })
+        ? (await import("./lib/product-policy.mjs")).readProductPolicyReviewDecision({ root: args.project_root, reviewDecisionId: args.review_decision_id })
       : name === "head_metric_define"
-        ? defineMetric({ root: args.project_root, metricKey: args.metric_key, unit: args.unit, direction: args.direction, typeVersion: args.type_version || "1" })
+        ? (await import("./lib/measurement-workflow.mjs")).defineMetric({ root: args.project_root, metricKey: args.metric_key, unit: args.unit, direction: args.direction, typeVersion: args.type_version || "1" })
       : name === "head_metric_observe"
-        ? recordMetricObservation({
+        ? (await import("./lib/measurement-workflow.mjs")).recordMetricObservation({
           root: args.project_root,
           metricKey: args.metric_key,
           typeVersion: args.type_version || "",
@@ -2289,17 +2325,17 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
           sourceEvidenceDigest: args.source_evidence_digest,
         })
       : name === "head_metric_compare"
-        ? compareMetricObservations({ root: args.project_root, baselineObservationId: args.baseline_observation_id, currentObservationId: args.current_observation_id })
+        ? (await import("./lib/measurement-workflow.mjs")).compareMetricObservations({ root: args.project_root, baselineObservationId: args.baseline_observation_id, currentObservationId: args.current_observation_id })
       : name === "head_metric_assess"
-        ? assessMetricComparison({ root: args.project_root, comparisonObservationId: args.comparison_observation_id, assessment: args.assessment, statement: args.statement, rationale: args.rationale || "" })
+        ? (await import("./lib/measurement-workflow.mjs")).assessMetricComparison({ root: args.project_root, comparisonObservationId: args.comparison_observation_id, assessment: args.assessment, statement: args.statement, rationale: args.rationale || "" })
       : name === "head_metric_follow_up"
-        ? proposeMetricFollowUp({ root: args.project_root, hypothesisId: args.hypothesis_id, title: args.title, description: args.description || "", reasoning: args.reasoning || "", featureResolution: args.feature_resolution ?? null })
+        ? (await import("./lib/measurement-workflow.mjs")).proposeMetricFollowUp({ root: args.project_root, hypothesisId: args.hypothesis_id, title: args.title, description: args.description || "", reasoning: args.reasoning || "", featureResolution: args.feature_resolution ?? null })
       : name === "head_metric_status"
-        ? inspectMeasurements({ root: args.project_root })
+        ? (await import("./lib/measurement-workflow.mjs")).inspectMeasurements({ root: args.project_root })
       : name === "head_metric_trace"
-        ? traceMeasurementLineage({ root: args.project_root, anchorId: args.anchor_id || "", metricKey: args.metric_key || "", typeVersion: args.type_version || "", depth: args.depth ?? 3, maxNodes: args.max_nodes ?? 128, maxEdges: args.max_edges ?? 256 })
+        ? (await import("./lib/measurement-workflow.mjs")).traceMeasurementLineage({ root: args.project_root, anchorId: args.anchor_id || "", metricKey: args.metric_key || "", typeVersion: args.type_version || "", depth: args.depth ?? 3, maxNodes: args.max_nodes ?? 128, maxEdges: args.max_edges ?? 256 })
       : name === "head_delivery_observe"
-        ? recordDeliveryObservation({
+        ? (await import("./lib/delivery-observation.mjs")).recordDeliveryObservation({
           root: args.project_root,
           environmentKey: args.environment_key,
           targetKey: args.target_key,
@@ -2324,11 +2360,11 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
           } : null,
         })
       : name === "head_delivery_status"
-        ? inspectDeliveryState({ root: args.project_root, environmentKey: args.environment_key || "", targetKey: args.target_key || "", historyLimit: args.history_limit ?? 100 })
+        ? (await import("./lib/delivery-observation.mjs")).inspectDeliveryState({ root: args.project_root, environmentKey: args.environment_key || "", targetKey: args.target_key || "", historyLimit: args.history_limit ?? 100 })
       : name === "head_feature_mapping_propose"
-        ? startFeatureMapping({ root: args.project_root, semanticProposal: featureMappingProposalFromMcp(args.semantic_proposal), expectedCandidateSetId: args.expected_candidate_set_id ?? null })
+        ? (await import("./lib/feature-mapping.mjs")).startFeatureMapping({ root: args.project_root, semanticProposal: featureMappingProposalFromMcp(args.semantic_proposal), expectedCandidateSetId: args.expected_candidate_set_id ?? null })
       : name === "head_feature_mapping_review"
-        ? (requireMcpConfirmation(args.confirm_user_review, "Feature mapping review requires explicit user confirmation.", "FEATURE_MAPPING_REVIEW_CONFIRMATION_REQUIRED"), reviewFeatureMapping({
+        ? (requireMcpConfirmation(args.confirm_user_review, "Feature mapping review requires explicit user confirmation.", "FEATURE_MAPPING_REVIEW_CONFIRMATION_REQUIRED"), (await import("./lib/feature-mapping.mjs")).reviewFeatureMapping({
           root: args.project_root,
           candidateSetId: args.candidate_set_id,
           disposition: args.disposition,
@@ -2336,59 +2372,59 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
           rationale: args.rationale,
         }))
       : name === "head_markdown_projection_build"
-        ? compactMarkdownBuild(materializeWorldMarkdownProjection({ root: args.project_root }))
+        ? compactMarkdownBuild((await import("./lib/world-model.mjs")).materializeWorldMarkdownProjection({ root: args.project_root }))
       : name === "head_runtime_adapters"
           ? inspectRuntimeAdapters(args.project_root)
         : name === "head_runtime_invocation_authorization"
-          ? readRuntimeInvocationAuthorization({ root: args.project_root, authorizationId: args.authorization_id })
+          ? (await import("./lib/runtime-invocation-lifecycle.mjs")).readRuntimeInvocationAuthorization({ root: args.project_root, authorizationId: args.authorization_id })
         : name === "head_runtime_invocation_lease_status"
-          ? inspectRuntimeInvocationExecutionLease({ root: args.project_root, authorizationId: args.authorization_id })
+          ? (await import("./lib/runtime-invocation-lifecycle.mjs")).inspectRuntimeInvocationExecutionLease({ root: args.project_root, authorizationId: args.authorization_id })
         : name === "head_runtime_invocation_result"
-          ? readRuntimeInvocationResult({ root: args.project_root, authorizationId: args.authorization_id })
+          ? (await import("./lib/runtime-run-result-application.mjs")).readRuntimeInvocationResult({ root: args.project_root, authorizationId: args.authorization_id })
         : name === "head_onboarding_status"
-          ? inspectOnboarding({ root: args.project_root })
+          ? (await import("./lib/onboarding.mjs")).inspectOnboarding({ root: args.project_root })
         : name === "head_feature_mapping_status"
-          ? inspectFeatureMapping({ root: args.project_root })
+          ? (await import("./lib/feature-mapping.mjs")).inspectFeatureMapping({ root: args.project_root })
         : name === "head_change_set_status"
-          ? inspectChangeSets({ root: args.project_root })
+          ? (await import("./lib/change-set.mjs")).inspectChangeSets({ root: args.project_root })
         : name === "head_vcs_evidence"
-          ? readVcsEvidence({ root: args.project_root, vcsEvidenceId: args.vcs_evidence_id })
+          ? (await import("./lib/change-set.mjs")).readVcsEvidence({ root: args.project_root, vcsEvidenceId: args.vcs_evidence_id })
         : name === "head_conformance_prepare"
-          ? prepareConformanceAssessment({ root: args.project_root, limit: args.limit ?? 32, projectionId: args.projection_id || "", cursor: args.cursor || "" })
+          ? (await import("./lib/conformance-reconciliation.mjs")).prepareConformanceAssessment({ root: args.project_root, limit: args.limit ?? 32, projectionId: args.projection_id || "", cursor: args.cursor || "" })
         : name === "head_conformance_propose"
-          ? proposeConformanceFindings({ root: args.project_root, baseline: conformanceBaselineFromMcp(args.baseline), findings: args.findings.map(conformanceFindingFromMcp) })
+          ? (await import("./lib/conformance-reconciliation.mjs")).proposeConformanceFindings({ root: args.project_root, baseline: conformanceBaselineFromMcp(args.baseline), findings: args.findings.map(conformanceFindingFromMcp) })
         : name === "head_conformance_queue"
-          ? inspectConformanceQueue({ root: args.project_root, status: args.status || "all", riskHint: args.risk_hint || "", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "", canonAnchor: args.canon_anchor == null ? null : { entityKind: args.canon_anchor.entity_kind, entityKey: args.canon_anchor.entity_key } })
+          ? (await import("./lib/conformance-reconciliation.mjs")).inspectConformanceQueue({ root: args.project_root, status: args.status || "all", riskHint: args.risk_hint || "", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "", canonAnchor: args.canon_anchor == null ? null : { entityKind: args.canon_anchor.entity_kind, entityKey: args.canon_anchor.entity_key } })
         : name === "head_conformance_read"
-          ? readConformanceFinding({ root: args.project_root, findingId: args.finding_id })
+          ? (await import("./lib/conformance-reconciliation.mjs")).readConformanceFinding({ root: args.project_root, findingId: args.finding_id })
         : name === "head_conformance_disposition"
-          ? recordConformanceDisposition({ root: args.project_root, findingId: args.finding_id, disposition: args.disposition, rationale: args.rationale, deferUntil: args.defer_until ?? null, resolutionId: args.resolution_id ?? null, confirmUserDisposition: args.confirm_user_disposition, actor: args.actor ?? "user" })
+          ? (await import("./lib/conformance-reconciliation.mjs")).recordConformanceDisposition({ root: args.project_root, findingId: args.finding_id, disposition: args.disposition, rationale: args.rationale, deferUntil: args.defer_until ?? null, resolutionId: args.resolution_id ?? null, confirmUserDisposition: args.confirm_user_disposition, actor: args.actor ?? "user" })
         : name === "head_conformance_resolution_propose"
-          ? proposeConformanceResolution({ root: args.project_root, findingId: args.finding_id, baseline: conformanceBaselineFromMcp(args.baseline), evidenceAnchors: args.evidence_anchors.map(conformanceEvidenceAnchorFromMcp), assessment: args.assessment, rationale: args.rationale })
+          ? (await import("./lib/conformance-reconciliation.mjs")).proposeConformanceResolution({ root: args.project_root, findingId: args.finding_id, baseline: conformanceBaselineFromMcp(args.baseline), evidenceAnchors: args.evidence_anchors.map(conformanceEvidenceAnchorFromMcp), assessment: args.assessment, rationale: args.rationale })
         : name === "head_conformance_trigger_status"
           ? (conformanceTriggerRegistry ? conformanceTriggerRegistry.inspect({ root: args.project_root, sourceId: args.source_id }) : { status: "optional-host-adapter-unavailable", ordinaryWorkBlocked: false, authority: "P5-capability-disclosure-only" })
         : name === "head_conformance_trigger_prepare"
           ? (conformanceTriggerRegistry ? conformanceTriggerRegistry.prepare({ root: args.project_root, sourceId: args.source_id, limit: args.limit ?? 64 }) : { status: "optional-host-adapter-unavailable", ordinaryWorkBlocked: false, authority: "P5-capability-disclosure-only" })
         : name === "head_source_context"
-          ? prepareSourceContext({ root: args.project_root, task: args.task, needs: args.needs ?? [], retain: args.retain ?? false, budget: args.budget, timeoutMs: args.timeout_ms ?? 15_000, signal, onProcess })
+          ? (await import("./lib/source-context-workflow.mjs")).prepareSourceContext({ root: args.project_root, task: args.task, needs: args.needs ?? [], retain: args.retain ?? false, budget: args.budget, timeoutMs: args.timeout_ms ?? 15_000, signal, onProcess })
         : name === "head_source_observation_read"
-          ? inspectSourceObservation({ root: args.project_root, bundleKey: args.bundle_key, failureKey: args.failure_key })
+          ? (await import("./lib/source-context-workflow.mjs")).inspectSourceObservation({ root: args.project_root, bundleKey: args.bundle_key, failureKey: args.failure_key })
         : name === "head_context_prepare"
-          ? prepareContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET })
+          ? (await import("./lib/context-workflow.mjs")).prepareContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET })
         : name === "head_context_preview"
-          ? previewContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET, evidenceNeeds: args.evidence_needs || [] })
+          ? (await import("./lib/context-workflow.mjs")).previewContextWorkflow({ root: args.project_root, task: args.task, budget: args.budget ?? DEFAULT_CONTEXT_BUDGET, evidenceNeeds: args.evidence_needs || [] })
           : name === "head_context_capsule"
-            ? readContextCapsule({ root: args.project_root, capsuleId: args.capsule_id })
+            ? (await import("./lib/context-compiler.mjs")).readContextCapsule({ root: args.project_root, capsuleId: args.capsule_id })
             : name === "head_lineage_artifact"
-              ? readLineageArtifact({ root: args.project_root, artifactId: args.artifact_id })
+              ? (await import("./lib/execution-lineage.mjs")).readLineageArtifact({ root: args.project_root, artifactId: args.artifact_id })
               : name === "head_pending_review"
-                ? getPendingReviewContext({ root: args.project_root })
+                ? (await import("./lib/run-lineage.mjs")).getPendingReviewContext({ root: args.project_root })
                 : name === "head_checkpoint_basis"
-                  ? inspectRecoveryCheckpointBasis({ root: args.project_root })
+                  ? (await import("./lib/compaction-recovery.mjs")).inspectRecoveryCheckpointBasis({ root: args.project_root })
                 : name === "head_checkpoint_diagnose"
-                  ? inspectRecoveryCheckpointDiagnosis({ root: args.project_root })
+                  ? (await import("./lib/recovery-checkpoint-diagnosis.mjs")).inspectRecoveryCheckpointDiagnosis({ root: args.project_root })
                 : name === "head_checkpoint_sync"
-                  ? syncRecoveryCheckpoint({
+                  ? (await import("./lib/compaction-recovery.mjs")).syncRecoveryCheckpoint({
                       root: args.project_root,
                       expectedRecoveryBasisId: args.expected_recovery_basis_id,
                       purpose: args.purpose,
@@ -2398,51 +2434,51 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
                       openReviewIds: args.open_review_ids || [],
                     })
                 : name === "head_session_restore"
-                  ? restoreSessionFromArtifacts({ root: args.project_root, checkpointId: args.checkpoint_id || null })
+                  ? (await import("./lib/session-recovery.mjs")).restoreSessionFromArtifacts({ root: args.project_root, checkpointId: args.checkpoint_id || null })
                   : name === "head_session_continue"
                     ? continueSessionFromMcp(args, coordinationWorkspaceHost)
                     : name === "head_worker_integration"
-                      ? operateWorkerIntegration(workerIntegrationInput(args), { root: args.project_root, onProcess })
+                      ? (await import("./lib/worker-integration-workflow.mjs")).operateWorkerIntegration(workerIntegrationInput(args), { root: args.project_root, onProcess })
                     : name === "head_worker_integration_status"
-                      ? inspectWorkerIntegration(workerIntegrationInput(args), { root: args.project_root })
+                      ? (await import("./lib/worker-integration-workflow.mjs")).inspectWorkerIntegration(workerIntegrationInput(args), { root: args.project_root })
                     : name === "head_bounded_worker_prepare"
-                      ? await prepareLocalBoundedWorker(localWorkerInput(args), { root: args.project_root, supervisorSelection: workerJobSupervisor, protocolFixtureBackend: workerPreparationBackend, signal, onProcess })
+                      ? await (await import("./lib/local-worker-host.mjs")).prepareLocalBoundedWorker(localWorkerInput(args), { root: args.project_root, supervisorSelection: workerJobSupervisor, protocolFixtureBackend: workerPreparationBackend, signal, onProcess })
                     : name === "head_bounded_worker_start"
-                      ? await startLocalBoundedWorker({ root: args.project_root, ...localWorkerInput(args, true) }, { host: workerJobHost, supervisorSelection: workerJobSupervisor, onProcess })
+                      ? await (await import("./lib/local-worker-host.mjs")).startLocalBoundedWorker({ root: args.project_root, ...localWorkerInput(args, true) }, { host: workerJobHost, supervisorSelection: workerJobSupervisor, onProcess })
                     : name === "head_bounded_worker_job_status"
-                      ? readBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
+                      ? (await import("./lib/bounded-worker-job.mjs")).readBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
                     : name === "head_bounded_worker_job_patch"
-                      ? readBoundedWorkerPatch({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
+                      ? (await import("./lib/bounded-worker-job.mjs")).readBoundedWorkerPatch({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
                     : name === "head_bounded_worker_cancel"
-                      ? cancelBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
+                      ? (await import("./lib/bounded-worker-job.mjs")).cancelBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
                     : name === "head_bounded_worker_job_reconcile"
-                      ? reconcileBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
+                      ? (await import("./lib/bounded-worker-job.mjs")).reconcileBoundedWorkerJob({ root: args.project_root, authorizationId: args.authorization_id }, { onProcess, inspectorSelection: workerJobSupervisor })
                     : name === "head_bounded_worker_reconcile"
-                    ? reconcileWorkerMember({ root: args.project_root, taskKey: args.task_key })
+                    ? (await import("./lib/runtime-invocation-lifecycle.mjs")).reconcileWorkerMember({ root: args.project_root, taskKey: args.task_key })
                   : name === "head_bounded_worker_dispatch"
-                    ? createBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id, role: args.role })
+                    ? (await import("./lib/bounded-worker-dispatch.mjs")).createBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id, role: args.role })
                   : name === "head_bounded_worker_status"
-                    ? readBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id })
+                    ? (await import("./lib/bounded-worker-dispatch.mjs")).readBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id })
                   : name === "head_bounded_worker_wait"
-                    ? await waitForBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id, timeoutMs: args.wait_timeout_ms ?? 0 })
+                    ? await (await import("./lib/bounded-worker-dispatch.mjs")).waitForBoundedWorkerDispatch({ root: args.project_root, authorizationId: args.authorization_id, timeoutMs: args.wait_timeout_ms ?? 0 })
                   : name === "head_bounded_worker_apply_result"
-                    ? applyBoundedWorkerDispatchResult({ root: args.project_root, authorizationId: args.authorization_id })
+                    ? (await import("./lib/bounded-worker-dispatch.mjs")).applyBoundedWorkerDispatchResult({ root: args.project_root, authorizationId: args.authorization_id })
                   : name === "head_bounded_worker_wave_create"
-                    ? createBoundedWorkerWave({ root: args.project_root, authorizationIds: args.authorization_ids })
+                    ? (await import("./lib/bounded-worker-wave.mjs")).createBoundedWorkerWave({ root: args.project_root, authorizationIds: args.authorization_ids })
                   : name === "head_bounded_worker_wave_read"
-                    ? readBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id })
+                    ? (await import("./lib/bounded-worker-wave.mjs")).readBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id })
                   : name === "head_bounded_worker_wave_seal"
-                    ? sealBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id })
+                    ? (await import("./lib/bounded-worker-wave.mjs")).sealBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id })
                   : name === "head_bounded_worker_wave_status"
-                    ? readBoundedWorkerWaveStatus({ root: args.project_root, waveId: args.wave_id })
+                    ? (await import("./lib/bounded-worker-wave.mjs")).readBoundedWorkerWaveStatus({ root: args.project_root, waveId: args.wave_id })
                   : name === "head_bounded_worker_wave_results"
-                    ? readBoundedWorkerWaveResults({ root: args.project_root, waveId: args.wave_id })
+                    ? (await import("./lib/bounded-worker-wave.mjs")).readBoundedWorkerWaveResults({ root: args.project_root, waveId: args.wave_id })
                   : name === "head_bounded_worker_wave_wait"
-                    ? await waitForBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id, timeoutMs: args.wait_timeout_ms ?? 0 })
+                    ? await (await import("./lib/bounded-worker-wave.mjs")).waitForBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id, timeoutMs: args.wait_timeout_ms ?? 0 })
                   : name === "head_bounded_worker_wave_abandon"
-                    ? abandonBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id, reasonCode: args.reason_code, reasonSummary: args.reason_summary || "" })
+                    ? (await import("./lib/bounded-worker-wave.mjs")).abandonBoundedWorkerWave({ root: args.project_root, waveId: args.wave_id, reasonCode: args.reason_code, reasonSummary: args.reason_summary || "" })
                   : name === "head_run_integrate_checkpoint"
-                    ? integrateReviewedRunCheckpoint({
+                    ? (await import("./lib/session-recovery.mjs")).integrateReviewedRunCheckpoint({
                         root: args.project_root,
                         runId: args.run_id,
                         reviewDecisionId: args.review_decision_id,
@@ -2453,58 +2489,58 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
                         openReviewIds: args.open_review_ids || [],
                       })
                     : name === "head_run_integration"
-                      ? readRunResultIntegration({ root: args.project_root, reviewDecisionId: args.review_decision_id })
+                      ? (await import("./lib/session-recovery.mjs")).readRunResultIntegration({ root: args.project_root, reviewDecisionId: args.review_decision_id })
                 : name === "head_world_model"
-                  ? inspectWorldModelStatus({ root: args.project_root })
+                  ? (await import("./lib/world-model.mjs")).inspectWorldModelStatus({ root: args.project_root })
                   : name === "head_incremental_refresh_status"
-                    ? inspectIncrementalRefresh({ root: args.project_root })
+                    ? (await import("./lib/incremental-refresh.mjs")).inspectIncrementalRefresh({ root: args.project_root })
                     : name === "head_incremental_refresh_receipt"
-                      ? readIncrementalRefreshReceipt({ root: args.project_root, refreshReceiptId: args.refresh_receipt_id })
+                      ? (await import("./lib/incremental-refresh.mjs")).readIncrementalRefreshReceipt({ root: args.project_root, refreshReceiptId: args.refresh_receipt_id })
                     : name === "head_refresh_trigger_status"
-                      ? inspectRefreshTriggers({ root: args.project_root })
+                      ? (await import("./lib/refresh-trigger.mjs")).inspectRefreshTriggers({ root: args.project_root })
                     : name === "head_refresh_trigger_delivery"
-                      ? readRefreshTriggerDelivery({ root: args.project_root, triggerDeliveryId: args.trigger_delivery_id })
+                      ? (await import("./lib/refresh-trigger.mjs")).readRefreshTriggerDelivery({ root: args.project_root, triggerDeliveryId: args.trigger_delivery_id })
                   : name === "head_graph_projection_status"
-                    ? inspectWorldGraphProjection({ root: args.project_root })
+                    ? (await import("./lib/world-model.mjs")).inspectWorldGraphProjection({ root: args.project_root })
                 : name === "head_graphdb_projection_status"
-                  ? inspectArcadeDbGraphProjectionStatus({ root: args.project_root, transport: graphDbTransport })
+                  ? (await import("./lib/graphdb-projection-activation.mjs")).inspectArcadeDbGraphProjectionStatus({ root: args.project_root, transport: graphDbTransport })
                 : name === "head_graphdb_database_status"
-                  ? inspectArcadeDbDatabaseCompatibility({ root: args.project_root, transport: graphDbTransport })
+                  ? (await import("./lib/arcadedb-database-lifecycle.mjs")).inspectArcadeDbDatabaseCompatibility({ root: args.project_root, transport: graphDbTransport })
                 : name === "head_graphdb_connection_preflight"
-                  ? inspectArcadeDbCredentialPreflight({ root: args.project_root, transport: graphDbTransport })
+                  ? (await import("./lib/graphdb-projection-activation.mjs")).inspectArcadeDbCredentialPreflight({ root: args.project_root, transport: graphDbTransport })
                 : name === "head_graphdb_database_initialize"
                   ? initializeGraphDbFromMcp(args, graphDbTransport)
                 : name === "head_graphdb_projection_activate"
                   ? activateGraphDbFromMcp(args, graphDbTransport)
                 : name === "head_markdown_projection_status"
-                    ? inspectWorldMarkdownProjection({ root: args.project_root })
+                    ? (await import("./lib/world-model.mjs")).inspectWorldMarkdownProjection({ root: args.project_root })
                   : name === "head_post_refresh_projection_status"
-                    ? inspectPostRefreshProjectionStatus({ root: args.project_root })
+                    ? (await import("./lib/incremental-refresh.mjs")).inspectPostRefreshProjectionStatus({ root: args.project_root })
                   : name === "head_post_refresh_projection_receipt"
-                    ? readPostRefreshProjectionReceipt({ root: args.project_root, postRefreshProjectionReceiptId: args.post_refresh_projection_receipt_id })
+                    ? (await import("./lib/incremental-refresh.mjs")).readPostRefreshProjectionReceipt({ root: args.project_root, postRefreshProjectionReceiptId: args.post_refresh_projection_receipt_id })
                   : name === "head_document_change_candidates"
-                    ? readWorldDocumentChangeCandidateSet({ root: args.project_root, candidateSetId: args.candidate_set_id })
+                    ? (await import("./lib/world-model.mjs")).readWorldDocumentChangeCandidateSet({ root: args.project_root, candidateSetId: args.candidate_set_id })
                   : name === "head_document_change_review_status"
-                    ? inspectDocumentChangeReviewStatus({ root: args.project_root, candidateSetId: args.candidate_set_id })
+                    ? (await import("./lib/document-change-review.mjs")).inspectDocumentChangeReviewStatus({ root: args.project_root, candidateSetId: args.candidate_set_id })
                   : name === "head_document_change_review"
-                    ? readDocumentChangeReviewDecision({ root: args.project_root, reviewDecisionId: args.review_decision_id })
+                    ? (await import("./lib/document-change-review.mjs")).readDocumentChangeReviewDecision({ root: args.project_root, reviewDecisionId: args.review_decision_id })
                   : name === "head_document_change_application"
-                    ? readDocumentChangeApplicationReceipt({ root: args.project_root, applicationReceiptId: args.application_receipt_id })
+                    ? (await import("./lib/document-change-review.mjs")).readDocumentChangeApplicationReceipt({ root: args.project_root, applicationReceiptId: args.application_receipt_id })
                   : name === "head_world_query"
-                    ? queryWorldModel({
+                    ? (await import("./lib/world-model.mjs")).queryWorldModel({
                       root: args.project_root,
                       query: args.query,
                       depth: args.depth ?? 1,
                       maxResults: args.limit ?? 100,
                     })
                     : name === "head_git_history"
-                      ? queryWorldHistory({
+                      ? (await import("./lib/world-model.mjs")).queryWorldHistory({
                         root: args.project_root,
                         query: args.query || "",
                         limit: args.limit ?? 50,
                       })
                       : name === "head_temporal_graph"
-                        ? queryWorldTemporalGraph({
+                        ? (await import("./lib/world-model.mjs")).queryWorldTemporalGraph({
                           root: args.project_root,
                           query: args.query,
                           anchorIds: args.exact_anchor_ids || null,
@@ -2518,9 +2554,9 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
                           maxEdges: args.edge_limit ?? 200,
                         })
                         : name === "head_graph_lineage_status"
-                          ? inspectGraphLineage({ root: args.project_root, cursor: args.cursor || "", limit: args.limit ?? 25 })
+                          ? (await import("./lib/graph-lineage.mjs")).inspectGraphLineage({ root: args.project_root, cursor: args.cursor || "", limit: args.limit ?? 25 })
                           : name === "head_graph_lineage_trace"
-                            ? traceGraphLineage({
+                            ? (await import("./lib/graph-lineage.mjs")).traceGraphLineage({
                               root: args.project_root,
                               worldModelId: args.world_model_id || "",
                               anchorId: args.anchor_id || "",
@@ -2531,9 +2567,9 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
                               includeExecution: args.include_execution ?? true,
                             })
                             : name === "head_graph_lineage_diff"
-                              ? diffGraphLineage({ root: args.project_root, fromWorldModelId: args.from_world_model_id, toWorldModelId: args.to_world_model_id, limit: args.limit ?? 100 })
+                              ? (await import("./lib/graph-lineage.mjs")).diffGraphLineage({ root: args.project_root, fromWorldModelId: args.from_world_model_id, toWorldModelId: args.to_world_model_id, limit: args.limit ?? 100 })
                         : name === "head_runtime_state"
-                          ? queryWorldRuntimeState({
+                          ? (await import("./lib/world-model.mjs")).queryWorldRuntimeState({
                             root: args.project_root,
                             query: args.query || "",
                             runtime: args.runtime || "",
@@ -2542,7 +2578,7 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
                             limit: args.limit ?? 50,
                           })
                           : name === "head_operating_lane_recommend"
-                            ? recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, authorizationStatus: args.authorization_status, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
+                            ? (await import("./lib/operating-lane.mjs")).recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, authorizationStatus: args.authorization_status, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
                           : name === "head_coordination_send_message"
                             ? (() => { const bindingToken = mcpCoordinationBindingToken(); return sendCoordinationMessage({ root: args.project_root, bindingToken, toRole: args.to_role, content: args.content, evidenceIds: args.evidence_ids || [], idempotencyKey: args.idempotency_key, lane: args.lane || "session", deliveryAdapter: coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }) }); })()
                           : name === "head_coordination_read_inbox"
@@ -2552,19 +2588,19 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
                           : name === "head_coordination_reply_message"
                             ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return replyCoordinationMessage({ root: args.project_root, bindingToken, inReplyTo: args.in_reply_to, content: args.content }); })()
                           : name === "head_compact_prepare"
-                            ? prepareCompaction({ root: args.project_root, runtime: args.runtime || "manual", userTurnIdAtPrepare: args.user_turn_id_at_prepare, purpose: args.purpose, approvedDecisions: args.approved_decisions, currentPosition: args.current_position, nextExpectedResult: args.next_expected_result, openReviewIds: args.open_review_ids || [] })
+                            ? (await import("./lib/compaction-recovery.mjs")).prepareCompaction({ root: args.project_root, runtime: args.runtime || "manual", userTurnIdAtPrepare: args.user_turn_id_at_prepare, purpose: args.purpose, approvedDecisions: args.approved_decisions, currentPosition: args.current_position, nextExpectedResult: args.next_expected_result, openReviewIds: args.open_review_ids || [] })
                           : name === "head_compact_verify"
-                            ? verifyCompaction({ root: args.project_root, epochId: args.epoch_id, checkpointDigest: args.checkpoint_digest, currentUserTurnId: args.current_user_turn_id, providerCompacted: args.provider_compacted, recoverySource: args.recovery_source || "canonical-checkpoint" })
+                            ? (await import("./lib/compaction-recovery.mjs")).verifyCompaction({ root: args.project_root, epochId: args.epoch_id, checkpointDigest: args.checkpoint_digest, currentUserTurnId: args.current_user_turn_id, providerCompacted: args.provider_compacted, recoverySource: args.recovery_source || "canonical-checkpoint" })
                           : name === "head_compact_continue"
-                            ? continueCompaction({ root: args.project_root, epochId: args.epoch_id, continuationToken: args.continuation_token, currentUserTurnId: args.current_user_turn_id })
+                            ? (await import("./lib/compaction-recovery.mjs")).continueCompaction({ root: args.project_root, epochId: args.epoch_id, continuationToken: args.continuation_token, currentUserTurnId: args.current_user_turn_id })
                           : name === "head_compact_status"
-                            ? inspectCompaction({ root: args.project_root })
+                            ? (await import("./lib/compaction-recovery.mjs")).inspectCompaction({ root: args.project_root })
                           : name === "head_compact_abort"
-                            ? abortCompaction({ root: args.project_root, epochId: args.epoch_id, reason: args.reason })
+                            ? (await import("./lib/compaction-recovery.mjs")).abortCompaction({ root: args.project_root, epochId: args.epoch_id, reason: args.reason })
                           : name === "head_conversation_enter"
-                            ? enterConversationRecovery({ root: args.project_root })
+                            ? (await import("./lib/compaction-lifecycle.mjs")).enterConversationRecovery({ root: args.project_root })
                           : name === "head_compaction_lifecycle_step"
-                            ? processCompactionLifecycle({
+                            ? (await import("./lib/compaction-lifecycle.mjs")).processCompactionLifecycle({
                               root: args.project_root,
                               hostAdapter: compactionLifecycleHost,
                               direction: args.direction == null ? null : {
@@ -2576,41 +2612,41 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
                               },
                             })
                           : name === "head_product_note"
-                            ? prepareProductLearningNote({ root: args.project_root, statement: args.statement, epistemicClass: args.epistemic_class, source: args.source || "", rationale: args.rationale || "", evidenceIds: args.evidence_ids || [], referencedByAnotherRun: args.referenced_by_another_run ?? false, needsRebuttal: args.needs_rebuttal ?? false, affectsProductState: args.affects_product_state ?? false, handoff: args.handoff ?? false })
+                            ? (await import("./lib/product-operating-loop.mjs")).prepareProductLearningNote({ root: args.project_root, statement: args.statement, epistemicClass: args.epistemic_class, source: args.source || "", rationale: args.rationale || "", evidenceIds: args.evidence_ids || [], referencedByAnotherRun: args.referenced_by_another_run ?? false, needsRebuttal: args.needs_rebuttal ?? false, affectsProductState: args.affects_product_state ?? false, handoff: args.handoff ?? false })
                           : name === "head_product_signal_record"
-                            ? recordProductSignal({ root: args.project_root, statement: args.statement, observedAt: args.observed_at, source: args.source || "", evidenceIds: args.evidence_ids || [] })
+                            ? (await import("./lib/product-operating-loop.mjs")).recordProductSignal({ root: args.project_root, statement: args.statement, observedAt: args.observed_at, source: args.source || "", evidenceIds: args.evidence_ids || [] })
                           : name === "head_product_hypothesis_record"
-                            ? recordProductHypothesis({ root: args.project_root, statement: args.statement, rationale: args.rationale || "", signalIds: args.signal_ids || [], observationIds: args.observation_ids || [] })
+                            ? (await import("./lib/product-operating-loop.mjs")).recordProductHypothesis({ root: args.project_root, statement: args.statement, rationale: args.rationale || "", signalIds: args.signal_ids || [], observationIds: args.observation_ids || [] })
                           : name === "head_product_initiative_propose"
-                            ? proposeProductInitiative({ root: args.project_root, title: args.title, description: args.description || "", reasoning: args.reasoning || "", hypothesisIds: args.hypothesis_ids || [], featureResolution: args.feature_resolution == null ? null : productFeatureResolutionFromMcp(args.feature_resolution) })
+                            ? (await import("./lib/product-operating-loop.mjs")).proposeProductInitiative({ root: args.project_root, title: args.title, description: args.description || "", reasoning: args.reasoning || "", hypothesisIds: args.hypothesis_ids || [], featureResolution: args.feature_resolution == null ? null : productFeatureResolutionFromMcp(args.feature_resolution) })
                           : name === "head_product_initiative_review"
-                            ? (requireMcpConfirmation(args.confirm_user_review, "Product Initiative review requires explicit user confirmation.", "PRODUCT_INITIATIVE_REVIEW_CONFIRMATION_REQUIRED"), reviewProductInitiative({ root: args.project_root, initiativeCandidateId: args.initiative_candidate_id, disposition: args.disposition, rationale: args.rationale, featureResolution: args.feature_resolution == null ? null : productFeatureResolutionFromMcp(args.feature_resolution) }))
+                            ? (requireMcpConfirmation(args.confirm_user_review, "Product Initiative review requires explicit user confirmation.", "PRODUCT_INITIATIVE_REVIEW_CONFIRMATION_REQUIRED"), (await import("./lib/product-operating-loop.mjs")).reviewProductInitiative({ root: args.project_root, initiativeCandidateId: args.initiative_candidate_id, disposition: args.disposition, rationale: args.rationale, featureResolution: args.feature_resolution == null ? null : productFeatureResolutionFromMcp(args.feature_resolution) }))
                           : name === "head_product_outcome_observe"
-                            ? observeProductOutcome({ root: args.project_root, changeSetId: args.change_set_id, initiativeId: args.initiative_id || "", statement: args.statement, epistemicClass: args.epistemic_class || "observed-fact", evidenceIds: args.evidence_ids || [] })
+                            ? (await import("./lib/product-operating-loop.mjs")).observeProductOutcome({ root: args.project_root, changeSetId: args.change_set_id, initiativeId: args.initiative_id || "", statement: args.statement, epistemicClass: args.epistemic_class || "observed-fact", evidenceIds: args.evidence_ids || [] })
                           : name === "head_product_operating_status"
-                            ? inspectProductOperatingLoop({ root: args.project_root, fresh: args.fresh ?? false })
+                            ? (await import("./lib/product-operating-loop.mjs")).inspectProductOperatingLoop({ root: args.project_root, fresh: args.fresh ?? false })
                           : name === "head_release_observe"
-                            ? (requireMcpConfirmation(args.confirm_host_observation, "Release observation requires explicit confirmation that the payload came from a host deployment observer.", "RELEASE_HOST_OBSERVATION_CONFIRMATION_REQUIRED"), observeReleaseState({ root: args.project_root, input: { environmentKey: args.environment_key, status: args.status, commit: args.commit, observedAt: args.observed_at, sourceEventKeyDigest: args.source_event_key_digest, deploymentEvidenceDigest: args.deployment_evidence_digest, approved: args.approved, approvalEvidenceDigest: args.approval_evidence_digest, changeSetId: args.change_set_id, vcsEvidenceId: args.vcs_evidence_id } }))
+                            ? (requireMcpConfirmation(args.confirm_host_observation, "Release observation requires explicit confirmation that the payload came from a host deployment observer.", "RELEASE_HOST_OBSERVATION_CONFIRMATION_REQUIRED"), (await import("./lib/release-observation.mjs")).observeReleaseState({ root: args.project_root, input: { environmentKey: args.environment_key, status: args.status, commit: args.commit, observedAt: args.observed_at, sourceEventKeyDigest: args.source_event_key_digest, deploymentEvidenceDigest: args.deployment_evidence_digest, approved: args.approved, approvalEvidenceDigest: args.approval_evidence_digest, changeSetId: args.change_set_id, vcsEvidenceId: args.vcs_evidence_id } }))
                           : name === "head_release_status"
-                            ? inspectReleaseObservations({ root: args.project_root })
+                            ? (await import("./lib/release-observation.mjs")).inspectReleaseObservations({ root: args.project_root })
                           : name === "head_observation_sources"
-                            ? inspectObservationSources({ root: args.project_root, registry: observationRegistry, typeKey: args.type_key || "", adapterKey: args.adapter_key || "", availabilityState: args.availability || "", limit: args.limit ?? 64, projectionId: args.projection_id || "", cursor: args.cursor || "" })
+                            ? (await import("./lib/observation-adapter.mjs")).inspectObservationSources({ root: args.project_root, registry: observationRegistry, typeKey: args.type_key || "", adapterKey: args.adapter_key || "", availabilityState: args.availability || "", limit: args.limit ?? 64, projectionId: args.projection_id || "", cursor: args.cursor || "" })
                           : name === "head_observation_prepare"
-                            ? prepareObservationEvidence({ root: args.project_root, registry: observationRegistry, typeKey: args.type_key, subjectType: args.subject_type || "", subjectKey: args.subject_key || "", adapterKey: args.adapter_key || "", observedAfter: args.observed_after || "", observedBefore: args.observed_before || "", existingLimit: args.existing_limit ?? 20, sourceLimit: args.source_limit ?? 20, sourceAvailability: args.source_availability || "", sourceProjectionId: args.source_projection_id || "", sourceCursor: args.source_cursor || "" })
+                            ? (await import("./lib/observation-workflow.mjs")).prepareObservationEvidence({ root: args.project_root, registry: observationRegistry, typeKey: args.type_key, subjectType: args.subject_type || "", subjectKey: args.subject_key || "", adapterKey: args.adapter_key || "", observedAfter: args.observed_after || "", observedBefore: args.observed_before || "", existingLimit: args.existing_limit ?? 20, sourceLimit: args.source_limit ?? 20, sourceAvailability: args.source_availability || "", sourceProjectionId: args.source_projection_id || "", sourceCursor: args.source_cursor || "" })
                           : name === "head_observation_collect_source"
-                            ? collectRegisteredObservation({ root: args.project_root, registry: observationRegistry, sourceId: args.source_id })
+                            ? (await import("./lib/observation-adapter.mjs")).collectRegisteredObservation({ root: args.project_root, registry: observationRegistry, sourceId: args.source_id })
                           : name === "head_observation_collect" || name === "head_observation_ingest"
-                            ? (requireMcpConfirmation(args.confirm_host_observation, "Observation collection requires explicit confirmation that the payload came from the exact Host source binding.", "OBSERVATION_HOST_CONFIRMATION_REQUIRED"), ingestStructuredObservation({ root: args.project_root, binding: observationBindingFromMcp(args.binding), descriptor: observationDescriptorFromMcp(args.descriptor), input: observationInputFromMcp(args.observation) }))
+                            ? (requireMcpConfirmation(args.confirm_host_observation, "Observation collection requires explicit confirmation that the payload came from the exact Host source binding.", "OBSERVATION_HOST_CONFIRMATION_REQUIRED"), (await import("./lib/observation-adapter.mjs")).ingestStructuredObservation({ root: args.project_root, binding: observationBindingFromMcp(args.binding), descriptor: observationDescriptorFromMcp(args.descriptor), input: observationInputFromMcp(args.observation) }))
                           : name === "head_observation_derive"
-                            ? (requireMcpConfirmation(args.confirm_host_derivation, "Derived Observation recording requires explicit confirmation that the payload came from the named deterministic algorithm.", "OBSERVATION_DERIVATION_CONFIRMATION_REQUIRED"), recordDerivedObservation({ root: args.project_root, descriptor: observationDescriptorFromMcp(args.descriptor), input: { subject: args.subject, temporalScope: { observedAt: args.temporal_scope.observed_at, start: args.temporal_scope.start, end: args.temporal_scope.end }, inputObservationIds: args.input_observation_ids, algorithm: args.algorithm, coverage: observationCoverageFromMcp(args.coverage), payload: args.payload } }))
+                            ? (requireMcpConfirmation(args.confirm_host_derivation, "Derived Observation recording requires explicit confirmation that the payload came from the named deterministic algorithm.", "OBSERVATION_DERIVATION_CONFIRMATION_REQUIRED"), (await import("./lib/observation-store.mjs")).recordDerivedObservation({ root: args.project_root, descriptor: observationDescriptorFromMcp(args.descriptor), input: { subject: args.subject, temporalScope: { observedAt: args.temporal_scope.observed_at, start: args.temporal_scope.start, end: args.temporal_scope.end }, inputObservationIds: args.input_observation_ids, algorithm: args.algorithm, coverage: observationCoverageFromMcp(args.coverage), payload: args.payload } }))
                           : name === "head_observation_read"
-                            ? readObservation({ root: args.project_root, observationId: args.observation_id })
+                            ? (await import("./lib/observation-store.mjs")).readObservation({ root: args.project_root, observationId: args.observation_id })
                           : name === "head_observation_query"
-                            ? queryObservations({ root: args.project_root, typeKey: args.type_key || "", subjectType: args.subject_type || "", subjectKey: args.subject_key || "", adapterKey: args.adapter_key || "", observedAfter: args.observed_after || "", observedBefore: args.observed_before || "", recordKind: args.record_kind || "all", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "" })
+                            ? (await import("./lib/observation-projection.mjs")).queryObservations({ root: args.project_root, typeKey: args.type_key || "", subjectType: args.subject_type || "", subjectKey: args.subject_key || "", adapterKey: args.adapter_key || "", observedAfter: args.observed_after || "", observedBefore: args.observed_before || "", recordKind: args.record_kind || "all", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "" })
                           : name === "head_observation_status"
-                            ? inspectObservations({ root: args.project_root })
+                            ? (await import("./lib/observation-projection.mjs")).inspectObservations({ root: args.project_root })
                           : name === "head_continuity_snapshot"
-                            ? buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
+                            ? (await import("./lib/product-operating-loop.mjs")).buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());
     const response = success(id, { content: [{ type: "text", text: formatMcpToolContent(name, value) }], structuredContent: value });
     if (name === "head_world_model" && Buffer.byteLength(JSON.stringify(response), "utf8") > WORLD_MODEL_STATUS_MCP_MAX_BYTES) {
@@ -2642,7 +2678,7 @@ export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = nul
       const request = JSON.parse(line);
       if (request.method === "notifications/cancelled") { sourceRequests.get(request.params?.requestId)?.abort(); return; }
       let controller;
-      if (request.method === "tools/call" && request.params?.name === "head_source_context") {
+      if (request.method === "tools/call" && requestedToolName(request) === "head_source_context") {
         sourceRequestId = request.id;
         if (sourceRequests.has(sourceRequestId)) throw new Error("Duplicate active source request id.");
         controller = new AbortController(); sourceRequests.set(sourceRequestId, controller); ownsSourceRequest = true;

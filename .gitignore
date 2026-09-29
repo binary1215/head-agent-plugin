@@ -19,6 +19,7 @@ test/*
 !test/operating-execution-means.test.mjs
 !test/skill-reference-links.test.mjs
 !test/managed-maintenance-surface.test.mjs
+!test/mcp-progressive-discovery.test.mjs
 !test/release-observation.test.mjs
 !test/session-recovery-integration.test.mjs
 !test/compaction-lifecycle.test.mjs
@@ -61,6 +62,7 @@ test/*
 test/helpers/*
 !test/helpers/worker-integration-fixture.mjs
 !test/helpers/invocation-publication-diagnostics.mjs
+!test/helpers/mcp-loading-probe.mjs
 !test/helpers/publication-directory-handle.ps1
 !test/helpers/codex-selected-fixture-host.mjs
 !test/helpers/codex-selected-provider-fixture.mjs

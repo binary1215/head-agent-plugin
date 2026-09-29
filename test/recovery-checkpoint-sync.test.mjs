@@ -14,7 +14,7 @@ import {
   syncRecoveryCheckpoint,
 } from "../scripts/lib/compaction-recovery.mjs";
 import { integrateReviewedRunCheckpoint, restoreSessionFromArtifacts } from "../scripts/lib/session-recovery.mjs";
-import { dispatch, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { dispatch, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");

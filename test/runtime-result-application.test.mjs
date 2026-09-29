@@ -30,7 +30,7 @@ import { executeCodexRuntimeInvocation } from "../scripts/lib/runtime-codex-exec
 import { createBoundedWorkerWave, readBoundedWorkerWaveStatus, sealBoundedWorkerWave, waitForBoundedWorkerWave } from "../scripts/lib/bounded-worker-wave.mjs";
 import { formatCliResult, formatMcpToolContent } from "../scripts/lib/cli-presentation.mjs";
 import { runCommand } from "../scripts/head.mjs";
-import { dispatch as dispatchMcp, tools as mcpTools } from "../scripts/mcp-server.mjs";
+import { dispatch as dispatchMcp, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");

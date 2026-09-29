@@ -2,7 +2,10 @@
 
 ## Purpose
 
-Compile the minimum sufficient context for one task. This is context construction, not long-term memory recall and not a replacement for HEAD judgment. The budget is a hard bound, not evidence that the result is sufficient.
+Use ordinary file inspection for ordinary reading and edits. Compile selected context
+when a reproducible handoff, durable Run or recovery boundary actually needs a Capsule.
+This is context construction, not long-term memory recall or a replacement for HEAD
+judgment. The budget is a hard bound, not evidence that the result is sufficient.
 
 Use only the deterministic approximate-token tiers `32768` (default), `65536`, `131072`, `262144`, and `524288` (hard maximum). The Compiler itself always receives one explicit tier and never changes it. The read-only preview wrapper starts at the caller's tier and deterministically retries the next fixed tier only while matching evidence was excluded by `context-budget`. Because the current estimate is `ceil(UTF-16 code units / 4)`, the runtime adapter must verify actual provider-token fit and output reserve before invocation.
 

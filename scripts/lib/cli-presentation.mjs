@@ -57,6 +57,8 @@ export function formatHelp(value) {
       "If delegation never started or has no remaining effects, continue directly or sequentially; inspect uncertain work before replacement.");
   }
   if (value.surface === "managed-maintenance") lines.push("Retained managed-work maintenance: original authorization and effect checks still apply. Not an automatic failure fallback.");
+    if (value.contextGuidance) lines.push(value.contextGuidance);
+    if (value.compatibilityDiagnostics?.length) lines.push(`Compatibility diagnostics only, not recommended workflow steps: ${value.compatibilityDiagnostics.join(", ")}.`);
   lines.push("");
   for (const [name, commands] of Object.entries(groups)) {
     if (!commands.length) continue;

@@ -348,8 +348,8 @@ head-agent status C:\path\to\project
 `readiness.product`, `readiness.context`를 분리하고, 지금 수행할
 `nextAction` 하나와 실제 선행조건이 붙은 선택 기능 목록을 보여줍니다. 예를
 들어 Product는 `available-not-activated`, bounded worker는
-`requires-session-or-run-authorization`으로 표시됩니다. 한 번의 독립 검토는
-Session으로 수행할 수 있으며, 지속적인 조율 작업은 Run 흐름을 유지합니다. 이 결과는 저장되지 않는
+기존 관리형 작업에는 `requires-session-or-run-authorization`으로 표시됩니다.
+일반 독립 검토에는 현재 Host의 위임을 쓰며 워커 수만으로 Run을 요구하지 않습니다. 이 결과는 저장되지 않는
 자문용 투영입니다. 읽는 것만으로 Product 활성화, Run 생성, 권한 부여 또는
 드리프트 복구가 일어나지 않습니다. `profile`도 숨은 프로젝트 모드가 아니라
 한 번의 초기화/재개 호출에서 선택하는 동작 범위입니다.
@@ -361,14 +361,22 @@ Session으로 수행할 수 있으며, 지속적인 조율 작업은 Run 흐름�
 
 ### 대화형 Context 준비와 미리보기
 
-대화에서는 사용자가 task를 한 번만 설명합니다. HEAD Skill이
-`head_context_prepare`를 호출하고, repository를 의미적으로 검사해 필요한
+대화에서는 사용자가 task를 한 번만 설명합니다. 일반 읽기·수정은 필요한 파일을
+직접 확인합니다. 재현 가능한 선택 맥락 전달, 영속 Run 또는 복구에 Capsule이
+실제로 필요할 때만 HEAD Skill이 `head_context_prepare`를 호출하고,
+repository를 의미적으로 검사해 필요한
 `EvidenceNeed[]`를 작성한 뒤, 사용자가 내부 단계를 조작하지 않아도
 `head_context_preview`까지 이어갑니다. 선택적 World evidence가 없거나 stale이어도
 직접 작업은 막히지 않으며, 근거가 있는 budget 확장은 자동입니다.
 최종 preview는 종류별 포함 증거, 사유별 의도적 제외와 남은 불확실성을 하나의
 설명 카드로 제공합니다. 새 gate를 추가하지 않으며, 기계적 coverage는 Core가,
 의미적 충분성은 HEAD가 계속 담당합니다.
+
+기본 MCP 목록은 Core 작업·복구·기존 작업의 상태/취소에 집중합니다. HEAD가
+선택적인 Product·Graph·Observation·Context 스키마를 `head_tools_discover`로
+찾고 반환된 읽기 전용 또는 효과 실행 경로로 호출합니다. 사용자는 기능을 unlock하거나
+매번 profile을 고르거나 JSON을 작성할 필요가 없습니다. 탐색은 권한을 부여하지
+않으며 기존 동작의 권한·효과 검사는 그대로 적용됩니다.
 
 자동화와 진단을 위해서는 같은 Core 동작을 CLI에서도 사용할 수 있습니다.
 
@@ -633,13 +641,13 @@ Signal → Hypothesis → Initiative 후보 → 사용자 ReviewDecision
 
 이 흐름은 하나의 자동 승격 사슬이 아닙니다. 증거는 증거로, 가설은 가설로
 남고, 검토된 Initiative도 Product Canon과 구분됩니다.
-`head-agent operating-lane-recommend`는 권한을 만들지 않으면서 가장 가벼운
-안전 경로를 제안할 수 있습니다.
+HEAD가 추천 API나 메모 형식화 호출 없이 위험과 필요한 지속성을 직접 판단합니다.
 
 - Observe: 읽기와 추론 작업
 - Session: 하나의 범위가 제한된 가역적 결과
 - Run: 서로 의존하거나 복구 민감한 작업
-- Authority: Canon, Initiative 결정, 외부 쓰기, 자격 증명 또는 복구 정본 변경
+- 명시적 권한: Canon·Initiative 결정 또는 현재 승인 범위 밖의 효과 실행.
+  기존 승인 방향 안에서 유용한 checkpoint를 갱신하는 것은 새 사용자 결정이 아닙니다.
 
 자세한 내용은 [Product Operating Loop](docs/ko/product-operating-loop.md)를
 참고하세요.

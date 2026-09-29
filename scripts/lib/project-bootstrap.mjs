@@ -332,8 +332,10 @@ function entrypoint(action, onboardingInspection = null) {
         : "The current typed MCP surface is read-only for refresh state; use the explicit CLI mutation entrypoint.",
     },
     work_with_product_context: {
-      cli: "head-agent context-prepare <project> --task <exact-task>",
-      mcpTool: "head_context_prepare",
+      cli: null,
+      mcpTool: null,
+      note: "Continue the user's task with the needed files and available Product evidence. Prepare a Capsule only for reproducible selected-context handoff, durable Run or recovery needs.",
+      optionalContextTool: "head_context_prepare",
     },
     inspect_product_governance: {
       cli: "head-agent onboarding-status <project>",
@@ -362,7 +364,7 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
     {
       id: "context-compiler",
       availability: blocked || contextState.repositoryEvidence,
-      useWhen: "The exact task needs reproducible minimum-sufficient evidence or a durable Run Capsule.",
+      useWhen: "Reproducible selected-context handoff, a durable Run or recovery actually needs a Capsule. Ordinary reading/editing uses needed files directly; the Compiler does not decide semantic sufficiency.",
       entrypoint: "head_context_prepare",
     },
     {
@@ -374,8 +376,8 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
     {
       id: "bounded-workers",
       availability: blocked || "requires-session-or-run-authorization",
-      useWhen: "One independently consumable Session result, or Run-scoped workers under a Whole-plan HEAD.",
-      entrypoint: "Create exact per-worker authorization, dispatch, execute, then read/wait. Session results are evidence-only; waves and result application remain Run-only.",
+      useWhen: "Inspect or settle retained managed work, not ordinary parallel delegation or an automatic fallback.",
+      entrypoint: "Use exact status/cancel diagnostics; explicit retained-work maintenance keeps original authorization and effect checks. Ordinary delegation uses available Host tools.",
     },
     {
       id: "compaction-recovery",

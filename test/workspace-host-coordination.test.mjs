@@ -370,7 +370,10 @@ test("two fresh MCP processes share exact host-local targets without provider se
   const headAttached = invoke({ token: head.bindingToken, role: "head", request: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
   assert.deepEqual(headAttached.result.structuredContent.messages, []);
   const listed = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 10, method: "tools/list", params: {} } });
-  const roleTools = listed.result.tools.filter((tool) => tool.name.startsWith("head_coordination_"));
+  assert.equal(listed.result.tools.some((tool) => tool.name === "head_tools_discover"), true);
+  assert.equal(listed.result.tools.some((tool) => tool.name.startsWith("head_coordination_")), false);
+  const discovered = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "head_tools_discover", arguments: { prefix: "head_coordination_" } } } });
+  const roleTools = discovered.result.structuredContent.tools;
   assert.deepEqual(roleTools.map((tool) => tool.name), [
     "head_coordination_send_message",
     "head_coordination_read_inbox",
@@ -381,7 +384,8 @@ test("two fresh MCP processes share exact host-local targets without provider se
     const properties = Object.keys(tool.inputSchema.properties || {});
     assert.deepEqual(properties.filter((field) => ["caller", "workspace_id", "tab_id", "endpoint_id", "terminal_id", "attachment_id"].includes(field)), []);
   }
-  const sent = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "head_coordination_send_message", arguments: { project_root: fx.root, to_role: "head", content: "fresh process delivery", idempotency_key: "fresh-host-process" } } } });
+  const sendTool = roleTools.find((tool) => tool.name === "head_coordination_send_message");
+  const sent = invoke({ token: developer.bindingToken, role: "developer", request: { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: sendTool.invokeWith, arguments: { name: sendTool.name, arguments: { project_root: fx.root, to_role: "head", content: "fresh process delivery", idempotency_key: "fresh-host-process" } } } } });
   assert.equal(sent.result.structuredContent.delivery.status, "delivered");
   const inbox = invoke({ token: head.bindingToken, role: "head", request: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "head_coordination_read_inbox", arguments: { project_root: fx.root } } } });
   assert.equal(inbox.result.structuredContent.messages[0].content, "fresh process delivery");

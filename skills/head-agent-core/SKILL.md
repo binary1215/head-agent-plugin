@@ -83,8 +83,8 @@ that evidence. Core must not make that semantic selection.
 
 Treat the authority model and typed operations as HEAD's internal work, not as
 forms the user must fill in. For an ordinary request, let the user describe the
-task once in natural language, then carry that exact task through status,
-preparation, semantic repository inspection, and preview without asking the
+task once in natural language, then continue through ordinary repository
+inspection and work without asking the
 user to choose a token tier, EvidenceNeed kind, repository path, entity key, or
 graph node ID. Do not ask about an optional profile before semantic task analysis
 has established a real need for that wider scope.
@@ -117,6 +117,22 @@ diagnostic detail, not the primary interaction. Read
 `references/conversation-ux.md` for the task-first, decision-card, and adaptive
 outcome contract.
 
+## Find optional tools only when needed
+
+The default MCP list keeps Core entry, recovery and retained-work status/cancel
+close at hand. For another capability, use `head_tools_discover` with its exact
+`name` or a returned `prefix`; follow `nextOffset` if present. Call the returned
+`invokeWith` (`head_tools_read` or `head_tools_call`) with that name and the arguments
+described by its unchanged `inputSchema`. Known tools can be called without a prior
+discovery request. HEAD supplies these arguments; do not ask the user to choose a
+profile, unlock tools, or write JSON. Discovery is read-only, not activation or
+authorization. Existing direct calls and CLI `help-all` remain available.
+
+Optional Product/Graph failures affect only dependent work. Existing managed
+diagnostics remain discoverable and exact owned cancellation stays in the default
+list. Managed mutations retain their separate maintenance entry and original
+checks; neither a router nor a failed Host call grants access or new authority.
+
 ## Choose the lightest sufficient lane
 
 - **Observe**: read, explain, compare, or advise. Do not create durable HEAD
@@ -127,17 +143,20 @@ outcome contract.
 - **Authority**: require the exact scoped ReviewDecision for Canon or another
   protected state transition.
 
-`head_operating_lane_recommend` is advisory. Risk and reversibility decide the
-lane; tool availability does not. This risk/persistence lane is separate from
-execution means: direct HEAD or ordinary Host delegation. Two independent
-workers are not `dependencyCount: 2`; an ordinary
-Host failure/fallback is not a durable recovery branch. A Run does not require
-every delegate to use managed authorization/lease/wave machinery.
+Judge risk and reversibility as HEAD; no lane-recommendation call or scorecard is
+needed. Work directly or use ordinary Host delegation when useful. Two independent
+workers or ordinary error handling do not require durable Run machinery. Updating
+a useful checkpoint within existing approved direction needs no new user decision;
+changing Product Canon or another protected scope still requires its exact authority.
 
 ## Context and execution
 
-For context-sensitive work, call live `head_context_prepare` first with only the
-user's task text. Do not ask the user to write EvidenceNeed JSON. Read its
+For ordinary reading and editing, inspect the needed files directly. Use the
+Compiler only when reproducible selected-context handoff, a durable Run, or a
+recovery boundary actually needs a Capsule. A task involving context is not by
+itself a reason to compile one. In that optional workflow, call
+`head_context_prepare` with the user's task text. Do not ask the user to write
+EvidenceNeed JSON. Read its
 bounded current identities and discovery material, inspect the repository when
 the required evidence is absent, and perform the semantic task analysis as
 HEAD. Author task-required EvidenceNeeds and any exact current graph anchors in
@@ -174,6 +193,10 @@ measurement, delivery, Policy, Conformance, or mapping work actually needed by
 the current task, read the relevant section of
 `references/conversation-ux.md#optional-product-evidence`. These paths do not
 add user forms, recurring approvals, automatic collection, or universal review.
+For an ephemeral note, distinguish observations, hypotheses and inferences and cite
+their evidence in the conversation; no formatting tool or Project setup is needed.
+Use existing durable Observation/Signal records only when audit, cross-Run reference
+or product-state work needs them. A formatted sentence does not verify its evidence.
 
 When selected Canon may affect a consequential judgment, the Context workflow's
 `conformanceLookup` provides exact optional queue lookups. It is `not-queried`,

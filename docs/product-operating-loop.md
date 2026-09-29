@@ -92,9 +92,11 @@ Repeated `product-operating-status` and `head-continuity` reads in the same proc
 
 ## CLI
 
-`head help` exposes the light default below. `operating-lane-recommend` is an
-optional advisory aid, never an execution gate. Use `head help-all` to discover
-the durable Signal/Hypothesis, audit, compatibility, and recovery surfaces.
+`head help` exposes Core work and recovery. Reason about risk directly and keep
+ephemeral facts, hypotheses, inferences and their evidence in the conversation.
+Use `head help-all` only when durable Signal/Hypothesis, audit or recovery work is
+needed. The old `operating-lane-recommend` and `product-note` commands remain
+explicit compatibility diagnostics, not recommended workflow steps or authority.
 
 ```text
 head operating-lane-recommend <project> --input <risk.json>
@@ -122,10 +124,8 @@ not ordinary error handling. A Run does not make every helper managed.
 call; the separate `executionMeans` advice lists managed-only requirements.
 Neither projection grants permission or creates a new user form or approval.
 
-The typed MCP surface is:
+The optional typed MCP catalog includes:
 
-- `head_operating_lane_recommend`
-- `head_product_note`
 - `head_product_signal_record`
 - `head_product_hypothesis_record`
 - `head_product_initiative_propose`
@@ -134,6 +134,17 @@ The typed MCP surface is:
 - `head_product_operating_status`
 - `head_continuity_snapshot`
 
-The default conversational surface is optional `head_operating_lane_recommend`, `head_product_note`, Initiative proposal/review when durable product action is needed, and status. The seven original record/observe/read tools remain compatible explicit surfaces rather than a mandatory ritual.
+The default MCP list focuses on Core and recovery. Find a needed schema through
+`head_tools_discover` (exact name or returned prefix) and call its `invokeWith`
+route, `head_tools_read` or `head_tools_call`. These stateless routes preserve the
+same original dispatch, authority checks and results; no activation, registration
+or extra user approval is added. Read-only calls retain a separate read-only route.
+Discovery can be skipped when HEAD already knows the contract. Managed mutations
+still require the existing separate maintenance entry for retained work.
+
+`head_operating_lane_recommend` and `head_product_note` are available only through
+explicit compatibility discovery or known direct calls. Formatting an ephemeral
+note verifies no evidence, and old lane advice does not govern checkpoint updates
+within existing approved direction. Use actual protected-transition checks instead.
 
 Initiative review requires `confirm_user_review: true`. The confirmation records user-owned review authority; MCP availability alone does not grant it.
