@@ -101,3 +101,23 @@ test("cold catalog and Core contract avoid optional implementations and survive 
   assert.equal(result.optionalFailureScoped, true); assert.equal(result.providerInvoked, false);
   console.log(JSON.stringify(result));
 });
+
+test("conversation onboarding discovers advanced schemas and exercises the advertised routes end to end", () => {
+  const args = [path.join(pluginRoot, "scripts/verify-conversational-onboarding.mjs")];
+  console.log(JSON.stringify({ event: "planned", command: process.execPath, args, parentPid: process.pid, cwd: pluginRoot, ports: [] }));
+  const child = spawnSync(process.execPath, args, { cwd: pluginRoot, windowsHide: true, encoding: "utf8", timeout: 30000 });
+  console.log(JSON.stringify({ event: "closed", pid: child.pid, parentPid: process.pid, exitCode: child.status, ports: [] }));
+  assert.equal(child.error, undefined); assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout.trim());
+  assert.equal(result.status, "conversational_onboarding_verified");
+  assert.equal(result.defaultToolCount, tools.length);
+  assert.equal(result.discoveryGrantsAuthorization, false);
+  assert.equal(result.unconfirmedGraphDbActivationRejected, true);
+  assert.equal(result.graphDbCredentialPreflightNetworkRequests, 0);
+  assert.equal(result.worldGraphContextDocumentsReady, true);
+  for (const name of ["head_onboarding_guide", "head_onboarding_review", "head_markdown_projection_build",
+    "head_context_prepare", "head_context_preview", "head_graphdb_connection_preflight", "head_graphdb_projection_activate"]) {
+    assert(result.advancedToolsDiscovered.includes(name), name);
+    assert(result.advancedToolsRouted.includes(name), name);
+  }
+});

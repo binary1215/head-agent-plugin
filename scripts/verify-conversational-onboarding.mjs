@@ -9,8 +9,11 @@ const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-conversa
 const projectRoot = path.join(temporaryRoot, "sample-project");
 const graphProjectRoot = path.join(temporaryRoot, "graph-project");
 const coreProjectRoot = path.join(temporaryRoot, "core-project");
+const defaultToolNames = new Set();
+const discoveredTools = new Map();
+const routedToolNames = new Set();
 
-async function toolResponse(name, args) {
+async function directToolResponse(name, args) {
   const response = await dispatch({
     jsonrpc: "2.0",
     id: `${name}-${Date.now()}`,
@@ -19,6 +22,27 @@ async function toolResponse(name, args) {
   });
   if (response.error) throw new Error(`${name}: ${response.error.message}`);
   return response.result;
+}
+
+async function discoverTool(name) {
+  if (!discoveredTools.has(name)) {
+    const discovery = (await directToolResponse("head_tools_discover", { name })).structuredContent;
+    assert.equal(discovery.persisted, false);
+    assert.equal(discovery.grantsAuthorization, false);
+    assert.equal(discovery.total, 1);
+    assert.equal(discovery.tools[0].name, name);
+    assert.equal(discovery.tools[0].invokeWith,
+      discovery.tools[0].annotations.readOnlyHint === true ? "head_tools_read" : "head_tools_call");
+    discoveredTools.set(name, discovery.tools[0]);
+  }
+  return discoveredTools.get(name);
+}
+
+async function toolResponse(name, args) {
+  if (defaultToolNames.has(name)) return directToolResponse(name, args);
+  const discovered = await discoverTool(name);
+  routedToolNames.add(name);
+  return directToolResponse(discovered.invokeWith, { name, arguments: args });
 }
 
 async function tool(name, args) {
@@ -36,7 +60,10 @@ try {
   fs.writeFileSync(path.join(projectRoot, "README.md"), "# Request processing\n\nAccept, validate, and acknowledge user requests.\n");
 
   const listed = await dispatch({ jsonrpc: "2.0", id: "tools", method: "tools/list", params: {} });
-  const names = new Set(listed.result.tools.map((entry) => entry.name));
+  for (const entry of listed.result.tools) defaultToolNames.add(entry.name);
+  for (const name of ["head_tools_discover", "head_tools_read", "head_tools_call", "head_project_initialize_or_resume"]) {
+    assert(defaultToolNames.has(name), `Missing default MCP entry: ${name}`);
+  }
   for (const name of [
     "head_onboarding_guide",
     "head_project_initialize_or_resume",
@@ -45,8 +72,12 @@ try {
     "head_graphdb_connection_preflight",
     "head_graphdb_database_initialize",
     "head_graphdb_projection_activate",
-  ]) assert(names.has(name), `Missing conversational MCP tool: ${name}`);
-  const graphDbActivateTool = listed.result.tools.find((entry) => entry.name === "head_graphdb_projection_activate");
+  ]) {
+    if (!defaultToolNames.has(name)) await discoverTool(name);
+  }
+  assert.equal(defaultToolNames.has("head_onboarding_guide"), false);
+  assert.equal(fs.existsSync(path.join(projectRoot, ".head")), false);
+  const graphDbActivateTool = await discoverTool("head_graphdb_projection_activate");
   assert.deepEqual(graphDbActivateTool.inputSchema.required, ["project_root", "confirm_remote_write"]);
   assert.equal(graphDbActivateTool.inputSchema.additionalProperties, false);
   assert.equal(Object.keys(graphDbActivateTool.inputSchema.properties).some((key) => /password|username|credential|token/i.test(key)), false);
@@ -104,6 +135,10 @@ try {
   assert.equal(graphDbPreflight.networkRequestPerformed, false);
   assert.equal(JSON.stringify(graphDbPreflight).includes("fixture-target.invalid"), false);
   assert.equal(JSON.stringify(graphDbPreflight).includes("fixture-target-database"), false);
+  await assert.rejects(() => tool("head_graphdb_projection_activate", {
+    project_root: graphProjectRoot,
+    confirm_remote_write: false,
+  }), /explicit user confirmation/u);
   const fixtureUsernameReference = "HEAD_FIXTURE_GRAPHDB_USERNAME_MISSING";
   const fixturePasswordReference = "HEAD_FIXTURE_GRAPHDB_PASSWORD_MISSING";
   const previousFixtureUsername = process.env[fixtureUsernameReference];
@@ -261,6 +296,11 @@ try {
     explicitReviewRequired: true,
     worldGraphContextDocumentsReady: true,
     optionalGraphDbConversationOperationsDiscoverable: true,
+    defaultToolCount: defaultToolNames.size,
+    advancedToolsDiscovered: [...discoveredTools.keys()].sort(),
+    advancedToolsRouted: [...routedToolNames].sort(),
+    discoveryGrantsAuthorization: false,
+    unconfirmedGraphDbActivationRejected: true,
     graphDbCredentialPreflightNetworkRequests: 0,
     graphDbTargetValuesReturnedByPreflight: false,
     graphDbCredentialValuesAcceptedByTools: false,
