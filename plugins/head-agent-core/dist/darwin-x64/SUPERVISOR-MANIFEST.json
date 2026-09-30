@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "kind": "HeadAgentProcessSupervisorManifest",
+  "manifestVersion": "0.3.0",
+  "supervisorProtocolVersion": "0.1.0",
+  "target": {
+    "platform": "darwin",
+    "arch": "x64",
+    "directory": "darwin-x64"
+  },
+  "binary": {
+    "relativePath": "head-agent-supervisor",
+    "sha256": "7a5ea6bb0712a3d265e46535dc96e4407ece41df836811032ef1ec6bc945a308",
+    "size": 2665872
+  },
+  "processModel": {
+    "transport": "single-request-stdio-with-control-fd3",
+    "windowsTreeOwnership": "job-object-kill-on-close",
+    "posixTreeOwnership": "isolated-process-group",
+    "shellInterpretation": false
+  },
+  "capabilities": {
+    "declarationOnly": true,
+    "processSupervision": {
+      "oneShotProtocolVersion": "0.1.0",
+      "jobProtocolVersion": "0.1.0",
+      "detachedJobAvailability": "runtime-platform-preflight-required",
+      "interactiveProtocolVersion": "0.1.0",
+      "interactiveTransport": "bounded-bootstrap-line-streaming-stdio"
+    },
+    "fileEffects": {
+      "transport": "single-request-stdio",
+      "transportProtocolVersion": "0.1.0",
+      "imageProtocolVersion": "0.1.0",
+      "operations": [
+        "probe",
+        "inspect",
+        "edit",
+        "retry",
+        "image-preflight",
+        "image-apply",
+        "image-inspect",
+        "image-retry"
+      ],
+      "availability": "runtime-platform-and-target-preflight-required"
+    }
+  },
+  "authority": {
+    "kind": "bounded-operational-process-and-file-effects",
+    "instructionAuthority": false,
+    "promotionAuthority": false,
+    "recoveryAuthority": false,
+    "grantsExecutionAuthorization": false,
+    "grantsWriteAuthorization": false,
+    "mutatesCanon": false
+  },
+  "manifestId": "process-supervisor-manifest-bdedc5fdf6d00378efb182d0",
+  "manifestHash": "bdedc5fdf6d00378efb182d0b82c7c897bd8a8732729d6c1fa81922653b6accd"
+}
