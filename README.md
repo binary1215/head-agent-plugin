@@ -211,6 +211,15 @@ delegate, HEAD continues directly or sequentially. Forked context must fit your
 input scope; otherwise HEAD uses supported fresh context. You do not configure
 a worker registry or supply IDs.
 
+Delegation can also help HEAD keep the context needed to judge your goal,
+constraints and acceptance criteria. Before deep execution or detailed review,
+HEAD considers whether that detail may crowd out the overall task and separates
+the work when useful—even for a sequential task with no parallel speedup. It asks
+for goal-related findings, important new facts, uncertainty and checkable evidence,
+then checks the needed evidence and judges whether the result meets your goal.
+Simple work stays direct. This adds no score, token threshold, required fork or
+approval step, and no particular conversation becomes the sole recovery source.
+
 If a delegate fails, HEAD keeps completed work and continues only the unfinished
 part after checking whether anything is still running or already applied. It
 preserves your edits and checks uncertain overlapping effects before replacement;

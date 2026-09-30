@@ -204,10 +204,17 @@ not proof that objections exist or are absent. HEAD decides relevance and reuses
 current readings; a changed task can make a previously acknowledged objection
 important again. Do not query every pointer by default or suppress it globally.
 
-Work directly by default. When independently reviewable contributions would
-help, use ordinary delegation through the current Host's available
+Keep the context needed to judge the user's objective, constraints and acceptance
+criteria. Before going deeply into execution or detailed verification, consider
+whether those details may crowd out that judgment context; delegate a bounded,
+independently reviewable outcome when useful, even if the work is sequential and
+offers no parallel speedup. Simple tasks remain direct HEAD work.
+
+For ordinary delegation, use the current Host's available
 fork/spawn, wait/read and cancel tools. HEAD supplies a short brief with outcome,
 allowed context, file ownership, constraints and useful completion evidence.
+Ask for results centered on objective satisfaction, important new facts, remaining
+uncertainty and checkable evidence, not an undifferentiated execution transcript.
 For small tasks, work directly. If delegation never started or is confirmed to
 have no remaining effects, continue directly or sequentially. Do not ask the
 user for a lane, registry, ID or JSON.
@@ -224,7 +231,7 @@ unnecessary history transfer rather than trimming for its own sake. Observed
 cache reuse may inform the choice, but fork does not imply a cache hit and fresh
 is not inherently cheaper or faster.
 
-These are flexible judgments, not a scorecard, token threshold, mandatory
+These delegation and context choices are flexible judgments, not a scorecard, token threshold, mandatory
 checklist or extra user choice/approval. A short reason in the existing brief is
 enough when useful; no new record is required. Context inheritance transfers
 neither user approval, Canon/P2 authority nor file isolation. Fork/fresh is
@@ -239,7 +246,10 @@ For meaningful waits, review findings and final results, follow
 [conversation UX](references/conversation-ux.md). These are communication
 practices, not new execution states or prerequisites.
 
-HEAD checks returned work against the current files, preserves user edits,
+HEAD decides whether execution or review success actually satisfies the user's
+objective and conditions. Inspect the specific supporting evidence needed for
+that judgment rather than trusting a summary alone. HEAD checks returned work
+against the current files, preserves user edits,
 resolves overlap and integrates contributions into one useful result. Ordinary delegation does not
 call `head_bounded_worker_prepare` or manufacture a managed authorization,
 lease, receipt or wave. Do not claim stronger isolation, durable reattachment

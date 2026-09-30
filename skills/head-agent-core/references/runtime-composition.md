@@ -30,10 +30,24 @@ Apply the Skill's fork/fresh guidance per contribution, for example:
 - Review the parser independently against its current requirements and tests:
   prefer fresh context containing that evidence, without feeding the parent's
   conclusion as the answer. Include relevant constraints, not merely filenames.
+- Run a long, sequential verification of an agreed change: delegate that bounded
+  execution when its detail may crowd out HEAD's objective and constraints, even
+  without parallel speedup. Return the acceptance findings, important new facts,
+  remaining uncertainty and links to relevant evidence. HEAD checks any material
+  gap against the user's goal; successful test execution alone is not completion.
 - Fix a small error message directly; neither a fork nor fresh worker is needed.
 
 These examples do not require a new artifact or selection ceremony. A fork's
 history is context, not proof of current authority or workspace isolation.
+Preserving judgment context does not make a particular parent conversation the
+sole authority or recovery source. A detailed execution or review conversation is
+not automatically a preserved copy of that higher-level context. Continue from
+existing approved direction and applicable canonical recovery records, and inspect
+specific source evidence when a result summary leaves an important question open.
+For example, a favorable detailed review that never checked a user-required output
+format leaves that criterion unresolved; HEAD assesses it before claiming the goal
+is met. This is situational judgment, not a claim that direct detailed work makes
+returning to the overall goal impossible or that delegation always performs better.
 
 ## Follow-up handoffs
 
