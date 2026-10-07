@@ -60,6 +60,20 @@ function nodeFromRecord(document, origin, views, extra = {}) {
   if (document.kind === "ProductPolicyCandidate") content.proposedPolicy = Object.fromEntries(
     ["key", "name", "statement", "description"].filter((field) => typeof document.proposedPolicy?.[field] === "string")
       .map((field) => [field, document.proposedPolicy[field].slice(0, 2048)]));
+  if (document.kind === "ProjectDirection") {
+    // This is an excerpt of an independently verified P2 original, not a new
+    // direction, a recovery field source or an execution authorization.
+    const input = document.input;
+    content.directionEvidence = { goal: input.goal.slice(0, 2048) };
+    const coverage = { goal: { truncated: input.goal.length > 2048 } };
+    for (const field of ["constraints", "decisions", "cancelledActions"]) {
+      content.directionEvidence[field] = input[field].slice(0, 32).map(value => value.slice(0, 512));
+      coverage[field] = { totalCount: input[field].length, includedCount: content.directionEvidence[field].length,
+        omittedCount: Math.max(0, input[field].length - 32), truncatedCount: input[field].slice(0, 32).filter(value => value.length > 512).length };
+    }
+    content.directionContentCoverage = { ...coverage, partial: coverage.goal.truncated ||
+      ["constraints", "decisions", "cancelledActions"].some(field => coverage[field].omittedCount || coverage[field].truncatedCount) };
+  }
   return { nodeId, ...content, kind: document.kind || "RecordReference", views, origin,
     sourceReference: { artifactId: nodeId, path: origin.path, digest: origin.digest },
     integrity: "verified", freshness: "retained-evidence", reviewState: document.disposition || "not-applicable",
@@ -306,7 +320,7 @@ function limits(options) {
   const strings = (values, max) => { if (values == null) return []; if (!Array.isArray(values) || values.length > max || values.some((value) => typeof value !== "string" || !value || value.length > 512)) fail("INVALID_PROJECT_GRAPH_FILTER"); return [...new Set(values)].sort(); };
   if (!["all", "work", "product"].includes(options.view || "all")) fail("INVALID_PROJECT_GRAPH_VIEW");
   if (options.query != null && (typeof options.query !== "string" || options.query.length > 4096)) fail("INVALID_PROJECT_GRAPH_QUERY");
-  return { query: String(options.query || "").trim(), anchorIds: strings(options.anchorIds, 32), paths: strings(options.paths, 32),
+  return { query: String(options.query || "").trim(), anchorIds: strings(options.anchorIds, 32), paths: [...new Set(strings(options.paths, 32).map(value => value.replaceAll("\\", "/")))].sort(),
     view: options.view || "all", depth: integer(options.depth, 1, 8, 0), maxNodes: integer(options.maxNodes, 60, 500), maxEdges: integer(options.maxEdges, 120, 1000),
     includeCandidates: options.includeCandidates !== false };
 }
@@ -327,14 +341,69 @@ function sourceFacts(root, sources, nodes) {
   return [...facts.values()].sort((a, b) => canonicalGraphJson(a).localeCompare(canonicalGraphJson(b)));
 }
 
+const foldSearch = value => value.normalize("NFKC").toLowerCase();
+const nodePaths = node => [node.path, node.sourceCurrentness?.path, node.sourceReference?.path].filter(value => typeof value === "string");
+function searchTerms(value) {
+  // Identifier and punctuation normalization only, not product/task inference.
+  // Preserve originals; Korean particle stripping adds an alias, never a gate.
+  const text = value.normalize("NFKC");
+  const terms = new Set();
+  for (const token of text.match(/[\p{Script=Hangul}]+|[\p{Script=Latin}\p{N}_$]+|[\p{L}\p{N}]+/gu) || []) {
+    terms.add(foldSearch(token));
+    for (const part of token.replace(/([a-z\d])([A-Z])/g, "$1 $2").replace(/([A-Z])([A-Z][a-z])/g, "$1 $2").split(/[\s_$]+/u)) if (part) terms.add(foldSearch(part));
+    if (/^[\p{Script=Hangul}]+$/u.test(token)) {
+      const stem = token.replace(/(?:에서는|으로는|에서|으로|에게|까지|부터|처럼|보다|은|는|이|가|을|를|의|도|와|과)$/u, "");
+      if (stem.length >= 2) terms.add(foldSearch(stem));
+    }
+  }
+  return terms;
+}
+function searchText(node) {
+  // Only display/domain values participate. Hashes, authority flags, revision
+  // keys and provenance boilerplate must not crowd out actual task evidence.
+  const values = [];
+  function append(value, depth = 0) {
+    if (values.length >= 256 || depth > 4) return;
+    if (typeof value === "string") values.push(value.slice(0, 4096));
+    else if (Array.isArray(value)) for (const entry of value.slice(0, 32)) append(entry, depth + 1);
+    else if (value && typeof value === "object") for (const [key, entry] of Object.entries(value).slice(0, 64)) {
+      if (!/(?:authority|digest|hash|revision|schema|protocol|provenance|sessionId|runId|artifactId|sourceSnapshotId|worldModelId|productModelId)/i.test(key)) append(entry, depth + 1);
+    }
+  }
+  for (const field of ["name", "title", "label", "qualifiedName", "key", "typeKey", "statement", "rationale", "objective", "purpose", "scope", "description", "explanation", "outcome", "planDelta", "unknowns", "claim", "assessment", "subject", "payload", "proposedPolicy", "directionEvidence"]) append(node[field]);
+  for (const relative of nodePaths(node)) append(relative);
+  return values.join("\n");
+}
+function rankedMatches(visible, options) {
+  const candidates = visible.filter(node => !options.paths.length || nodePaths(node).some(relative => options.paths.includes(relative.replaceAll("\\", "/"))));
+  if (!options.query) return candidates;
+  // Fold the query before alias generation: the spelling/case of a question
+  // must not add several votes for one camel-case identifier.
+  const queryTerms = [...searchTerms(foldSearch(options.query))], query = foldSearch(options.query.replaceAll("\\", "/"));
+  const entries = candidates.map(node => {
+    const text = searchText(node);
+    return { node, text: foldSearch(text), terms: searchTerms(text) };
+  });
+  const frequency = new Map(queryTerms.map(term => [term, entries.filter(entry => entry.terms.has(term)).length]));
+  return entries.map(entry => {
+    const exact = entry.node.nodeId === options.query || nodePaths(entry.node).some(relative => foldSearch(relative.replaceAll("\\", "/")) === query);
+    const matched = queryTerms.filter(term => entry.terms.has(term));
+    // Rare explicit identifiers outrank common conversational words. All
+    // matching evidence stays eligible: this is bounded lexical navigation,
+    // not a semantic sufficiency decision or an authorization predicate.
+    const weights = matched.map(term => 1 + Math.log1p(entries.length / frequency.get(term)));
+    const specificity = weights.length ? Math.max(...weights) : 0;
+    const score = weights.reduce((sum, weight) => sum + weight, 0);
+    return { node: entry.node, exact, matched: matched.length, specificity, score, phrase: entry.text.includes(query) };
+  }).filter(entry => entry.exact || entry.matched).sort((a, b) => Number(b.exact) - Number(a.exact) ||
+    b.specificity - a.specificity || b.score - a.score || Number(b.phrase) - Number(a.phrase) || a.node.nodeId.localeCompare(b.node.nodeId)).map(entry => entry.node);
+}
+
 function viewTraversal(nodes, edges, options) {
   const visible = nodes.filter((node) => (options.view === "all" || node.views.includes(options.view))
     && (options.includeCandidates || !["candidate", "rejected", "historical-opaque"].includes(node.reviewState)));
   const byId = new Map(visible.map((node) => [node.nodeId, node]));
-  const searchTokens = options.query.toLocaleLowerCase().split(/\s+/u).filter(Boolean);
-  const match = (node) => (!options.paths.length || options.paths.some((relative) => node.path === relative || node.sourceCurrentness?.path === relative || node.sourceReference?.path === relative))
-    && (!searchTokens.length || searchTokens.some((token) => canonicalGraphJson(node).toLocaleLowerCase().includes(token)));
-  const matches = options.anchorIds.length ? options.anchorIds.map((anchor) => byId.get(anchor)).filter(Boolean) : visible.filter(match);
+  const matches = options.anchorIds.length ? options.anchorIds.map((anchor) => byId.get(anchor)).filter(Boolean) : rankedMatches(visible, options);
   const selected = new Set(matches.slice(0, options.maxNodes).map((node) => node.nodeId));
   const inclusion = new Map([...selected].map((nodeId) => [nodeId, options.anchorIds.length ? "exact-anchor" : "discovery-match"]));
   const selectedEdges = [], boundary = []; let frontier = new Set(selected);
@@ -355,7 +424,7 @@ function viewTraversal(nodes, edges, options) {
     const missing = [edge.from, edge.to].filter((nodeId) => !selected.has(nodeId));
     if (missing.length) boundary.push({ edgeId: edge.edgeId, nextAnchorIds: missing, reason: "depth-or-result-bound" });
   }
-  const selectedNodes = visible.filter((node) => selected.has(node.nodeId));
+  const selectedNodes = [...selected].map(nodeId => byId.get(nodeId));
   // Endpoint state is carried on every relationship. A summary or neighbor
   // expansion cannot make a rejected/candidate revision look approved.
   const enrichedEdges = selectedEdges.map((edge) => ({ ...edge, endpointStates: [edge.from, edge.to].map((nodeId) => ({ nodeId,
@@ -418,6 +487,16 @@ export async function queryProjectGraph(options = {}) {
       if (adapterFailures.has(key)) return clone(adapterFailures.get(key));
       try {
       const temporalAnchors = normalized.anchorIds.filter((anchor) => graph.nodes.some((node) => node.nodeId === anchor));
+      if (!temporalAnchors.length && !normalized.anchorIds.length && !normalized.query && normalized.paths.length) {
+        // Bind paths to logical File identities in this verified retained
+        // snapshot, rather than an unbound empty temporal query.
+        for (const relative of normalized.paths) {
+          const file = graph.nodes.find(node => node.kind === "File" && node.path === relative);
+          if (file) temporalAnchors.push(file.nodeId);
+        }
+      }
+      if (!temporalAnchors.length && !normalized.query) return { status: "not-used", fallbackUsed: false,
+        reasonCode: "COMBINED_LOCAL_ONLY", scope: "combined-local-navigation", acceleratesCombinedTraversal: false };
       const projected = queryGraphProjection({ projectRoot: root, graph, adapter: options.graphProjectionAdapter || null,
         query: { query: temporalAnchors.length ? null : normalized.query || null, anchorIds: temporalAnchors.length ? temporalAnchors : null,
           expectedGraphSnapshotId: temporalAnchors.length ? graph.graphSnapshotId : null, freshness: ["current", "historical", "stale"],
@@ -485,19 +564,22 @@ export async function queryProjectGraph(options = {}) {
   }
   if (queryAdapter) adapter = await queryAdapter();
   const traversed = viewTraversal(allNodes, graphEdges, normalized);
+  const partialDirection = traversed.nodes.some(node => node.directionContentCoverage?.partial);
   const count = (field) => Object.fromEntries([...new Set(traversed.nodes.map((node) => node[field] || "unknown"))].sort().map((key) => [key, traversed.nodes.filter((node) => (node[field] || "unknown") === key).length]));
   const payload = { kind: "ProjectGraphDiscoveryProjection", protocol: { name: "head-agent-core-project-graph", version: PROJECT_GRAPH_PROTOCOL_VERSION },
     authorityBoundary: artifactAuthorityBoundary("ProjectGraphDiscoveryProjection"),
     status: traversed.nodes.length ? "available" : "source-fallback", basis, query: normalized, ...traversed,
     summary: { nodeCount: traversed.nodes.length, edgeCount: traversed.edges.length, reviewStates: count("reviewState"), freshnessStates: count("freshness"),
       policyReferences: traversed.nodes.filter((node) => node.policyKey).map((node) => ({ nodeId: node.nodeId, ...navigationState(node) })),
+      directionReferences: traversed.nodes.filter(node => node.kind === "ProjectDirection").map(node => ({ nodeId: node.nodeId,
+        ...navigationState(node), sourceReference: node.sourceReference, contentCoverage: node.directionContentCoverage })),
       semantics: "navigation-evidence; relationship does not prove cause, approval, current effect authority or semantic sufficiency" },
     integrity: { verifiedLayers: layers.filter((layer) => layer.status === "verified").map((layer) => layer.layer), excluded: unavailable },
     freshness: { scope: "referenced-source-bytes-and-retained-revisions", wholeWorldCurrentRequired: false, historicalEvidenceReadable: true },
     coverage: { state: "partial", inventoryBoundReached: !inventory.complete, layers: layers.map(({ reused, ...layer }) => layer), verifiedNodeCount: allNodes.length, matchedNodeCount: traversed.nodes.length,
       emptyResultProvesAbsence: false, semanticSufficiency: "HEAD-owned" },
-    sourceFallback: { available: true, needed: !traversed.nodes.length || traversed.truncated || unavailable.length > 0 || !inventory.complete,
-      action: "Read current original files or the referenced records; expand anchors when useful.", reasonCodes: unavailable.map((entry) => entry.reasonCode),
+    sourceFallback: { available: true, needed: !traversed.nodes.length || traversed.truncated || unavailable.length > 0 || !inventory.complete || partialDirection,
+      action: "Read current original files or the referenced records; expand anchors when useful.", reasonCodes: [...unavailable.map((entry) => entry.reasonCode), ...(partialDirection ? ["PROJECT_DIRECTION_EXCERPT_PARTIAL"] : [])],
       excludedInputs: unavailable }, adapter, reuse: { status: "fresh-read", semanticSufficiency: "HEAD-owned" }, authority };
   const resultHash = projectGraphDigest(payload), result = { ...payload, resultId: `project-graph-result-${resultHash.slice(0, 24)}`, resultHash };
   boundedCache(resultCache, queryKey, clone(result));

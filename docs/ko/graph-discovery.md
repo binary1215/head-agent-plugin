@@ -25,6 +25,13 @@
 지정합니다. 한도는 전송 크기를 제한하며 의미적 충분성 판정이나 사용자 양식이
 아닙니다.
 
+자연어 질문은 권한 플래그나 리비전·출처 메타데이터가 아닌, 한정된 표시·도메인
+값을 검색합니다. 일치하는 드문 용어를 우선 정렬하고 전송 한도를 적용합니다.
+이는 재현 가능한 어휘 탐색이지 의미 추론이 아닙니다. 관련성과 부족한 맥락은
+HEAD가 판단합니다. 구두점, 식별자 구성 단어, 한국어 조사 별칭으로 탐색을 돕되
+원래 용어도 보존합니다. 필요한 정확한 경로·anchor는 HEAD가 작성하며 사용자가
+질문이나 점수 양식을 다시 작성하지 않습니다.
+
 ```text
 head-agent graph-query <project> --query "<task>"
 head-agent graph-index <project>
@@ -51,6 +58,28 @@ head-agent graph-query <project> --session <logical-session> --query "<task>"
 fallback은 계속 사용할 수 있습니다. 이번 소스·fixture 시험으로 새
 실제 ArcadeDB, Host lifecycle이나 모델 행동 검증을 주장하지 않습니다. 속도,
 token과 품질 개선은 측정 전까지 가설입니다.
+
+경로만 지정한 요청은 검증된 보존 World의 논리 File anchor와 정확한 snapshot에
+결속해 선택적 temporal adapter 검증을 수행합니다. 사용할 temporal 선택자가
+없는 전체 둘러보기·Work 전용 anchor는 adapter 실패가 아닌 `not-used` 로컬
+탐색입니다. 실제 adapter 실패의 사유와 동일 기준 fallback 재사용은 유지하며
+어느 경로도 공통 전체 조회 가속을 주장하지 않습니다.
+
+## 코드 영향과 기록 탐색의 구분
+
+일반 `CONTAINS`, `HAS_REVISION`, `DECLARES` 경로는 기록·버전을 연결합니다.
+이를 확대하는 것은 코드 영향 분석이 아닙니다. 심볼의 import·call 이웃은 기존
+`head_world_query` 또는 다음 명령으로 조회합니다.
+
+```text
+head-agent world-query <project> --query "<symbol>" --depth 3 --limit 20
+```
+
+World 기능이 제공될 때 한정된 `IMPORTS`·`CALLS`를 조회합니다. HEAD는 기존
+선택적 MCP 검색·호출 경로를 사용하므로 새 사용자 설정은 필요하지 않습니다.
+World가 없거나 관련 소스가 stale이면 현재 소스의 import·call을 직접 조사합니다.
+보존된 관계는 조사 단서이지 현재 영향의 증명이 아닙니다. 전체 World 갱신,
+새 Run, Product 검토나 DB 활성화를 조사 게이트로 만들지 않습니다.
 
 ## 독립 진행 라우팅
 
@@ -80,6 +109,12 @@ HEAD가 대화에서 typed 입력을 작성하므로 사용자가 양식을 채�
 `.head/project-direction/current.json`은 불변 revision을 참조합니다. 정확한 기준
 비교로 경합한 갱신을 조정하고 시각이나 마지막 쓰기로 의미 충돌을 해결하지 않습니다.
 동일 갱신은 기존 방향을 재사용합니다.
+
+그래프 방향 노드는 네 입력 필드를 한정된 `directionEvidence`로 표시하고
+`directionContentCoverage`에 생략·잘림을 알립니다. 요약에도 원본 경로·리비전과
+현재·과거 상태를 보존합니다. 필요하면 원본 전체 방향을 읽습니다. 부분 그래프
+사본은 전체 방향이나 P2 복구 권위가 아닙니다. 옛 제약은 과거 근거이지 현재
+공통 지시가 아닙니다.
 
 복구는 정확한 과거 checkpoint 필드와 `currentProjectDirection`을 함께 제공합니다.
 배포를 준비하던 Session을 복구했더라도 그 사이 사용자가 전체 Project 배포를

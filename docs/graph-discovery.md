@@ -23,6 +23,14 @@ and `query` from the task, with optional `anchor_ids`, `paths`, `depth`,
 `world_model_id`, `previous_result`, `include_candidates` and `session_id`.
 Bounds limit transport; they are not a task-sufficiency decision or a user form.
 
+Natural-language questions match bounded display/domain values, excluding
+authority flags and revision/provenance boilerplate. Rare matching terms help
+order results before the transport bound. This is deterministic lexical
+navigation, not semantic inference: HEAD judges relevance and missing context.
+Punctuation, identifier parts and Korean particle aliases aid lookup without
+replacing the original term. Exact paths/anchors remain available; HEAD supplies
+them when useful, rather than asking the user to write a query or scoring form.
+
 ```text
 head-agent graph-query <project> --query "<task>"
 head-agent graph-index <project>
@@ -53,6 +61,29 @@ This implementation's source/fixture tests do not establish new live ArcadeDB,
 Host lifecycle or model behavior evidence. Speed, token savings and quality
 improvements remain hypotheses until measured.
 
+Paths-only requests bind logical File anchors from the verified retained World
+to its exact snapshot for optional temporal adapter verification. With no usable
+temporal selector, browsing and Work-only anchors remain `not-used` combined-local
+navigation, not adapter failure. A genuine adapter failure retains its reason and
+same-basis fallback reuse. Neither path claims combined traversal acceleration.
+
+## Code impact versus record navigation
+
+General `CONTAINS`, `HAS_REVISION` and `DECLARES` paths connect records and
+versions; expanding them is not code-impact analysis. For a symbol's import/call
+neighbors use existing `head_world_query` or:
+
+```text
+head-agent world-query <project> --query "<symbol>" --depth 3 --limit 20
+```
+
+This bounded `IMPORTS`/`CALLS` lookup uses the World capability when available.
+HEAD accesses the optional MCP tool through its existing discover/invoke route;
+no new user setup is required. If World is absent or its relevant source is stale,
+read the affected current imports/calls directly. Retained links may guide that
+inspection but do not prove current impact. Do not make whole-World refresh,
+new Run, Product review or database activation an investigation gate.
+
 ## Route independent progress
 
 One canonical Project holds common user direction. The original Session record
@@ -81,6 +112,13 @@ HEAD supplies the typed input from the conversation; users do not fill a form.
 The pointer `.head/project-direction/current.json` references immutable revisions.
 Exact-basis comparison reconciles competing updates; timestamp and last write do
 not resolve semantic conflicts. Identical updates reuse existing direction.
+
+Graph direction nodes expose bounded `directionEvidence` for all four input
+fields and `directionContentCoverage` for omitted/truncated content. Their summary
+retains original path, revision and current/historical state. Read full direction
+from its original when needed; a partial graph excerpt is neither the complete
+direction nor P2 recovery authority. Old constraints remain historical evidence,
+not the current common instruction.
 
 Restore returns `currentProjectDirection` beside the exact historical checkpoint
 fields. Suppose a Session was preparing a deployment and the user later cancelled

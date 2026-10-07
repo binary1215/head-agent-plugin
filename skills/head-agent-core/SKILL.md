@@ -70,6 +70,19 @@ useful anchors/filters, or reuse sufficient same-basis results. Read nearby
 relations first and widen when needed. Avoid whole-graph prompt injection and
 per-turn full rescans. HEAD interprets relevance; lexical overlap is a hint.
 
+Natural questions search bounded display/domain evidence, not metadata keys.
+Exact names, paths or anchors help narrow a partial result; HEAD supplies them
+without asking the user to rewrite the task. Common direction excerpts include
+constraints, decisions and cancellations with current/historical revision labels.
+Read the original direction when the excerpt is partial or before relying on it
+for a current effect; its graph copy grants no permission.
+
+For code impact, use existing `head_world_query` / CLI `world-query` for bounded
+`IMPORTS`/`CALLS` neighbors, not general `CONTAINS`/`HAS_REVISION`/`DECLARES`
+expansion. With absent or stale World evidence, inspect affected current source
+imports/calls directly. Do not require a whole World refresh, new Run or approval
+just to investigate; retained links are hints to verify, not current impact proof.
+
 Read basis/revision, integrity, freshness, coverage, original state and provenance
 together. Work and Product are linked logical views of common original records.
 Different revisions of the same path remain distinct. Intact historical evidence
