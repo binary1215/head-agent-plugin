@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { sessionStatePath, assertRunSession } from "./session-routing.mjs";
+import { assertProjectActionsCurrent } from "./project-direction.mjs";
+import { atomicWriteArtifact, atomicCreateArtifact } from "./artifact-storage.mjs";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, createResultPacket, createReviewDecision, readLineageArtifact } from "./execution-lineage.mjs";
@@ -37,14 +40,7 @@ function completedTransitionMatches(run, state, patch) {
 }
 
 function atomicWrite(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  try {
-    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
-    fs.renameSync(temporary, file);
-  } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-  }
+  atomicWriteArtifact(file, content);
 }
 
 function readJson(file, label) {
@@ -72,7 +68,7 @@ function runFile(root, runId) {
 }
 
 function stateFile(root) {
-  return path.join(root, ".head", "sessions", "current.json");
+  return sessionStatePath(root);
 }
 
 // An explicit operation first binds its validated input to the existing P2 Run.
@@ -136,6 +132,7 @@ function pendingReviewBundle(root) {
   const projectRoot = inspected.project.projectRoot;
   const file = runFile(projectRoot, pending.runId);
   const run = readJson(file, "Run canon");
+  assertRunSession(projectRoot, run, inspected.state);
   if (run.status !== "awaiting_review" || run.resultPacketId !== pending.resultPacketId || run.wholePlanId !== pending.wholePlanId) {
     fail("Pending review state does not match Run canon.", "RUN_REVIEW_CONFLICT");
   }
@@ -167,6 +164,7 @@ function startRunLocked({ root = ".", executionContractId } = {}) {
   if (inspected.state.pendingReview) fail("The previous Result Packet requires a ReviewDecision before another Run starts.", "RUN_REVIEW_REQUIRED");
   const projectRoot = inspected.project.projectRoot;
   const contract = requireArtifact(projectRoot, executionContractId.trim(), "ExecutionContract");
+  assertProjectActionsCurrent({ root: projectRoot, actions: contract.allowedActions || [] });
   const plan = requireArtifact(projectRoot, contract.wholePlanId, "WholePlanSnapshot");
   readContextCapsule({ root: projectRoot, capsuleId: contract.capsuleId });
   const requiredPlanAction = inspected.state.requiredPlanAction;
@@ -186,6 +184,8 @@ function startRunLocked({ root = ".", executionContractId } = {}) {
   const run = {
     schemaVersion: SCHEMA_VERSION,
     runId,
+    projectId: inspected.project.projectId,
+    sessionId: inspected.state.sessionId,
     status: "active",
     goal: contract.scope,
     wholePlanId: contract.wholePlanId,
@@ -193,7 +193,7 @@ function startRunLocked({ root = ".", executionContractId } = {}) {
     executionContractId: contract.executionContractId,
     startedAt: now(),
   };
-  atomicWrite(runFile(projectRoot, runId), json(run));
+  atomicCreateArtifact(runFile(projectRoot, runId), json(run));
   const state = {
     ...inspected.state,
     mode: "run",
@@ -218,6 +218,7 @@ function finishRunLocked({ root = ".", outcome, evidence, planDelta = "", impact
   const projectRoot = inspected.project.projectRoot;
   const file = runFile(projectRoot, runId);
   let run = readJson(file, "Run canon");
+  assertRunSession(projectRoot, run, inspected.state);
   if (run.runId !== runId || !["active", "awaiting_review"].includes(run.status) || !run.executionContractId) fail("Active Run canon is not bound to an Execution Contract.", "INVALID_RUN_LINEAGE");
   if (run.sessionTransition?.kind === "review") fail("This Run already has an exact review transition; finish cannot replace it.", "RUN_TRANSITION_CONFLICT");
   if (inspected.state.currentWholePlanId !== run.wholePlanId
@@ -280,6 +281,7 @@ function reviewRunLocked({ root = ".", reviewContextId, disposition, rationale, 
   if (!runId) fail("No Result Packet is awaiting review.", "NO_PENDING_REVIEW");
   const file = runFile(projectRoot, runId);
   let run = readJson(file, "Run canon");
+  assertRunSession(projectRoot, run, inspected.state);
   const pending = inspected.state.pendingReview || { runId, wholePlanId: run.wholePlanId, resultPacketId: run.resultPacketId };
   if (run.runId !== runId || !["awaiting_review", "reviewed"].includes(run.status)
     || run.resultPacketId !== pending.resultPacketId || run.wholePlanId !== pending.wholePlanId

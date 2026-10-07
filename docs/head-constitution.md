@@ -9,9 +9,10 @@ mechanisms are subordinate to the protected outcomes.
 
 ## Normative rules
 
-1. **One logical HEAD.** A project has one canonical Project identity and one
-   current HEAD Session. Provider sessions, panes, processes, and model calls
-   are replaceable consumers.
+1. **One coherent project direction.** One canonical Project holds common user
+   direction and multiple independently routed logical HEAD Sessions. Each
+   Session preserves its own purpose, progress, active work and recovery.
+   Provider sessions, panes, processes and model calls are replaceable consumers.
 2. **Direct work is the default.** HEAD handles ordinary work coherently.
    Delegation is justified only by a bounded, independently reviewable whole
    outcome; parallelism does not create scope or authority.
@@ -35,9 +36,10 @@ mechanisms are subordinate to the protected outcomes.
 
 The public initialization transaction has two profiles:
 
-- `core` is the default. It creates or resumes the fixed Project/Session
-  anchors and managed provider projections. Product, World Model, Graph, and
-  document machinery remains dormant.
+- `core` is the default. It preserves Project/Session anchors and provider
+  projections and indexes eligible existing observations for graph discovery.
+  Product inference, Canon promotion, whole-World construction and governed
+  documents remain optional.
 - `product` explicitly starts or resumes evidence-linked onboarding and the
   review-gated Product/World/Graph path.
 
@@ -60,7 +62,7 @@ it does not become the record of authority.
 | Concern | Durable owner | Graph or document role |
 | --- | --- | --- |
 | approved product meaning | Product Model revision + ReviewDecision | projection and audit trail |
-| current direction | Session/Run pointers + checkpoint | referenced recovery view |
+| common direction and independent progress | ProjectDirection + selected Session/Run pointers + checkpoint | referenced recovery view |
 | execution outcome | ResultPacket + review lineage | evidence traversal |
 | repository observation | SourceSnapshot and immutable revisions | bounded discovery |
 | host effect | lease, PID, endpoint, delivery receipt | operational evidence only |
@@ -75,9 +77,31 @@ host effect.
 Compaction is a four-step protocol: prepare an immutable checkpoint, compact in
 the provider, verify the resulting context against trusted real-user-turn
 evidence, and consume one continuation token. The fixed recovery anchors remain
-`.head/project.json`, `.head/sessions/current.json`, and the exact checkpoint
-referenced by the Session. Provider summaries are never promoted into those
-anchors. A newer user turn supersedes the prepared continuation.
+`.head/project.json`, the selected logical Session record, and its exact
+checkpoint. `.head/sessions/current.json` remains the default Session record;
+other Sessions use `.head/sessions/by-id/<session-id>/current.json` without
+switching that default. Read current common ProjectDirection alongside restore:
+older checkpoint fields stay exact, but cannot undo newer shared constraints or
+cancelled actions. Provider summaries are never promoted into these anchors.
+A newer user turn supersedes the prepared continuation.
+
+## Graph-first discovery and execution choice
+
+New project information starts with bounded graph discovery or sufficient
+same-basis reuse. HEAD work and Product are logical views of common originals.
+Queries retain revision, provenance, coverage and original candidate/rejection
+state, including intact historical evidence. Absence or failed coverage calls
+for original-source fallback, not a general readiness gate. Full World currentness,
+Product approval, indexing completion, Run/Capsule and a database connection are
+not prerequisites for ordinary exploration. Damaged layers are excluded separately;
+effects recheck current sources and authority.
+
+Direct work, ordinary Host delegation and managed execution serve the needed
+outcome. Managed work is useful for durable ownership, interruption recovery or
+uncertain/duplicate effects; edits, worker count or ordinary failure do not force
+it. Fork/fresh is a separate context choice and does not grant approval,
+isolation or cache guarantees. Preserve completed contributions and reconcile
+unknown effects before replacement while independent work continues.
 
 ## Conformance test
 

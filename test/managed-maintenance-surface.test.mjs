@@ -50,10 +50,15 @@ test("small default discovery keeps all optional contracts discoverable and mana
   const ordinary = (await dispatch({ id: 1, method: "tools/list" })).result.tools;
   const retained = (await dispatch({ id: 2, method: "tools/list" }, { surface: "managed-maintenance" })).result.tools;
   assert.deepEqual(ordinary, tools); assert.deepEqual(retained, toolsForSurface("managed-maintenance"));
-  assert.equal(ordinary.length, 16); assert.equal(retained.length, 131);
+  assert.equal(ordinary.length, 17);
   assert(catalogTools.some(tool => tool.name === "head_onboarding_candidate_restore"));
   const routers = new Set(["head_tools_discover", "head_tools_read", "head_tools_call"]);
-  assert.deepEqual(retained.filter(tool => !routers.has(tool.name) && !catalogTools.some(item => item.name === tool.name)).map(tool => tool.name).sort(), mutations.map(pair => pair[1]).filter(Boolean).sort());
+  assert.deepEqual(retained.filter(tool => !routers.has(tool.name)).map(tool => tool.name).sort(), catalogTools.map(tool => tool.name).sort());
+  for (const [, name] of mutations) if (name) {
+    const discovered = (await dispatch(request("head_tools_discover", { name }))).result.structuredContent.tools[0];
+    assert.equal(discovered.executionMode, "managed");
+    assert.equal(discovered.invokeWith, "head_tools_call");
+  }
   for (const name of ["head_bounded_worker_status", "head_bounded_worker_wait", "head_bounded_worker_job_status", "head_bounded_worker_job_patch", "head_bounded_worker_cancel", "head_worker_integration_status", "head_bounded_worker_wave_read", "head_bounded_worker_wave_status", "head_bounded_worker_wave_results", "head_bounded_worker_wave_wait", "head_context_preview", "head_world_model", "head_conversation_enter"]) {
     assert(catalogTools.some(tool => tool.name === name), name);
     const found = await dispatch(request("head_tools_discover", { name }));

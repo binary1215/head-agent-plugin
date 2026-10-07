@@ -12,6 +12,9 @@
   -> .mcp.json                    read-only inspection surface
   -> scripts/head.mjs             explicit mutation entrypoint
        -> scripts/lib/head-core   project canon and projections
+       -> scripts/lib/session-routing independent logical Session routing
+       -> scripts/lib/project-direction common current user direction
+       -> scripts/lib/project-graph bounded graph-first discovery
        -> scripts/lib/context-compiler
                                   versioned task Context Capsules
        -> scripts/lib/execution-lineage
@@ -38,7 +41,7 @@ Claude Code, Codex 및 OpenCode는 동일한 `.head/` 권한의 프로젝션입�
 
 안정적인 규범적 기반은 [`head-constitution.md`](head-constitution.md)에 있는 작은 공급자 중립적 HEAD 헌법입니다. P1-P5는 강제 가능한 내부 타입 시스템이지, 사용자가 반드시 거쳐야 하는 의식이 아닙니다. 공개 초기화/재개 트랜잭션은 별도의 프로젝트 ID를 만들지 않고 두 가지 프로필을 노출합니다.
 
-- `core`가 기본값이며 정식 Project, 현재 Session, 관리되는 런타임 프로젝션 및 휴면 상태인 선택적 상태 포인터만 설정합니다.
+- `core`가 기본값이며 정식 Project, 선택된 논리 Session, 공급자 투영과 적격한 기존 관측 색인을 보존합니다.
 - `product`는 증거가 연결된 온보딩과 Product/World/Graph 거버넌스 경로를 명시적으로 활성화하거나 재개합니다.
 
 두 프로필은 동일한 Core 트랜잭션, Project ID, Session ID, 관리형 설치 수렴 및 권한 계약을 사용합니다. Core 재개는 이미 활성화된 Product 프로필을 삭제하거나 자동으로 새로 고치지 않습니다. `product`를 명시적으로 선택하지 않으면 온보딩 입력은 거부됩니다. 공급자 어댑터가 서로 다른 선택적 기능을 노출할 수는 있지만, 어느 어댑터도 이러한 의미 체계를 재정의할 수 없습니다.
@@ -68,9 +71,41 @@ continuation보다 P2를 먼저 복원합니다. Adapter는 provider-session ide
 없습니다. Adapter 부재는 project-readiness failure가 아니라 일반 작업을 막지
 않는 capability gap입니다.
 
+## 공통 방향, Session과 탐색
+
+하나의 정식 Project에 현재 공통 사용자 방향과 독립적으로 라우팅되는 Session이
+있습니다. 각 Session은 목적, 진행, 체크포인트와 활성·불명 작업을 보존합니다.
+요청별 routing은 `.head/sessions/current.json`을 기본 기록으로 유지하며 다른
+Session은 `.head/sessions/by-id/<session-id>/current.json`을 사용합니다.
+논리 Session ID는 공급자 session ID가 아닙니다. 프로젝트 범위 온보딩의 기존
+검토 계보도 유지합니다.
+
+`ProjectDirection`은 P2 현재 사용자 방향으로, 불변 revision과
+`.head/project-direction/current.json` 포인터에 저장합니다. 정확한 기준의
+compare-and-swap으로 경합한 쓰기가 시각이나 마지막 쓰기만으로 덮어쓰지 못하게
+합니다. 과거 checkpoint 필드는 그대로 보존하고 현재 공통 방향을 별도로
+제공하므로 더 최신인 공통 제약이나 취소된 작업을 되돌리지 않습니다.
+방향 기록 자체가 실행 authorization을 부여하지도 않습니다.
+
+`head_project_graph`는 제한된 P4 관측 색인과 선택적 보존 World 층을 조회합니다.
+작업과 Product 관점은 공통 원본을 참조합니다. 관계 확장에서도 리비전·기준,
+무결성, 최신성, 확인 범위, 출처와 원래 후보·거절 상태를 유지합니다.
+온전한 과거 자료는 읽을 수 있고 손상된 층만 제외합니다. 빈 결과나 부분 범위는
+사실 부재를 뜻하지 않습니다. 동일 기준의 결과와 알려진 실패를 재사용하고
+그래프·adapter 손실 시 원본으로 진행합니다. 전체 World current, Product 검토,
+Run/Capsule, 색인 완료나 DB는 일반 탐색의 gate가 아닙니다. 변경 없는 색인을
+재사용하며 조회는 체크포인트, 승인, 후보나 매번의 receipt를 만들지 않습니다.
+실제 효과는 현재 원본과 권한을 다시 확인합니다.
+[탐색 참고 문서](../../skills/head-agent-core/references/project-discovery.md)를 참고하세요.
+
+직접 작업, 일반 Host 위임과 관리형 실행은 수단 선택입니다. 새로운 유용한
+복구·효과 추적 작업에 관리형을 선택할 수 있지만 파일 수정, worker 수나 일반
+실패만으로 강제하지 않습니다. Fork/fresh는 별도 맥락 선택이며 승인, 격리나
+cache를 보장하지 않습니다.
+
 ## 온보딩 authority plane
 
-초기화는 공급자 대화와 독립적으로 프로젝트 범위의 HEAD Session 레코드와 휴면 온보딩 포인터를 생성합니다. 명시적인 `product` 프로필만 로컬 World Model을 인덱싱합니다. 구조화된 user brief는 candidate를 직접 seed할 수 있고, 그 외에는 fresh provider HEAD가 현재 evidence에서 bounded semantic proposal을 작성합니다. JavaScript Core는 정확한 SourceSnapshot, path, digest, line, optional symbol, Product Model reference와 bound를 검증한 뒤 하나의 immutable batch를 제시합니다. Core는 lexical product inference를 하지 않으며 proposal에는 지시 또는 승격 권한이 없습니다.
+초기화는 공급자 대화와 독립적인 기본 Session과 온보딩 포인터를 보존하고 경량 기존 관측 색인을 갱신합니다. 명시적인 `product` 범위에서만 관리되는 로컬 World Model을 구성합니다. 구조화된 user brief는 candidate를 직접 seed할 수 있고, 그 외에는 fresh provider HEAD가 현재 evidence에서 bounded semantic proposal을 작성합니다. JavaScript Core는 정확한 SourceSnapshot, path, digest, line, optional symbol, Product Model reference와 bound를 검증한 뒤 하나의 immutable batch를 제시합니다. Core는 lexical product inference를 하지 않으며 proposal에는 지시 또는 승격 권한이 없습니다.
 
 CLI로 제공되고 `decisionScope: product-canon-bootstrap`이 지정된 `ReviewDecision`만 Product Canon revision을 생성할 수 있습니다. 수락 시 이전 및 다음 Product Model 해시를 기록하고, 자식 SourceSnapshot을 재구축하며, 상태 포인터가 준비 상태가 되기 전에 temporal GraphSnapshot을 검증합니다. revision은 후속 후보 집합을 생성하고, 거부 시 Canon은 변경되지 않습니다. 불변 candidate, Evidence, Unknown, ReviewDecision 및 ProductModelRevision 영수증은 감사를 위해 그래프에 프로젝션되지만, 프로젝션 자체는 결정하거나 승격할 수 없습니다. 읽기 전용 MCP는 검증된 상태와 범위가 한정된 그래프 순회를 노출하지만 검토하거나 승격할 수 없습니다.
 

@@ -6,7 +6,9 @@ description: Explicitly activate or resume optional HEAD Product, World, Graph, 
 # HEAD Agent conversational onboarding
 
 This skill is the explicit Product/World governance path, not the generic setup
-path. If "onboard" merely means installing HEAD or starting ordinary work,
+path. Graph-first discovery of existing observations is available through the Core
+Skill without activating Product governance or constructing a full World. If
+"onboard" merely means installing HEAD or starting ordinary work,
 stop here and use the general `head-agent-core` skill with `profile: "core"`.
 Enter this skill only when the user asks for reviewed Product meaning, World or
 Graph construction, governed document projections, or equivalent protected
@@ -37,7 +39,9 @@ tool calls remain available to hosts that expose them.
    project needs a structured brief. GraphDB selection needs endpoint, database,
    and environment variable reference names—never credential values.
 4. Call `head_project_initialize_or_resume` with `profile: "product"`. Re-entry must resume the same HEAD
-   Project and Session rather than inventing new identities.
+   Project and default/selected logical Session rather than inventing identities.
+   Project-scoped review lineage remains intact across independently routed
+   Sessions; a new Session does not require re-onboarding.
 5. Call `head_onboarding_guide` again and follow its `nextAction`.
 
 Installation or initialization must not contact GraphDB. The optional remote
@@ -51,8 +55,10 @@ symbol names, paths, README headings, or lexical overlap into product concepts.
 
 1. Use the exact `sourceSnapshotId` returned by
    `head_project_initialize_or_resume` or `head_onboarding_status`.
-2. Inspect bounded current repository evidence with the host's normal read and
-   search tools. Reason about user-visible behavior, policy, constraints, and
+2. Query `head_project_graph` first or reuse sufficient same-basis results, then
+   inspect needed current repository originals with normal read/search tools.
+   Historical discovery helps investigation but cannot replace the proposal's
+   exact current source binding. Reason about user-visible behavior, policy, constraints, and
    product structure; do not mirror helper/function names into Features.
 3. Author one typed `semantic_proposal` whose candidates use the Product Model
    entity schema. Each candidate needs 1–8 citations with an exact

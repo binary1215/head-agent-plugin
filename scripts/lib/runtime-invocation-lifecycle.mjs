@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { assertProjectActionsCurrent, readProjectDirection, assertAuthorizationProjectDirection } from "./project-direction.mjs";
+import { assertRunSession } from "./session-routing.mjs";
 import { spawn } from "node:child_process";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule, requireCoveredContextCapsule } from "./context-compiler.mjs";
@@ -240,6 +242,7 @@ function runCanon(projectRoot, runId) {
   const file = path.join(projectRoot, ".head", "sessions", "runs", runId, "run.json");
   if (!fs.existsSync(file)) fail(`Active Run canon is missing: ${runId}.`, "RUNTIME_INVOCATION_RUN_MISSING");
   const run = readJson(file, "Run canon");
+  assertRunSession(projectRoot, run, inspectProject(projectRoot).state);
   if (run.runId !== runId || run.status !== "active") fail("Runtime invocation requires the exact active Run canon.", "RUNTIME_INVOCATION_RUN_NOT_ACTIVE");
   // startRun creates no transition. An active Run with a prepared finish has
   // already frozen its result, even if its Session pointer has not committed.
@@ -500,6 +503,7 @@ export function buildRuntimeInvocationAuthorization({
       fail("Active Run, ExecutionContract, WholePlanSnapshot, and ContextCapsule do not compose.", "RUNTIME_INVOCATION_LINEAGE_CONFLICT");
     }
     const allowed = new Set(contract.allowedActions || []);
+    assertProjectActionsCurrent({ root: projectRoot, actions: contract.allowedActions || [] });
     const forbidden = new Set(contract.forbiddenActions || []);
     if (requiredActions.some((action) => !allowed.has(action)) || requiredActions.some((action) => forbidden.has(action))) {
       fail(`ExecutionContract must allow ${requiredActions.join(" and ")} and must not forbid either action.`, "RUNTIME_INVOCATION_NOT_AUTHORIZED");
@@ -568,11 +572,16 @@ export function buildRuntimeInvocationAuthorization({
     }
     input = attachWorkerInput(input, workerInput);
   }
+  const currentProjectDirection = readProjectDirection({ root: projectRoot });
+  if (currentProjectDirection) input = { ...input, currentProjectDirection };
   const inputBytes = Buffer.byteLength(canonicalJson(input));
   if (inputBytes > normalizedLimits.maxInputBytes) fail("Runtime execution input exceeds the accepted input bound.", "RUNTIME_INVOCATION_INPUT_LIMIT");
   const payload = {
     schemaVersion: 1,
     kind: "ExecutionAuthorization",
+    // Absence is not a new direction or grant. Keep the original payload/ID so
+    // an already-consumed authorization cannot be replayed under a null field.
+    ...(currentProjectDirection ? { currentProjectDirectionId: currentProjectDirection.directionId } : {}),
     protocolVersion: workerInput?.proposalBasis ? PROPOSAL_WORKER_EXECUTION_AUTHORIZATION_VERSION : workerInput?.writeBasis ? WRITE_BOUND_WORKER_EXECUTION_AUTHORIZATION_VERSION : workerInput?.executionBoundary ? BOUND_WORKER_EXECUTION_AUTHORIZATION_VERSION : workerInput ? WORKER_EXECUTION_AUTHORIZATION_VERSION : RUNTIME_INVOCATION_AUTHORIZATION_VERSION,
     ...(workerInput ? { workerInput } : {}),
     projectId: inspected.project.projectId,
@@ -643,6 +652,7 @@ export function verifyRuntimeInvocationAuthorization(document) {
     "projectRootDigest", "runtimeProjectBindingId", "runtimeProtocolEvidenceId", "runtimeProtocolObservationId",
     "executionInput", "limits", "authorizationBoundary", "authority", "instructionAuthority", "promotionAuthority",
     "mutatesCanon", "authorizationId", "authorizationHash", ...(legacyAuthorization ? [] : ["runtimeSelection"]),
+    ...(Object.hasOwn(document || {}, "currentProjectDirectionId") ? ["currentProjectDirectionId"] : []),
     ...(workerAuthorization ? ["workerInput"] : []),
   ], "Runtime invocation authorization");
   assertFields(document.scope, [
@@ -658,6 +668,8 @@ export function verifyRuntimeInvocationAuthorization(document) {
     "executionLeaseActivated", "providerControlEnabled",
   ], "Runtime invocation authorization boundary");
   const runtime = normalizeRuntime(document.runtime);
+  if (Object.hasOwn(document, "currentProjectDirectionId") && document.currentProjectDirectionId !== null
+    && !/^direction-[a-f0-9]{24}$/.test(document.currentProjectDirectionId || "")) fail("Invalid common Project direction basis.", "INVALID_RUNTIME_INVOCATION_AUTHORIZATION");
   const workspaceMode = normalizeWorkspaceMode(document.workspaceMode);
   const runtimeSelection = legacyAuthorization ? { model: null } : normalizeRuntimeSelection(document.runtimeSelection);
   const expectedActions = [REQUIRED_INVOKE_ACTION, WORKSPACE_ACTION[workspaceMode]];
@@ -815,6 +827,8 @@ function prepareRuntimeInvocationInput({ root = ".", authorization, sessionReque
   }
   const projectRoot = inspected.project.projectRoot;
   if (digest(realRoot(projectRoot)) !== verified.projectRootDigest) fail("Runtime invocation project root changed after authorization.", "RUNTIME_INVOCATION_PROJECT_DRIFT");
+  const currentProjectDirection = assertAuthorizationProjectDirection(projectRoot, verified);
+  assertProjectActionsCurrent({ root: projectRoot, actions: verified.requiredAllowedActions });
   if (verified.workerInput) {
     requireCurrentWorkerMember(projectRoot, verified);
     if (verifyCurrentSources) {
@@ -829,6 +843,7 @@ function prepareRuntimeInvocationInput({ root = ".", authorization, sessionReque
   if (verified.scope.kind === "run") {
     const run = runCanon(projectRoot, verified.scope.runId);
     const contract = lineage(projectRoot, verified.scope.executionContractId, "ExecutionContract");
+    assertProjectActionsCurrent({ root: projectRoot, actions: contract.allowedActions || [] });
     const plan = lineage(projectRoot, verified.scope.wholePlanId, "WholePlanSnapshot");
     const capsule = readContextCapsule({ root: projectRoot, capsuleId: verified.scope.contextCapsuleId }).capsule;
     if (run.executionContractId !== contract.executionContractId || run.wholePlanId !== plan.wholePlanId
@@ -847,6 +862,7 @@ function prepareRuntimeInvocationInput({ root = ".", authorization, sessionReque
     executionInput = sessionInvocationInput({ request, capsule, requiredActions: verified.requiredAllowedActions });
   }
   executionInput = attachWorkerInput(executionInput, verified.workerInput);
+  if (currentProjectDirection) executionInput = { ...executionInput, currentProjectDirection };
   const input = Buffer.from(canonicalJson(executionInput), "utf8");
   if (input.length !== verified.executionInput.bytes || digest(input) !== verified.executionInput.digest) {
     fail("Runtime execution input changed after authorization.", "RUNTIME_INVOCATION_INPUT_DRIFT");

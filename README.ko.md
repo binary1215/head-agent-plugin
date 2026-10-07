@@ -166,6 +166,15 @@ AI와 함께 개발하는 제품의 일관성을 유지해야 하는 사람을 �
 
 ## 일반 사용자는 어떻게 사용하나요?
 
+### 대화는 독립적으로, 방향은 함께 유지합니다
+
+사용자는 할 일을 말하면 됩니다. HEAD는 독립 작업을 별도 논리 Session으로
+라우팅하면서 공통 Project 목표와 제약을 유지합니다. 각 Session은 진행과 복구를
+보존하므로 새 대화가 다른 작업을 대체하지 않습니다. 공통 배포 취소는 과거
+Session을 복구해도 유효합니다. HEAD가 요청에서 routing과 현재 방향을 처리하며
+사용자가 ID를 관리하거나 방향 양식을 채울 필요가 없습니다.
+[그래프 탐색과 독립 Session](docs/ko/graph-discovery.md)을 참고하세요.
+
 HEAD Agent Core는 한 번 설치한 뒤 Codex, Claude Code 또는 연동한 OpenCode에서
 프로젝트를 열고 평소처럼 자연어로 요청하면 됩니다. HEAD를 별도 프로그램처럼
 조작할 필요는 없습니다.
@@ -214,16 +223,18 @@ fresh 맥락을 사용합니다. 사용자가 워커 원장을 설정하거나 I
 중첩 변경은 재실행 전에 조사합니다. 독립 작업은 계속할 수 있고 별도 워커 설정이나
 추가 승인 절차를 요구하지 않습니다.
 
-기존 관리형 작업의 기록·상태 조회와 정확한 소유 취소는 유지합니다. 관리형 변경
-API는 [명시적인 유지관리 진입](docs/ko/worker-context-integration.md)에 보존하며,
-일반 작업 방법이나 실패 시 대안으로 자동 추천하지 않습니다. 원래의 권한·효과
-검사는 그대로 적용됩니다. Run은 위험과 복구 요구이지 모든 위임을 관리형으로
+관리형 작업의 기록·상태 조회와 정확한 소유 취소는 유지합니다. 중단 복구,
+지속 소유권이나 불명·중복 효과 관리가 필요하면 새 작업에도
+[명시적 관리형 실행](skills/head-agent-core/references/runtime-composition.md#explicit-managed-execution)을
+사용합니다. 원래의 권한·효과 검사는 유지하며 파일 수정, worker 수나 일반 실패만으로
+관리형을 강제하지 않습니다. Run은 위험과 복구 요구이지 모든 위임을 관리형으로
 실행하라는 뜻이 아닙니다.
 
 HEAD는 프로젝트 상태를 확인하거나 재개하고, 작업에 맞는 가장 가벼운 안전 경로를
 선택하며, 필요한 경우에만 지속 가능한 컨텍스트나 복구 기록을 준비합니다. 일반
-작업은 저장소를 직접 살펴보며 진행할 수 있고, Product·World·Graph와 장기 Run은
-필수 초기 설정이 아니라 실제 작업에 필요할 때만 사용하는 선택 기능입니다.
+작업은 가까운 그래프 관계를 먼저 조회하거나 충분한 동일 기준 결과를 재사용하고
+필요한 원본을 확인합니다. Product 관리, 전체 World 구성, DB와 장기 Run은
+필수 초기 설정이 아니라 실제 작업에 필요한 선택 기능입니다.
 
 사용자는 구조화 JSON을 작성하거나, 토큰 예산을 고르거나, graph·session ID를
 찾거나, GraphDB를 조작하거나, Observe·Session·Run 단계를 선택하거나, 어떤 CLI나
@@ -341,8 +352,9 @@ head-agent doctor /path/to/project
 head-agent init C:\path\to\project --runtime claude,codex,opencode
 ```
 
-이 경로는 저장소를 인덱싱하거나 Product, World Model, Graph, 문서 거버넌스를
-시작하지 않고 `core_ready`를 반환합니다. 같은 범위 제한 상태는 언제든 확인할
+이 경로는 ID를 보존하고 가능한 기존 관측 자료의 경량 색인을 갱신하면서
+`core_ready`를 반환합니다. 제품 의미 추론, 관리 World 구성과 문서 거버넌스는
+선택 사항으로 남습니다. 같은 범위 제한 상태는 언제든 확인할
 수 있습니다.
 
 ```powershell
@@ -356,7 +368,7 @@ head-agent status C:\path\to\project
 `readiness.product`, `readiness.context`를 분리하고, 지금 수행할
 `nextAction` 하나와 실제 선행조건이 붙은 선택 기능 목록을 보여줍니다. 예를
 들어 Product는 `available-not-activated`, bounded worker는
-기존 관리형 작업에는 `requires-session-or-run-authorization`으로 표시됩니다.
+관리형 작업에는 `requires-session-or-run-authorization`으로 표시됩니다.
 일반 독립 검토에는 현재 Host의 위임을 쓰며 워커 수만으로 Run을 요구하지 않습니다. 이 결과는 저장되지 않는
 자문용 투영입니다. 읽는 것만으로 Product 활성화, Run 생성, 권한 부여 또는
 드리프트 복구가 일어나지 않습니다. `profile`도 숨은 프로젝트 모드가 아니라
@@ -490,6 +502,7 @@ head-agent onboarding-candidates C:\path\to\project `
 
 ```powershell
 head-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
+head-agent graph-query C:\path\to\project --query "<task>"
 head-agent world-status C:\path\to\project
 head-agent context-preview C:\path\to\project `
   --task "검토된 Feature 하나의 구현 증거 찾기" --budget 32768
@@ -666,6 +679,16 @@ Git ref 및 배포 배관은 [Release observation](docs/ko/release-observation.m
 
 ## 그래프와 기록
 
+새 프로젝트 정보는 `head_project_graph`의 제한된 관계 조회 또는 충분한 동일
+기준 결과 재사용으로 찾습니다. 작업과 Product 관점은 공통 원본을 참조하고,
+온전한 과거 자료의 리비전, 출처, 확인 범위와 후보·거절 상태도 유지합니다.
+없거나 실패한 층은 원본 탐색으로 보완하며 전체 World current, Product 승인,
+Run/Capsule이나 ArcadeDB를 시작 조건으로 삼지 않습니다. 부분 결과가 비어 있어도
+사실 부재로 단정하지 않습니다. 실제 효과는 현재 원본과 권한을 다시 확인하며
+조회마다 새 artifact를 만들지 않습니다.
+[그래프 탐색과 독립 Session](docs/ko/graph-discovery.md)을 참고하세요.
+
+
 `GraphSnapshot`은 검증된 하나의 Repository World Model에 포함된 변경 불가능한
 콘텐츠 주소 기반 증거 그래프입니다. 그래프 UI의 스크린샷, 데이터베이스
 백업, 변경 가능한 최신 노드 집합이 아닙니다. 동일한 검증 입력은 동일한
@@ -687,8 +710,8 @@ flowchart LR
 ```
 
 원시 프롬프트는 이 그래프 밖에 남습니다. 제품 의미는 검토된 Canon
-아티팩트를 통해서만 들어옵니다. 후보 노드는 명시적으로 검사할 수 있지만
-기본 탐색과 Context 컴파일에서는 제외됩니다.
+아티팩트를 통해서만 들어옵니다. 일반 탐색은 후보·거절 기록의 원래 상태를
+표시하면서 읽을 수 있으며 Canon Context 컴파일에서 승격하지 않습니다.
 
 공통 Observation의 정확한 descriptor·receipt·derivation 계보도 동일한 temporal
 graph에 들어갑니다. ProductHypothesis는 정확한 Observation을 가리킬 수 있지만,
@@ -856,7 +879,8 @@ HEAD는 정확히 승인된 `provider/model`과 일시적인 권한·개인정�
 | 영역 | 기능 | 상태 |
 | --- | --- | --- |
 | 프로젝트 | 초기화, Source Scope, 검토를 거치는 Product Canon | **사용 가능** |
-| 지식 | World Model, 증분 갱신, Context Capsule | **사용 가능** |
+| 지식 | 원본 fallback을 갖는 제한된 그래프 우선 탐색, World Model, 증분 갱신, 선택적 Context Capsule | **사용 가능** |
+| Session | 독립 논리 Session 라우팅, 공통 현재 방향과 정확한 기준의 갱신 | **사용 가능** |
 | 계보 | Run, ResultPacket, Fresh HEAD 검토, P2 Session 및 대화 진입 복구 | **사용 가능** |
 | Host lifecycle | 공급자 중립 주입형 compaction 계약 | **실험적** |
 | Host lifecycle | 패키지에 연결된 Claude Code, Codex, OpenCode compaction event binding | **보류됨** |

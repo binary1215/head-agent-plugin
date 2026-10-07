@@ -17,14 +17,34 @@ a HEAD Project, use this sequence:
 2. call `head_conversation_enter` automatically;
 3. read its composed project status, recovery readiness, Attention, version,
    and presentation policy;
-4. use the verified restored direction when one exists;
+4. use verified Session recovery with current common direction when available;
 5. judge the needed persistence and risk directly, without a recommendation API;
 6. continue the original task in the same turn unless a real authority, scope,
    integrity, or destructive-action boundary needs the user.
 
 Do not initialize an uninitialized repository merely because an ordinary coding
-request happens to match this Skill. Product, World, Graph, durable Run, worker,
-and provider capabilities remain optional.
+request happens to match this Skill. Product governance, governed World construction, durable Run, managed workers
+and provider execution remain optional; bounded graph discovery can use existing
+observations without activating those capabilities.
+
+## Graph-first information and Session continuity
+
+Keep the task in ordinary language. Query `head_project_graph` before seeking new
+project information, or reuse a sufficient same-basis result. Widen nearby
+relations only when needed. Read original basis, revision, coverage and
+candidate/rejection state, including intact history; absence under partial
+coverage is not absence of facts. A known same-basis adapter failure is reusable
+information, not a reason to repeat the call. Continue from original sources
+when the graph is absent or a layer fails. Whole World currentness, Product
+approval, Run/Capsule and DB connectivity do not gate ordinary exploration.
+Before an effect, check the actual current sources and authority separately.
+
+Use independent logical Sessions when work needs separate progress/recovery,
+route each request without switching the default Session, and keep common goal,
+constraints and cancellations visible. A restored earlier deploy step cannot
+undo the common cancellation. Do not make the user maintain session IDs or
+repeat the task. A Session-specific scope change does not automatically redirect
+another Session.
 
 ## Direct work and ordinary delegation
 
@@ -43,9 +63,11 @@ job label does not invalidate otherwise verified ordinary Host work. Report the
 combined outcome and limitations without requiring a new approval click, except
 at an actual protected transition or existing active Run contract.
 
-Do not suggest managed maintenance as a fallback. It exists separately for
-explicitly settling retained managed work with all original checks. Existing
-history/status and exact owned cancellation remain ordinary diagnostics.
+Use managed execution for a useful durable recovery/effect-tracking outcome,
+including new work, with all original checks. Ordinary failure, file edits or
+worker count alone do not require it. HEAD supplies the explicit managed route
+without another user choice or approval. History/status and exact owned
+cancellation remain ordinary diagnostics.
 
 ## Waiting and resumption
 

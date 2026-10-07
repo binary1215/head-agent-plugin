@@ -1864,7 +1864,54 @@ const allTools = [
   },
 ];
 
+allTools.push(
+  {
+    name: "head_project_graph",
+    description: "Find project evidence through a bounded graph first. Verified historical records keep their original revision and candidate/rejection state. Missing/partial/failed graph or DB returns source fallback; no Product approval, current whole World, Run or Capsule prerequisite. Results never authorize effects or replace current user direction.",
+    inputSchema: { type: "object", properties: {
+      project_root: { type: "string", minLength: 1 }, query: { type: "string", default: "" },
+      view: { type: "string", enum: ["all", "work", "product"], default: "all" },
+      anchor_ids: { type: "array", items: { type: "string" }, maxItems: 32 },
+      paths: { type: "array", items: { type: "string" } }, depth: { type: "integer", minimum: 0, maximum: 8, default: 1 },
+      max_nodes: { type: "integer", minimum: 1, maximum: 500, default: 60 }, max_edges: { type: "integer", minimum: 0, maximum: 1000, default: 120 },
+      world_model_id: { type: "string" }, include_candidates: { type: "boolean", default: true },
+      previous_result: { type: "object", description: "Optional prior verified result for identical-basis reuse, supplied by HEAD." },
+    }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: "head_project_graph_index", description: "Refresh the replaceable graph inventory from existing verified records and observations. Reuse unchanged inputs; no Product approval, execution, checkpoint or semantic inference.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_session_create", description: "Create or reuse an independent logical HEAD Session within the canonical Project. Preserve the default Session and every existing active/unknown operation. HEAD chooses the route; users need no ID form.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, purpose: { type: "string" }, new_session_id: { type: "string" } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "head_session_list", description: "Read logical HEAD Sessions and their independent progress without switching the default or granting effect authority.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_project_direction_read", description: "Read the current common user-directed goal, constraints and cancellation across Sessions. Historical graphs/checkpoints cannot override it.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_project_direction_update", description: "Record a current user direction against the exact common-direction basis; identical retry reuses it. HEAD conveys the user's scoped decision. Observed evidence, projected approval and model consensus cannot author direction or grant deployment/Canon authority.",
+    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, expected_direction_id: { type: ["string", "null"] },
+      direction: { type: "object", properties: { goal: { type: "string" }, constraints: { type: "array", items: { type: "string" } }, decisions: { type: "array", items: { type: "string" } }, cancelledActions: { type: "array", items: { type: "string" } } }, required: ["goal", "constraints", "decisions", "cancelledActions"], additionalProperties: false },
+    }, required: ["project_root", "expected_direction_id", "direction"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+);
+
 for (const tool of allTools) {
+  if (tool.inputSchema?.properties?.project_root) {
+    tool.inputSchema.properties.session_id = { type: "string", description: "Optional logical HEAD Session route, selected by HEAD/Host. Omit for the existing default. Never a provider session ID." };
+  }
   if (tool.annotations?.readOnlyHint === undefined && Object.hasOwn(supplementalReadOnlyHints, tool.name)) {
     tool.annotations = { ...tool.annotations, readOnlyHint: supplementalReadOnlyHints[tool.name] };
   }
@@ -1873,7 +1920,7 @@ for (const tool of allTools) {
 // Stateless discovery, not a registration store or permission/activation system.
 const compatibilityTools = new Set(["head_operating_lane_recommend", "head_product_note"]);
 const defaultToolNames = new Set([
-  "head_core_contract", "head_project_initialize_or_resume", "head_conversation_enter",
+  "head_core_contract", "head_project_initialize_or_resume", "head_conversation_enter", "head_project_graph",
   "head_project_status", "head_checkpoint_diagnose", "head_checkpoint_basis",
   "head_checkpoint_sync", "head_session_restore", "head_pending_review",
   "head_runtime_invocation_lease_status", "head_bounded_worker_job_status",
@@ -1906,12 +1953,14 @@ const discoveryTools = [
   {
     name: "head_tools_call",
     description: "Call a discovered HEAD operation using its exact inputSchema within existing user scope. Original authority, current-basis, ownership, replay and maintenance checks still apply. Discovery grants no authorization. Prefer head_tools_read for read-only operations.",
-    inputSchema: routedInputSchema,
+    inputSchema: { ...routedInputSchema, properties: { ...routedInputSchema.properties,
+      execution_mode: { type: "string", enum: ["ordinary", "managed"], default: "ordinary", description: "HEAD selects managed only for needed durable ownership/recovery/effect guarantees. It grants no new authorization." },
+    } },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
 ];
 // Complete ordinary schemas for programmatic consumers; tools/list stays small.
-export const catalogTools = allTools.filter(tool => !isManagedMutation(tool.name) && !compatibilityTools.has(tool.name));
+export const catalogTools = allTools.filter(tool => !compatibilityTools.has(tool.name));
 export function toolsForSurface(surface = "ordinary") {
   requireSurface(surface);
   return [...allTools.filter(tool => surface === "managed-maintenance"
@@ -1924,9 +1973,10 @@ export function discoverTools({ name, prefix, offset = 0, limit = 8 } = {}, surf
   if ((name != null && typeof name !== "string") || (prefix != null && typeof prefix !== "string")
       || (name != null && prefix != null) || !Number.isInteger(offset) || offset < 0
       || !Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error("Invalid tool discovery selector or page.");
-  const available = allTools.filter(tool => surface === "managed-maintenance" || !isManagedMutation(tool.name));
+  const available = allTools;
   const scope = { surface, persisted: false, grantsAuthorization: false,
-    maintenanceEntry: "scripts/mcp-managed-maintenance.mjs (retained managed work only; original checks apply)" };
+    managedEntry: "head_tools_call with execution_mode: managed; original authorization, scope, lease and result checks apply",
+    maintenanceEntry: "scripts/mcp-managed-maintenance.mjs (same managed execution contract; retained reader supported)" };
   if (name == null && prefix == null) {
     const counts = new Map();
     for (const tool of available.filter(tool => !compatibilityTools.has(tool.name))) {
@@ -1942,6 +1992,7 @@ export function discoverTools({ name, prefix, offset = 0, limit = 8 } = {}, surf
   return { ...scope, total: matches.length, offset, nextOffset: offset + limit < matches.length ? offset + limit : null,
     tools: matches.slice(offset, offset + limit).map(tool => ({ ...tool,
       invokeWith: tool.annotations?.readOnlyHint === true ? "head_tools_read" : "head_tools_call",
+      ...(isManagedMutation(tool.name) ? { executionMode: "managed" } : {}),
       ...(compatibilityTools.has(tool.name) ? { compatibilityDiagnostic: true,
         guidance: "Historical formatting/advice only; reason directly as HEAD. Not a decision or evidence verifier." } : {}),
     })) };
@@ -2205,7 +2256,25 @@ function localWorkerInput(args, start = false) {
   return Object.fromEntries(Object.entries(args).filter(([key]) => key !== "project_root").map(([key, value]) => [fields[key], value]));
 }
 
-export async function dispatch(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
+export async function dispatch(request, options = {}) {
+  const outer = request.params?.arguments;
+  const routed = request.params?.name === "head_tools_read" || request.params?.name === "head_tools_call";
+  const args = routed ? outer?.arguments : outer;
+  if (request.method === "tools/call" && args && Object.hasOwn(args, "session_id")) {
+    try {
+      const name = routed ? outer.name : request.params.name;
+      const selected = allTools.find(tool => tool.name === name);
+      if (!selected?.inputSchema?.properties?.session_id) throw new Error("This operation has no project Session route.");
+      const cleanArgs = { ...args }; delete cleanArgs.session_id;
+      const clean = { ...request, params: { ...request.params, arguments: routed ? { ...outer, arguments: cleanArgs } : cleanArgs } };
+      const { withSessionRoute } = await import("./lib/session-routing.mjs");
+      return await withSessionRoute(args.project_root, args.session_id, () => dispatchRouted(clean, options));
+    } catch (error) { return failure(request.id ?? null, error.message); }
+  }
+  return dispatchRouted(request, options);
+}
+
+async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
   requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
@@ -2224,7 +2293,9 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
     if (name === "head_tools_read" || name === "head_tools_call") {
       const selected = allTools.find(tool => tool.name === args.name);
       if (!selected || !args.arguments || typeof args.arguments !== "object" || Array.isArray(args.arguments)
-          || Object.keys(args).some(key => !["name", "arguments"].includes(key))) throw new Error("An exact HEAD tool name and arguments object are required; routing cannot be nested.");
+          || Object.keys(args).some(key => !["name", "arguments", ...(name === "head_tools_call" ? ["execution_mode"] : [])].includes(key))) throw new Error("An exact HEAD tool name and arguments object are required; routing cannot be nested.");
+      if (args.execution_mode != null && !["ordinary", "managed"].includes(args.execution_mode)) throw new Error("Unknown execution mode.");
+      if (name === "head_tools_call" && args.execution_mode === "managed") surface = "managed-maintenance";
       if (name === "head_tools_read" && selected.annotations?.readOnlyHint !== true) throw new Error("The selected tool is not read-only; use its declared effectful route within existing authority.");
       name = selected.name;
       args = args.arguments;
@@ -2247,6 +2318,20 @@ export async function dispatch(request, { surface = "ordinary", graphDbTransport
       }
       : name === "head_project_status"
         ? (await import("./lib/project-bootstrap.mjs")).inspectProjectExperience({ root: args.project_root })
+      : name === "head_project_graph"
+        ? (await import("./lib/project-graph.mjs")).queryProjectGraph({ root: args.project_root, query: args.query ?? "", view: args.view ?? "all",
+          anchorIds: args.anchor_ids ?? [], paths: args.paths ?? [], depth: args.depth ?? 1, maxNodes: args.max_nodes ?? 60, maxEdges: args.max_edges ?? 120,
+          worldModelId: args.world_model_id ?? "", includeCandidates: args.include_candidates ?? true, previousResult: args.previous_result ?? null })
+      : name === "head_project_graph_index"
+        ? (await import("./lib/project-graph.mjs")).indexProjectGraph({ root: args.project_root })
+      : name === "head_session_create"
+        ? (await import("./lib/session-routing.mjs")).createHeadSession({ root: args.project_root, sessionId: args.new_session_id, purpose: args.purpose })
+      : name === "head_session_list"
+        ? (await import("./lib/session-routing.mjs")).listHeadSessions({ root: args.project_root })
+      : name === "head_project_direction_read"
+        ? (await import("./lib/session-routing.mjs")).readProjectDirection({ root: args.project_root })
+      : name === "head_project_direction_update"
+        ? (await import("./lib/session-routing.mjs")).updateProjectDirection({ root: args.project_root, expectedDirectionId: args.expected_direction_id, input: args.direction })
       : name === "head_onboarding_guide"
         ? (await import("./lib/onboarding-conversation.mjs")).inspectConversationalOnboarding({ root: args.project_root, candidateLimit: args.candidate_limit ?? 25 })
       : name === "head_project_initialize_or_resume"

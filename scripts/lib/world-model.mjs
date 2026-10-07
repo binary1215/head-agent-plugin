@@ -78,6 +78,7 @@ import {
   readDocumentChangeCandidateSet,
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
+import { readGraphProject, safeGraphFile } from "./discovery-index.mjs";
 
 export const WORLD_MODEL_VERSION = "0.18.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
@@ -680,6 +681,34 @@ export function readWorldModelSnapshot({ root = ".", worldModelId, storeAdapter 
     snapshot: verifiedSnapshot(snapshotEntry.document, worldModelId),
     storeAdapter: adapter.describe(),
   };
+}
+
+// Ordinary discovery verifies the retained bytes without making generated
+// installation drift or whole-repository freshness a prerequisite. Current
+// mutations and reproducible Capsule consumers keep their existing checks.
+export function readWorldModelForDiscovery({ root = ".", worldModelId = "", storeAdapter = null } = {}) {
+  const { projectRoot, project } = readGraphProject(root);
+  if (!project) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (worldModelId && !/^world-model-[a-f0-9]{24}$/.test(worldModelId)) fail("World Model snapshot id is invalid.", "INVALID_WORLD_MODEL_ID");
+  const adapter = createWorldModelStoreAdapter({ projectRoot, adapter: storeAdapter });
+  if (!storeAdapter) safeGraphFile(projectRoot, ".head/world-model/current.json");
+  let pointer = null;
+  try { pointer = adapter.readPointer()?.document || null; }
+  catch (error) { if (!worldModelId) throw error; }
+  if (pointer && (pointer.projectId !== project.projectId || pointer.schemaVersion !== SCHEMA_VERSION
+    || pointer.kind !== "WorldModelPointer" || !/^world-model-[a-f0-9]{24}$/.test(pointer.worldModelId || ""))) {
+    if (!worldModelId) fail("World Model pointer identity is invalid.", "WORLD_MODEL_POINTER_MISMATCH");
+    pointer = null;
+  }
+  const selectedId = worldModelId || pointer?.worldModelId;
+  if (!selectedId) fail("Repository World Model has not been built.", "WORLD_MODEL_NOT_BUILT");
+  if (!storeAdapter) safeGraphFile(projectRoot, `.head/world-model/snapshots/${selectedId}.json`);
+  const entry = adapter.readSnapshot(selectedId);
+  if (!entry) fail("World Model snapshot is missing.", "WORLD_MODEL_SNAPSHOT_MISSING");
+  const snapshot = verifiedSnapshot(entry.document, selectedId);
+  if (snapshot.projectId !== project.projectId || snapshot.projectRoot !== projectRoot) fail("World snapshot belongs to another Project/root.", "WORLD_MODEL_IDENTITY_MISMATCH");
+  if (!worldModelId && pointer.worldModelHash !== snapshot.worldModelHash) fail("World pointer hash differs from retained bytes.", "WORLD_MODEL_POINTER_MISMATCH");
+  return { snapshot, pointer, file: entry.location, historical: !pointer || selectedId !== pointer.worldModelId };
 }
 
 export function findWorldModelSnapshot({ root = ".", graphSnapshotId = "", sourceSnapshotId = "", storeAdapter = null } = {}) {

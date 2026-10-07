@@ -173,6 +173,17 @@ expected to become the unquestioned source of project meaning.
 
 ## How to use it
 
+### Separate conversations, shared direction
+
+Tell HEAD what to do. It can route independent work to separate logical Sessions
+while preserving the common Project goal and constraints. Each Session keeps its
+own progress and recovery; a new conversation does not replace another's work.
+A common deployment cancellation stays current even when an earlier Session is
+restored. HEAD handles the routing and current-direction updates from your request;
+you do not maintain IDs or fill a direction form. See
+[Graph discovery and independent Sessions](docs/graph-discovery.md).
+
+
 Install HEAD Agent Core once, open your project in Codex, Claude Code, or a
 configured OpenCode workspace, and describe your work in ordinary language.
 You do not have to operate HEAD as a separate application.
@@ -225,18 +236,18 @@ part after checking whether anything is still running or already applied. It
 preserves your edits and checks uncertain overlapping effects before replacement;
 independent work can continue. No extra worker setup or approval ceremony is added.
 
-Existing managed jobs keep their history, status and exact cancellation tools.
-Their mutation APIs are retained behind an explicit
-[maintenance entry](skills/head-agent-core/references/runtime-composition.md#explicit-maintenance-of-retained-managed-work),
-not suggested as a fallback or ordinary workflow. Original authorization and
-effect checks still apply. A Run describes risk and recovery needs, not a
+Managed jobs keep their history, status and exact cancellation tools.
+Choose [explicit managed execution](skills/head-agent-core/references/runtime-composition.md#explicit-managed-execution)
+for new or retained work when interruption recovery, durable ownership or unknown
+and duplicate effects need tracking. Original authorization/effect checks apply;
+file edits, worker count and ordinary failure alone do not require it. A Run describes risk and recovery needs, not a
 requirement that every helper use a managed launcher.
 
 HEAD checks or resumes the project, chooses the lightest safe operating lane,
 and prepares durable context or recovery artifacts only when the task needs
-them. It may inspect the repository directly for ordinary work; Product, World,
-Graph, and long-lived Run machinery are optional escalations rather than setup
-requirements.
+them. It first queries nearby graph relations or reuses sufficient same-basis
+results, then reads original sources when needed. Product governance, full World
+construction, databases and durable Runs remain optional rather than setup requirements.
 
 You do **not** need to write structured JSON, choose a token budget, find graph
 or session IDs, operate GraphDB, select an Observe/Session/Run lane, or decide
@@ -357,8 +368,9 @@ fixed Project/Session recovery anchors:
 head-agent init C:\path\to\project --runtime claude,codex,opencode
 ```
 
-It returns `core_ready` without indexing the repository or starting Product,
-World Model, Graph, or document governance. The same bounded status is available
+It returns `core_ready`, preserving identities and updating the lightweight
+existing-observation index where available. Product inference, governed World
+construction and document governance remain optional. The same bounded status is available
 at any time:
 
 ```powershell
@@ -514,6 +526,7 @@ Apply the decision and verify the resulting views:
 
 ```powershell
 head-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
+head-agent graph-query C:\path\to\project --query "<task>"
 head-agent world-status C:\path\to\project
 head-agent context-preview C:\path\to\project `
   --task "Find implementation evidence for one reviewed Feature" --budget 32768
@@ -698,6 +711,17 @@ documented in [Delivery state observation](docs/delivery-observation.md).
 
 ## Graph and records
 
+For new project information, HEAD uses bounded `head_project_graph` discovery
+first, or reuses sufficient results from the same basis. Work and Product views
+reference the same original records. The result keeps revision, provenance,
+coverage and candidate/rejection state, including intact history. Missing or
+failed layers lead to original-source inspection without requiring whole-World
+currentness, Product approval, Run/Capsule or ArcadeDB. Empty partial results do
+not prove absence; effects separately recheck current sources and authority.
+The query does not generate a new artifact per read. See
+[Graph discovery and independent Sessions](docs/graph-discovery.md).
+
+
 A `GraphSnapshot` is the immutable, content-addressed evidence graph embedded in
 one verified Repository World Model. It is not a graph UI screenshot, database
 backup, or mutable latest-node collection. The same verified inputs produce the
@@ -719,8 +743,8 @@ flowchart LR
 ```
 
 Raw prompts stay outside this graph. Product meaning enters only through
-reviewed Canon artifacts. Candidate nodes may be inspected explicitly, but are
-excluded from default traversal and Context compilation.
+reviewed Canon. General discovery may show labelled candidates/rejected records
+without promoting them; they remain excluded from Canon Context compilation.
 
 Common Observations keep their exact descriptor, receipt, and derivation
 lineage in the same temporal graph. A ProductHypothesis may point to an exact
@@ -742,8 +766,8 @@ Policy genealogy stays equally explicit. A proposed create, revision, or
 retirement is P3 evidence until the user accepts that exact candidate. The
 accepted decision points to the resulting Product Model revision and to the
 matching current Policy revision, even after an unrelated Policy is added.
-Unreviewed Policy candidates remain hidden from normal graph discovery unless
-HEAD explicitly opts into candidate inspection.
+General graph discovery retains an unreviewed Policy candidate's original state;
+legacy governed traversal can exclude it and Canon compilation does not promote it.
 
 Source relations are structural evidence, not product meaning. The default
 heuristic import/call graph remains available, while an optional provider-neutral
@@ -887,7 +911,8 @@ Status labels are evidence claims, not roadmap promises:
 | Area | Capability | Status |
 | --- | --- | --- |
 | Project | initialization, Source Scope, review-gated Product Canon | **Available** |
-| Knowledge | World Model, incremental refresh, Context Capsules | **Available** |
+| Knowledge | graph-first bounded discovery with source fallback, World Model, incremental refresh, optional Context Capsules | **Available** |
+| Sessions | request-local logical Sessions and current common direction with exact-basis updates | **Available** |
 | Lineage | Runs, ResultPackets, Fresh HEAD review, P2 Session and conversation-entry recovery | **Available** |
 | Host lifecycle | provider-neutral injected compaction contract | **Experimental** |
 | Host lifecycle | packaged Claude Code, Codex, and OpenCode compaction event bindings | **Deferred** |

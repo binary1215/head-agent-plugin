@@ -2,15 +2,15 @@
 
 HEAD works directly by default. When ordinary delegation helps, use available Host tools with a short brief and independent ownership, then have HEAD check and combine results. No managed authorization, registry or wave is required merely to delegate. Preserve completed work; continue the unfinished part directly or sequentially only after confirming it never started or no effects remain. Inspect uncertain overlapping effects before replacement, while independent work continues.
 
-The detailed contracts below are retained for explicit maintenance of existing managed work. Use `node <plugin-root>/scripts/head.mjs managed-maintenance <command> ...` (including `help-all`), or the separate stdio entry `scripts/mcp-managed-maintenance.mjs`. Examples below name the retained commands/tools; mutation commands require that maintenance entry. Default discovery and raw calls exclude new managed launches, waves and integration mutations. History/status/wait/result reads and exact owned cancellation remain ordinary diagnostics. Shared non-worker runtime, Core/Context/World and Go compute are unchanged.
+Use the detailed contracts below for useful new or retained managed work when durable ownership, recovery or effect reconciliation needs them. CLI uses `node <plugin-root>/scripts/head.mjs managed <command> ...`; typed MCP discovers the original schema and routes through `head_tools_call` with `execution_mode: "managed"`. Raw managed names remain fenced on the ordinary server. The retained maintenance CLI/server stays compatible. History/status/wait/result reads and exact owned cancellation remain ordinary diagnostics. HEAD selects the means without a user unlock or extra approval; original authorization, lease and effect checks still apply.
 
-Maintenance is not an unlock, new authorization or automatic failure fallback. Original authorization/lease, transaction and record verification remain intact; an ordinary Host fork is not a managed launch. Neither risk lane nor worker count selects this entry. All paths preserve user edits and leave Canon/P2 authority with HEAD and the user.
+Routing is not an authorization or automatic failure fallback. Original authorization/lease, transaction and record checks remain intact; an ordinary Host fork is not a managed launch. File edits, worker count or ordinary failure alone do not select this path. All paths preserve user edits and leave Canon/P2 authority with HEAD and the user.
 
 ## Current support
 
 Fresh one-shot context is the current managed adapter default, not a universal
 preference for ordinary Host delegation. HEAD chooses fork/fresh by the
-contribution's context needs using the [Skill guidance](../skills/head-agent-core/SKILL.md#context-and-execution),
+contribution's context needs using the [Skill guidance](../skills/head-agent-core/SKILL.md#choose-execution-and-preserve-judgment),
 independently of choosing B or C and within actual adapter support.
 An optional Codex native-fork Host adapter
 binds a completed source-turn cutoff and exact inherited prefix; an app's fork

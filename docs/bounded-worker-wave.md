@@ -5,10 +5,10 @@ into a worker launcher, provider-session registry, or Herdr adapter. It groups
 already-created and already-verified `BoundedWorkerDispatch` records beneath one
 exact active Run lineage.
 
-This is a retained managed-work contract, not the default parallel-work flow.
-Use direct HEAD work or ordinary Host delegation for new work. Wave mutations
-are available only through explicit maintenance of existing approved managed
-tasks; history/status/wait remain available without activating that path.
+Use a wave when independent dispatches need durable recovery and effect tracking,
+for either useful new work or retained work. Direct HEAD and ordinary Host
+delegation remain available. File edits, worker count or ordinary failure do not
+force a wave; history/status/wait remain ordinary diagnostics.
 
 ## Authority and identity
 
@@ -79,22 +79,23 @@ application and HEAD's combined finish, see
 ## CLI and typed MCP
 
 ```text
-head managed-maintenance worker-wave-create <project> --input <wave.json>
+head managed worker-wave-create <project> --input <wave.json>
 head worker-wave-read <project> --wave <bounded-worker-wave-id>
-head managed-maintenance worker-wave-seal <project> --wave <bounded-worker-wave-id>
+head managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
 head worker-wave-status <project> --wave <bounded-worker-wave-id>
 head worker-wave-results <project> --wave <bounded-worker-wave-id>
 head worker-wave-wait <project> --wave <bounded-worker-wave-id> [--wait-timeout-ms <0..600000>]
-head managed-maintenance worker-wave-abandon <project> --input <abandonment.json>
+head managed worker-wave-abandon <project> --input <abandonment.json>
 ```
 
-Typed MCP uses the same Core functions and identities. Mutation tools are exposed
-only by the separate `scripts/mcp-managed-maintenance.mjs` stdio server; ordinary
-MCP retains read/status/results/wait. No tool argument unlocks mutations on the
-ordinary server. In explicit maintenance, create/launch/seal still require the
-original exact authorization, lineage and verified start evidence. Status does
-not recommend starting missing members or sealing automatically. Do not replace
-the user's installed MCP server or turn Host failure into managed execution.
+Typed MCP uses the same Core functions and identities. Discover a managed
+mutation schema and use `head_tools_call` with `execution_mode: "managed"`, or
+the retained separate managed stdio server. The CLI `managed` route also supports
+useful new durable work. Routing creates no authorization and preserves exact
+lineage, lease and start-evidence checks. Ordinary MCP retains read/status/results/
+wait and exact owned cancellation. Status does not automatically launch or seal
+members. File edits, worker count and ordinary Host failure do not select this
+path or justify replacing the user's installed server.
 
 An embedding Host may optionally pass an opened Worker Admission capability to
 wave status. That adds P5 queue/reservation detail only; it never changes the

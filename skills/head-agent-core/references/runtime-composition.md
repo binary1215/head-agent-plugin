@@ -68,20 +68,24 @@ current context; this handoff convention requires no new checkpoint, Run or
 recovery gate. Do not edit digest-bound managed input through this ordinary
 follow-up convention.
 
-## Explicit maintenance of retained managed work
+## Explicit managed execution
 
-This is a compatibility entry for explicitly maintaining existing approved
-managed tasks, not a recommendation for new work or a Host-failure fallback.
-Use `node <plugin-root>/scripts/head.mjs managed-maintenance <command> ...`
-or the separate `scripts/mcp-managed-maintenance.mjs` stdio server. The ordinary
-server and raw CLI calls exclude managed mutations using the same classification.
-No request argument unlocks the ordinary MCP server. This routing grants no
-permission: every original authorization, lease, lineage and effect check remains.
-History/status/wait/result reads and exact owned cancellation stay on the
-ordinary surface. Shared non-worker runtime, Core, Context, World and Go compute
-remain available. Do not change a user's installed server automatically.
+Choose this path when durable ownership, interruption recovery, unknown effects
+or duplicate integration prevention need the managed contracts. It supports useful
+new work and retained work. File editing, worker count, duration alone and ordinary
+Host failure do not force it; ordinary Host delegation remains available.
 
-The following preserved API details apply only inside that explicit entry.
+Use `node <plugin-root>/scripts/head.mjs managed <command> ...`. In ordinary MCP,
+discover the managed tool's unchanged schema and returned `executionMode`, then
+call `head_tools_call` with `execution_mode: "managed"`. Known tools can be routed
+without prior discovery. HEAD makes this choice internally; there is no user
+unlock/launcher form. The original authorization, lease, lineage and effect checks
+still run. Raw managed mutation names stay fenced on the ordinary server.
+The retained `managed-maintenance` CLI and separate stdio server remain compatible
+entries. Reads/status/wait and exact owned cancellation remain ordinary diagnostics.
+Do not change a user's installed server automatically.
+
+The following managed API details apply inside the explicit entry.
 For one managed Session result, use the idle Session's exact
 ExecutionAuthorization and `head_bounded_worker_dispatch`; `worker-execute`
 receives the authorized sessionRequest. Preserve lease, role and scope checks.

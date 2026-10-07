@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { assertRunSession } from "./session-routing.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { readBoundedWorkerDispatch } from "./bounded-worker-dispatch.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
@@ -101,6 +102,7 @@ function currentLineage(inspected) {
   }
   const runPath = path.join(root, ".head", "sessions", "runs", state.activeRunId, "run.json");
   const run = readJson(runPath, "Active Run", "INVALID_BOUNDED_WORKER_WAVE_LINEAGE");
+  assertRunSession(root, run, state);
   if (run.status !== "active" || run.runId !== state.activeRunId || run.wholePlanId !== state.currentWholePlanId
     || run.executionContractId !== state.activeExecutionContractId || !/^capsule-[a-f0-9]{24}$/.test(run.capsuleId || "")) {
     fail("Active Run does not match the canonical Session pointer.", "BOUNDED_WORKER_WAVE_LINEAGE_DRIFT");

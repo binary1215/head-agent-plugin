@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.12+codex.20260907233130",
+  "version": "0.3.0-beta.13",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -19,12 +19,14 @@
   "interface": {
     "displayName": "HEAD Agent Core",
     "shortDescription": "HEAD-owned coordination and continuity",
-    "longDescription": "A provider-neutral HEAD core that preserves one Project and Session across providers. Ordinary work uses a small constitutional default; Product/Graph onboarding, durable Runs, compaction recovery, bounded workers, and host coordination activate only when their protected outcome requires them.",
+    "longDescription": "A provider-neutral HEAD core with one Project, a common user-directed goal, and independently routed logical HEAD Sessions. Ordinary work uses bounded graph-first discovery with source fallback; review-gated Product governance, durable Runs, compaction recovery, bounded workers, and host coordination activate only when their protected outcome requires them.",
     "developerName": "ccolt",
     "category": "Developer Tools",
     "capabilities": [
       "Small Provider-neutral HEAD Constitution",
       "Core-first Project and Session Continuity",
+      "Independent Logical Sessions with Common User Direction",
+      "Bounded Graph-first Discovery with Source Fallback",
       "Read-only Readiness and Next-action Guidance",
       "Task-only Conversational Context Preparation",
       "Reproducible Context Capsules with Exact Evidence Proof",
@@ -49,7 +51,7 @@
     "defaultPrompt": [
       "Initialize or resume the small provider-neutral HEAD Core and report readiness.",
       "Inspect readiness and show the next safe action without activating optional governance.",
-      "Prepare Context from my exact task; if World is absent, explain the explicit optional path."
+      "Discover evidence for my exact task through bounded graph views or original sources, without requiring World activation."
     ],
     "brandColor": "#234E70"
   }

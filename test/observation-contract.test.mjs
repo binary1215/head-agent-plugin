@@ -340,7 +340,7 @@ test("lets CLI and MCP collect a Host-injected source by opaque ID without user-
   const unavailable = await dispatchMcp({ jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "head_observation_collect_source", arguments: { project_root: root, source_id: registered.sourceId } } });
   assert.match(unavailable.error.message, /No trusted Host Observation adapter registry/);
   const sourceTool = mcpTools.find((tool) => tool.name === "head_observation_collect_source");
-  assert.deepEqual(Object.keys(sourceTool.inputSchema.properties).sort(), ["project_root", "source_id"]);
+  assert.deepEqual(Object.keys(sourceTool.inputSchema.properties).sort(), ["project_root", "session_id", "source_id"]);
   const mcpPrepared = await dispatchMcp({ jsonrpc: "2.0", id: 23, method: "tools/call", params: { name: "head_observation_prepare", arguments: { project_root: root, type_key: "example.configured.health" } } }, { observationRegistry: registry });
   assert.equal(mcpPrepared.result.structuredContent.existing.returned, 1);
   assert.equal(mcpPrepared.result.structuredContent.configuredSources.sources[0].sourceId, registered.sourceId);

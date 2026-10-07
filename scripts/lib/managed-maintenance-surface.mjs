@@ -33,7 +33,7 @@ export function requireOperationSurface(name, surface = "ordinary", { workerBoun
 }
 
 export function commandEntry(argv) {
-  return argv[0] === "managed-maintenance"
+  return argv[0] === "managed-maintenance" || argv[0] === "managed"
     ? { surface: "managed-maintenance", argv: argv.slice(1) }
     : { surface: "ordinary", argv };
 }

@@ -10,9 +10,9 @@ Forked input stays within user scope. Preserve user edits and reconcile unknown
 effects before repeating them. Ordinary Host work does not claim managed
 isolation, leases, durable reattachment or at-most-once application.
 
-The managed worker contracts below are retained for explicit maintenance of
-existing approved managed tasks, not a recommendation for new work or a fallback
-when Host delegation is unavailable. Keep their authorization, source-basis,
+The managed contracts below support useful new durable work and retained work
+when recovery, ownership or effect reconciliation needs them. File edits, worker
+count and ordinary Host failure alone do not require this path. Keep their authorization, source-basis,
 lease and cleanup checks. A risk lane, including Run, does not select a launcher. Host
 results are evidence, not Canon approval or P2 recovery direction. Ordinary
 results need no additional review click; protected transitions and active Run
@@ -20,13 +20,14 @@ contracts keep their existing rules.
 
 ## Retained one-shot worker contracts
 
-Managed worker mutations use `node scripts/head.mjs managed-maintenance <command> ...`
-or the separate `scripts/mcp-managed-maintenance.mjs` stdio server. This includes
-prepare/start/dispatch/execute/apply, reconcile, integration and wave mutations.
-Ordinary CLI/MCP retains history/status/wait/result reads and exact owned
-cancellation. Shared runtime authorization/execution/application requires this
-entry only for worker-bound operations; non-worker runtime remains available.
-No request argument unlocks the ordinary server, and the entry grants no authority.
+Managed worker mutations use `node scripts/head.mjs managed <command> ...`
+or `head_tools_call` with `execution_mode: "managed"` and the discovered original
+schema. HEAD supplies this route without a user unlock. Raw managed names stay
+fenced on ordinary MCP, while the retained `managed-maintenance` CLI and separate
+stdio server remain compatible entries. Prepare/start/dispatch/execute/apply,
+reconcile, integration and wave mutations keep all authorization, lease, lineage
+and effect checks. History/status/wait/result reads and exact owned cancellation
+remain ordinary operations. Routing itself grants no authority.
 
 Operating-lane advice `0.2.0` separates `executionLane` from an authorization
 decision. Credentials alone do not require Authority; approved external effects
@@ -37,10 +38,10 @@ existing runtime scope restrictions remain unchanged (Session runtime does not
 gain external-write permission from advice).
 
 The existing worker dispatch/execute/read/wait flow accepts an idle Session
-ExecutionAuthorization. CLI `managed-maintenance worker-execute --input <file>` supplies only the
+ExecutionAuthorization. CLI `managed worker-execute --input <file>` supplies only the
 exact `sessionRequest` frozen in that authorization. No Run, WholePlan, contract
 or compulsory persisted Capsule is created. Typed MCP dispatch/status/wait use
-the same Core identity; managed execution remains the explicit maintenance composition.
+the same Core identity; managed execution uses its explicit route and original checks.
 Maintenance MCP start uses the trusted Host connection described below, not
 caller-supplied execution policy. HEAD consumes the bounded invocation result
 as evidence. `worker-apply` and waves remain Run-only. Requested admission uses
@@ -159,7 +160,7 @@ The protocol-evidence composition runs fixed help profiles through the same dire
 
 The current Windows execution observes the required non-interactive and machine-protocol surfaces for Claude Code, Codex, and OpenCode. This records `actualProviderProtocolObservationValidated: true`, but `actualProviderSessionControlValidated`, provider-session creation, and runtime control remain false.
 
-`RuntimeProjectBinding` then binds the version and protocol evidence identities to the canonical `.head/project.json` project ID and `.head/sessions/current.json` HEAD Session ID. The physical project root is reduced to a digest and no project content is sent during these probes. This is a capability-reference binding only: it proves which HEAD project and Session inspected the installed interfaces, not that a provider session was created or attached to that project.
+`RuntimeProjectBinding` then binds the version and protocol evidence identities to the canonical `.head/project.json` project ID and the selected logical HEAD Session ID (the legacy `current.json` remains default). The physical project root is reduced to a digest and no project content is sent during these probes. This is a capability-reference binding only: it proves which HEAD project and Session inspected the installed interfaces, not that a provider session was created or attached to that project.
 
 ## Risk-proportional execution authorization
 
@@ -425,7 +426,7 @@ fixed-scope reviews do not constitute whole-backend acceptance. Model-free check
 of the pinned installed executable confirmed fixed feature flags and config/skill
 readbacks in an isolated synthetic Codex home only; that probe made no account,
 thread, turn or model call. The built-in local Host connects preparation and
-start only on the explicit managed-maintenance CLI/MCP surface; it does not
+start through the explicit managed CLI/MCP route; it does not
 install or update a runtime cache.
 There is no new user JSON form or general Session gate, and failure of this
 optional mode never silently launches in the canonical workspace.
@@ -441,7 +442,7 @@ assertions are not wire inputs. `selected-only` instructions are the default;
 `host-global` is explicit input selection, never implied permission to widen a
 user's narrower input scope. Account/model readiness is checked only at actual
 execution. Preparation does not grant write authority or create a Run. The
-explicit maintenance CLI/stdio MCP paths have model-free native fixture coverage;
+explicit managed CLI/stdio MCP paths have model-free native fixture coverage;
 stock Codex preparation has no-account/no-thread/no-model observation coverage.
 
 When selected source/preimages change before execution, the same member can be

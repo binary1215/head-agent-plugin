@@ -1,7 +1,8 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { noteProjectGraphChange } from "./discovery-index.mjs";
+import { atomicCreateArtifact } from "./artifact-storage.mjs";
 import {
   OBSERVATION_PROTOCOL_VERSION,
   createDerivedObservationRecord,
@@ -37,14 +38,8 @@ function safeDirectory(projectRoot, relative) {
 }
 
 function atomicCreate(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  try {
-    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
-    try { fs.linkSync(temporary, file); return true; }
-    catch (error) { if (error?.code === "EEXIST") return false; throw error; }
-  }
-  finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+  try { atomicCreateArtifact(file, content); return true; }
+  catch (error) { if (error?.code === "EEXIST") return false; throw error; }
 }
 
 function readCreateOnly(file, label) {
@@ -257,6 +252,11 @@ function recordCollectedObservationInternal({ root = ".", descriptor, input, ada
   };
   const receipt = verifyObservationCollectionReceipt(receiptIdentity(receiptPayload), inspected.project.projectId);
   const receiptPersisted = persistCreateOnly(inspected.project.projectRoot, OBSERVATION_RECEIPT_DIRECTORY, `${receipt.receiptId}.json`, receipt);
+  noteProjectGraphChange(inspected.project.projectRoot, [
+    `${OBSERVATION_DESCRIPTOR_DIRECTORY}/${registered.descriptorId}.json`,
+    path.relative(inspected.project.projectRoot, recordPersisted.file).replaceAll("\\", "/"),
+    path.relative(inspected.project.projectRoot, receiptPersisted.file).replaceAll("\\", "/"),
+  ]);
   return { status: recordPersisted.status === "existing" && receiptPersisted.status === "existing" ? "existing" : "recorded", descriptor: registered, observation: record, receipt };
 }
 
@@ -333,6 +333,8 @@ export function recordDerivedObservation({ root = ".", descriptor, input } = {})
   });
   const derived = createDerivedObservationRecord({ projectId: inspected.project.projectId, descriptor: registered, subject: input.subject, temporalScope: input.temporalScope, inputObservations: inputs, algorithm: input.algorithm, coverage: input.coverage, payload: input.payload });
   const persisted = persistCreateOnly(inspected.project.projectRoot, DERIVED_OBSERVATION_DIRECTORY, `${derived.derivedObservationId}.json`, derived);
+  noteProjectGraphChange(inspected.project.projectRoot, [`${OBSERVATION_DESCRIPTOR_DIRECTORY}/${registered.descriptorId}.json`,
+    path.relative(inspected.project.projectRoot, persisted.file).replaceAll("\\", "/")]);
   return { ...persisted, descriptor: registered, derivedObservation: derived };
 }
 

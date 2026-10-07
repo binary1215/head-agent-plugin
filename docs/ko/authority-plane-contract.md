@@ -6,9 +6,9 @@
 
 상태: 활성 실행 가능 계약
 
-프로토콜 버전: `0.8.0`
+프로토콜 버전: `0.9.0`
 
-다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0`, `0.7.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.8.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
+다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0`, `0.7.0`, `0.8.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.9.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
 
 `WorkerPatchIntegrationIntent`는 P3입니다. HEAD가 선택한 조합의 정확한 dispatch,
 authorization, 종료된 receipt, owner가 동결한 patch 출처를 연결합니다. 경로를
@@ -38,9 +38,9 @@ HEAD Agent Core는 한 표현이 다른 표현의 권한을 물려받게 하지 
 | 평면 | 소유 범위 | 대표 artifact | 금지된 추론 |
 |---|---|---|---|
 | P1 Normative Authority | 승인된 제품 의미, 정책, 명시적 결정 | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision, accepted ProductPolicyReviewDecision | 그래프, 메시지, 결과 또는 host에 존재한다는 사실만으로 승인을 만들 수 없음 |
-| P2 Canonical Recovery/Lineage Record | Project, Session, Run, 계획, context, contract와 다음 방향의 provider 독립적 복구 | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | 증거 삭제나 provider 요약이 checkpoint 필드를 다시 쓸 수 없음 |
+| P2 Canonical Recovery/Lineage Record | Project, Session, Run, 계획, context, contract와 다음 방향의 provider 독립적 복구 | Project, ProjectDirection, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | 증거 삭제나 provider 요약이 checkpoint 필드를 다시 쓸 수 없음 |
 | P3 Evidence Record | 검토 가능한 결과, 관찰, 후보, claim, 소유권 레코드와 감사 receipt | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate/ProductPolicyCandidate, Evidence, ObservationTypeDescriptor/ObservationRecord/DerivedObservationRecord/ObservationCollectionReceipt, MetricDefinitionProjection, ProductHypothesis, ConformanceFindingCandidate/DispositionReceipt/ResolutionCandidate, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | 증거가 스스로 승격되거나 복구 Canon이 될 수 없음 |
-| P4 Derived Relation/View | 재현 가능한 검색과 사람 대상 view | GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, MeasurementLineageProjection, DeliveryStateProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, RecoveryCheckpointDiagnosisProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | projection이 Canon을 변경하거나 지시 권한을 부여하거나 유일한 복구 출처가 될 수 없음 |
+| P4 Derived Relation/View | 재현 가능한 검색과 사람 대상 view | ProjectGraphDiscoveryProjection, ProjectGraphObservationIndex, GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, MeasurementLineageProjection, DeliveryStateProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, RecoveryCheckpointDiagnosisProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | projection이 Canon을 변경하거나 지시 권한을 부여하거나 유일한 복구 출처가 될 수 없음 |
 | P5 Operational Effect | host 로컬 process, continuation, wait와 delivery 효과 | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, ObservationSourceBinding, ConformanceTriggerBinding, provider-session reference | continuation, wait, delivery 또는 process 제어의 성공이 실행, 검토, 승격 또는 복구를 승인할 수 없음 |
 
 `scripts/lib/authority-plane-contract.mjs`는 내용에서 파생된 하나의 `AuthorityPlaneContract`를 내보내고, 위에서 구현된 artifact를 정확한 평면에 할당하며, 내장된 artifact 경계를 검증합니다. 이 평면들은 지속성 계층이 아니라 의미 클래스입니다. P2는 복구에 대한 권한을 갖지만 P1의 제품 의미를 소유하지 않으며, P1 검토는 P2 checkpoint 상태를 대체하지 않습니다.
@@ -74,7 +74,7 @@ context와 조정에도 같은 규칙이 적용됩니다.
 - Capsule은 지시 및 승격 권한이 false인 제한된 그래프 순회만 포함할 수 있습니다.
 - 지속되지 않는 ContextWorkflowProjection은 새로운 의미 artifact가 아니라 하나의 Capsule preview에 관한 조언용 UX입니다. 이는 P4 비증폭 제약을 따르며, 입증된 `context-budget` 제외에 대해서만 다음 고정 tier에서 동일한 읽기 전용 compile을 반복할 수 있습니다. 그러나 EvidenceNeeds를 선택하거나, 512K를 초과하거나, provider를 호출하거나, 상태를 변경하거나, 의미적 충분성을 평가하거나, 승인을 부여하거나, 복구 방향을 쓸 수는 없습니다.
 - 지속되지 않는 ContextPreparationProjection은 의미 추론이 아니라 P4 candidate visibility입니다. task text만 받아 제한된 현재 identity와 lexical discovery material을 보여주고 provider HEAD가 사용자 JSON 없이 구조화 proposal을 작성하게 합니다. EvidenceNeeds나 graph anchor를 선택하거나 provider/session identity를 영속화하거나 P2 방향을 쓸 수 없습니다. 이후 preview는 Project/World/Graph drift를 다시 검증합니다.
-- 검토되지 않은 후보는 기본 traversal과 compilation에서 제외된 상태로 유지됩니다.
+- 검토 전 후보는 Canon context compilation에서 제외됩니다. 일반 탐색은 원래 후보·거절 상태를 표시한 P3 자료를 포함할 수 있지만 관계 확장에서도 승격하지 않습니다.
 - provider 요약, continuity view, inbox message와 reply는 checkpoint 필드를 변경하거나 ReviewDecision을 만들 수 없습니다.
 - 원격 GraphDB는 검증된 query를 가속할 수 있지만, 로컬 규범 레코드와 복구 레코드가 손실된 뒤 Product Canon을 재구성할 수는 없습니다.
 
@@ -154,3 +154,19 @@ direction, P3 result meaning, Product Canon 또는 wave completion을 만들거�
 수정할 수 없습니다. Admission 상태 누락은 영향받은 admission domain만
 차단하며 일반 Core recovery와 admission을 사용하지 않는 실행은 기존 계약을
 그대로 따릅니다.
+
+## 그래프 탐색, 공통 방향과 세션
+
+`ProjectDirection`은 현재 사용자의 공통 goal/constraints/decisions/cancelledActions를
+보존하는 P2 기록입니다. 정확한 기준의 갱신은 경합한 지시를 무조건 덮어쓰지 않습니다.
+방향 필드나 그래프에서 읽은 과거 승인이 실행 authorization을 만들지는 않습니다.
+여러 논리 Session이 요청별로 독립 진행·복구를 유지하며 기본 Session을 바꾸지 않습니다.
+과거 체크포인트 필드는 그대로 복원하고 현재 공통 방향을 별도로 적용합니다.
+
+`ProjectGraphDiscoveryProjection`과 교체 가능한 `ProjectGraphObservationIndex`는 P4입니다.
+작업/Product 관점은 같은 원본을 참조합니다. 범위 내 탐색은 미승인·거절·과거 근거를
+원래 상태, 기준, 리비전과 함께 읽으며 관계 확장에도 상태를 유지합니다. 이는 Canon
+컴파일의 후보 제외 규칙을 바꾸거나 승인을 현재 실행 권한으로 승격하지 않습니다.
+전체 World current, Product 승인, Run/Capsule, DB와 무관하게 유효한 층을 탐색하며
+손상된 층만 제외합니다. 부분·빈 결과는 사실 부재의 증명이 아니고 원본 fallback을
+제공합니다. 같은 기준의 결과/실패는 재사용하고 읽기는 승인·checkpoint를 만들지 않습니다.

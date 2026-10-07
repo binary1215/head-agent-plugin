@@ -11,6 +11,10 @@ export function operatingExecutionGuidance() {
   return {
     default: "head-direct",
     delegation: "existing-host-tools-when-useful",
+    delegationReasons: ["independently-reviewable-result", "preserve-judgment-context-in-long-sequential-work"],
+    managedWhen: ["durable-ownership", "recovery-after-interruption", "effect-retry-or-duplicate-integration-control"],
+    managedSelectionIsAutomatic: false,
+    contextTransfer: "fork-or-fresh-is-separate-from-execution-and-authority",
     laneSelectsExecutionMeans: false,
     requiresUserSelection: false,
     hostFallback: ["head-direct", "sequential"],

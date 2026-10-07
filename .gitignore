@@ -20,6 +20,10 @@ test/*
 !test/skill-reference-links.test.mjs
 !test/managed-maintenance-surface.test.mjs
 !test/mcp-progressive-discovery.test.mjs
+!test/project-graph.test.mjs
+!test/multi-session.test.mjs
+!test/graph-session-entry.test.mjs
+!test/artifact-storage.test.mjs
 !test/release-observation.test.mjs
 !test/session-recovery-integration.test.mjs
 !test/compaction-lifecycle.test.mjs

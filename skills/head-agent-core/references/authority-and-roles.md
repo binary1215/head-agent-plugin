@@ -35,6 +35,12 @@ already authorized by the user.
 - Canonical files outrank conversation summaries and logs.
 - Managed file drift stops state mutation until reconciled.
 - One project ID maps to one canonical root.
+- A Project has common current user direction and multiple request-local logical
+  Sessions. Their progress is independent; routing never overwrites the default
+  Session or restores a superseded shared cancellation as current permission.
+- Graph-first discovery may expose intact historical, candidate and rejected
+  evidence with its original revision/state. Partial absence is not proof of
+  absence, and source fallback needs no World/Product/Run/DB readiness gate.
 - Capability never implies authorization.
 - ResultPacket and Worker Report are P3 evidence; SessionRunCheckpoint is the P2 recovery record; ReviewDecision is a P1 normative record.
 - ProductCanonFeature and ReviewedFeature are P1; FeatureCandidate and ProductFeatureCandidate are P3. A graph label never promotes a candidate.

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { assertRunSession } from "./session-routing.mjs";
 import { inspectProject } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
@@ -251,6 +252,7 @@ function verifyApplicationRun(record, inspected) {
     fail("Runtime result belongs to a different Run or ExecutionContract; current work was not changed.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
   }
   const run = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "sessions", "runs", scope.runId, "run.json"), "utf8"));
+  assertRunSession(projectRoot, run, inspected.state);
   const contract = readLineageArtifact({ root: projectRoot, artifactId: scope.executionContractId }).artifact;
   const plan = readLineageArtifact({ root: projectRoot, artifactId: scope.wholePlanId }).artifact;
   const capsule = readContextCapsule({ root: projectRoot, capsuleId: scope.contextCapsuleId }).capsule;

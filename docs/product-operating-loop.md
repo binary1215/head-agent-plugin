@@ -140,7 +140,8 @@ route, `head_tools_read` or `head_tools_call`. These stateless routes preserve t
 same original dispatch, authority checks and results; no activation, registration
 or extra user approval is added. Read-only calls retain a separate read-only route.
 Discovery can be skipped when HEAD already knows the contract. Managed mutations
-still require the existing separate maintenance entry for retained work.
+use the explicit managed route when useful for durable work: `head_tools_call`
+with `execution_mode: "managed"`, preserving the original checks without user unlock.
 
 `head_operating_lane_recommend` and `head_product_note` are available only through
 explicit compatibility discovery or known direct calls. Formatting an ephemeral

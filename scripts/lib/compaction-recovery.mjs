@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { sessionStatePath, sessionDataPath, assertRunSession, safeSessionPath } from "./session-routing.mjs";
+import { readProjectDirection } from "./project-direction.mjs";
+import { atomicWriteArtifact } from "./artifact-storage.mjs";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
@@ -64,25 +67,11 @@ function readyProject(root, action) {
 }
 
 function atomicWrite(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  try {
-    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
-    fs.renameSync(temporary, file);
-  } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-  }
+  atomicWriteArtifact(file, content);
 }
 
 function replaceJson(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  try {
-    fs.writeFileSync(temporary, json(value), { encoding: "utf8", flag: "wx" });
-    fs.renameSync(temporary, file);
-  } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-  }
+  atomicWriteArtifact(file, json(value));
 }
 
 function readJson(file, label) {
@@ -98,11 +87,11 @@ function checkpointFile(root, checkpointId) {
   if (typeof checkpointId !== "string" || !/^checkpoint-[a-f0-9]{24}$/.test(checkpointId)) {
     fail("Recovery checkpoint id is invalid.", "INVALID_RECOVERY_CHECKPOINT_ID");
   }
-  return path.join(checkpointDirectory(root), `${checkpointId}.json`);
+  return safeSessionPath(root, ".head", "sessions", "ledger", `${checkpointId}.json`);
 }
 
 function compactionRoot(root) {
-  return path.join(root, ".head", "sessions", "compaction");
+  return sessionDataPath(root, "compaction");
 }
 
 function epochFile(root, epochId) {
@@ -145,6 +134,7 @@ function readRunPointer(inspected) {
   }
   const runFile = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", state.activeRunId, "run.json");
   const run = readJson(runFile, "Active Run canon");
+  assertRunSession(inspected.project.projectRoot, run, state);
   if (run.status !== "active" || run.runId !== state.activeRunId || run.wholePlanId !== state.currentWholePlanId
     || run.executionContractId !== state.activeExecutionContractId) {
     fail("Active Run state does not match Run canon.", "COMPACTION_RUN_POINTER_MISMATCH");
@@ -190,6 +180,7 @@ function readTransitionRun(inspected) {
   const file = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", runId, "run.json");
   if (!fs.existsSync(file)) fail(`Current Run canon not found: ${runId}`, "INVALID_RUN_CANON");
   const run = readJson(file, "Current Run canon");
+  assertRunSession(inspected.project.projectRoot, run, inspected.state);
   if (run.runId !== runId || !run.wholePlanId || !run.executionContractId || !run.capsuleId) {
     fail("Current Run canon is incomplete or belongs to another Run.", "INVALID_RUN_CANON");
   }
@@ -318,6 +309,7 @@ function recoveryCheckpointBasisFromInspection(inspected) {
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     latestCheckpointId: latestCheckpoint?.checkpointId || null,
+    currentProjectDirectionId: readProjectDirection({ root: inspected.project.projectRoot })?.directionId || null,
     latestCheckpointDigest: latestCheckpoint?.checkpointDigest || null,
     sessionRecordHash: sessionStateHash(inspected.state),
     sessionUpdatedAt: inspected.state.updatedAt,
@@ -433,6 +425,7 @@ function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
   const file = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", runId, "run.json");
   if (!fs.existsSync(file)) fail(`Reviewed Run canon not found: ${runId}`, "RUN_RESULT_INTEGRATION_RUN_NOT_FOUND");
   const run = readJson(file, "Reviewed Run canon");
+  assertRunSession(inspected.project.projectRoot, run, inspected.state);
   if (run.runId !== runId || run.status !== "reviewed" || run.reviewDecisionId !== reviewDecisionId || !run.resultPacketId) {
     fail("Reviewed Run canon does not match the integration request.", "RUN_RESULT_INTEGRATION_RUN_CONFLICT");
   }
@@ -548,7 +541,7 @@ function persistRecoveryCheckpoint(inspected, checkpoint) {
   }
   if (existed) readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId });
   const state = { ...inspected.state, latestCheckpoint: checkpointId, updatedAt: now() };
-  replaceJson(path.join(inspected.project.projectRoot, ".head", "sessions", "current.json"), state);
+  replaceJson(sessionStatePath(inspected.project.projectRoot), state);
   return { status: existed ? "existing" : "checkpointed", file, checkpoint, state };
 }
 
@@ -666,13 +659,15 @@ export function syncRecoveryCheckpoint(options = {}) {
   });
 }
 
-export function readRecoveryCheckpoint({ root = ".", checkpointId } = {}) {
-  const inspected = readyProject(root, "a recovery checkpoint is read");
+export function readRecoveryCheckpoint({ root = ".", checkpointId, historical = false } = {}) {
+  const inspected = historical ? { project: readJson(safeSessionPath(root, ".head", "project.json"), "Project canon") }
+    : readyProject(root, "a recovery checkpoint is read");
+  if (inspected.project.projectRoot !== fs.realpathSync(path.resolve(root))) fail("Project root identity differs.", "PROJECT_IDENTITY_MISMATCH");
   const file = checkpointFile(inspected.project.projectRoot, checkpointId);
   if (!fs.existsSync(file)) fail(`Recovery checkpoint not found: ${checkpointId}`, "RECOVERY_CHECKPOINT_NOT_FOUND");
   const checkpoint = readJson(file, "Recovery checkpoint");
   if (checkpoint.kind !== "SessionRunCheckpoint" || checkpoint.projectId !== inspected.project.projectId
-    || checkpoint.sessionId !== inspected.state.sessionId || !checkpoint.purpose || !Array.isArray(checkpoint.approvedDecisions)
+    || !historical && checkpoint.sessionId !== inspected.state.sessionId || !checkpoint.purpose || !Array.isArray(checkpoint.approvedDecisions)
     || !checkpoint.currentPosition || !checkpoint.nextExpectedResult) {
     fail("Recovery checkpoint is incomplete or belongs to another Project/Session.", "INVALID_RECOVERY_CHECKPOINT");
   }
@@ -875,7 +870,7 @@ function createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPre
   };
   const file = epochFile(inspected.project.projectRoot, epochId);
   const pointerFile = currentEpochFile(inspected.project.projectRoot);
-  const sessionFile = path.join(inspected.project.projectRoot, ".head", "sessions", "current.json");
+  const sessionFile = sessionStatePath(inspected.project.projectRoot);
   const previousPointer = fs.existsSync(pointerFile) ? fs.readFileSync(pointerFile) : null;
   const previousSession = fs.readFileSync(sessionFile);
   const checkpointPath = checkpointFile(inspected.project.projectRoot, checkpoint.checkpointId);
@@ -1046,8 +1041,9 @@ function continueCompactionLocked({ root = ".", epochId, continuationToken, curr
     status: "compaction_continuation_consumed",
     epoch,
     checkpoint,
+    currentProjectDirection: readProjectDirection({ root: inspected.project.projectRoot }),
     recoveryReceipt: receipt.receipt,
-    continuationInstruction: `Continue from checkpoint ${checkpoint.checkpointId} toward its exact nextExpectedResult without rewriting purpose or approved decisions.`,
+    continuationInstruction: `Continue from checkpoint ${checkpoint.checkpointId} subject to the current common Project direction, constraints and cancelled actions; its historical nextExpectedResult grants no current effect authorization. Preserve the checkpoint's recorded purpose and approved decisions.`,
     providerSubmission: "adapter-or-user-owned",
   };
 }

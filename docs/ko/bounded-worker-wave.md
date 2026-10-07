@@ -6,10 +6,10 @@
 adapter로 만들지 않으면서 하나의 간결한 실행 wave 보기를 추가합니다. 이미 생성되고
 검증된 `BoundedWorkerDispatch` 레코드를 정확히 하나의 활성 Run 계보 아래 묶습니다.
 
-이 문서는 보존된 관리형 작업의 계약이며 기본 병렬 작업 흐름이 아닙니다.
-새 작업은 HEAD 직접 수행 또는 일반 Host 위임을 사용합니다. Wave 변경은 기존에
-승인된 관리형 작업의 명시적 유지관리 진입점에서만 제공하며, 과거 기록·상태·대기는
-그 경로를 활성화하지 않고도 조회할 수 있습니다.
+독립 dispatch의 지속 복구·효과 추적이 필요하면 새로운 유용한 작업과 기존
+작업에 wave를 사용합니다. HEAD 직접 작업과 일반 Host 위임도 계속 제공합니다.
+파일 수정, worker 수나 일반 실패만으로 wave를 강제하지 않으며 과거 기록·상태·
+대기는 일반 진단으로 남습니다.
 
 ## 권위와 정체성
 
@@ -77,22 +77,23 @@ dispatch와 실행 소유권으로 유지됩니다. HF-010은 각 fragment가 �
 ## CLI와 typed MCP
 
 ```text
-head managed-maintenance worker-wave-create <project> --input <wave.json>
+head managed worker-wave-create <project> --input <wave.json>
 head worker-wave-read <project> --wave <bounded-worker-wave-id>
-head managed-maintenance worker-wave-seal <project> --wave <bounded-worker-wave-id>
+head managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
 head worker-wave-status <project> --wave <bounded-worker-wave-id>
 head worker-wave-results <project> --wave <bounded-worker-wave-id>
 head worker-wave-wait <project> --wave <bounded-worker-wave-id> [--wait-timeout-ms <0..600000>]
-head managed-maintenance worker-wave-abandon <project> --input <abandonment.json>
+head managed worker-wave-abandon <project> --input <abandonment.json>
 ```
 
-Typed MCP는 동일한 Core 함수와 정체성을 사용합니다. 변경 도구는 별도
-`scripts/mcp-managed-maintenance.mjs` stdio 서버에만 있으며 일반 MCP에는
-read/status/results/wait가 남습니다. 도구 인자로 일반 서버의 변경 기능을 열 수
-없습니다. 명시적 유지관리에서도 create/launch/seal에는 기존의 정확한 권한·계보와
-검증된 시작 증거가 필요합니다. Status는 누락 멤버 시작이나 자동 seal을 권하지
-않습니다. 사용자의 설치된 MCP 서버를 바꾸거나 Host 실패를 관리형 실행으로
-전환하지 않습니다.
+Typed MCP는 동일한 Core 함수와 ID를 사용합니다. 관리형 변경 schema를
+발견하고 `head_tools_call`에 `execution_mode: "managed"`를 지정하거나 기존
+별도 관리형 stdio 서버를 사용합니다. CLI `managed`도 유용한 새로운 복구
+작업을 지원합니다. 라우팅은 authorization을 만들지 않고 정확한 계보, lease와
+시작 증거 검사를 보존합니다. 일반 MCP에는 read/status/results/wait와 정확한
+소유 취소가 남습니다. Status는 자동 시작이나 seal을 수행하지 않습니다.
+파일 수정, worker 수나 일반 Host 실패만으로 관리형을 선택하거나 사용자의
+설치 서버를 교체하지 않습니다.
 
 Embedding Host는 열린 Worker Admission capability를 wave status에 선택적으로
 전달할 수 있습니다. 이 경우 P5 queue/reservation detail만 추가되며 wave

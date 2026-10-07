@@ -4,14 +4,14 @@
 
 기본은 HEAD 직접 작업입니다. 일반 위임이 유용하면 사용 가능한 Host 도구에 짧은 작업 설명과 독립 소유 범위를 주고 HEAD가 결과를 확인·통합합니다. 위임한다는 이유만으로 관리형 권한·원장·wave가 필요하지 않습니다. 완료분은 보존하고, 미완료 부분이 시작되지 않았거나 남은 효과가 없음을 확인한 뒤 직접/순차 수행합니다. 불확실한 중첩 효과는 재실행 전에 조사하되 독립 작업은 계속합니다.
 
-아래 상세 계약은 기존 관리형 작업의 명시적인 유지관리를 위해 보존합니다. CLI는 `node <plugin-root>/scripts/head.mjs managed-maintenance <command> ...` (`help-all` 포함), MCP는 별도 stdio 진입 `scripts/mcp-managed-maintenance.mjs`를 사용합니다. 아래 예시의 변경 명령·도구는 이 진입에서만 사용합니다. 기본 탐색과 직접 호출에서는 새 관리형 실행·wave·통합 변경을 제외하고, 기록·상태·wait·결과 조회와 정확한 소유 취소는 일반 진단에 유지합니다. 비관리형 공유 runtime, Core/Context/World, Go 계산은 그대로입니다.
+아래 상세 계약은 지속 소유권, 복구나 효과 확인이 유용한 새로운 관리형 작업과 기존 작업에 사용합니다. CLI는 `node <plugin-root>/scripts/head.mjs managed <command> ...`, typed MCP는 원래 schema를 발견한 뒤 `head_tools_call`의 `execution_mode: "managed"`로 호출합니다. 원시 관리형 이름은 일반 서버에서 계속 제한하고 기존 유지관리 CLI/서버는 호환 진입점으로 남습니다. 기록·상태·wait·결과 조회와 정확한 소유 취소는 일반 진단입니다. HEAD가 사용자 unlock이나 추가 승인 없이 수단을 선택하며 원래 authorization, lease와 effect 검사를 유지합니다.
 
-유지관리 진입은 잠금 해제나 새 권한 부여, 자동 실패 대안이 아닙니다. 원래 권한·lease·트랜잭션·기록 검증은 유지하며 일반 Host fork를 관리형 launch로 해석하지 않습니다. 위험 lane이나 worker 수가 이 진입을 자동 선택하지 않습니다. 모든 경로는 사용자 변경을 보호하고 Canon/P2 권한을 HEAD와 사용자에게 남깁니다.
+라우팅은 권한 부여나 자동 실패 대안이 아닙니다. 원래 권한·lease·트랜잭션·기록 검증은 유지하며 일반 Host fork를 관리형 launch로 해석하지 않습니다. 파일 수정, worker 수나 일반 실패만으로 이 경로를 선택하지 않습니다. 모든 경로는 사용자 변경을 보호하고 Canon/P2 권한을 HEAD와 사용자에게 남깁니다.
 
 ## 현재 지원 범위
 
 Fresh one-shot 컨텍스트는 현재 관리형 어댑터의 기본값이며, 일반 Host 위임에서
-항상 우선해야 하는 방식은 아닙니다. HEAD는 [Skill 기준](../../skills/head-agent-core/SKILL.md#context-and-execution)에
+항상 우선해야 하는 방식은 아닙니다. HEAD는 [Skill 기준](../../skills/head-agent-core/SKILL.md#choose-execution-and-preserve-judgment)에
 따라 각 기여에 필요한 맥락으로 fork/fresh를 선택합니다. 이 판단은 B/C 선택과
 별개이며 실제 어댑터 지원 범위 안에서 이뤄집니다.
 선택적인 Codex native-fork Host 어댑터는

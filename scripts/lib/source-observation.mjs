@@ -4,6 +4,7 @@ import { createObservationTypeDescriptor, createObservationRecord, verifyObserva
 import { recordCollectedObservation } from "./observation-store.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { sourceDigest, sourceObjectDigest, readSourceBytes, sourceCurrent, sourceError, preparePythonObservation, preparePythonDeclarations } from "./python-source-collector.mjs";
+import { noteProjectGraphChange } from "./discovery-index.mjs";
 
 const DIRECTORY = ".head/observations/source-bundles";
 export const SOURCE_OBSERVATION_TYPE = "source.structural-context";
@@ -151,6 +152,7 @@ export function retainSourceObservation(root, bundle) {
   retainBundle(root, key, bundle);
   const { sourceScopeDigest, input } = observationInput(bundle.evidence);
   recordCollectedObservation({ root, descriptor: bundle.descriptor, input, adapterDescriptor, sourceScopeDigest });
+  noteProjectGraphChange(root, [`${DIRECTORY}/${key}.json`]);
   return key;
 }
 
@@ -192,6 +194,7 @@ export function retainSourceFailure(root, input) {
   // Identical source/profile/query/outcome coalesces; polling does not create
   // one artifact per attempt. This is not an execution or retry authorization.
   retainBundle(root, key, { failure });
+  noteProjectGraphChange(root, [`${DIRECTORY}/${key}.json`]);
   return key;
 }
 

@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readProjectDirection } from "./project-direction.mjs";
+import { noteProjectGraphChange, PROJECT_GRAPH_INDEX_PATH } from "./discovery-index.mjs";
 import { fileURLToPath } from "node:url";
 import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
 import { inspectOnboarding, inspectOptionalOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
@@ -435,6 +437,7 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
     status: coreState === "ready" ? product.status : "core_drifted",
     project: { ...projectInspection.project, sessionId: projectInspection.state.sessionId },
     state: projectInspection.state,
+    currentProjectDirection: readProjectDirection({ root: projectInspection.project.projectRoot }),
     drift: projectInspection.drift,
     readiness: {
       core: { state: coreState, managedProjectionDriftCount: projectInspection.drift.length },
@@ -508,6 +511,10 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   }
 
   if (profile === "product") await recoverOnboardingPromotion({ root });
+  // Explicit resume can initialize a missing optional inventory. Existing
+  // inventories are refreshed by actual record writers or explicit indexing;
+  // unchanged resume must not create a new derived generation after view loss.
+  if (!fs.existsSync(path.join(root, PROJECT_GRAPH_INDEX_PATH))) noteProjectGraphChange(root);
   let current = profile === "core" ? inspectOptionalOnboarding({ root }) : inspectOnboarding({ root });
   if (profile === "core") {
     const productGovernanceActivated = !["initialized", "migration_required"].includes(current.status);

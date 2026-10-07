@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { assertRunSession } from "./session-routing.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { inspectProject } from "./head-core.mjs";
 import { buildFreshHeadReview, createResultPacket, readLineageArtifact } from "./execution-lineage.mjs";
@@ -238,6 +239,7 @@ function currentTarget(root, intent, packet) {
     || state.activeRunId && (state.mode !== "run" || state.pendingReview || state.activeExecutionContractId !== lineage.executionContractId)
     || !state.activeRunId && (state.mode !== "review" || state.activeExecutionContractId)) fail("Whole result belongs to a different current Run or HEAD Session; current work was not changed.");
   const run = JSON.parse(readIntegrationBytes(path.join(inspected.project.projectRoot, ".head/sessions/runs", lineage.runId, "run.json")));
+  assertRunSession(inspected.project.projectRoot, run, state);
   if (run.runId !== lineage.runId || !["active", "awaiting_review"].includes(run.status)
     || run.wholePlanId !== lineage.wholePlanId || run.executionContractId !== lineage.executionContractId || run.capsuleId !== lineage.contextCapsuleId
     || run.resultPacketId && run.resultPacketId !== packet.resultPacketId

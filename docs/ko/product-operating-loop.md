@@ -139,8 +139,9 @@ HEAD 직접 작업이 기본이고, 유용하면 기존 Host 위임을 사용하
 `invokeWith`에 따라 `head_tools_read` 또는 `head_tools_call`로 호출합니다.
 상태를 저장하지 않는 이 경로는 기존 dispatch·권한 검사·결과를 그대로 사용하며
 등록·활성화·추가 사용자 승인을 만들지 않습니다. 읽기 전용 경로는 별도로 유지하고,
-HEAD가 계약을 이미 알면 사전 탐색을 생략할 수 있습니다. 관리형 변경은 기존
-작업을 정리하는 별도 maintenance 진입과 원래 검사를 유지합니다.
+HEAD가 계약을 이미 알면 사전 탐색을 생략할 수 있습니다. 지속 작업에 유용한
+관리형 변경은 `head_tools_call`의 `execution_mode: "managed"`를 사용하고
+사용자 unlock 없이 원래 검사를 유지합니다.
 
 `head_operating_lane_recommend`와 `head_product_note`는 명시적인 호환 진단
 탐색이나 알려진 직접 호출로만 사용합니다. 임시 메모 형식화는 근거를 검증하지

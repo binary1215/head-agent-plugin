@@ -9,8 +9,8 @@ fresh/직접/순차 경로로 계속합니다. 포크 입력은 사용자 범위
 보호하며 불명 효과는 반복 전에 확인합니다. 일반 Host 작업에 관리형 격리·lease·
 지속 재접속·일회성 적용 보장이 있다고 주장하지 않습니다.
 
-아래 관리형 worker 계약은 기존에 승인된 관리형 작업의 명시적 유지관리를 위해
-보존합니다. 새 작업의 권장 경로나 Host 위임 불가 시 fallback이 아닙니다.
+아래 관리형 계약은 복구, 소유권이나 효과 확인이 필요할 때 새로운 유용한 작업과
+기존 작업에 사용합니다. 파일 수정, worker 수나 일반 Host 실패만으로 강제하지 않습니다.
 권한·원본 기저·lease·정리 검사를 유지합니다. Run을 포함한 위험 lane이 실행기를
 선택하지는 않습니다. Host 결과는 증거이지 Canon 승인이나 P2 복구 방향이 아닙니다.
 일반 결과에 추가 검토 클릭은 필요하지 않으며, 보호 전환과 활성 Run의 기존 계약은
@@ -18,13 +18,14 @@ fresh/직접/순차 경로로 계속합니다. 포크 입력은 사용자 범위
 
 ## 보존된 일회성 worker 계약
 
-관리형 worker 변경은 `node scripts/head.mjs managed-maintenance <command> ...`
-또는 별도 `scripts/mcp-managed-maintenance.mjs` stdio 서버를 사용합니다.
-prepare/start/dispatch/execute/apply, reconcile, integration, wave 변경이 해당합니다.
-일반 CLI/MCP에는 과거 기록·상태·대기·결과 조회와 정확히 소유한 작업 취소가 남습니다.
-공유 runtime 권한·실행·적용도 worker에 결속된 경우에만 이 진입점이 필요하며
-non-worker runtime은 그대로 사용합니다. 도구 인자로 일반 서버를 해제할 수 없으며
-진입점 자체가 권한을 부여하지 않습니다.
+관리형 변경은 `node scripts/head.mjs managed <command> ...` 또는 원래 도구
+schema를 사용하는 `head_tools_call`의 `execution_mode: "managed"`로 호출합니다.
+HEAD가 라우팅하며 사용자 unlock을 요구하지 않습니다. 원시 관리형 이름은 일반
+MCP에서 계속 제한하고 기존 `managed-maintenance` CLI/별도 stdio 서버는 호환
+진입점으로 남습니다. Prepare/start/dispatch/execute/apply, reconcile, integration,
+wave 변경은 기존 authorization, lease, lineage와 effect 검사를 모두 유지합니다.
+기록·상태·대기·결과 조회와 정확한 소유 취소는 일반 경로에 남고 라우팅 자체가
+권한을 부여하지 않습니다.
 
 Operating-lane 권고 `0.2.0`은 `executionLane`과 권한 결정을 분리합니다.
 자격 증명 사용만으로 Authority를 요구하지 않으며, 승인 범위의 외부 효과나
@@ -33,10 +34,10 @@ Operating-lane 권고 `0.2.0`은 `executionLane`과 권한 결정을 분리합�
 허가가 아닙니다. 기존 런타임 권한은 그대로이며 Session에 외부 쓰기를 허용하지 않습니다.
 
 기존 dispatch/execute/read/wait는 idle Session ExecutionAuthorization도 받습니다.
-CLI `managed-maintenance worker-execute --input <file>`에는 승인 당시와 정확히 같은 `sessionRequest`만
+CLI `managed worker-execute --input <file>`에는 승인 당시와 정확히 같은 `sessionRequest`만
 전달합니다. Run·WholePlan·contract·필수 영속 Capsule을 만들지 않습니다. MCP
-dispatch/status/wait는 동일 Core를 사용하며 관리형 실행은 명시적 유지관리 구성이 맡습니다.
-유지관리 MCP start는 아래의 신뢰된 Host 연결을 사용하며 호출자가 실행 정책을 주입하지 않습니다.
+dispatch/status/wait는 동일 Core를 사용하며 관리형 실행은 명시적 라우팅과 기존 검사를 사용합니다.
+관리형 MCP start는 아래의 신뢰된 Host 연결을 사용하며 호출자가 실행 정책을 주입하지 않습니다.
 HEAD는 결과를 증거로 소비하며 `worker-apply`와 Wave는 Run 전용입니다.
 요청된 admission, 소유권·범위 검증, 일회성 lease와 정리 증명은 생략하지 않습니다.
 과거 read/wait는 동일 계보와 무결성을 검증하되 현재 active Run을 강제하지 않습니다.
@@ -124,7 +125,7 @@ protocol-evidence 구성은 동일한 direct-child, no-shell, ignored-stdin, min
 
 현재 Windows 실행은 Claude Code, Codex, OpenCode에 필요한 non-interactive 및 machine-protocol surface를 관찰합니다. 이는 `actualProviderProtocolObservationValidated: true`를 기록하지만, `actualProviderSessionControlValidated`, provider-session creation 및 runtime control은 계속 false입니다.
 
-그런 다음 `RuntimeProjectBinding`은 version 및 protocol evidence ID를 canonical `.head/project.json` project ID와 `.head/sessions/current.json` HEAD Session ID에 결속합니다. 물리적 project root는 digest로 축소되며 이 probe 동안 어떤 프로젝트 콘텐츠도 전송되지 않습니다. 이는 capability-reference binding일 뿐입니다. 즉, 어떤 HEAD project 및 Session이 설치된 interface를 검사했는지를 입증할 뿐, 공급자 session이 생성되었거나 해당 프로젝트에 연결되었음을 입증하지 않습니다.
+그런 다음 `RuntimeProjectBinding`은 version 및 protocol evidence ID를 canonical `.head/project.json` project ID와 선택된 논리 HEAD Session ID에 결속합니다. 기존 `current.json`은 기본 기록입니다. 물리적 project root는 digest로 축소되며 이 probe 동안 어떤 프로젝트 콘텐츠도 전송되지 않습니다. 이는 capability-reference binding일 뿐입니다. 즉, 어떤 HEAD project 및 Session이 설치된 interface를 검사했는지를 입증할 뿐, 공급자 session이 생성되었거나 해당 프로젝트에 연결되었음을 입증하지 않습니다.
 
 ## 위험 비례 실행 권한 부여
 
@@ -368,8 +369,8 @@ actual-provider 연결로 승격될 수 없습니다.
 이는 해당 시험의 허용량이지 제품 제한이 아닙니다. 로컬 계약 시험과 한정 범위 검토는
 backend 전체의 수용 판정이 아닙니다. 고정한 설치 실행 파일의 모델 없는 검사는
 고정 feature flag와 격리된 합성 Codex home의 config·skill 조회만 확인했으며 계정·
-thread·turn·모델 호출은 하지 않았습니다. 내장 로컬 Host의 준비·시작은 명시적
-managed-maintenance CLI/MCP 표면에만 연결됩니다. Runtime cache를 설치·업데이트하지는 않습니다.
+thread·turn·모델 호출은 하지 않았습니다. 내장 로컬 Host의 준비·시작은
+명시적인 managed CLI/MCP 라우트에 연결됩니다. Runtime cache를 설치·업데이트하지는 않습니다.
 새 사용자 JSON 양식이나 일반 Session 게이트를 만들지 않으며, 선택 모드가
 실패해도 정본 작업 폴더에서 조용히 실행하지 않습니다.
 
@@ -382,7 +383,7 @@ member, context, source·proposal 범위를 받습니다. 로컬의 고정 Codex
 주장은 공개 입력이 아닙니다. 지침 기본값은 `selected-only`이며 `host-global`은
 명시적인 입력 선택이지 사용자의 더 좁은 범위를 넓힐 권한이 아닙니다. 계정·모델
 준비도는 실제 실행 때 확인합니다. 준비는 쓰기 권한이나 Run을 만들지 않습니다.
-명시적 유지관리 CLI/stdio MCP 경로는 모델 없는 native fixture로 검증했고 stock Codex 준비는
+명시적 관리형 CLI/stdio MCP 경로는 모델 없는 native fixture로 검증했고 stock Codex 준비는
 계정·thread·모델 호출 없는 관측으로 검증했습니다.
 
 실행 전에 선택 소스·변경 전 상태가 바뀌면 task 이름 변경이나 캐시 삭제 없이

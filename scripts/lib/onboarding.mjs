@@ -114,7 +114,7 @@ function readJson(file, label, code = "INVALID_ONBOARDING_ARTIFACT") {
 }
 
 function readyProject(root, action = "onboarding") {
-  const inspected = inspectProject(root);
+  const inspected = inspectProject(root, { sessionScope: "default" });
   if (inspected.status !== "ready") {
     fail(`Project must be ready for ${action}; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   }

@@ -40,13 +40,30 @@ checkpoint를 대체하지 않습니다. 통합 작업은 `purpose`, `approvedDe
 `currentPosition`, `nextExpectedResult`를 명시적으로 받습니다. worker reply와
 ResultPacket 어느 쪽도 이 fields를 작성할 수 없습니다.
 
+## 독립 Session 라우팅과 현재 공통 방향
+
+하나의 정식 Project에서 여러 논리 HEAD Session을 독립적으로 라우팅합니다.
+MCP `session_id` 또는 CLI `--session`은 요청 대상만 선택하며
+`.head/sessions/current.json`을 바꾸지 않습니다. 추가 기록은
+`.head/sessions/by-id/<session-id>/current.json`에 보존합니다. 기존 ID, 검토,
+활성·불명 작업을 유지하고 로컬 목적·진행 변경은 다른 Session이나 공통 방향을
+덮어쓰지 않습니다.
+
+복구는 현재 공통 P2 기록의 `currentProjectDirection`도 반환합니다. goal,
+constraints, decisions, cancelledActions는 과거 checkpoint 필드와 구분합니다.
+과거 배포 단계가 더 최신인 공통 배포 취소를 되돌릴 수 없습니다.
+`head_project_direction_update`는 정확한 조회 `expected_direction_id`와 현재
+사용자 방향을 요구하며 경합은 다시 읽고 조정합니다. 복구나 방향 기록은 실행
+authorization을 만들지 않습니다. 온전한 과거 자료는 탐색할 수 있지만 읽을 수
+있다는 이유만으로 현재 효과를 실행하지는 않습니다.
+
 ## 아티팩트 전용 Session 복원
 
 `session-restore`는 현재 canonical checkpoint pointer에서 시작하여 다음을 수행합니다.
 
 1. content-addressed `SessionRunCheckpoint`를 digest 검증합니다.
 2. 현재 protocol `0.3.0`과 그 불변 `sessionPointer`를 요구합니다.
-3. 해당 pointer를 `.head/sessions/current.json`과 byte-semantic 기준으로 비교합니다.
+3. pointer를 선택된 논리 Session 기록과 비교합니다. 기본 `current.json`과 추가 `by-id/<session-id>/current.json`은 독립적으로 유지됩니다.
 4. 현재 WholePlan과, 활성 상태인 경우 정확한 Run, ExecutionContract 및 ContextCapsule
    digest를 다시 검증합니다.
 5. ResultPacket 증거가 있으면 보류 중인 review 계보를 다시 검증합니다.
@@ -232,11 +249,14 @@ receipt는 통합이 ReviewDecision을 생성하지 않았고 ResultPacket은 �
 
 ## 공개 표면
 
-아래 worker 변경은 기존에 승인된 관리형 작업의 명시적 유지관리만을 위해 보존하며
-일반 복구나 새로운 위임 절차가 아닙니다. 일반 작업은 HEAD 직접 수행 또는 현재 Host
-도구를 사용합니다. Typed MCP 변경 도구는 별도 `scripts/mcp-managed-maintenance.mjs`
-서버에만 있고, read/status/wait와 정확히 소유한 작업 취소는 일반 표면에 남습니다.
-복구 API가 관리형 실행을 선택하거나 사용자의 설치된 서버를 변경하지 않습니다.
+아래 worker 변경은 중단 복구, 소유권이나 효과 추적이 유용할 때 새로운
+관리형 작업에도 사용합니다. CLI `managed`, 또는 도구 발견 후
+`head_tools_call`의 `execution_mode: "managed"`로 호출합니다.
+기존 `managed-maintenance` CLI/서버도 호환 진입점으로 유지합니다.
+라우팅은 기존 authorization, lease, lineage와 effect 검사를 보존하며 추가
+사용자 unlock은 필요하지 않습니다. 일반 read/status/wait와 정확한 소유 취소는
+계속 제공됩니다. 복구, worker 수, 파일 수정이나 일반 Host 실패만으로 관리형을
+강제하지 않습니다.
 
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
@@ -245,15 +265,15 @@ head checkpoint-diagnose <project>
 head checkpoint-sync <project> --input <head-direction.json>
 head session-restore <project> [--checkpoint <checkpoint-id>]
 head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
-head managed-maintenance worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
+head managed worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
 head worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
-head managed-maintenance worker-execute <project> --authorization <authorization-id> --role <non-head-role>
-head managed-maintenance worker-apply <project> --authorization <authorization-id>
-head managed-maintenance worker-wave-create <project> --input <wave.json>
-head managed-maintenance worker-wave-seal <project> --wave <bounded-worker-wave-id>
+head managed worker-execute <project> --authorization <authorization-id> --role <non-head-role>
+head managed worker-apply <project> --authorization <authorization-id>
+head managed worker-wave-create <project> --input <wave.json>
+head managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
 head worker-wave-status <project> --wave <bounded-worker-wave-id>
 head worker-wave-wait <project> --wave <bounded-worker-wave-id>
-head managed-maintenance worker-wave-abandon <project> --input <abandonment.json>
+head managed worker-wave-abandon <project> --input <abandonment.json>
 head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```

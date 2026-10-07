@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assertProjectActionsCurrent, assertAuthorizationProjectDirection } from "./project-direction.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { requireCurrentWorkerMember } from "./worker-member-registry.mjs";
 
@@ -549,6 +550,7 @@ function consume(projectRoot, authorization, owner) {
 }
 
 function consumeCurrent(projectRoot, authorization, owner) {
+  assertAuthorizationProjectDirection(projectRoot, authorization);
   verifyRuntimeExecutionLeaseOwnership({ projectRoot, authorization, lease: owner });
   const payload = {
     schemaVersion: 1,
@@ -709,6 +711,8 @@ export async function withRuntimeExecutionLease(
   const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: true });
   const acquireCurrent = () => {
     requireCurrentWorkerMember(projectRoot, verified);
+    assertAuthorizationProjectDirection(projectRoot, verified);
+    assertProjectActionsCurrent({ root: projectRoot, actions: verified.requiredAllowedActions });
     return acquire({ projectRoot, operationalStateRoot, authorization: verified, ownerFenceDigest });
   };
   const owner = verified.workerInput

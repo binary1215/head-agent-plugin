@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { withSessionRoute } from "./session-routing.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { readRuntimeInvocationAuthorization, prepareRuntimeInvocationExecution, buildRuntimeResultPacketDraft, verifyRuntimeInvocationLifecycleReceipt } from "./runtime-invocation-lifecycle.mjs";
@@ -498,6 +499,12 @@ export function reconcileBoundedWorkerJob(input, inspection = {}) {
 export async function runBoundedWorkerJobOwner(bindingFile, { signal, onProcess = () => {} } = {}) {
   const initial = read(bindingFile);
   const { projectRoot, authorization } = identity(initial.projectRoot, initial.authorizationId);
+  // Detached owners recreate the exact logical Session route from the verified
+  // Project-bound authorization, never from a provider/session environment.
+  return withSessionRoute(projectRoot, authorization.headSessionId, () => runRoutedOwner(bindingFile, { signal, onProcess }, { projectRoot, authorization }));
+}
+
+async function runRoutedOwner(bindingFile, { signal, onProcess }, { projectRoot, authorization }) {
   const directory = jobDirectory(resolveRuntimeOperationalStateRoot({ projectRoot, create: false }), authorization);
   if (path.resolve(bindingFile) !== path.join(directory, "binding.json")) fail("Owner binding path differs.");
   const { binding } = verifiedBinding(directory, projectRoot, authorization);

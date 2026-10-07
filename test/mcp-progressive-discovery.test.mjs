@@ -25,7 +25,8 @@ function snapshot(root) {
 }
 
 test("small default catalog discovers every ordinary contract without registering, unlocking or initializing", async () => {
-  assert.equal(tools.length, 16);
+  assert.equal(tools.length, 17);
+  assert(tools.some(tool => tool.name === "head_project_graph"));
   assert(Buffer.byteLength(JSON.stringify(tools)) < 112030 / 2);
   for (const name of ["head_operating_lane_recommend", "head_product_note", "head_context_prepare", "head_world_model"]) {
     assert(!tools.some(tool => tool.name === name));

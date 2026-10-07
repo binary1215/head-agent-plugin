@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { readProjectDirection } from "./project-direction.mjs";
+import { assertRunSession } from "./session-routing.mjs";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
@@ -79,6 +81,7 @@ function readRun(root, runId) {
   const file = runFile(root, runId);
   if (!fs.existsSync(file)) fail(`Run canon not found: ${runId}`, "SESSION_RUN_NOT_FOUND");
   const run = readJson(file, "Run canon");
+  assertRunSession(root, run, inspectProject(root).state);
   if (run.runId !== runId) fail("Run canon identity is invalid.", "SESSION_RUN_IDENTITY_MISMATCH");
   return run;
 }
@@ -257,12 +260,14 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
   const integrationEvidence = reviewedRunIntegration?.resultPacketId
     ? optionalResultEvidence(inspected.project.projectRoot, reviewedRunIntegration.resultPacketId)
     : { status: "not-applicable", resultPacketId: null, artifactHash: null };
+  const currentProjectDirection = readProjectDirection({ root: inspected.project.projectRoot });
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "SessionRestoreProjection",
     protocol: { name: "head-agent-core-artifact-session-restore", version: SESSION_RECOVERY_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
+    currentProjectDirection,
     authorityBoundary: artifactAuthorityBoundary("SessionRestoreProjection"),
     checkpoint: {
       checkpointId: checkpoint.checkpointId,
@@ -285,6 +290,8 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
       purpose: checkpoint.purpose,
       currentPosition: checkpoint.currentPosition,
       nextExpectedResult: checkpoint.nextExpectedResult,
+      ...(currentProjectDirection ? { currentProjectDirection,
+        commonDirectionPrecedence: "current-common-constraints-and-cancellations-apply-before-historical-session-intent" } : {}),
     },
     providerBoundary: {
       providerSessionIdentityRequired: false,

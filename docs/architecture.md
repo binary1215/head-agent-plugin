@@ -10,6 +10,9 @@ The plugin is organized as thin provider distributions around a provider-neutral
   -> .mcp.json                    read-only inspection surface
   -> scripts/head.mjs             explicit mutation entrypoint
        -> scripts/lib/head-core   project canon and projections
+       -> scripts/lib/session-routing independent logical Session routing
+       -> scripts/lib/project-direction common current user direction
+       -> scripts/lib/project-graph bounded graph-first discovery
        -> scripts/lib/context-compiler
                                   versioned task Context Capsules
        -> scripts/lib/execution-lineage
@@ -49,8 +52,8 @@ The stable normative root is the small provider-neutral HEAD constitution in
 type system, not a mandatory user ceremony. The public initialize/resume
 transaction exposes two profiles without creating separate project identities:
 
-- `core` is the default and establishes only the canonical Project, current
-  Session, managed runtime projections, and dormant optional-state pointers;
+- `core` preserves the canonical Project, selected logical Session, provider
+  projections and eligible existing-observation index by default;
 - `product` explicitly activates or resumes evidence-linked onboarding and the
   Product/World/Graph governance path.
 
@@ -94,11 +97,43 @@ verify or continuation action. The adapter cannot carry provider-session
 identity or author recovery, instruction, review, promotion, or Product Canon;
 its absence is a non-blocking capability gap, not a project-readiness failure.
 
+## Common direction, Sessions and discovery
+
+One canonical Project carries current common user direction. Independently routed
+Sessions preserve their own purpose, progress, checkpoints and active/unknown work.
+Request-local routing retains `.head/sessions/current.json` as the default record;
+additional Sessions use `.head/sessions/by-id/<session-id>/current.json`. A logical
+Session identity is not a provider session ID. Project-scoped onboarding keeps its
+original review lineage.
+
+`ProjectDirection` is P2 current user direction: immutable revisions behind
+`.head/project-direction/current.json`. Exact-basis compare-and-swap prevents
+timestamp/last-writer replacement. Restore preserves the historical checkpoint's
+exact fields while exposing current common direction separately; it cannot undo
+a later shared constraint or cancelled action. The record grants no execution
+authorization.
+
+`head_project_graph` queries a bounded P4 observation index and optional retained
+World layer. Work and Product views reference common originals. Results retain
+basis/revision, integrity, freshness, coverage, provenance and candidate/rejection
+state through relation expansion. Intact history remains readable; damaged layers
+are excluded independently. Empty/partial coverage is not absence. Same-basis
+results and known failures can be reused. Graph/adapter loss returns original-source
+fallback without a full-World-current, Product-review, Run/Capsule, index-completion
+or database gate. Index updates reuse unchanged input; reads publish no checkpoint,
+approval, candidate or per-read receipt. Effects recheck current sources and
+authority. See [project discovery](../skills/head-agent-core/references/project-discovery.md).
+
+Direct, ordinary Host and managed execution are choices of means. Managed work
+may serve a new useful durable outcome; file edits, worker count and ordinary
+failure do not force it. Fork/fresh selects context independently without an
+approval, isolation or cache guarantee.
+
 ## Onboarding authority plane
 
-Initialization creates a project-scoped HEAD Session record and a dormant
-onboarding pointer independently from provider conversations. Only the explicit
-`product` profile indexes the local World Model. A structured user brief may
+Initialization preserves the default Session and dormant onboarding pointer,
+updates the existing-observation index independently of provider conversations,
+and builds the governed local World Model only through explicit `product` scope. A structured user brief may
 directly seed candidates; otherwise a fresh provider HEAD authors a bounded
 semantic proposal from current evidence. The JavaScript Core validates exact
 SourceSnapshot, path, digest, line, optional symbol, Product Model references,

@@ -40,13 +40,32 @@ integration operation receives `purpose`, `approvedDecisions`, `currentPosition`
 and `nextExpectedResult` explicitly; neither a worker reply nor ResultPacket is
 allowed to author those fields.
 
+## Independent Session routing and current common direction
+
+One canonical Project has independently routed logical HEAD Sessions.
+`session_id` (MCP) or `--session` (CLI) selects the request's target without
+switching `.head/sessions/current.json`; additional records live under
+`.head/sessions/by-id/<session-id>/current.json`. Existing identities, review
+records, active and unknown work stay intact. Session-local purpose/progress
+updates do not overwrite another Session or common direction.
+
+Restore also returns `currentProjectDirection` from the current common P2 record.
+Its goal, constraints, decisions and cancelled actions remain distinct from
+historical checkpoint fields: a past deploy step cannot revoke a later shared
+cancellation. `head_project_direction_update` requires the exact read
+`expected_direction_id` and current user direction. Concurrent differences require
+reconciliation. Neither restore nor this direction record grants an execution
+authorization. An older valid record remains inspectable history, while a stale
+checkpoint cannot drive current effect execution merely by being readable.
+
 ## Artifact-only Session restore
 
 `session-restore` starts from the current canonical checkpoint pointer and:
 
 1. digest-verifies the content-addressed `SessionRunCheckpoint`;
 2. requires current protocol `0.3.0` and its immutable `sessionPointer`;
-3. compares that pointer byte-semantically with `.head/sessions/current.json`;
+3. compares that pointer with the selected logical Session record (`current.json`
+   for the preserved default, or `by-id/<session-id>/current.json`);
 4. re-verifies the current WholePlan and, when active, exact Run,
    ExecutionContract, and ContextCapsule digest;
 5. re-verifies pending review lineage when ResultPacket evidence is present;
@@ -251,12 +270,14 @@ does not change the checkpoint or restore projection's next direction.
 
 ## Public surfaces
 
-Worker mutations below are retained only for explicit maintenance of existing
-approved managed work, not normal recovery or new delegation. Ordinary work uses
-direct HEAD or current Host tools. Typed MCP exposes those mutations only on the
-separate `scripts/mcp-managed-maintenance.mjs` server; read/status/wait and exact
-owned cancellation remain on the ordinary surface. Recovery APIs do not select
-managed execution or change the user's installed server.
+Worker mutations support explicit useful managed execution when interruption
+recovery, ownership or effect tracking needs it. Use CLI `managed`, or discover
+the typed tool and call `head_tools_call` with `execution_mode: "managed"`.
+The retained `managed-maintenance` CLI/server remains a compatible entry.
+Routing preserves every original authorization, lease, lineage and effect check;
+HEAD chooses it without a new user unlock. Ordinary read/status/wait and exact
+owned cancellation remain available. Recovery alone, worker count, file edits
+and ordinary Host failures do not force managed execution.
 
 ```text
 head checkpoint <project> --summary <text> [--next <text>]
@@ -265,15 +286,15 @@ head checkpoint-diagnose <project>
 head checkpoint-sync <project> --input <head-direction.json>
 head session-restore <project> [--checkpoint <checkpoint-id>]
 head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
-head managed-maintenance worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
+head managed worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
 head worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
-head managed-maintenance worker-execute <project> --authorization <authorization-id> --role <non-head-role>
-head managed-maintenance worker-apply <project> --authorization <authorization-id>
-head managed-maintenance worker-wave-create <project> --input <wave.json>
-head managed-maintenance worker-wave-seal <project> --wave <bounded-worker-wave-id>
+head managed worker-execute <project> --authorization <authorization-id> --role <non-head-role>
+head managed worker-apply <project> --authorization <authorization-id>
+head managed worker-wave-create <project> --input <wave.json>
+head managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
 head worker-wave-status <project> --wave <bounded-worker-wave-id>
 head worker-wave-wait <project> --wave <bounded-worker-wave-id>
-head managed-maintenance worker-wave-abandon <project> --input <abandonment.json>
+head managed worker-wave-abandon <project> --input <abandonment.json>
 head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```

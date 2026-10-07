@@ -6,7 +6,8 @@ import test from "node:test";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const skillRoot = path.join(pluginRoot, "skills", "head-agent-core");
-const files = ["SKILL.md", "references/runtime-composition.md", "references/conversation-ux.md", "references/authority-and-roles.md"];
+const files = ["SKILL.md", "references/runtime-composition.md", "references/conversation-ux.md", "references/authority-and-roles.md",
+  "references/project-discovery.md", "references/context-workflow.md", "references/recovery-workflow.md"];
 
 // This checks this Skill's inline Markdown links and ATX heading anchors, not
 // model behavior or every CommonMark extension. Ignore examples in code fences.

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { defaultSessionStatePath, sessionStatePath } from "./session-routing.mjs";
 import { inspectProject } from "./head-core.mjs";
 import {
   ONBOARDING_PRODUCT_REVISION_DIRECTORY,
@@ -111,11 +112,17 @@ export function captureHistoricalBoundaryApplicationBasis({ root = "." } = {}) {
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail("Project and Session must be independently current-readable.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
   const projectRoot = inspected.project.projectRoot;
+  // Product onboarding is Project-scoped and retains its original review
+  // Session. A routed Session owns only its own current recovery/effect basis.
+  const onboardingOwner = inspectProject(projectRoot, { sessionScope: "default" });
+  if (onboardingOwner.status !== "ready" || onboardingOwner.project.projectId !== inspected.project.projectId) {
+    fail("Common onboarding Session identity must be independently readable.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
+  }
   const stateFile = path.join(projectRoot, ...ONBOARDING_STATE_RELATIVE_PATH.split("/"));
   if (!fs.existsSync(stateFile)) fail("Onboarding state is missing.", "HISTORICAL_BOUNDARY_STATE_UNSUPPORTED");
   const onboardingState = verifyOnboardingState(readJson(stateFile, "Onboarding state"), {
     projectId: inspected.project.projectId,
-    sessionId: inspected.state.sessionId,
+    sessionId: onboardingOwner.state.sessionId,
   });
   if (onboardingState.protocol?.version !== ONBOARDING_STATE_PROTOCOL_VERSION || onboardingState.phase !== "ready") {
     fail("The first migration slice supports only current ready onboarding state.", "HISTORICAL_BOUNDARY_STATE_UNSUPPORTED");
@@ -130,7 +137,7 @@ export function captureHistoricalBoundaryApplicationBasis({ root = "." } = {}) {
     fail("Current Canon revision is not independently readable.", "HISTORICAL_BOUNDARY_CURRENT_CANON_REVISION_UNSUPPORTED");
   }
   const projectFile = fileBasis(projectRoot, ".head/project.json", inspected.project.projectId);
-  const sessionFile = fileBasis(projectRoot, ".head/sessions/current.json", inspected.state.sessionId);
+  const sessionFile = fileBasis(projectRoot, path.relative(projectRoot, sessionStatePath(projectRoot)).split(path.sep).join("/"), inspected.state.sessionId);
   const stateBasis = fileBasis(projectRoot, ONBOARDING_STATE_RELATIVE_PATH, onboardingState.pointerHash);
   const canonBasis = fileBasis(projectRoot, canon.relativePath, canon.model.productModelId);
   const referencedP2 = verifyReferencedP2(projectRoot, inspected.state);
@@ -143,6 +150,9 @@ export function captureHistoricalBoundaryApplicationBasis({ root = "." } = {}) {
     appliedAtBasis: {
       project: projectFile,
       session: sessionFile,
+      ...(onboardingOwner.state.sessionId !== inspected.state.sessionId ? {
+        onboardingSession: fileBasis(projectRoot, relativePath(projectRoot, defaultSessionStatePath(projectRoot)), onboardingOwner.state.sessionId),
+      } : {}),
       onboardingState: {
         ...stateBasis,
         candidateSetId: onboardingState.candidateSetId,

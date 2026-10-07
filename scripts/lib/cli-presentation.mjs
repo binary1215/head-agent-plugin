@@ -50,13 +50,13 @@ export function formatHelp(value) {
   const lines = [
     "HEAD Agent Core",
     "In a supported coding conversation, describe the task in ordinary language; HEAD handles the internal setup.",
-    "Core-first by default. Product, World, Graph, durable Runs, and workers stay explicit.",
+    "Core-first by default. Find bounded graph evidence, use source fallback when needed, and activate Product governance or durable execution for their intended outcomes.",
   ];
   if (value.executionMeans?.default === "head-direct") {
     lines.push("Work directly by default; use available Host tools for useful delegation, then let HEAD integrate the results.",
       "If delegation never started or has no remaining effects, continue directly or sequentially; inspect uncertain work before replacement.");
   }
-  if (value.surface === "managed-maintenance") lines.push("Retained managed-work maintenance: original authorization and effect checks still apply. Not an automatic failure fallback.");
+  if (value.surface === "managed-maintenance") lines.push("Managed execution: use it when durable ownership, recovery or effect settlement is needed. Original authorization and effect checks apply.");
     if (value.contextGuidance) lines.push(value.contextGuidance);
     if (value.compatibilityDiagnostics?.length) lines.push(`Compatibility diagnostics only, not recommended workflow steps: ${value.compatibilityDiagnostics.join(", ")}.`);
   lines.push("");

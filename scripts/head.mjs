@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { commandEntry, isManagedMutation, requireOperationSurface, requireSurface } from "./lib/managed-maintenance-surface.mjs";
 import { inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
+import { withSessionRoute, createHeadSession, listHeadSessions, readProjectDirection, updateProjectDirection } from "./lib/session-routing.mjs";
 import { startBoundedWorkerJob, readBoundedWorkerJob, cancelBoundedWorkerJob, reconcileBoundedWorkerJob, readBoundedWorkerPatch } from "./lib/bounded-worker-job.mjs";
 import { operateWorkerIntegration, inspectWorkerIntegration } from "./lib/worker-integration-workflow.mjs";
 import { prepareLocalBoundedWorker, startLocalBoundedWorker } from "./lib/local-worker-host.mjs";
@@ -99,6 +100,12 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       "head --version",
       "head status <project>",
       "head doctor <project>",
+      "head graph-query <project> --query <text> [--view all|work|product] [--paths <path,...>] [--anchors <id,...>] [--depth <n>] [--max-nodes <n>] [--max-edges <n>] [--world-model <id>]",
+      "head graph-index <project>",
+      "head session-create <project> [--purpose <text>] [--new-session <session-id>]",
+      "head session-list <project>",
+      "head project-direction-read <project>",
+      "head project-direction-update <project> --input <current-user-direction.json> [--expected-direction <id>]",
       "head runtime-adapters <project>",
       "head runtime-invocation-authorize <project> --input <authorization.json>",
       "head runtime-invocation-read <project> --authorization <execution-authorization-id>",
@@ -263,6 +270,8 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
     "head init <project> [--runtime claude,codex,opencode]  # small Core is the default",
     "head resume <project> [--runtime claude,codex,opencode]",
     "head status <project>",
+    "head graph-query <project> --query <text>  # bounded graph first; source fallback remains usable",
+    "head session-list <project>  # use --session <logical-session-id> on project commands when needed",
     "head checkpoint-diagnose <project>  # only when recovery needs attention",
     "head compact-status <project>",
     "head help-all  # advanced, compatibility, audit, and recovery commands",
@@ -331,6 +340,18 @@ function requireRuntimeSurface(command, surface, root, authorization) {
 
 export function runCommand(argv = process.argv.slice(2), { observationRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
   const entry = commandEntry(argv);
+  const parsed = parse(entry.argv);
+  const index = argv.indexOf("--session");
+  if (index >= 0) {
+    if (argv.lastIndexOf("--session") !== index) throw new Error("Only one logical Session route may be selected.");
+    const routed = [...argv]; routed.splice(index, 2);
+    return withSessionRoute(parsed.root, parsed.options.session, () => runRoutedCommand(routed, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess }));
+  }
+  return runRoutedCommand(argv, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess });
+}
+
+function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
+  const entry = commandEntry(argv);
   const { surface } = entry;
   const { command, root, options } = parse(entry.argv);
   requireOperationSurface(command, surface);
@@ -345,6 +366,14 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
     onboarding: options.input ? inputJson(options, "Project onboarding") : null,
   });
   if (command === "status" || command === "doctor") return inspectProjectExperience({ root });
+  if (command === "graph-query") return import("./lib/project-graph.mjs").then(({ queryProjectGraph }) => queryProjectGraph({ root, query: options.query || "", view: options.view || "all",
+    paths: options.paths?.split(",") || [], anchorIds: options.anchors?.split(",") || [], depth: options.depth == null ? 1 : Number(options.depth),
+    maxNodes: options["max-nodes"] == null ? 60 : Number(options["max-nodes"]), maxEdges: options["max-edges"] == null ? 120 : Number(options["max-edges"]), worldModelId: options["world-model"] || "" }));
+  if (command === "graph-index") return import("./lib/project-graph.mjs").then(({ indexProjectGraph }) => indexProjectGraph({ root }));
+  if (command === "session-create") return createHeadSession({ root, sessionId: options["new-session"], purpose: options.purpose });
+  if (command === "session-list") return listHeadSessions({ root });
+  if (command === "project-direction-read") return readProjectDirection({ root });
+  if (command === "project-direction-update") return updateProjectDirection({ root, expectedDirectionId: options["expected-direction"] || null, input: inputJson(options, "Current user Project direction") });
   if (command === "runtime-adapters") return inspectRuntimeAdapters(root);
   if (command === "runtime-invocation-authorize") {
     const input = inputJson(options, "Runtime invocation authorization");

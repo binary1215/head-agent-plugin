@@ -6,10 +6,10 @@ history or validation fixtures.
 
 Status: active, executable contract
 
-Protocol version: `0.8.0`
+Protocol version: `0.9.0`
 
-Digest-valid `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0`, and `0.7.0` embedded boundaries remain readable for upgrade continuity;
-new builders emit `0.8.0`. The only legacy classification retained by the reader
+Digest-valid `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0`, `0.7.0`, and `0.8.0` embedded boundaries remain readable for upgrade continuity;
+new builders emit `0.9.0`. The only legacy classification retained by the reader
 is the former generic Feature/Policy naming, never used to promote a new artifact.
 
 `WorkerPatchIntegrationIntent` is P3: exact dispatch, authorization, settled
@@ -45,9 +45,9 @@ become an additional source of product meaning or recovery direction.
 | Plane | Ownership | Representative artifacts | Forbidden inference |
 |---|---|---|---|
 | P1 Normative Authority | approved product meaning, policy, and explicit decisions | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision, accepted ProductPolicyReviewDecision | existence in a graph, message, result, or host cannot create approval |
-| P2 Canonical Recovery/Lineage Record | provider-independent recovery of Project, Session, Run, plan, context, contract, and next direction | Project, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | evidence deletion or provider summary cannot rewrite checkpoint fields |
+| P2 Canonical Recovery/Lineage Record | provider-independent recovery of Project, Session, Run, plan, context, contract, and next direction | Project, ProjectDirection, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | evidence deletion or provider summary cannot rewrite checkpoint fields |
 | P3 Evidence Record | reviewable results, observations, candidates, claims, ownership records, and audit receipts | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate/ProductPolicyCandidate, Evidence, ObservationTypeDescriptor/ObservationRecord/DerivedObservationRecord/ObservationCollectionReceipt, MetricDefinitionProjection, ProductHypothesis, ConformanceFindingCandidate/DispositionReceipt/ResolutionCandidate, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | evidence cannot promote itself or become recovery canon |
-| P4 Derived Relation/View | reproducible retrieval and human-facing views | GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, MeasurementLineageProjection, DeliveryStateProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, RecoveryCheckpointDiagnosisProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
+| P4 Derived Relation/View | reproducible retrieval and human-facing views | ProjectGraphDiscoveryProjection, ProjectGraphObservationIndex, GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, MeasurementLineageProjection, DeliveryStateProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, RecoveryCheckpointDiagnosisProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | a projection cannot mutate Canon, grant instruction authority, or be the only recovery source |
 | P5 Operational Effect | host-local process, continuation, wait, and delivery effects | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, ObservationSourceBinding, ConformanceTriggerBinding, provider-session reference | successful continuation, waiting, delivery, or process control cannot authorize execution, review, promotion, or recovery |
 
 `scripts/lib/authority-plane-contract.mjs` emits one content-derived
@@ -112,7 +112,9 @@ The same rule applies in context and coordination:
   structured proposal without requiring user JSON. It cannot choose
   EvidenceNeeds or graph anchors, persist provider/session identity, or write
   P2 direction. Any later preview revalidates Project/World/Graph drift;
-- unreviewed candidates remain excluded from default traversal and compilation;
+- unreviewed candidates remain excluded from Canon context compilation; graph
+  discovery may include them as explicitly labelled P3 evidence, retaining their
+  original candidate/rejection state through relation expansion;
 - provider summaries, continuity views, inbox messages, and replies cannot change
   checkpoint fields or create a ReviewDecision;
 - a remote GraphDB can accelerate a verified query but cannot reconstruct Product
@@ -250,3 +252,22 @@ P1 review, P2 recovery direction, P3 result meaning, Product Canon, or wave
 completion. Missing admission state blocks only the affected admission domain;
 ordinary Core recovery and non-admission execution remain governed by their
 existing contracts.
+
+## Discovery, common direction and Session routing
+
+`ProjectDirection` is P2 current common user direction: goal, constraints,
+decisions and cancelled actions. Exact-basis updates reconcile concurrent intent.
+These fields and historical approvals read from the graph grant no execution
+authorization. Multiple logical Sessions keep independent progress/recovery through
+request-local routing without switching the default Session. Restore preserves
+checkpoint fields exactly and applies current common direction separately.
+
+`ProjectGraphDiscoveryProjection` and its replaceable `ProjectGraphObservationIndex`
+are P4. Work/Product views reference the same originals. Bounded discovery reads
+intact historical/unapproved/rejected evidence with original state, basis and
+revision preserved through relation expansion. This does not relax Canon compiler
+candidate exclusion or promote an old approval into current effect permission.
+Valid layers remain usable without full World currentness, Product review,
+Run/Capsule or DB; damaged layers are excluded independently. Empty/partial
+coverage is not absence and returns original-source fallback. Same-basis results
+and failures may be reused. Reading creates neither approval nor checkpoint.
