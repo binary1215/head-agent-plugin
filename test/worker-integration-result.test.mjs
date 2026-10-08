@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import { workerIntegrationFixture } from "./helpers/worker-integration-fixture.mjs";
 import { inspectProject } from "../scripts/lib/head-core.mjs";
 import { createResultPacket, readLineageArtifact } from "../scripts/lib/execution-lineage.mjs";
@@ -171,29 +172,68 @@ test("existing receipt is historical across later Run, Session, source and manag
   assert.deepEqual(files(f.root), before);
 });
 
-for (const boundary of ["prepare", "artifact", "run", "session"]) {
+function freshPublicationRetry(publication) {
+  const moduleUrl = new URL("../scripts/lib/worker-integration-result.mjs", import.meta.url).href;
+  const cwd = path.resolve(import.meta.dirname, "..");
+  const code = `import { publishWorkerIntegrationResult } from ${JSON.stringify(moduleUrl)};
+    const result = await publishWorkerIntegrationResult(${JSON.stringify(publication)}, {
+      readApplication: () => { throw new Error("frozen transition must not reobserve or replay effects"); }
+    });
+    console.log(JSON.stringify(result));`;
+  console.log(JSON.stringify({ event: "owned-worker-result-retry-launch", parentPid: process.pid,
+    command: process.execPath, args: ["--input-type=module", "--eval", "exact worker result publication retry"], cwd, ports: [] }));
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", code], { cwd, encoding: "utf8", windowsHide: true, timeout: 60_000 });
+  console.log(JSON.stringify({ event: "owned-worker-result-retry-exit", pid: child.pid, parentPid: process.pid,
+    status: child.status, signal: child.signal, ports: [] }));
+  assert.equal(child.error, undefined, child.error?.message);
+  assert.equal(child.status, 0, child.stderr);
+  assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
+  return JSON.parse(child.stdout.trim());
+}
+
+// The final Run freezes the exact packet, then no-clobber artifact publication,
+// then the Session update. There is no preparatory Run publication anymore.
+for (const boundary of ["run", "artifact", "session"]) {
   test(`partial finish recovers one exact whole packet after ${boundary} write`, async t => {
     const f = await prepared(t);
-    const rename = fs.renameSync;
+    const rename = fs.renameSync, link = fs.linkSync;
     let injected = false;
     fs.renameSync = (source, target) => {
-      let match = boundary === "session" && target === f.sessionFile
-        || boundary === "artifact" && path.basename(path.dirname(target)) === "result-packets";
-      if ((boundary === "prepare" || boundary === "run") && target === f.runFile) {
+      let match = boundary === "session" && target === f.sessionFile;
+      if (boundary === "run" && target === f.runFile) {
         const run = JSON.parse(fs.readFileSync(source));
-        match = run.sessionTransition?.kind === "finish" && run.status === (boundary === "prepare" ? "active" : "awaiting_review");
+        match = run.sessionTransition?.kind === "finish" && run.status === "awaiting_review";
       }
       if (!injected && match) { injected = true; rename(source, target); throw Object.assign(new Error("Synthetic finish crash"), { code: "EIO" }); }
       return rename(source, target);
     };
+    fs.linkSync = (source, target) => {
+      const match = boundary === "artifact" && path.basename(path.dirname(target)) === "result-packets";
+      if (!injected && match) { injected = true; link(source, target); throw Object.assign(new Error("Synthetic artifact crash"), { code: "EIO" }); }
+      return link(source, target);
+    };
     try { await assert.rejects(publishWorkerIntegrationResult(f.publication), { code: "EIO" }); }
-    finally { fs.renameSync = rename; }
+    finally { fs.renameSync = rename; fs.linkSync = link; }
     assert.equal(injected, true);
+    const packetFile = path.join(f.root, ".head/lineage/result-packets", `${f.verification.wholeResultPacket.resultPacketId}.json`);
+    assert.equal(JSON.parse(fs.readFileSync(f.runFile)).resultPacketId, f.verification.wholeResultPacket.resultPacketId);
+    assert.equal(fs.existsSync(packetFile), boundary !== "run", "the frozen Run precedes the exact artifact publication");
+    assert.equal(inspectProject(f.root).state.pendingReview?.runId ?? null, boundary === "session" ? f.run.runId : null);
+    assert.equal(fs.existsSync(receiptFile(f)), false);
+    const beforeRead = files(f.root);
+    inspectProject(f.root);
+    assert.deepEqual(files(f.root), beforeRead, "inspection does not repair an interrupted publication");
     fs.writeFileSync(path.join(f.root, "b.txt"), "new observation after exact finish was frozen");
-    const retry = await publishWorkerIntegrationResult(f.publication, { readApplication: () => { throw new Error("frozen transition must use finish replay"); } });
+    const retry = freshPublicationRetry(f.publication);
     assert.equal(retry.resultPacket.resultPacketId, f.verification.wholeResultPacket.resultPacketId);
+    assert.deepEqual(retry.resultPacket, f.verification.wholeResultPacket, "fresh process preserves the frozen assessment and unknowns");
     assert.equal(inspectProject(f.root).state.pendingReview.runId, f.run.runId);
+    assert.equal(inspectProject(f.root).state.lastReviewDecisionId, null);
+    assert.equal(fs.readFileSync(path.join(f.root, "b.txt"), "utf8"), "new observation after exact finish was frozen");
     assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
+    const completed = files(f.root);
+    assert.equal((await publishWorkerIntegrationResult(f.publication)).status, "already-published");
+    assert.deepEqual(files(f.root), completed, "completed retry cannot apply or publish twice");
   });
 }
 

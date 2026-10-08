@@ -113,7 +113,10 @@ test("concurrent public MCP awaits and CLI operations keep two Session checkpoin
   for (let index = 0; index < ids.length; index++) {
     const graph = await call("head_project_graph", { project_root: root, session_id: ids[index], anchor_ids: [ids[index]], depth: 2 });
     assert(graph.nodes.some(node => node.nodeId === ids[index]), "Each logical Session is discoverable through work graph evidence");
-    assert(graph.nodes.some(node => node.runId === [runA, runB][index].run.runId), "The Session's independently active Run remains linked");
+    const runId = [runA, runB][index].run.runId;
+    assert(graph.nodes.some(node => node.nodeId === runId), "The compact graph retains the exact linked Run identity");
+    const detail = await call("head_project_graph", { project_root: root, session_id: ids[index], anchor_ids: [runId], details: true });
+    assert(detail.nodes.some(node => node.runId === runId), "Explicit expansion preserves the original Run detail");
     assert.equal(graph.authority.executionAuthority, false);
   }
   assert.deepEqual(snapshot(root), beforeReads);
