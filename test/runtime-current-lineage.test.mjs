@@ -177,31 +177,45 @@ test("individually digest-valid plan and Capsule cannot be mixed with another co
   }
 });
 
-test("real prepared finish prevents new execution but the exact finish retry still converges", async (t) => {
+test("real frozen finish prevents new execution but the exact finish retry still converges", async (t) => {
   const f = await fixture(t);
   const finishInput = { root: f.root, outcome: "Synthetic whole result", evidence: [{ fixture: "no provider" }],
-    verification: [{ check: "synthetic result boundary", status: "passed" }] };
+    verification: [{ check: "synthetic result boundary", status: "passed" }], unknowns: ["Actual provider effects were not exercised"] };
+  const sessionBeforeFinish = fs.readFileSync(f.sessionFile);
   const rename = fs.renameSync;
   let injected = false;
   fs.renameSync = (source, target) => {
     const result = rename(source, target);
     if (!injected && target === f.runFile && JSON.parse(fs.readFileSync(target)).sessionTransition?.kind === "finish") {
       injected = true;
-      throw Object.assign(new Error("Synthetic failure after durable finish preparation"), { code: "EIO" });
+      throw Object.assign(new Error("Synthetic failure after frozen final Run publication"), { code: "EIO" });
     }
     return result;
   };
   try { assert.throws(() => finishRun(finishInput), { code: "EIO" }); }
   finally { fs.renameSync = rename; }
   assert.equal(injected, true);
-  assert.equal(JSON.parse(fs.readFileSync(f.runFile)).status, "active");
+  const frozen = JSON.parse(fs.readFileSync(f.runFile));
+  assert.equal(frozen.status, "awaiting_review");
+  assert.equal(frozen.sessionTransition.kind, "finish");
+  assert.equal(frozen.sessionTransition.artifactId, frozen.resultPacketId);
+  assert.equal(fs.existsSync(path.join(f.root, ".head/lineage/result-packets", `${frozen.resultPacketId}.json`)), false,
+    "the frozen final Run was published before the result artifact");
+  assert.deepEqual(fs.readFileSync(f.sessionFile), sessionBeforeFinish);
   assert.equal(inspectProject(f.root).state.activeRunId, f.run.runId);
-  assertRejectedUnchanged(f, "RUNTIME_INVOCATION_RUN_TRANSITION_PENDING");
+  // The Session still has its pre-finish pointers, but final Run canon wins:
+  // affected invocation fails closed rather than treating those pointers as permission.
+  assertRejectedUnchanged(f, "RUNTIME_INVOCATION_RUN_NOT_ACTIVE");
   const before = snapshot(f.root);
-  assert.throws(() => buildRuntimeInvocationAuthorization(f.options), { code: "RUNTIME_INVOCATION_RUN_TRANSITION_PENDING" });
+  assert.throws(() => buildRuntimeInvocationAuthorization(f.options), { code: "RUNTIME_INVOCATION_RUN_NOT_ACTIVE" });
+  assert.throws(() => finishRun({ ...finishInput, outcome: "Divergent result cannot replace the frozen finish" }), { code: "RUN_TRANSITION_CONFLICT" });
   assert.deepEqual(snapshot(f.root), before);
   const finished = finishRun(finishInput);
   assert.equal(finished.run.runId, f.run.runId);
+  assert.equal(finished.resultPacket.resultPacketId, frozen.resultPacketId);
+  assert.deepEqual(finished.resultPacket.unknowns, finishInput.unknowns);
+  assert.equal(inspectProject(f.root).state.pendingReview.resultPacketId, frozen.resultPacketId);
+  assert.equal(inspectProject(f.root).state.lastReviewDecisionId, null);
   assertRejectedUnchanged(f, "RUNTIME_INVOCATION_FENCE_MISMATCH");
   const unchanged = snapshot(f.root);
   assert.equal(finishRun(finishInput).resultPacket.resultPacketId, finished.resultPacket.resultPacketId);
