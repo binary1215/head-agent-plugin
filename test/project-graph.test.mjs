@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { createWholePlanSnapshot, createExecutionContract, createResultPacket, createReviewDecision, buildFreshHeadReview } from "../scripts/lib/execution-lineage.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
+import { startRun } from "../scripts/lib/run-lineage.mjs";
 import { proposeProductPolicy, reviewProductPolicy } from "../scripts/lib/product-policy.mjs";
 import { prepareSourceContext } from "../scripts/lib/source-context-workflow.mjs";
 import { readSourceObservation } from "../scripts/lib/source-observation.mjs";
@@ -48,6 +49,69 @@ function noAuthority(result) {
   for (const node of result.nodes) for (const field of ["instructionAuthority", "promotionAuthority", "recoveryAuthority", "executionAuthority"]) assert.equal(node[field], false);
   for (const edge of result.edges) for (const field of ["instructionAuthority", "promotionAuthority", "recoveryAuthority", "executionAuthority"]) assert.equal(edge[field], false);
 }
+
+test("compact Run and Session state preserves active/unknown status and ownership without effects", async t => {
+  const root = fixture(t);
+  const capsule = compileContext({ root, task: "Inspect synthetic request", persist: true }).capsule;
+  const plan = createWholePlanSnapshot({ root, objective: "Inspect synthetic request", plan: ["Read local fixture"] }).artifact;
+  const contract = createExecutionContract({ root, wholePlanId: plan.wholePlanId, capsuleId: capsule.capsuleId,
+    scope: "Synthetic read", acceptanceCriteria: ["Observed local fixture"] }).artifact;
+  const started = startRun({ root, executionContractId: contract.executionContractId });
+  const runId = started.run.runId, sessionId = started.state.sessionId;
+  const runFile = path.join(root, ".head/sessions/runs", runId, "run.json");
+  for (const status of ["active", "unknown"]) {
+    // Synthetic retained-state fixture, not an execution transition or repair.
+    const run = JSON.parse(fs.readFileSync(runFile, "utf8"));
+    run.status = status;
+    if (status === "unknown") run.unknowns = ["Delivery acknowledgement remains unresolved"];
+    fs.writeFileSync(runFile, JSON.stringify(run));
+    const before = headFiles(root);
+    const compact = await queryProjectGraph({ root, anchorIds: [runId], depth: 0 });
+    const detail = await queryProjectGraph({ root, ...compact.nodes[0].detail });
+    assert.equal(compact.nodes[0].status, status);
+    assert.equal(detail.nodes[0].status, status);
+    assert.equal(compact.nodes[0].sessionId, sessionId);
+    assert.equal(compact.nodes[0].runId, runId);
+    assert.equal(compact.nodes[0].revisionId, detail.nodes[0].revisionId);
+    assert.deepEqual(compact.nodes[0].sourceReference, detail.nodes[0].sourceReference);
+    assert.equal(compact.nodes[0].contentPartial, status === "unknown");
+    if (status === "unknown") {
+      assert(compact.nodes[0].excerpt.includes(run.unknowns[0]));
+      assert.deepEqual(detail.nodes[0].unknowns, run.unknowns);
+      assert(compact.sourceFallback.reasonCodes.includes("PROJECT_GRAPH_COMPACT_CONTENT_PARTIAL"));
+    }
+    const session = await queryProjectGraph({ root, anchorIds: [sessionId], depth: 0 });
+    const sessionDetail = await queryProjectGraph({ root, ...session.nodes[0].detail });
+    assert.equal(session.nodes[0].mode, "run");
+    assert.equal(session.nodes[0].activeRunId, runId);
+    assert.equal(session.nodes[0].sessionId, sessionId);
+    for (const field of ["mode", "activeRunId", "sessionId", "latestCheckpoint", "revisionId"]) {
+      assert.deepEqual(session.nodes[0][field], sessionDetail.nodes[0][field]);
+    }
+    const related = await queryProjectGraph({ root, anchorIds: [sessionId], depth: 1 });
+    assert(related.edges.some(edge => edge.type === "ACTIVE_RUN" && edge.from === sessionId && edge.to === runId));
+    assert(related.edges.some(edge => edge.type === "RECORDED_FOR_SESSION" && edge.from === runId && edge.to === sessionId));
+    assert.equal(related.nodes.find(node => node.nodeId === runId).status, status);
+    for (const result of [compact, detail, session, sessionDetail, related]) noAuthority(result);
+    assert.deepEqual(headFiles(root), before);
+  }
+});
+
+test("compact named-content omissions remain partial even when the search excerpt is short", async t => {
+  const root = fixture(t);
+  const plan = createWholePlanSnapshot({ root, objective: "Inspect a short objective", plan: ["Read local fixture"] }).artifact;
+  const before = headFiles(root);
+  const compact = await queryProjectGraph({ root, anchorIds: [plan.wholePlanId], depth: 0 });
+  const detail = await queryProjectGraph({ root, ...compact.nodes[0].detail });
+  assert(compact.nodes[0].excerpt.includes(plan.objective));
+  assert(compact.nodes[0].excerpt.length < 360);
+  assert.equal(compact.nodes[0].objective, undefined);
+  assert.equal(detail.nodes[0].objective, plan.objective);
+  assert.equal(compact.nodes[0].contentPartial, true);
+  assert(compact.sourceFallback.reasonCodes.includes("PROJECT_GRAPH_COMPACT_CONTENT_PARTIAL"));
+  assert.deepEqual(headFiles(root), before);
+  noAuthority(compact); noAuthority(detail);
+});
 
 test("observed ingestion shares one replaceable inventory; core-only graph reads reuse exact originals", async t => {
   const root = fixture(t), index = await observed(root);

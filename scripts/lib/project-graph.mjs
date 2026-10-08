@@ -444,7 +444,8 @@ function navigationState(node) {
 }
 
 function compactNode(node) {
-  const fields = ["nodeId", "kind", "name", "key", "path", "digest", "revisionId", "views", "reviewState", "freshness", "integrity", "sourceAuthority", "sourceReference", "sourceCurrentness", "snapshotState", "policyKey", "baseProductModelId", "resultingProductModelId"];
+  const fields = ["nodeId", "kind", "name", "key", "path", "digest", "revisionId", "views", "reviewState", "freshness", "integrity", "sourceAuthority", "sourceReference", "sourceCurrentness", "snapshotState", "policyKey", "baseProductModelId", "resultingProductModelId",
+    "status", "disposition", "applicationStatus", "mode", "activeRunId", "sessionId", "runId", "latestCheckpoint"];
   const compact = Object.fromEntries(fields.filter(key => node[key] !== undefined).map(key => [key, node[key]]));
   const text = searchText(node);
   const excerpt = text.slice(0, 360);
@@ -453,7 +454,12 @@ function compactNode(node) {
     ["constraints", "decisions", "cancelledActions"].map(key => [key, direction[key].slice(0, 3).map(value => value.slice(0, 160))])) } : null;
   const directionPartial = direction && (node.directionContentCoverage.partial || direction.goal.length > 240
     || ["constraints", "decisions", "cancelledActions"].some(key => direction[key].length > 3 || direction[key].some(value => value.length > 160)));
-  return { ...compact, excerpt, contentScope: "bounded-navigation-excerpt", contentPartial: excerpt.length < text.length || Boolean(directionPartial),
+  // A short search excerpt is not a complete named record: temporal scope,
+  // unknowns and other omitted fields still require explicit detail expansion.
+  const omittedContent = Object.entries(node).some(([key, value]) => !Object.hasOwn(compact, key) && !Object.hasOwn(authority, key)
+    && !["origin", "directionEvidence", "directionContentCoverage"].includes(key)
+    && value != null && value !== "" && (typeof value !== "object" || Object.keys(value).length > 0));
+  return { ...compact, excerpt, contentScope: "bounded-navigation-excerpt", contentPartial: excerpt.length < text.length || Boolean(directionPartial) || omittedContent,
     ...(direction ? { directionEvidence, directionContentCoverage: { partial: Boolean(directionPartial),
       originalExcerptCoverage: node.directionContentCoverage, detailRequiredForCompleteDirection: Boolean(directionPartial) } } : {}),
     detail: { anchorIds: [node.nodeId], details: true, depth: 0 }, ...authority };

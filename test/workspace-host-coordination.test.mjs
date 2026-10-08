@@ -157,3 +157,114 @@ test("six-reference export composition supports P2-first MCP continuation withou
   assert.equal(unavailable.result.structuredContent.continuationOutcome.disclosure, "provider-attachment-unavailable");
   assert.deepEqual(bytes(fx.root), before);
 });
+test("endpoint child directory loss preserves direct P2 continuation and cannot send or write", t => {
+  const fx = fixture(t), host = driver(fx), adapter = new VerifiedWorkspaceHostAdapter({ driver: host });
+  const cwd = path.join(fx.root, "ephemeral-endpoint"); fs.mkdirSync(cwd);
+  host.state.endpoints[0] = { ...endpoint(fx), cwd };
+  createRecoveryCheckpoint({ root: fx.root, purpose: "Keep current direction", currentPosition: "Completed result preserved", nextExpectedResult: "Inspect remaining source" });
+  const expected = continueSessionFromArtifacts({ root: fx.root, runtime: "codex" });
+  const attachment = adapter.attach({ caller, boundary: fx.boundary });
+  fs.rmdirSync(cwd);
+  const before = bytes(fx.root), operationalBefore = bytes(fx.exportRoot);
+  const continued = continueSessionFromArtifacts({ root: fx.root, runtime: "codex", hostAttachment: attachment, workspaceHostAdapter: adapter });
+  assert.equal(continued.status, "session_continued_with_fresh_logical_head");
+  assert.equal(continued.continuationOutcome.disclosure, "provider-attachment-unavailable");
+  assert.equal(continued.restore.projection.sessionRestoreHash, expected.restore.projection.sessionRestoreHash);
+  assert.deepEqual(continued.restore.projection.consumerInstruction, expected.restore.projection.consumerInstruction);
+  assert.equal(adapter.send({ attachment, boundary: fx.boundary, message: message(fx) }).status, "unavailable");
+  assert.equal(host.state.deliveries.length, 0);
+  assert.deepEqual(bytes(fx.root), before); assert.deepEqual(bytes(fx.exportRoot), operationalBefore);
+  for (const [key, value, code] of [["projectId", "different-project", "STALE_WORKSPACE_HOST_ATTACHMENT"], ["headSessionId", "different-session", "STALE_WORKSPACE_HOST_ATTACHMENT"], ["cwd", path.join(fx.exportRoot, "missing"), "WORKSPACE_HOST_PROJECT_MISMATCH"]]) {
+    assert.throws(() => adapter.receive({ attachment: { ...attachment, [key]: value }, boundary: fx.boundary }), { code });
+  }
+  assert.throws(() => continueSessionFromArtifacts({ root: fx.root, runtime: "opencode", hostAttachment: attachment, workspaceHostAdapter: adapter }), { code: "RUNTIME_CONTINUATION_ATTACHMENT_CONFLICT" });
+});
+test("public MCP child directory loss between attach and receive returns original P2 without effects", async t => {
+  const fx = fixture(t), host = driver(fx), adapter = new VerifiedWorkspaceHostAdapter({ driver: host });
+  const { dispatch } = await import("../scripts/mcp-server.mjs");
+  const cwd = path.join(fx.root, "ephemeral-endpoint"); fs.mkdirSync(cwd);
+  host.state.endpoints[0] = { ...endpoint(fx), cwd };
+  createRecoveryCheckpoint({ root: fx.root, purpose: "Resume current user direction", currentPosition: "Completed contribution retained", nextExpectedResult: "Inspect remaining source" });
+  const expected = continueSessionFromArtifacts({ root: fx.root, runtime: "codex" });
+  const before = bytes(fx.root), operationalBefore = bytes(fx.exportRoot);
+  const originalAttach = adapter.attach.bind(adapter);
+  adapter.attach = args => { const attachment = originalAttach(args); fs.rmdirSync(cwd); return attachment; };
+  const response = await dispatch({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_session_continue", arguments: { project_root: fx.root, runtime: "codex" } } }, { coordinationWorkspaceHost: { adapter, caller, projectRoot: fx.root } });
+  const continued = response.result?.structuredContent;
+  assert.equal(continued?.status, "session_continued_with_fresh_logical_head", JSON.stringify(response));
+  assert.equal(continued.continuationOutcome.disclosure, "provider-attachment-unavailable");
+  assert.equal(continued.restore.projection.sessionRestoreHash, expected.restore.projection.sessionRestoreHash);
+  assert.deepEqual(continued.restore.projection.consumerInstruction, expected.restore.projection.consumerInstruction);
+  assert.equal(continued.continuationOutcome.instructionAuthority, false); assert.equal(continued.continuationOutcome.mutatesCanon, false);
+  assert.equal(host.state.deliveries.length, 0);
+  assert.deepEqual(bytes(fx.root), before); assert.deepEqual(bytes(fx.exportRoot), operationalBefore);
+});
+test("endpoint query failure is unavailable but replacing its directory with a link remains rejected", t => {
+  const fx = fixture(t), host = driver(fx), adapter = new VerifiedWorkspaceHostAdapter({ driver: host });
+  const cwd = path.join(fx.root, "ephemeral-endpoint"); fs.mkdirSync(cwd);
+  host.state.endpoints[0] = { ...endpoint(fx), cwd };
+  const attachment = adapter.attach({ caller, boundary: fx.boundary });
+  const before = bytes(fx.root), operationalBefore = bytes(fx.exportRoot), lstat = fs.lstatSync;
+  try {
+    for (const code of ["EACCES", "EIO"]) {
+      fs.lstatSync = function(file, ...args) {
+        if (path.resolve(String(file)) === cwd) throw Object.assign(new Error("Endpoint lookup unavailable"), { code });
+        return lstat.call(this, file, ...args);
+      };
+      assert.equal(adapter.receive({ attachment, boundary: fx.boundary }).status, "unavailable");
+      assert.equal(adapter.send({ attachment, boundary: fx.boundary, message: message(fx) }).status, "unavailable");
+    }
+  } finally { fs.lstatSync = lstat; }
+  fs.rmdirSync(cwd); fs.symlinkSync(fx.exportRoot, cwd, "junction");
+  try {
+    assert.throws(() => adapter.receive({ attachment, boundary: fx.boundary }), { code: "INVALID_WORKSPACE_HOST_PATH" });
+    assert.throws(() => adapter.send({ attachment, boundary: fx.boundary, message: message(fx) }), { code: "INVALID_WORKSPACE_HOST_PATH" });
+  } finally { fs.unlinkSync(cwd); }
+  assert.equal(host.state.deliveries.length, 0);
+  assert.deepEqual(bytes(fx.root), before); assert.deepEqual(bytes(fx.exportRoot), operationalBefore);
+});
+test("directory loss after an actual send remains ambiguous and a subsequent call cannot resend", t => {
+  const fx = fixture(t), host = driver(fx), adapter = new VerifiedWorkspaceHostAdapter({ driver: host });
+  const cwd = path.join(fx.root, "ephemeral-endpoint"); fs.mkdirSync(cwd);
+  host.state.endpoints[0] = { ...endpoint(fx), cwd };
+  const attachment = adapter.attach({ caller, boundary: fx.boundary });
+  const before = bytes(fx.root), operationalBefore = bytes(fx.exportRoot);
+  host.state.afterSend = () => fs.rmdirSync(cwd);
+  assert.equal(adapter.send({ attachment, boundary: fx.boundary, message: message(fx) }).status, "ambiguous");
+  assert.equal(host.state.deliveries.length, 1);
+  assert.equal(adapter.send({ attachment, boundary: fx.boundary, message: message(fx) }).status, "unavailable");
+  assert.equal(host.state.deliveries.length, 1);
+  assert.deepEqual(bytes(fx.root), before); assert.deepEqual(bytes(fx.exportRoot), operationalBefore);
+});
+test("public MCP rejects wrong project, current Session and runtime while Host snapshot loss falls back", async t => {
+  const fx = fixture(t), host = driver(fx), adapter = new VerifiedWorkspaceHostAdapter({ driver: host });
+  const { dispatch } = await import("../scripts/mcp-server.mjs");
+  createRecoveryCheckpoint({ root: fx.root, purpose: "Current project direction", currentPosition: "Completed contribution preserved", nextExpectedResult: "Inspect remaining source" });
+  const expected = continueSessionFromArtifacts({ root: fx.root, runtime: "codex" });
+  const before = bytes(fx.root), operationalBefore = bytes(fx.exportRoot);
+  const request = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_session_continue", arguments: { project_root: fx.root, runtime: "codex" } } };
+  const call = () => dispatch(request, { coordinationWorkspaceHost: { adapter, caller, projectRoot: fx.root } });
+  host.state.endpoints[0] = { ...endpoint(fx), cwd: fx.exportRoot };
+  assert.match((await call()).error?.message || "", /outside the project/u);
+  host.state.endpoints[0] = endpoint(fx);
+  const originalAttach = adapter.attach.bind(adapter);
+  for (const [key, value] of [["projectId", "different-project"], ["headSessionId", "different-session"]]) {
+    adapter.attach = args => ({ ...originalAttach(args), [key]: value });
+    assert.match((await call()).error?.message || "", /another Project\/Session/u);
+  }
+  adapter.attach = () => { throw Object.assign(new Error("Wrong current Session attachment scope"), { code: "STALE_WORKSPACE_HOST_ATTACHMENT" }); };
+  assert.match((await call()).error?.message || "", /Wrong current Session/u);
+  adapter.attach = () => { throw Object.assign(new Error("Invalid requested attachment boundary"), { code: "INVALID_WORKSPACE_HOST_BOUNDARY" }); };
+  assert.match((await call()).error?.message || "", /Invalid requested attachment boundary/u);
+  adapter.attach = originalAttach;
+  host.state.endpoints[0] = { ...endpoint(fx), runtime: "opencode" };
+  assert.match((await call()).error?.message || "", /exact HEAD runtime/u);
+  host.snapshot = () => { throw new Error("Optional Host snapshot unavailable"); };
+  const unavailable = (await call()).result?.structuredContent;
+  assert.equal(unavailable?.status, "session_continued_with_fresh_logical_head");
+  assert.equal(unavailable.continuationOutcome.disclosure, "provider-attachment-unavailable");
+  assert.equal(unavailable.restore.projection.sessionRestoreHash, expected.restore.projection.sessionRestoreHash);
+  assert.deepEqual(unavailable.restore.projection.consumerInstruction, expected.restore.projection.consumerInstruction);
+  assert.equal(host.state.deliveries.length, 0);
+  assert.deepEqual(bytes(fx.root), before); assert.deepEqual(bytes(fx.exportRoot), operationalBefore);
+});

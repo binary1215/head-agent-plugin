@@ -2201,7 +2201,8 @@ async function continueSessionFromMcp(args, coordinationWorkspaceHost) {
       caller: coordinationWorkspaceHost.caller,
       boundary: { projectId: restored.projection.projectId, headSessionId: restored.projection.sessionId, role: "head", projectRoot: fs.realpathSync(path.resolve(args.project_root)) },
     });
-  } catch {
+  } catch (error) {
+    if (["WORKSPACE_HOST_PROJECT_MISMATCH", "STALE_WORKSPACE_HOST_ATTACHMENT", "INVALID_WORKSPACE_HOST_BOUNDARY"].includes(error?.code)) throw error;
     // Optional Host availability cannot erase successfully restored direction.
   }
   return continuation.continueSessionFromArtifacts({

@@ -218,3 +218,90 @@ test("Product approval has one original decision; derived outputs rebuild and le
   assert.equal(inspectProductOperatingLoop({ root, fresh: true }).projection.reviewedInitiatives[0].initiativeId, accepted.reviewedInitiative.initiativeId);
   assert.equal(fs.readFileSync(file, "utf8"), original);
 });
+
+function acceptedIntegrationInput(root) {
+  const begun = start(root);
+  const finished = finishRun(resultInput(root));
+  const accepted = reviewRun(reviewInput(root));
+  return { input: { root, runId: begun.run.runId, reviewDecisionId: accepted.reviewDecision.reviewDecisionId, ...direction }, finished };
+}
+
+test("normal shared ledger keeps two accepted Session integrations independent for first publication, read and exact replay", (t) => {
+  const root = fixture(t);
+  const primary = acceptedIntegrationInput(root);
+  const primaryIntegration = integrateReviewedRunCheckpoint(primary.input);
+  createRecoveryCheckpoint({ root, ...direction, purpose: "Normal primary checkpoint before secondary integration" });
+  const primaryOriginals = Object.fromEntries(Object.entries(allBytes(root)).filter(([file]) => {
+    const name = file.replaceAll("\\", "/");
+    return name === ".head/project.json" || name === ".head/sessions/current.json"
+      || [".head/lineage/", ".head/context/capsules/", ".head/sessions/runs/", ".head/sessions/ledger/", ".head/sessions/records/"].some((prefix) => name.startsWith(prefix));
+  }));
+  const secondary = createHeadSession({ root, purpose: "Independent secondary accepted result" });
+  const other = withSessionRoute(root, secondary.sessionId, () => {
+    const accepted = acceptedIntegrationInput(root);
+    const integrated = integrateReviewedRunCheckpoint(accepted.input);
+    assert.equal(integrated.status, "run_result_integrated_checkpointed");
+    return { ...accepted, integrated };
+  });
+  for (const [file, content] of Object.entries(primaryOriginals)) {
+    assert.equal(fs.readFileSync(path.join(root, file), "base64"), content, "secondary integration preserves all existing primary originals");
+  }
+  createRecoveryCheckpoint({ root, ...direction, purpose: "Later primary direction", nextExpectedResult: "Continue primary work" });
+  const readAndReplay = ({ input }, expectedId) => {
+    const before = allBytes(root);
+    assert.equal(readRunResultIntegration(input).checkpoint.checkpointId, expectedId);
+    assert.equal(integrateReviewedRunCheckpoint(input).status, "run_result_integration_existing");
+    assert.deepEqual(allBytes(root), before, "read and exact replay do not alter either Session or its originals");
+  };
+  readAndReplay(primary, primaryIntegration.checkpoint.checkpointId);
+  withSessionRoute(root, secondary.sessionId, () => readAndReplay(other, other.integrated.checkpoint.checkpointId));
+  const checkpointOriginal = fs.readFileSync(other.integrated.file);
+  fs.unlinkSync(path.join(root, ".head/lineage/result-packets", `${other.finished.resultPacket.resultPacketId}.json`));
+  updateProjectDirection({ root, input: { goal: "Investigate unknown effects", constraints: ["Keep independent Sessions"], decisions: [], cancelledActions: ["deploy"] } });
+  withSessionRoute(root, secondary.sessionId, () => {
+    readAndReplay(other, other.integrated.checkpoint.checkpointId);
+    const restored = restoreSessionFromArtifacts({ root });
+    assert.equal(restored.projection.lastResultEvidence.status, "missing-evidence");
+    assert.equal(restored.checkpoint.nextExpectedResult, direction.nextExpectedResult);
+    assert.deepEqual(restored.projection.currentProjectDirection.input.cancelledActions, ["deploy"]);
+  });
+  assert.deepEqual(fs.readFileSync(other.integrated.file), checkpointOriginal);
+});
+
+test("exact decision ledger lookup still rejects related damage, duplicate records and another Project or Session without writes", (t) => {
+  const root = fixture(t);
+  const secondary = createHeadSession({ root, purpose: "Validate only exact secondary decision" });
+  withSessionRoute(root, secondary.sessionId, () => {
+    const accepted = acceptedIntegrationInput(root);
+    const integrated = integrateReviewedRunCheckpoint(accepted.input);
+    const originalBytes = fs.readFileSync(integrated.file);
+    const original = JSON.parse(originalBytes);
+    const unchangedFailure = (code, publishCode = code) => {
+      const before = allBytes(root);
+      assert.throws(() => readRunResultIntegration(accepted.input), { code });
+      assert.throws(() => integrateReviewedRunCheckpoint(accepted.input), { code: publishCode });
+      assert.deepEqual(allBytes(root), before);
+    };
+    for (const [patch, code] of [
+      [{ nextExpectedResult: "Corrupt current target" }, "COMPACTION_DIGEST_MISMATCH"],
+      [{ projectId: "project-another" }, "INVALID_RECOVERY_CHECKPOINT"],
+      [{ sessionId: "session-another" }, "INVALID_RECOVERY_CHECKPOINT"],
+    ]) {
+      fs.writeFileSync(integrated.file, JSON.stringify({ ...original, ...patch }));
+      try { unchangedFailure(code); }
+      finally { fs.writeFileSync(integrated.file, originalBytes); }
+    }
+    fs.writeFileSync(integrated.file, "{malformed routing metadata");
+    try { unchangedFailure("INVALID_SESSION_RECOVERY_ARTIFACT", "INVALID_COMPACTION_CANON"); }
+    finally { fs.writeFileSync(integrated.file, originalBytes); }
+    const { checkpointId, checkpointDigest, ...payload } = original;
+    payload.createdAt = new Date(Date.parse(payload.createdAt) + 1).toISOString();
+    const duplicateDigest = sessionStateHash(payload);
+    const duplicate = { ...payload, checkpointDigest: duplicateDigest, checkpointId: `checkpoint-${duplicateDigest.slice(0, 24)}` };
+    const duplicateFile = path.join(root, ".head/sessions/ledger", `${duplicate.checkpointId}.json`);
+    fs.writeFileSync(duplicateFile, JSON.stringify(duplicate));
+    try { unchangedFailure("RUN_RESULT_INTEGRATION_MULTIPLE_CHECKPOINTS"); }
+    finally { fs.unlinkSync(duplicateFile); }
+    assert.deepEqual(fs.readFileSync(integrated.file), originalBytes);
+  });
+});

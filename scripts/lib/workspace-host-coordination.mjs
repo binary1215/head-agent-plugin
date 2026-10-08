@@ -14,13 +14,20 @@ const within = (parent, child) => {
   const relative = path.relative(parent, child);
   return relative === "" || relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 };
-const directory = (value) => {
+const directory = (value, { optionalAvailability = false } = {}) => {
   if (typeof value !== "string" || !path.isAbsolute(value)) fail("Host directory must be absolute.", "INVALID_WORKSPACE_HOST_PATH");
-  try {
-    const stat = fs.lstatSync(value);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe directory");
-    return fs.realpathSync(value);
-  } catch { fail("Host directory is unavailable or unsafe.", "INVALID_WORKSPACE_HOST_PATH"); }
+  let stat;
+  try { stat = fs.lstatSync(value); }
+  catch {
+    if (optionalAvailability) return null;
+    fail("Host directory is unavailable.", "INVALID_WORKSPACE_HOST_PATH");
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) fail("Host directory is unsafe.", "INVALID_WORKSPACE_HOST_PATH");
+  try { return fs.realpathSync(value); }
+  catch {
+    if (optionalAvailability) return null;
+    fail("Host directory is unavailable.", "INVALID_WORKSPACE_HOST_PATH");
+  }
 };
 function boundary(value) {
   if (!value || !/^[a-z][a-z0-9-]{0,63}$/u.test(value.role || "")) fail("Host role is invalid.", "INVALID_WORKSPACE_HOST_BOUNDARY");
@@ -39,8 +46,14 @@ function attachment(value, scope) {
     fail("Host attachment belongs to another Project/Session or role.", "STALE_WORKSPACE_HOST_ATTACHMENT");
   }
   endpoint(value); requiredId(value.hostInstanceId);
-  if (!within(scope.projectRoot, directory(value.cwd))) fail("Host endpoint is outside the project.", "WORKSPACE_HOST_PROJECT_MISMATCH");
+  if (!within(scope.projectRoot, path.resolve(value.cwd))) fail("Host endpoint is outside the project.", "WORKSPACE_HOST_PROJECT_MISMATCH");
   return value;
+}
+function attachmentAvailable(value, scope) {
+  const currentDirectory = directory(value.cwd, { optionalAvailability: true });
+  if (currentDirectory === null) return false;
+  if (!within(scope.projectRoot, currentDirectory)) fail("Host endpoint is outside the project.", "WORKSPACE_HOST_PROJECT_MISMATCH");
+  return true;
 }
 
 // Optional endpoint adapter only. Ordinary delegation uses the Host's own tasks,
@@ -88,6 +101,7 @@ export class VerifiedWorkspaceHostAdapter {
     if (!message || message.projectId !== scope.projectId || message.headSessionId !== scope.headSessionId || message.toRole !== scope.role
       || typeof message.content !== "string" || !message.content.trim() || Buffer.byteLength(message.content) > 8192 || message.instructionAuthority !== false || message.mutatesCanon !== false) fail("Host message is invalid or outside the current scope.", "INVALID_WORKSPACE_HOST_MESSAGE");
     requiredId(message.messageId);
+    if (!attachmentAvailable(value, scope)) return { status: "unavailable", endpointId: value.endpointId };
     if (this.detachedAttachments.has(value)) return { status: "unavailable", endpointId: value.endpointId };
     let selected;
     try { selected = this.live(this.snapshot(), value); }
@@ -97,21 +111,23 @@ export class VerifiedWorkspaceHostAdapter {
     try { acknowledgement = this.driver.send({ endpoint: selected, messageId: message.messageId, text: message.content }); }
     catch { return { status: "ambiguous", endpointId: value.endpointId }; }
     let fresh;
-    try { fresh = this.live(this.snapshot(), value); }
+    try { fresh = attachmentAvailable(value, scope) && this.live(this.snapshot(), value); }
     catch { return { status: "ambiguous", endpointId: value.endpointId }; }
     const acknowledged = acknowledgement?.status === "delivered" && acknowledgement.messageId === message.messageId
       && acknowledgement.hostInstanceId === value.hostInstanceId && ["workspaceId", "tabId", "endpointId", "terminalId"].every(key => acknowledgement[key] === value[key]);
     return { status: acknowledged && fresh ? "delivered" : "ambiguous", endpointId: value.endpointId };
   }
   receive({ attachment: value, boundary: rawScope } = {}) {
-    attachment(value, boundary(rawScope));
+    const scope = boundary(rawScope); attachment(value, scope);
+    if (!attachmentAvailable(value, scope)) return { status: "unavailable", endpointId: value.endpointId };
     try { return { status: !this.detachedAttachments.has(value) && this.live(this.snapshot(), value) ? "attached" : "unavailable", endpointId: value.endpointId }; }
     catch { return { status: "unavailable", endpointId: value.endpointId }; }
   }
   detach({ attachment: value, boundary: rawScope } = {}) {
-    attachment(value, boundary(rawScope));
+    const scope = boundary(rawScope); attachment(value, scope);
+    const available = attachmentAvailable(value, scope);
     let endpointWasLive = false;
-    try { endpointWasLive = !!this.live(this.snapshot(), value); } catch {}
+    try { endpointWasLive = available && !!this.live(this.snapshot(), value); } catch {}
     this.detachedAttachments.add(value);
     return { status: "detached", endpointId: value.endpointId, endpointWasLive };
   }

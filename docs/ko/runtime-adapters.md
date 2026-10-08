@@ -68,12 +68,12 @@ HEAD Core
        -> Linux contract reference
   -> WorkspaceHostAdapter
        -> native-process contract reference
-       -> verified exact-endpoint role coordination
+       -> optional verified exact-endpoint attachment
             -> injected provider-neutral WorkspaceHostDriver
-                 -> host-export filesystem mailbox reference
+                 -> host-export attachment-only current snapshot
 ```
 
-`AgentRuntimeAdapter`는 메서드 표면 `probe`, `start`, `resume`, `stream`, `interrupt`, `close`를 고정합니다. `PlatformAdapter`는 플랫폼이 소유하는 실행 파일 탐색, 소유 프로세스 시작/검사/종료, 경로, 권한, IPC, 원자적 파일 작업 및 서비스 수명 주기를 고정합니다. `WorkspaceHostAdapter`는 호스트 연결, 메시징, receipt 및 연결 해제를 고정합니다.
+`AgentRuntimeAdapter`는 메서드 표면 `probe`, `start`, `resume`, `stream`, `interrupt`, `close`를 고정합니다. `PlatformAdapter`는 플랫폼이 소유하는 실행 파일 탐색, 소유 프로세스 시작/검사/종료, 경로, 권한, IPC, 원자적 파일 작업 및 서비스 수명 주기를 고정합니다. `WorkspaceHostAdapter`는 선택적 연결, 현재 endpoint 상태 조회와 연결 해제를 제공합니다. 주입된 driver는 전달을 지원할 수 있지만 filesystem export bridge는 연결 전용입니다. 메시지 큐나 전달 receipt를 쓰지 않으며 `deliverySupported: false`를 표시합니다. 일반 worker 메시징은 Host tool이 소유합니다.
 
 참조 계약 어댑터는 정적 `probe`만 지원합니다. 모든 제어 메서드는 `RUNTIME_ADAPTER_CONTROL_NOT_ENABLED`로 실패합니다. 검증된 Host composition은 exact 선택적 연결·해제를 활성화할 수 있지만 일반 통신은 현재 Host tool이 소유합니다. AgentRuntime이나 Platform 제어를 활성화하지 않습니다. 기본 계약 행렬은 Windows, macOS, Linux의 Claude Code, Codex, OpenCode를 포함하며 다음을 명시합니다:
 

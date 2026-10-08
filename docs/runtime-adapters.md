@@ -74,12 +74,12 @@ HEAD Core
        -> Linux contract reference
   -> WorkspaceHostAdapter
        -> native-process contract reference
-       -> verified exact-endpoint role coordination
+       -> optional verified exact-endpoint attachment
             -> injected provider-neutral WorkspaceHostDriver
-                 -> host-export filesystem mailbox reference
+                 -> host-export attachment-only current snapshot
 ```
 
-`AgentRuntimeAdapter` fixes the method surface `probe`, `start`, `resume`, `stream`, `interrupt`, and `close`. `PlatformAdapter` fixes platform-owned executable discovery, owned-process start/inspection/termination, paths, permissions, IPC, atomic file operations, and service lifecycle. `WorkspaceHostAdapter` fixes host attachment, messaging, receipt, and detachment.
+`AgentRuntimeAdapter` fixes the method surface `probe`, `start`, `resume`, `stream`, `interrupt`, and `close`. `PlatformAdapter` fixes platform-owned executable discovery, owned-process start/inspection/termination, paths, permissions, IPC, atomic file operations, and service lifecycle. `WorkspaceHostAdapter` provides optional attachment, current endpoint status, and detachment. An injected driver may support delivery, but the filesystem export bridge is attachment-only: it writes no message queue or delivery receipt and reports `deliverySupported: false`. Ordinary worker messaging remains owned by Host tools.
 
 The reference contract adapters support only static `probe`. Every control method fails with `RUNTIME_ADAPTER_CONTROL_NOT_ENABLED`. A verified Host composition may activate exact optional attachment and detachment; ordinary messaging stays owned by current Host tools. It does not enable AgentRuntime or Platform control. The default contract matrix covers Claude Code, Codex, and OpenCode across Windows, macOS, and Linux, but explicitly records:
 

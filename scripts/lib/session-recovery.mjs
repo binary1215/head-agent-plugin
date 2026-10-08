@@ -415,6 +415,10 @@ export function readRunResultIntegration({ root = ".", reviewDecisionId } = {}) 
   for (const entry of fs.existsSync(ledger) ? fs.readdirSync(ledger, { withFileTypes: true }) : []) {
     if (!entry.isFile() || !/^checkpoint-[a-f0-9]{24}\.json$/.test(entry.name)) continue;
     const checkpointId = entry.name.slice(0, -5);
+    // Unrelated Sessions share this ledger. Select the decision before applying
+    // the strict current reader; a matching cross-Session/Project record fails.
+    const candidate = readJson(path.join(ledger, entry.name), "Recovery checkpoint routing metadata");
+    if (candidate.reviewedRunIntegration?.reviewDecisionId !== reviewDecisionId) continue;
     const checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId }).checkpoint;
     if (checkpoint.reviewedRunIntegration?.reviewDecisionId === reviewDecisionId && checkpoint.sessionId === inspected.state.sessionId) matches.push(checkpoint);
   }

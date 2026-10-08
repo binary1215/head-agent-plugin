@@ -548,6 +548,9 @@ function createRecoveryCheckpointLocked({ root = ".", purpose, approvedDecisions
     const directory = checkpointDirectory(inspected.project.projectRoot);
     const matches = (fs.existsSync(directory) ? fs.readdirSync(directory) : [])
       .filter((name) => /^checkpoint-[a-f0-9]{24}\.json$/.test(name))
+      // Routing metadata only selects the exact decision; it grants no trust.
+      // Matching records still require current Project/Session/digest validation.
+      .filter((name) => readJson(path.join(directory, name), "Recovery checkpoint routing metadata").reviewedRunIntegration?.reviewDecisionId === reviewedRunIntegration.reviewDecisionId)
       .map((name) => readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: name.slice(0, -5) }).checkpoint)
       .filter((record) => record.reviewedRunIntegration?.reviewDecisionId === reviewedRunIntegration.reviewDecisionId);
     if (matches.length > 1) fail("One ReviewDecision has multiple integration checkpoints.", "RUN_RESULT_INTEGRATION_MULTIPLE_CHECKPOINTS");
