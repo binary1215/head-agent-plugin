@@ -126,6 +126,21 @@ external effects blindly. For durable Runs, retain accepted lineage, ResultPacke
 Fresh HEAD review, explicit ReviewDecision and checkpoint integration.
 Wave success is operational evidence, not approval or P2 direction.
 
+## Finish changes with usable graph evidence
+
+After a meaningful code-change or feature-addition work segment, HEAD checks
+whether the integrated result needs a graph update. Connect affected code and
+the purpose, decisions and verification needed by later work to their originals;
+reuse updates already made by persistence hooks. Use the existing index or World
+refresh when needed, then check supported affected relations and disclose what
+remains unverified or unprojected. Test presence is not an executed PASS.
+Workers return changes, evidence and unknowns; HEAD owns the integrated update.
+Do not require every worker or turn to refresh globally, activate World/DB,
+create a Run/Capsule, install a watcher or ask for routine approval. On update
+failure, retain the affected gap and continue source fallback and independent work.
+Read [project discovery](references/project-discovery.md#after-integrated-changes)
+for the distinct existing update paths and their limits.
+
 ## Keep conversation light
 
 Lead with the outcome. Successful entry, reuse and sync are quiet; explain

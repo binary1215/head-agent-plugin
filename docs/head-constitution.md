@@ -103,6 +103,16 @@ it. Fork/fresh is a separate context choice and does not grant approval,
 isolation or cache guarantees. Preserve completed contributions and reconcile
 unknown effects before replacement while independent work continues.
 
+After meaningful code or feature work, HEAD owns checking whether the integrated
+result needs graph maintenance. Connect purpose, implementation and actual
+verification to their original records, update necessary supported relations,
+and disclose unknown or unprojected scope. Graph projection never creates meaning,
+approval or recovery direction. Reuse sufficient existing updates; do not require
+per-turn full refresh, World/DB activation, new Run/Capsule, watcher or routine
+user approval. Failed maintenance leaves a scoped evidence gap while current
+original-source fallback and independent work remain available. See
+[graph maintenance](graph-discovery.md#maintain-evidence-after-integrated-changes).
+
 ## Conformance test
 
 An extension conforms only if it can answer yes to all of these:

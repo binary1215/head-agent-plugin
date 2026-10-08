@@ -90,6 +90,69 @@ read the affected current imports/calls directly. Retained links may guide that
 inspection but do not prove current impact. Do not make whole-World refresh,
 new Run, Product review or database activation an investigation gate.
 
+## Maintain evidence after integrated changes
+
+At the end of a meaningful code-change or feature-addition segment, HEAD checks
+the integrated result for needed graph maintenance. Include added, changed,
+deleted or renamed code and affected references/imports/calls, not only edited
+files. Workers return their changes, original evidence and unknowns; HEAD
+reconciles the combined checkout and owns its update and verification. Workers
+do not each perform an uncoordinated global refresh.
+
+| Existing surface | What it does | What it does not do |
+| --- | --- | --- |
+| `head_project_graph_index` / `graph-index` | Refreshes the replaceable inventory of existing verified records and observations; reuses identical input | Does not extract new repository code relations or infer a feature |
+| `world-refresh` | Refreshes an already active World, including its supported code relations and revision evidence | Does not activate missing Product/World capability or grant approval |
+| `head_world_model`, `head_incremental_refresh_status`, `head_world_query` / `world-query` | Reads freshness/refresh evidence or bounded affected relations | Does not trigger a World refresh |
+
+Core initialization/resume and supported source/observation persistence already
+update the observation inventory. Reuse their sufficiently current results;
+an explicit index is useful for relevant new/missing records or reconciliation,
+not a ritual after every save. When follow-up work needs existing World relations,
+the current refresh discovers and reads/hashes **all eligible files** under the
+configured source scope, reuses unchanged semantic analysis, and recomputes
+supported links against the current file set. It is not a changed-files-only
+reader. Unchanged callers may gain or lose resolved targets. Preserve excluded
+scope, analyzer support/confidence, unresolved imports/calls and other unknowns.
+A rename may be observed as remove/add; a name match alone cannot establish
+semantic identity or verified rename lineage.
+
+HEAD connects a feature's purpose/requirements to its implementation and actual
+verification through existing source documents, user direction, code references
+and applicable observation/result/candidate records. Keep original paths,
+digests/revisions and approval state. A test's presence is not a PASS: execution
+needs the actual command, tested basis, result and uncertainty. Indexing plain
+documents, general conversation or successful execution does not automatically
+create Product Canon or approval; existing exact user review remains unchanged.
+Reference current user direction; do not write P2 direction just to store a
+feature explanation.
+Existing graph schemas project supported references; they do not automatically
+turn arbitrary prose into typed feature-to-code-to-test edges. Keep unsupported
+links in the originals and disclose what is still unprojected. Durable evidence
+is retained when later work needs it, without a new compulsory form, Run or record
+for every edit. Existing active/unknown execution contracts still apply; refreshing
+the graph does not rewrite their digest-bound inputs or authorize another effect.
+
+```text
+head-agent graph-index <project>
+head-agent world-refresh <project>
+head-agent world-query <project> --query "<affected symbol>" --depth 3 --limit 20
+```
+
+Use only the relevant path. No World/DB activation, full reindex, Run/Capsule,
+watcher installation or routine user approval is required for ordinary work.
+If maintenance fails, retain affected unreflected paths/records and uncertainty;
+verify current originals and continue independent work. A retained old graph is
+historical evidence, not proof that the new code is reflected. This completion
+guidance uses existing capabilities; it is not a new automatic Host lifecycle hook.
+
+Representative checks, selected according to the task rather than required as
+one universal checklist: an edit changes current source evidence and supported
+neighbors; a new feature keeps purpose/implementation/test references while test
+execution remains separate; deletion/rename removes obsolete current relations
+without erasing history; parallel integration updates the combined basis; and
+refresh failure leaves a disclosed gap with usable original-source fallback.
+
 ## Route independent progress
 
 One canonical Project holds common user direction. The original Session record

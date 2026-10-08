@@ -49,6 +49,17 @@ format leaves that criterion unresolved; HEAD assesses it before claiming the go
 is met. This is situational judgment, not a claim that direct detailed work makes
 returning to the overall goal impossible or that delegation always performs better.
 
+At completion, workers return changed/added/deleted/renamed code, affected
+references, purpose/decisions, original evidence, actual verification results and
+unknowns. Distinguish a test added from a test executed successfully. HEAD checks
+the combined checkout after reconciliation and performs/verifies any needed
+graph update for that integrated basis, reusing current persistence-hook results.
+Do not require each worker to run an uncoordinated global refresh or to activate
+World/DB. See [after integrated changes](project-discovery.md#after-integrated-changes).
+An update failure leaves a scoped evidence gap, not a new user approval, worker
+authorization or barrier to independent work. These handoff facts can use the
+existing report/ordinary brief; no new mandatory artifact or field schema is added.
+
 ## Follow-up handoffs
 
 For a continuing contribution, lead with what changed, what is already usable,
