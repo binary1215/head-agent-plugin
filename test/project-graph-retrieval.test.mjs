@@ -46,6 +46,28 @@ test("natural questions rank domain evidence ahead of boilerplate, without a rel
     name: `ThemeSpacing${i}`, statement: "The reason we chose the display spacing is readability." });
   const target = createWholePlanSnapshot({ root, objective: "CacheRelay preserves unsent requests during disconnected restarts.", plan: ["Retain pending requests"] }).artifact;
   const before = originals(root);
+  const compact = await queryProjectGraph({ root, query: "What is the reason we chose CacheRelay?" });
+  const detailed = await queryProjectGraph({ root, query: "What is the reason we chose CacheRelay?", details: true });
+  assert.equal(compact.nodes[0].nodeId, target.wholePlanId);
+  assert.equal(compact.nodes.length, 8);
+  assert.equal(detailed.nodes.length, 60);
+  assert(Buffer.byteLength(JSON.stringify(compact)) < Buffer.byteLength(JSON.stringify(detailed)) / 4);
+  assert.equal(compact.coverage.verifiedNodeCount, detailed.coverage.verifiedNodeCount);
+  assert.equal(compact.omittedMatchCount, detailed.omittedMatchCount + 52);
+  for (const selected of compact.nodes) {
+    const expanded = await queryProjectGraph({ root, ...selected.detail });
+    const original = expanded.nodes[0];
+    assert.equal(original.nodeId, selected.nodeId);
+    assert.equal(original.revisionId, selected.revisionId);
+    assert.equal(original.reviewState, selected.reviewState);
+    assert.equal(original.freshness, selected.freshness);
+    assert.deepEqual(original.sourceReference, selected.sourceReference);
+    assert.equal(expanded.query.details, true);
+  }
+  assert.equal(compact.nodes[0].objective, undefined);
+  assert.equal(detailed.nodes[0].objective, target.objective);
+  assert(compact.nodes[0].excerpt.includes("CacheRelay"));
+  assert.deepEqual(originals(root), before);
   for (const query of ["What is the reason we chose CacheRelay?", "What is the reason we chose cacherelay?", "What is the reason we chose CACHERELAY?", "CacheRelay를 유지하는 이유는?", "CacheRelay?", "cache relay"]) {
     for (const maxNodes of [1, 60]) {
       const result = await queryProjectGraph({ root, query, maxNodes, maxEdges: 1, depth: 0 });
@@ -82,7 +104,7 @@ test("current and historical common direction expose all bounded fields without 
   const current = updateProjectDirection({ root, expectedDirectionId: old.directionId, input: { goal: "Document flow", constraints: ["LocalBoundary"], decisions: [], cancelledActions: ["ExternalCancelled"] } }).direction;
   const before = originals(root);
   for (const [query, direction, freshness] of [["AirGapBoundary", old, "historical-direction-reference"], ["RetentionChoice", old, "historical-direction-reference"], ["UploadCancelled", old, "historical-direction-reference"], ["LocalBoundary", current, "current-direction-reference"]]) {
-    const result = await queryProjectGraph({ root, query, depth: 0 });
+    const result = await queryProjectGraph({ root, query, depth: 0, details: true });
     const node = result.nodes.find(node => node.nodeId === direction.directionId);
     assert(node, query);
     assert.deepEqual(node.directionEvidence, direction.input);
@@ -100,7 +122,7 @@ test("direction excerpts disclose truncation and keep full originals accessible"
   const root = fixture(t);
   const direction = updateProjectDirection({ root, expectedDirectionId: null, input: { goal: "G".repeat(3000), constraints: Array.from({ length: 40 }, (_, i) => `Constraint${i} ` + "x".repeat(700)), decisions: [], cancelledActions: [] } }).direction;
   const before = originals(root);
-  const result = await queryProjectGraph({ root, anchorIds: [direction.directionId], depth: 0 });
+  const result = await queryProjectGraph({ root, anchorIds: [direction.directionId], depth: 0, details: true });
   const node = result.nodes[0];
   assert.equal(node.directionEvidence.goal.length, 2048);
   assert.equal(node.directionEvidence.constraints.length, 32);
@@ -112,6 +134,13 @@ test("direction excerpts disclose truncation and keep full originals accessible"
   assert.deepEqual(readProjectDirection({ root }), direction);
   assert.deepEqual(originals(root), before);
   safe(result);
+  const compact = await queryProjectGraph({ root, anchorIds: [direction.directionId], depth: 0 });
+  assert.equal(compact.nodes[0].directionEvidence.goal.length, 240);
+  assert.equal(compact.nodes[0].directionEvidence.constraints.length, 3);
+  assert.equal(compact.nodes[0].directionContentCoverage.partial, true);
+  assert.equal(compact.sourceFallback.needed, true);
+  assert(compact.sourceFallback.reasonCodes.includes("PROJECT_GRAPH_COMPACT_CONTENT_PARTIAL"));
+  assert.equal(compact.nodes[0].sourceReference.path, result.nodes[0].sourceReference.path);
 });
 
 async function worldFixture(t) {

@@ -166,7 +166,7 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
       delete result.observationId;
     }
   }
-  const evidenceNeeds = current.map(({ need, bundle }) => ({ id: need.id, kind: "observation", observationIds: [bundle.observation.observationId], rationale: `HEAD-selected ${need.kind}; proves actual inclusion only, not semantic sufficiency` }));
+  const evidenceNeeds = current.map(({ need, bundle }) => ({ id: need.id, kind: "observation", observationIds: [bundle.observation.observationId], rationale: `HEAD-selected ${need.kind}; source-linked context for HEAD assessment` }));
   const context = current.length ? previewContextWorkflow({ root, task, budget, evidenceNeeds, sourceObservations: current.map(({ bundle }) => bundle), includeRepositoryWorld: false }) : null;
   const included = new Set(context?.capsule.observationEvidence.map((entry) => entry.nodeId) ?? []);
   for (const result of results) if (result.status === "ready") result.includedInContext = included.has(result.observationId);

@@ -1,12 +1,13 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { atomicCreateArtifact } from "./artifact-storage.mjs";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
-import { readContextCapsule, requireCoveredContextCapsule } from "./context-compiler.mjs";
+import { readContextCapsule } from "./context-compiler.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
 export const EXECUTION_LINEAGE_VERSION = "0.4.0";
-export const FRESH_HEAD_REVIEW_VERSION = "0.1.0";
+const FRESH_HEAD_REVIEW_VERSION = "0.1.0";
 
 const DEFINITIONS = Object.freeze({
   WholePlanSnapshot: { prefix: "whole-plan", directory: "whole-plans", idField: "wholePlanId" },
@@ -118,17 +119,6 @@ function projectForRead(root) {
   return inspected.project;
 }
 
-function atomicWrite(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  try {
-    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
-    fs.renameSync(temporary, file);
-  } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-  }
-}
-
 function definitionForId(artifactId) {
   if (typeof artifactId !== "string") fail("Lineage artifact id is required.", "INVALID_LINEAGE_ID");
   const match = Object.entries(DEFINITIONS).find(([, definition]) => artifactId.startsWith(`${definition.prefix}-`));
@@ -166,7 +156,11 @@ function persistArtifact(root, artifact, persist) {
     const existing = readLineageArtifact({ root, artifactId });
     return { status: "existing", file, artifact: existing.artifact };
   }
-  atomicWrite(file, json(artifact));
+  try { atomicCreateArtifact(file, json(artifact)); }
+  catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    return { status: "existing", file, artifact: readLineageArtifact({ root, artifactId }).artifact };
+  }
   return { status: "recorded", file, artifact };
 }
 
@@ -329,7 +323,7 @@ export function createExecutionContract({ root = ".", wholePlanId, capsuleId, sc
   const planId = requiredText(wholePlanId, "Whole-plan id");
   const contextId = requiredText(capsuleId, "Context Capsule id");
   requireArtifact(project.projectRoot, planId, "WholePlanSnapshot");
-  const contextCapsule = requireCoveredContextCapsule({ root: project.projectRoot, capsuleId: contextId }).capsule;
+  readContextCapsule({ root: project.projectRoot, capsuleId: contextId });
   const artifact = buildArtifact({
     project,
     kind: "ExecutionContract",
@@ -339,8 +333,6 @@ export function createExecutionContract({ root = ".", wholePlanId, capsuleId, sc
       contextAcceptance: {
         authority: "HEAD",
         disposition: "accepted-for-this-execution-contract",
-        evidenceNeedSetDigest: contextCapsule.evidenceNeedContract?.evidenceNeedSetDigest || null,
-        coverageProofDigest: contextCapsule.coverageAssessment?.proofDigest || null,
         semanticJudgmentSource: "HEAD-not-context-compiler",
       },
       scope: requiredText(scope, "Execution scope"),

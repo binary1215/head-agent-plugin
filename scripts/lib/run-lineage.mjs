@@ -35,8 +35,15 @@ export function operationPointerHash(state) {
 function completedTransitionMatches(run, state, patch) {
   const transition = run.sessionTransition;
   const terminal = transition.kind === "finish" ? run.status === "awaiting_review" : run.status === "reviewed";
-  return terminal && operationPointerHash(state) === transition.afterOperationPointerHash
-    && Object.entries(patch).every(([key, value]) => JSON.stringify(canonical(state[key])) === JSON.stringify(canonical(value)));
+  return terminal && Object.entries(patch).every(([key, value]) => sameValue(state[key], value));
+}
+
+const sameValue = (left, right) => JSON.stringify(canonical(left ?? null)) === JSON.stringify(canonical(right ?? null));
+const publicRun = ({ sessionTransition, ...run }) => run;
+function unchangedSession(state, transition, patch) {
+  return transition.before
+    ? Object.entries(transition.before).every(([key, value]) => sameValue(state[key], value)) && sameValue(transition.patch, patch)
+    : sessionStateHash(state) === transition.beforeSessionHash && sessionStateHash({ ...state, ...patch, updatedAt: transition.changedAt }) === transition.afterSessionHash;
 }
 
 function atomicWrite(file, content) {
@@ -71,51 +78,36 @@ function stateFile(root) {
   return sessionStatePath(root);
 }
 
-// An explicit operation first binds its validated input to the existing P2 Run.
-// This is not a second journal, an approval, or recovery direction. Its hashes
-// permit only the missing Session write, never overwriting intervening P2 work.
-function prepareTransition({ run, inspected, kind, artifactId, changedAt, patch, file }) {
+// Publish the final Run once, with only the Session fields this operation owns.
+// An interrupted Session update can resume without a preparatory Run write or
+// hashes over unrelated checkpoint metadata. Old prepared records remain readable.
+function sessionChange({ run, inspected, kind, artifactId, changedAt, patch }) {
   const existing = run.sessionTransition;
   if (existing?.kind === kind) {
     if (existing.artifactId !== artifactId || existing.projectId !== inspected.project.projectId
       || existing.sessionId !== inspected.state.sessionId || existing.runId !== run.runId) {
       fail("Run transition retry differs from its recorded input or identity.", "RUN_TRANSITION_CONFLICT");
     }
-    const completedReplay = completedTransitionMatches(run, inspected.state, patch);
-    const hash = sessionStateHash(inspected.state);
-    if (!completedReplay && hash !== existing.beforeSessionHash && hash !== existing.afterSessionHash) {
-      fail("Session changed after the recorded Run transition.", "RUN_TRANSITION_SESSION_DRIFT");
-    }
-    if (!completedReplay && sessionStateHash({ ...inspected.state, ...patch, updatedAt: existing.changedAt }) !== existing.afterSessionHash) {
-      fail("Run transition target does not match its exact Session change.", "RUN_TRANSITION_CONFLICT");
-    }
-    if ((kind === "finish" && run.status === "awaiting_review" && run.completedAt !== existing.changedAt)
-      || (kind === "review" && run.status === "reviewed" && run.reviewedAt !== existing.changedAt)) {
-      fail("Run transition timestamp does not match Run canon.", "RUN_TRANSITION_CONFLICT");
-    }
-    return run;
+    if (!completedTransitionMatches(run, inspected.state, patch) && !unchangedSession(inspected.state, existing, patch)) fail("Session changed in fields owned by the recorded Run operation.", "RUN_TRANSITION_SESSION_DRIFT");
+    return existing;
   }
   const transition = {
     kind, artifactId, projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId, runId: run.runId, changedAt,
-    beforeSessionHash: sessionStateHash(inspected.state),
-    afterSessionHash: sessionStateHash({ ...inspected.state, ...patch, updatedAt: changedAt }),
-    afterOperationPointerHash: operationPointerHash({ ...inspected.state, ...patch }),
+    before: Object.fromEntries([...new Set([...Object.keys(patch), "currentWholePlanId", "activeRunId", "activeExecutionContractId", "lastReviewedRunId"])]
+      .map((key) => [key, inspected.state[key] ?? null])),
+    patch,
   };
-  const prepared = { ...run, sessionTransition: transition };
-  atomicWrite(file, json(prepared));
-  return prepared;
+  return transition;
 }
 
 function commitSessionTransition({ root, inspected, run, patch }) {
   const transition = run.sessionTransition;
-  const currentHash = sessionStateHash(inspected.state);
   // A later explicit checkpoint may change only checkpoint metadata. Once the
   // exact operation is committed, acknowledge it without restoring older P2.
   if (completedTransitionMatches(run, inspected.state, patch)) return inspected.state;
-  if (currentHash === transition.afterSessionHash) return inspected.state;
   const state = { ...inspected.state, ...patch, updatedAt: transition.changedAt };
-  if (currentHash !== transition.beforeSessionHash || sessionStateHash(state) !== transition.afterSessionHash) {
+  if (!unchangedSession(inspected.state, transition, patch)) {
     fail("Run transition cannot overwrite changed Session state.", "RUN_TRANSITION_SESSION_DRIFT");
   }
   atomicWrite(stateFile(root), json(state));
@@ -219,8 +211,8 @@ function finishRunLocked({ root = ".", outcome, evidence, planDelta = "", impact
   const file = runFile(projectRoot, runId);
   let run = readJson(file, "Run canon");
   assertRunSession(projectRoot, run, inspected.state);
-  if (run.runId !== runId || !["active", "awaiting_review"].includes(run.status) || !run.executionContractId) fail("Active Run canon is not bound to an Execution Contract.", "INVALID_RUN_LINEAGE");
   if (run.sessionTransition?.kind === "review") fail("This Run already has an exact review transition; finish cannot replace it.", "RUN_TRANSITION_CONFLICT");
+  if (run.runId !== runId || !["active", "awaiting_review"].includes(run.status) || !run.executionContractId) fail("Active Run canon is not bound to an Execution Contract.", "INVALID_RUN_LINEAGE");
   if (inspected.state.currentWholePlanId !== run.wholePlanId
     || inspected.state.activeRunId && inspected.state.activeExecutionContractId !== run.executionContractId
     || !inspected.state.activeRunId && (inspected.state.pendingReview?.resultPacketId !== run.resultPacketId || run.status !== "awaiting_review")) {
@@ -256,14 +248,12 @@ function finishRunLocked({ root = ".", outcome, evidence, planDelta = "", impact
     lastResultPacketId: preview.resultPacketId,
     pendingReview,
   };
-  run = prepareTransition({ run, inspected, kind: "finish", artifactId: preview.resultPacketId, changedAt: run.completedAt || now(), patch, file });
-  const resultPacket = run.status === "awaiting_review"
-    ? requireArtifact(projectRoot, preview.resultPacketId, "ResultPacket")
-    : createResultPacket({ ...input, persist: true }).artifact;
-  const completedRun = { ...run, status: "awaiting_review", resultPacketId: resultPacket.resultPacketId, completedAt: run.sessionTransition.changedAt };
-  if (run.status !== "awaiting_review") atomicWrite(file, json(completedRun));
+  const sessionTransition = sessionChange({ run, inspected, kind: "finish", artifactId: preview.resultPacketId, changedAt: run.completedAt || now(), patch });
+  const completedRun = { ...run, sessionTransition, status: "awaiting_review", resultPacketId: preview.resultPacketId, completedAt: sessionTransition.changedAt };
+  if (run.status !== "awaiting_review" || !run.sessionTransition) atomicWrite(file, json(completedRun));
+  const resultPacket = createResultPacket({ ...input, persist: true }).artifact;
   const state = commitSessionTransition({ root: projectRoot, inspected, run: completedRun, patch });
-  return { status: "run_awaiting_review", run: completedRun, resultPacket, state };
+  return { status: "run_awaiting_review", run: publicRun(completedRun), resultPacket, state };
 }
 
 export function reviewRun(options = {}) {
@@ -335,12 +325,10 @@ function reviewRunLocked({ root = ".", reviewContextId, disposition, rationale, 
     lastReviewedRunId: runId,
     requiredPlanAction,
   };
-  run = prepareTransition({ run, inspected, kind: "review", artifactId: preview.reviewDecisionId, changedAt: run.reviewedAt || now(), patch, file });
-  const reviewDecision = run.status === "reviewed"
-    ? requireArtifact(projectRoot, preview.reviewDecisionId, "ReviewDecision")
-    : createReviewDecision({ ...input, persist: true }).artifact;
-  const reviewedRun = { ...run, status: "reviewed", reviewDecisionId: reviewDecision.reviewDecisionId, reviewDisposition: reviewDecision.disposition, reviewedAt: run.sessionTransition.changedAt };
-  if (run.status !== "reviewed") atomicWrite(file, json(reviewedRun));
+  const sessionTransition = sessionChange({ run, inspected, kind: "review", artifactId: preview.reviewDecisionId, changedAt: run.reviewedAt || now(), patch });
+  const reviewedRun = { ...run, sessionTransition, status: "reviewed", reviewDecisionId: preview.reviewDecisionId, reviewDisposition: preview.disposition, reviewedAt: sessionTransition.changedAt };
+  if (run.status !== "reviewed" || run.sessionTransition?.kind !== "review") atomicWrite(file, json(reviewedRun));
+  const reviewDecision = createReviewDecision({ ...input, persist: true }).artifact;
   const state = commitSessionTransition({ root: projectRoot, inspected, run: reviewedRun, patch });
-  return { status: "run_reviewed", run: reviewedRun, reviewDecision, state };
+  return { status: "run_reviewed", run: publicRun(reviewedRun), reviewDecision, state };
 }

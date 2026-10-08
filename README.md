@@ -81,9 +81,8 @@ task-local EvidenceNeeds in the conversation. It can name exact repository
 paths, Product entities, and current graph node anchors without asking the user
 to write JSON, choose a graph ID, or manage a token tier. Status, preparation,
 repository inspection, and preview are internal HEAD steps rather than a setup
-wizard the user must operate. The Context Compiler then verifies what was
-actually included under a fixed budget while
-recording exclusions and stale coverage. Lexical overlap remains fallback
+wizard the user must operate. The Context Compiler provides selected sources, exclusions and uncertainty
+under the requested budget. It does not certify inclusion or semantic sufficiency. Lexical overlap remains fallback
 discovery/ranking only; Core no longer chooses a semantic graph anchor from the
 first matching word, makes a current file ineligible, or declares sufficiency.
 
@@ -431,13 +430,11 @@ proposal, then gives that proposal to the existing preview verifier. Core does
 not select evidence kinds or anchors, and absence from the lexical candidate
 view never means irrelevance.
 
-If Product/World has not been activated, preparation returns `curated_only` and
-keeps direct Core work as the primary path. It discloses that reproducible
-repository, Product, and graph Capsule evidence is unavailable, while ordinary
-repository inspection remains possible. The explicit Product-profile entrypoint
-is offered only as an optional escalation after HEAD or the user determines that
-the task needs that evidence; preparation never activates or indexes the
-repository by itself.
+If Product/World has not been activated, preparation still returns
+`ready_for_head_semantic_assessment`, discloses missing repository metadata and
+provides available curated context. HEAD may inspect current source directly.
+Preparation never activates Product, indexes the repository or creates recovery
+records. Optional Product/World work is chosen only when the task needs it.
 
 Advanced automation may call the preview directly with HEAD-authored structured
 input:
@@ -449,35 +446,15 @@ head-agent context-preview C:\path\to\project `
   --evidence-needs .\evidence-needs.json
 ```
 
-CLI output is concise and human-readable by default. Add `--json` to either
-command for the complete Capsule, identities, exclusions, and coverage proof.
+CLI output is concise by default. Add `--json` for selected context, sources,
+omissions and uncertainty. One preparation or preview call is enough when its
+evidence is useful; a separate preview is optional, not a setup ritual.
 
-The preview still returns the deterministic Capsule content, and now adds a
-small read-only `workflow` projection. It reports whether the World Model is
-current, missing, or stale-excluded; whether HEAD has defined EvidenceNeeds;
-mechanical inclusion coverage; the current fixed budget tier; and one next
-action. The preview starts at the requested tier and automatically retries only
-when matching evidence was excluded specifically by `context-budget`. Every
-attempt in `workflow.budget.attempts` and summarizes the tiers in
-`workflow.budget.attemptedTiers`. Each attempt binds its tier, Capsule ID, and
-coverage-proof digest. Common final
-states are:
-
-- `evidence_needs_unassessed`: HEAD must choose task-required evidence kinds or
-  explicitly decide that no mechanical requirements are needed;
-- `world_evidence_unavailable` or `world_refresh_required`: World activation,
-  indexing, or refresh remains a separate explicit operation;
-- `evidence_gap_requires_head_action`: evidence is absent, so a larger budget is
-  not used, or matching evidence still does not fit at the 512K hard maximum;
-- `ready_for_head_semantic_assessment`: inclusion coverage is complete, but HEAD
-  must still judge semantic sufficiency.
-
-The preparation and preview guides never invent EvidenceNeeds, refresh the World, persist the preview
-Capsule, grants execution authority, or converts `coverage-complete` into
-approval. Automatic expansion is a bounded read-only retry across the fixed
-32K, 64K, 128K, 256K, and 512K tiers—not a provider call, open-ended context
-growth, or a sufficiency judgment. The exact task and EvidenceNeeds remain
-unchanged across retries.
+`ready_for_head_semantic_assessment` means HEAD should assess the selected
+context, not that the tool has proved completeness. HEAD reads original bodies
+when needed and can expand a returned graph anchor with `details: true`.
+Missing/stale World is disclosed; direct current source remains available.
+No fixed budget tiers, inclusion certificate or extra user approval is required.
 
 ### Conversation-first path
 
@@ -598,32 +575,22 @@ The feedback path is explicit: an accepted result may become reviewed lineage,
 the repository can be re-indexed, and a later graph may project that evidence.
 No result, projection, or runtime effect accepts itself.
 
-### Minimum sufficient context
+### HEAD judgment with reproducible selected context
 
 The Context Compiler selects task-relevant evidence under an explicit budget.
 It records what was included, excluded, stale, missing, truncated, or unknown.
 The same canonical inputs, compiler version, traversal policy, and budget
 reproduce the same Context Capsule.
 
-Budgets use five deterministic approximate-token tiers: `32768` (default),
-`65536`, `131072`, `262144`, and `524288` (hard maximum). Read-only preview
-starts at 32K and advances automatically only while an unmet HEAD-owned need has
-matching evidence excluded by `context-budget`. Direct compilation and Capsule
-persistence still use one explicit tier, and 512K is never exceeded.
-These are compiler estimates, currently calculated as UTF-16 code units divided
-by four; the runtime adapter must still check the provider's actual tokenizer,
-context window, and output reserve before invocation.
+The default budget is `32768` approximate tokens, and HEAD may use any positive
+safe integer. There is no five-tier ladder or 512K policy ceiling. Actual provider
+context fit and output reserve still apply; the estimate is not a tokenizer proof.
 
-HEAD decides which evidence the current task actually requires. It can pass
-task-local `EvidenceNeed[]` entries with exact repository `paths` for source or
-test evidence, exact Product Canon `entityKeys` for Product Context, or specific
-graph relations plus exact current `graphAnchor` node IDs and traversal bounds;
-the Compiler does not invent a universal test rule or infer semantics from word
-overlap. Stale, cross-project, hidden-candidate, tampered, or enlarged graph
-anchors fail closed.
-It emits a reproducible `coverageAssessment` proving only whether matching
-evidence was included. The later ExecutionContract records HEAD's separate
-semantic acceptance with the exact need-set and coverage-proof digests.
+HEAD may guide selection with exact repository paths, Product Canon keys,
+Observation IDs or bounded current graph anchors. The compiler supplies
+`evidenceGaps`, `omissions` and `uncertainty`, not an inclusion-proof gate.
+HEAD decides whether more source evidence is needed. A persisted ExecutionContract
+records that separate judgment; it does not manufacture semantic acceptance.
 
 A Capsule is a derived execution input, not a second Canon. Digest or Canon drift
 fails closed; simple read/reason work does not create a Capsule by default.
@@ -820,17 +787,17 @@ observe capability, consume one exact authorization at most once, supervise the
 owned process tree, validate structured output, and keep operational state
 outside the project.
 
-Role coordination is intentionally small: send, read-inbox, bounded wait-reply,
-and immutable reply. A trusted host binds each endpoint to one project role;
-callers cannot assert their own sender role. Messages and delivery receipts are
-evidence only and cannot create a ReviewDecision, widen a contract, mutate
-Product Canon, or rewrite recovery direction.
+Ordinary delegation uses the current Host's tasks, messages and progress.
+HEAD provides context and ownership, combines successful contributions, inspects
+unknown effects, and handles only the unfinished part. There is no HEAD role-token,
+generation, inbox or target-chain setup. Worker success cannot approve Canon or
+write recovery direction.
 
-Host-specific pane, socket, CLI, and UI behavior belongs in separately owned
-optional adapters. The Core keeps provider-neutral endpoint, project-root,
-fresh-snapshot, proof, acknowledgment, and cleanup fences. General provider
-resume and streaming remain deferred. See [Runtime adapters](docs/runtime-adapters.md)
-and [Role coordination](docs/role-coordination.md).
+Optional P2-first exact endpoint attachment preserves the same logical HEAD when
+the Host disappears. The portable export bridge is attachment-only; it retains one
+current snapshot, not a durable delivery mail service. Host-specific pane/socket/UI
+behavior stays outside Core. See [Runtime adapters](docs/runtime-adapters.md)
+and [Host delegation and attachment](docs/role-coordination.md).
 
 ## Optional GraphDB
 
@@ -998,7 +965,7 @@ Additional references:
 - [Incremental refresh](docs/incremental-refresh.md)
 - [Compaction recovery](docs/compaction-recovery.md)
 - [Session recovery](docs/session-recovery.md)
-- [Role coordination](docs/role-coordination.md)
+- [Ordinary Host delegation and optional attachment](docs/role-coordination.md)
 - [Graph projection adapter](docs/graph-projection-adapter.md)
 - [Document projection adapter](docs/document-projection-adapter.md)
 - [Codex marketplace distribution](docs/codex-marketplace.md)

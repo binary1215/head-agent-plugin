@@ -60,9 +60,14 @@ accepted execution ReviewDecision + ResultPacket -> ChangeSet
   -> HEAD reevaluates product meaning and success
 ```
 
-The persisted Signal/Hypothesis path remains available for explicit audit boundaries. The lighter path may create an immutable `ProductInitiativeCandidate` directly from explicit inline reasoning. It may defer Feature resolution until accept review, so no `ProductFeatureCandidate` exists before the user decision. The reviewed Initiative preserves the candidate's title, description, reasoning, and hypothesis references byte-independently while adding exactly one `existing-feature | candidate | gap` resolution in the separate reviewed artifact.
+The persisted Signal/Hypothesis path remains available for explicit audit boundaries. The lighter path may create an immutable `ProductInitiativeCandidate` directly from explicit inline reasoning. It may defer Feature resolution until accept review, so no `ProductFeatureCandidate` exists before the user decision. The reviewed Initiative preserves the candidate's title, description, reasoning, and hypothesis references byte-independently while adding exactly one `existing-feature | candidate | gap` resolution in the decision-derived reviewed view.
 
-The current Initiative `ReviewDecision` also binds the candidate's full hash, the exact effective Feature resolution, and the complete `ProductFeatureCandidate` when that candidate was selected at review time. Product Operating writers are serialized by one project-local P5 mutation lease, and every affected directory's existing count, individual bytes, total bytes, and all compound outputs are checked before the first durable write. An exact retry after a partial filesystem failure may create only the missing reviewed output from that unchanged decision. A different disposition, rationale, or Feature choice cannot replace it. Completed legacy decisions remain readable and replayable. When a legacy candidate already froze its Feature resolution, that exact evidence may recover a missing output; Core never guesses a deferred legacy selection and returns bounded recovery guidance instead.
+The current Initiative `ReviewDecision` records the exact candidate and Feature
+selection once. The reviewed initiative and Feature candidate are reconstructed
+read-only from that record rather than stored as duplicate decisions.
+The project-local P5 writer lease serializes competing publication; exact retry
+reuses the decision without another write. Historical original outputs remain
+readable; an absent deferred legacy selection is never guessed.
 
 These are mutation-integrity checks, not additional user gates. The existing explicit review remains the only authority boundary, ordinary reads and work remain available, and transient writer contention is handled internally without changing Product Canon or P2 recovery direction.
 

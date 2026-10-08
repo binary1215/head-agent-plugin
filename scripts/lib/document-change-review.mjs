@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { atomicWriteArtifact } from "./artifact-storage.mjs";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import {
   createDocumentProjectionAdapter,
@@ -142,27 +143,7 @@ function json(value) {
 }
 
 function atomicWrite(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.tmp-${process.pid}`;
-  let descriptor = null;
-  let ownsTemporary = false;
-  try {
-    descriptor = fs.openSync(temporary, "wx");
-    ownsTemporary = true;
-    fs.writeFileSync(descriptor, content, { encoding: "utf8" });
-    fs.closeSync(descriptor);
-    descriptor = null;
-    fs.renameSync(temporary, file);
-    ownsTemporary = false;
-  } catch (error) {
-    if (descriptor != null) {
-      try { fs.closeSync(descriptor); } catch { /* best effort */ }
-    }
-    if (ownsTemporary) {
-      try { fs.unlinkSync(temporary); } catch { /* best effort */ }
-    }
-    throw error;
-  }
+  atomicWriteArtifact(file, content);
 }
 
 function persistImmutable(file, document, verifier, label) {

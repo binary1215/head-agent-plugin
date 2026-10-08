@@ -109,10 +109,6 @@ function consumptionFile(root, epochId) {
   return path.join(compactionRoot(root), "consumptions", `${epochId}.json`);
 }
 
-function receiptDirectory(root) {
-  return path.join(compactionRoot(root), "receipts");
-}
-
 function verifyContentIdentity(document, { idField, hashField, prefix, label }) {
   const payload = { ...document };
   const recordedId = payload[idField];
@@ -214,6 +210,29 @@ function inspectRunTransitionState(inspected) {
   const { run, lineage } = loaded;
   const transition = run.sessionTransition;
   if (!transition) return { status: "stable", lineage, transition: null };
+  if (transition.before && transition.patch) {
+    if (!new Set(["finish", "review"]).has(transition.kind)
+      || transition.projectId !== inspected.project.projectId || transition.sessionId !== inspected.state.sessionId
+      || transition.runId !== run.runId || typeof transition.changedAt !== "string" || !Number.isFinite(Date.parse(transition.changedAt))) {
+      fail("Current Run Session change is invalid.", "INVALID_RUN_CANON");
+    }
+    const equal = (left, right) => canonicalJson(left ?? null) === canonicalJson(right ?? null);
+    const committed = Object.entries(transition.patch).every(([key, value]) => equal(inspected.state[key], value));
+    const unchanged = Object.entries(transition.before).every(([key, value]) => equal(inspected.state[key], value));
+    const terminal = transition.kind === "finish" ? "awaiting_review" : "reviewed";
+    const id = transition.kind === "finish" ? run.resultPacketId : run.reviewDecisionId;
+    if (run.status !== terminal || id !== transition.artifactId) fail("Run does not match its final Session change.", "RUN_TRANSITION_CONFLICT");
+    let artifactStatus = "verified";
+    try {
+      const artifact = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: id }).artifact;
+      if (artifact.kind !== (transition.kind === "finish" ? "ResultPacket" : "ReviewDecision")) fail("Run Session change has a different artifact kind.", "RUN_TRANSITION_CONFLICT");
+    } catch (error) {
+      if (error.code !== "LINEAGE_ARTIFACT_NOT_FOUND" || committed && transition.kind === "review") throw error;
+      artifactStatus = committed ? "missing-evidence" : "missing-before-publication";
+    }
+    return { status: committed ? "committed" : unchanged ? "incomplete" : "conflict", lineage,
+      transition: { kind: transition.kind, artifactId: id, artifactStatus, changedAt: transition.changedAt, transitionHash: digest(canonicalJson(transition)) } };
+  }
   if (!new Set(["finish", "review"]).has(transition.kind)
     || transition.projectId !== inspected.project.projectId || transition.sessionId !== inspected.state.sessionId
     || transition.runId !== run.runId || typeof transition.artifactId !== "string"
@@ -407,18 +426,20 @@ function verifyIntegrationRequest(inspected, input, checkpointInput) {
 function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
   if (input == null) return null;
   const keys = Object.keys(input).sort();
-  if (canonicalJson(keys) !== canonicalJson(["integrationInputHash", "integrationRequestId", "reviewDecisionId", "runId"])) {
-    fail("Reviewed Run integration requires one exact create-only request identity.", "INVALID_RUN_RESULT_INTEGRATION");
+  const legacy = Object.hasOwn(input, "integrationRequestId");
+  if (canonicalJson(keys) !== canonicalJson(legacy ? ["integrationInputHash", "integrationRequestId", "reviewDecisionId", "runId"] : ["integrationInputHash", "reviewDecisionId", "runId"])) {
+    fail("Reviewed Run integration requires the exact decision and caller direction.", "INVALID_RUN_RESULT_INTEGRATION");
   }
   const runId = requiredText(input.runId, "Reviewed Run id");
   const reviewDecisionId = requiredText(input.reviewDecisionId, "Reviewed Run ReviewDecision id");
-  const integrationRequestId = requiredText(input.integrationRequestId, "Run result integration request id");
+  const integrationRequestId = legacy ? requiredText(input.integrationRequestId, "Run result integration request id") : null;
   const integrationInputHash = requiredText(input.integrationInputHash, "Run result integration input hash");
   if (!/^run-[0-9]+-[a-f0-9]{6}$/.test(runId) || !/^review-decision-[a-f0-9]{24}$/.test(reviewDecisionId)
-    || !/^run-result-integration-request-[a-f0-9]{24}$/.test(integrationRequestId) || !/^[a-f0-9]{64}$/.test(integrationInputHash)) {
+    || legacy && !/^run-result-integration-request-[a-f0-9]{24}$/.test(integrationRequestId) || !/^[a-f0-9]{64}$/.test(integrationInputHash)) {
     fail("Reviewed Run integration identities are invalid.", "INVALID_RUN_RESULT_INTEGRATION");
   }
-  verifyIntegrationRequest(inspected, { runId, reviewDecisionId, integrationRequestId, integrationInputHash }, checkpointInput);
+  if (integrationInputHash !== digest(canonicalJson(checkpointInput))) fail("Integration direction differs from the exact caller input.", "RUN_RESULT_INTEGRATION_CONFLICT");
+  if (legacy) verifyIntegrationRequest(inspected, { runId, reviewDecisionId, integrationRequestId, integrationInputHash }, checkpointInput);
   if (inspected.state.activeRunId || inspected.state.pendingReview || inspected.state.lastReviewDecisionId !== reviewDecisionId) {
     fail("Reviewed Run integration requires the current completed review state.", "RUN_RESULT_INTEGRATION_STATE_CONFLICT");
   }
@@ -459,7 +480,7 @@ function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
     resultPacketId: result.resultPacketId,
     reviewDecisionId: review.reviewDecisionId,
     reviewContextId: review.reviewContextId,
-    integrationRequestId,
+    ...(legacy ? { integrationRequestId } : { previousCheckpointId: inspected.state.latestCheckpoint || null }),
     integrationInputHash,
     disposition: review.disposition,
     reviewedAt: requiredText(run.reviewedAt, "Reviewed Run timestamp"),
@@ -517,6 +538,35 @@ export function createRecoveryCheckpoint(options = {}) {
 
 function createRecoveryCheckpointLocked({ root = ".", purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [], reviewedRunIntegration = null } = {}) {
   const inspected = readyProject(root, "a recovery checkpoint is created");
+  if (reviewedRunIntegration) {
+    const keys = Object.keys(reviewedRunIntegration).sort();
+    const expectedKeys = Object.hasOwn(reviewedRunIntegration, "integrationRequestId")
+      ? ["integrationInputHash", "integrationRequestId", "reviewDecisionId", "runId"] : ["integrationInputHash", "reviewDecisionId", "runId"];
+    if (canonicalJson(keys) !== canonicalJson(expectedKeys) || !/^[a-f0-9]{64}$/.test(reviewedRunIntegration.integrationInputHash || "")) fail("Reviewed integration requires the exact decision and input identity.", "INVALID_RUN_RESULT_INTEGRATION");
+    const direction = normalizeCheckpointDirection(inspected, { purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
+    const inputHash = digest(canonicalJson({ runId: reviewedRunIntegration.runId, reviewDecisionId: reviewedRunIntegration.reviewDecisionId, ...direction }));
+    const directory = checkpointDirectory(inspected.project.projectRoot);
+    const matches = (fs.existsSync(directory) ? fs.readdirSync(directory) : [])
+      .filter((name) => /^checkpoint-[a-f0-9]{24}\.json$/.test(name))
+      .map((name) => readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: name.slice(0, -5) }).checkpoint)
+      .filter((record) => record.reviewedRunIntegration?.reviewDecisionId === reviewedRunIntegration.reviewDecisionId);
+    if (matches.length > 1) fail("One ReviewDecision has multiple integration checkpoints.", "RUN_RESULT_INTEGRATION_MULTIPLE_CHECKPOINTS");
+    if (matches[0]) {
+      const checkpoint = matches[0];
+      if (checkpoint.sessionId !== inspected.state.sessionId || checkpoint.reviewedRunIntegration.runId !== reviewedRunIntegration.runId
+        || checkpoint.reviewedRunIntegration.integrationInputHash !== inputHash || inputHash !== reviewedRunIntegration.integrationInputHash) {
+        fail("ReviewDecision already has a different recovery direction.", "RUN_RESULT_INTEGRATION_CONFLICT");
+      }
+      const previousCheckpointId = Object.hasOwn(checkpoint.reviewedRunIntegration, "previousCheckpointId")
+        ? checkpoint.reviewedRunIntegration.previousCheckpointId : checkpoint.reviewedRunIntegration.integrationRequestId ? null : undefined;
+      if (inspected.state.latestCheckpoint !== checkpoint.checkpointId
+        && inspected.state.latestCheckpoint === previousCheckpointId) {
+        if (canonicalJson(readSessionPointer(inspected)) !== canonicalJson(checkpoint.sessionPointer)) fail("Interrupted integration cannot overwrite changed Session work.", "RUN_RESULT_INTEGRATION_STATE_CONFLICT");
+        return persistRecoveryCheckpoint(inspected, checkpoint);
+      }
+      return { status: "existing", file: checkpointFile(inspected.project.projectRoot, checkpoint.checkpointId), checkpoint, state: inspected.state };
+    }
+  }
   const payload = recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds, reviewedRunIntegration });
   const checkpointDigest = digest(canonicalJson(payload));
   const checkpointId = `checkpoint-${checkpointDigest.slice(0, 24)}`;
@@ -801,38 +851,7 @@ function maybeSupersede(root, epochFilePath, epoch, currentUserTurnId) {
     supersededByUserTurnId: current,
     continuationTokenBindingHash: null,
   });
-  writeRecoveryReceipt(root, superseded, {
-    verifiedDigest: null,
-    continuationSubmitted: false,
-    supersededByUserTurnId: current,
-  });
   return superseded;
-}
-
-function writeRecoveryReceipt(root, epoch, { verifiedDigest = null, continuationSubmitted = false, supersededByUserTurnId = null } = {}) {
-  const payload = {
-    schemaVersion: SCHEMA_VERSION,
-    kind: "CompactionRecoveryReceipt",
-    protocol: { name: "head-agent-core-compaction-recovery", version: COMPACTION_RECOVERY_VERSION },
-    projectId: epoch.projectId,
-    sessionId: epoch.sessionId,
-    epochId: epoch.epochId,
-    checkpointId: epoch.checkpointId,
-    verifiedDigest,
-    recoveredAt: now(),
-    continuationSubmitted,
-    supersededByUserTurnId,
-    authority: "derived-observation-only",
-    instructionAuthority: false,
-    recoveryAuthority: false,
-    objectiveRewrite: false,
-  };
-  const receiptHash = digest(canonicalJson(payload));
-  const receiptId = `compaction-receipt-${receiptHash.slice(0, 24)}`;
-  const receipt = { ...payload, receiptId, receiptHash };
-  const file = path.join(receiptDirectory(root), `${receiptId}.json`);
-  if (!fs.existsSync(file)) atomicWrite(file, json(receipt));
-  return { file, receipt };
 }
 
 function validateCompactionRuntime(runtime) {
@@ -968,7 +987,6 @@ function verifyCompactionLocked({ root = ".", epochId, checkpointDigest, current
     writeEpoch(loaded.file, epoch, "aborted", { abortReason: "provider-compaction-failed", continuationTokenBindingHash: null });
     fail("Provider compaction did not succeed; a new prepare is required before retry.", "PROVIDER_COMPACTION_FAILED");
   }
-  if (epoch.state === "prepared") epoch = writeEpoch(loaded.file, epoch, "provider_compacted", { providerCompactedAt: now() });
   if (checkpointDigest !== epoch.checkpointDigest) {
     writeEpoch(loaded.file, epoch, "aborted", { abortReason: "checkpoint-digest-mismatch", continuationTokenBindingHash: null });
     fail("Prepared checkpoint digest does not match the supplied digest.", "COMPACTION_DIGEST_MISMATCH");
@@ -981,13 +999,11 @@ function verifyCompactionLocked({ root = ".", epochId, checkpointDigest, current
     writeEpoch(loaded.file, epoch, "aborted", { abortReason: error.code || "checkpoint-verification-failed", continuationTokenBindingHash: null });
     throw error;
   }
-  epoch = writeEpoch(loaded.file, epoch, "verified", { verifiedAt: now() });
-  const receipt = writeRecoveryReceipt(inspected.project.projectRoot, epoch, { verifiedDigest: checkpoint.checkpointDigest });
+  epoch = writeEpoch(loaded.file, epoch, "verified", { providerCompactedAt: epoch.providerCompactedAt || now(), verifiedAt: now() });
   return {
     status: "compaction_verified",
     epoch,
     checkpoint,
-    recoveryReceipt: receipt.receipt,
     recoverySource: "canonical-session-run-checkpoint",
     excludedSources: ["provider-transcript", "provider-summary", "provider-session-identity", "HEADContinuitySnapshot"],
   };
@@ -1033,16 +1049,11 @@ function continueCompactionLocked({ root = ".", epochId, continuationToken, curr
     throw error;
   }
   epoch = writeEpoch(loaded.file, epoch, "continued", { continuedAt: now(), continuationTokenBindingHash: null });
-  const receipt = writeRecoveryReceipt(inspected.project.projectRoot, epoch, {
-    verifiedDigest: checkpoint.checkpointDigest,
-    continuationSubmitted: true,
-  });
   return {
     status: "compaction_continuation_consumed",
     epoch,
     checkpoint,
     currentProjectDirection: readProjectDirection({ root: inspected.project.projectRoot }),
-    recoveryReceipt: receipt.receipt,
     continuationInstruction: `Continue from checkpoint ${checkpoint.checkpointId} subject to the current common Project direction, constraints and cancelled actions; its historical nextExpectedResult grants no current effect authorization. Preserve the checkpoint's recorded purpose and approved decisions.`,
     providerSubmission: "adapter-or-user-owned",
   };

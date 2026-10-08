@@ -27,7 +27,7 @@ TUI 동작을 내장하지 않으면서, 원래 HEAD Session 복원 및 worker-r
 |---|---|---|
 | `WholePlanSnapshot`, `ExecutionContract`, `ContextCapsule`, `Run`, `SessionRunCheckpoint` | P2 | 복구 가능한 프로젝트 실행 계보 및 정확한 다음 방향 |
 | `ReviewDecision` | P1 | Fresh HEAD의 명시적 규범 판단 |
-| `BoundedWorkerDispatch`, `ResultPacket`, `RunResultIntegrationRequest`, `RunResultIntegrationReceipt` | P3 | worker 소유권, result 및 통합 증거일 뿐임 |
+| `BoundedWorkerDispatch`, `ResultPacket` | P3 | worker 소유권과 result 증거; 과거 integration request/receipt 기록은 계속 읽을 수 있음 |
 | `SessionRestoreProjection` | P4 | 지속되지 않으며 재현 가능한 consumer view |
 | `ContinuationOutcome`, `BoundedWorkerWaitOutcome`, execution lease/process | P5 | 선택적인 live attachment 및 운영 진행일 뿐임 |
 | `BoundedWorkerWave`, seal, abandonment | P3 | 동일 계보의 multi-dispatch 그룹 및 비성공 handoff 증거 |
@@ -196,7 +196,6 @@ BoundedWorkerDispatch (P3)
   -> explicit accept ReviewDecision (P1)
   -> explicit integration input owned by HEAD/user direction
   -> SessionRunCheckpoint (P2)
-  -> RunResultIntegrationReceipt (P3)
 ```
 
 `worker-dispatch`는 등록된 non-HEAD role 하나를 정확한 현재 Run의
@@ -229,23 +228,17 @@ Fresh HEAD review identity, 현재 Session state 및 `accept` disposition을 다
 `revise`, `expand`, `rollback`, `escalate`는 정상적인 next-plan 또는 user-direction 경로에
 남으며 result integration으로 잘못 표시될 수 없습니다.
 
-ReviewDecision 하나는 최대 하나의 recovery checkpoint에 바인딩될 수 있습니다. 동일한
-retry는 기존 checkpoint와 receipt를 반환합니다. purpose, position, decision set,
-open-review set 또는 next expected result가 다른 retry는 실패합니다. 수락된 전체 lineage
-preflight 후, create-only P3 integration request가 checkpoint write 전에 정규화된 input을
-고정합니다. 동시에 들어온 동일한 request는 해당 request와 reviewed-time-derived checkpoint
-identity로 수렴합니다. 동시에 들어온 다른 request는 또 다른 checkpoint를 만들기 전에
-실패합니다. P2 checkpoint는 request ID와 input hash를 바인딩하므로, 직접적인 lower-level
-checkpoint construction으로 transaction을 우회하거나 다른 recovery direction으로 바꿀
-수 없습니다. request는 recovery authority가 아니라 P3 transaction provenance로 남습니다.
-checkpoint가 검증된 후에는 request 또는 ResultPacket을 삭제해도 self-contained P2 fields의
-artifact-only restore를 바꾸거나 막을 수 없습니다. checkpoint write 뒤 receipt 생성 전에
-process가 중단되면 retry는 유일하게 검증된 integration checkpoint를 찾아 누락된 create-only
-receipt만 완성합니다.
+ReviewDecision 하나는 recovery checkpoint 하나에 결속됩니다.
+lock 안의 발행은 exact reviewed lineage와 HEAD가 명시적으로 작성한 방향을
+checkpoint에 저장합니다. 동일 재시도는 재사용하고 다른 방향은 충돌합니다.
+ledger와 Session pointer 사이에서 중단되면 누락된 pointer 갱신만 완료합니다.
+뒤에 생성된 checkpoint를 재시도가 되돌리지 않습니다.
 
-receipt는 통합이 ReviewDecision을 생성하지 않았고 ResultPacket은 참조 증거일 뿐임을
-기록합니다. 나중에 해당 ResultPacket을 삭제해도 checkpoint 또는 restore projection의
-다음 방향은 바뀌지 않습니다.
+새 integration은 별도 request나 receipt를 만들지 않습니다.
+과거 request와 receipt 형식은 좁은 reader로 원본 bytes를 바꾸지 않고 읽습니다.
+ResultPacket은 참조 증거로 남으며 나중에 없어져도 checkpoint의 자체 완결적인
+방향이 바뀌지 않습니다. review, 운영 완료와 checkpoint 발행은 의미상 구분되지만
+중복 승인 절차를 만들지 않습니다.
 
 ## 공개 표면
 
@@ -295,7 +288,7 @@ fresh-process test는 서로 다른 Codex 및 OpenCode provider-session 환경 �
 `npm run verify:hostless-session-recovery`는 resident-consumer proof를 추가합니다. 하나의
 fresh process가 통합하고, 독립적인 Codex/OpenCode labeled process가 동일한 projection을
 복원하여 하나의 read-only next move를 실행하며, 주입된 inbox text는 해당 move를 작성할
-수 없습니다. 검증기는 request-before-checkpoint 및 checkpoint-before-receipt crash recovery,
-P3 request와 ResultPacket 증거 삭제, 동시 동일·상이 integration 및 non-accept review도
+수 없습니다. 검증기는 checkpoint 발행 전후 중단, 독립 writer,
+상이한 integration과 non-accept review도
 다룹니다. Git repository, GraphDB, WorkspaceHost, Herdr process 또는 provider session
 resume은 필요하지 않습니다.

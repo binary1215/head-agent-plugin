@@ -125,8 +125,8 @@ test("accepted and refreshed Worlds support mapping and exact Context without ch
     const capsule = compileContext({ root, task: "Explain the reviewed delivery implementation.", persist: false,
       evidenceNeeds: [{ id: "delivery-product", kind: "product-context", entityKeys: ["delivery"], minimumItems: 1 },
         { id: "delivery-source", kind: "repository-source", paths: ["src/delivery.mjs"], minimumItems: 1 }] }).capsule;
-    assert.equal(capsule.coverageAssessment.status, "coverage-complete");
-    assert.equal(capsule.coverageAssessment.semanticAcceptance, "not-assessed-HEAD-owned", "mechanical coverage does not grant semantic approval");
+    assert.deepEqual(capsule.evidenceGaps, []);
+    assert.equal(Object.hasOwn(capsule, "coverageAssessment"), false, "context selection does not grant semantic approval");
     assert.equal((await statusParity(root)).status, "product_ready");
     assert.deepEqual(authority(root), protectedBytes);
     assert.equal((await refreshWorldModel({ root })).status, "unchanged");
@@ -312,8 +312,8 @@ test("explicit stale mapping rejection unblocks a fresh reviewed proposal and Co
     const capsule = compileContext({ root, task: "Explain current delivery implementation.", persist: false,
       evidenceNeeds: [{ id: "delivery-product", kind: "product-context", entityKeys: ["delivery"], minimumItems: 1 },
         { id: "delivery-source", kind: "repository-source", paths: ["src/delivery.mjs"], minimumItems: 1 }] }).capsule;
-    assert.equal(capsule.coverageAssessment.status, "coverage-complete");
-    assert.equal(capsule.coverageAssessment.semanticAcceptance, "not-assessed-HEAD-owned");
+    assert.deepEqual(capsule.evidenceGaps, []);
+    assert.equal(Object.hasOwn(capsule, "coverageAssessment"), false);
     assert.deepEqual(authority(root), protectedBytes);
     assert.deepEqual(fs.readFileSync(priorFile), priorBytes);
   }

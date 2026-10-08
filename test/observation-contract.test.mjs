@@ -515,7 +515,7 @@ test("admits Observation evidence only by exact HEAD need and keeps semantic int
     observationIds: [observed.observation.observationId],
     rationale: "Fresh HEAD selected this immutable observation after semantic task analysis.",
   }] });
-  assert.equal(withExactNeed.capsule.coverageAssessment.status, "coverage-complete");
+  assert.deepEqual(withExactNeed.capsule.evidenceGaps, []);
   assert.deepEqual(withExactNeed.capsule.observationEvidence.map((item) => item.nodeId), [observed.observation.observationId]);
   assert.equal(withExactNeed.capsule.observationEvidence[0].semanticAuthority, false);
 

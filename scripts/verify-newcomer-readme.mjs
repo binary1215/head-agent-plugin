@@ -104,10 +104,8 @@ function assertReadmeContract() {
     "core_ready",
     "readiness.product",
     "requires-session-or-run-authorization",
-    "evidence_needs_unassessed",
-    "world_refresh_required",
     "ready_for_head_semantic_assessment",
-    "workflow.budget.attemptedTiers",
+    "evidenceGaps",
     "distribution.mjs uninstall",
     "head-agent-core@head-agent-plugin",
     "verify:claude-marketplace",
@@ -224,16 +222,18 @@ try {
   const contextTask = "Find request acceptance and validation evidence";
   const preparation = await runGlobal(["context-prepare", projectRoot, "--task", contextTask, "--budget", "32768"]);
   assert.equal(preparation.status, "prepared");
-  assert.equal(preparation.preparation.status, "ready_for_head_evidence_proposal");
-  assert.equal(preparation.preparation.conversation.userInput, "task-text-only");
+  assert.equal(preparation.preparation.status, "ready_for_head_semantic_assessment");
+  assert.equal(preparation.preparation.task, contextTask);
+  assert(preparation.preparation.selectedContext.repositoryFiles.length > 0);
   assert.equal(preparation.preparation.authority.selectsEvidenceNeeds, false);
   const context = await runGlobal(["context-preview", projectRoot, "--task", contextTask, "--budget", "32768"]);
   assert.equal(context.status, "preview");
   assert.equal("file" in context, false);
   assert.equal(context.capsule.productContext.length > 0, true);
-  assert.equal(context.workflow.budget.autoEscalates, true);
-  assert.equal(context.workflow.budget.requestedTier, 32768);
-  assert.equal(context.workflow.budget.attemptedTiers[0], 32768);
+  assert.equal(context.workflow.budget.requestedApproxTokens, 32768);
+  assert.equal(context.workflow.budget.providerFitVerified, false);
+  assert.equal("attemptedTiers" in context.workflow.budget, false);
+  assert.equal("coverageAssessment" in context.capsule, false);
   assert.equal(context.workflow.capsule.persisted, false);
   const documents = await runGlobal(["world-docs-build", projectRoot]);
   assert.equal(documents.status, "projected");

@@ -63,7 +63,7 @@ accepted execution ReviewDecision + ResultPacket -> ChangeSet
 
 영속 Signal/Hypothesis 경로는 명시적 감사 경계를 위해 계속 사용할 수 있습니다. 더 가벼운 경로는 명시적인 인라인 추론에서 불변 `ProductInitiativeCandidate`를 직접 생성할 수 있습니다. 이 경로는 Feature 결정을 수락 검토까지 미룰 수 있으므로 사용자 결정 전에는 `ProductFeatureCandidate`가 존재하지 않습니다. 검토된 Initiative는 후보의 바이트에 의존하지 않고 제목, 설명, 추론 및 가설 참조를 보존하면서, 별도의 검토 아티팩트에 정확히 하나의 `existing-feature | candidate | gap` 결정을 추가합니다.
 
-현재 Initiative `ReviewDecision`은 후보의 전체 hash, 실제로 검토한 정확한 Feature resolution 및 검토 시 candidate가 선택된 경우 완전한 `ProductFeatureCandidate`도 결속합니다. Product Operating writer는 project-local P5 mutation lease 하나로 직렬화되며, 영향받는 모든 디렉터리의 기존 개수, 개별 바이트, 총 바이트 및 모든 복합 output을 첫 durable write 전에 검사합니다. 부분 filesystem 실패 뒤의 exact retry는 변경되지 않은 그 결정에서 누락된 reviewed output만 생성할 수 있습니다. 다른 disposition, rationale 또는 Feature 선택은 이를 대체할 수 없습니다. 완료된 legacy decision은 계속 읽고 replay할 수 있습니다. legacy candidate가 Feature resolution을 이미 동결했다면 그 exact evidence로 누락 output을 복구할 수 있지만, Core는 연기된 legacy 선택을 추측하지 않고 범위가 제한된 복구 안내를 반환합니다.
+현재 Initiative `ReviewDecision`은 exact candidate와 Feature selection을 한 번만 기록합니다. reviewed initiative와 Feature candidate는 중복 결정을 저장하지 않고 그 기록에서 읽기 전용으로 재구성합니다. project-local P5 writer lease가 경쟁 발행을 직렬화하며 exact retry는 추가 쓰기 없이 decision을 재사용합니다. 과거 원본 output은 계속 읽을 수 있고, 누락된 deferred legacy selection은 추측하지 않습니다.
 
 이는 mutation-integrity 검사이지 추가 사용자 gate가 아닙니다. 기존 explicit review만 유일한 authority boundary로 유지되고, 일반 read와 작업은 계속 가능하며, 일시적 writer contention은 Product Canon이나 P2 recovery direction을 바꾸지 않고 내부에서 처리됩니다.
 

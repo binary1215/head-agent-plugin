@@ -135,8 +135,9 @@ and schemas are diagnostic detail, not user prerequisites.
 
 Preserve important changes, judgments, results and uncertainty when continuity
 needs them. Do not create checkpoints, receipts, candidates, structured notes or
-transcript copies for every read/turn. Capsules and fixed budget tiers serve
-optional reproducible handoff/recovery, not ordinary exploration.
+transcript copies for every read/turn. Selected context includes sources, omissions
+and uncertainty without compulsory budget tiers or inclusion proof. Persist a
+Capsule only when durable handoff/recovery needs it, not for ordinary exploration.
 
 ## Progressive references and tools
 

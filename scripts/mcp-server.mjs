@@ -4,9 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isManagedMutation, requireOperationSurface, requireSurface } from "./lib/managed-maintenance-surface.mjs";
 import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
-import { CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET } from "./lib/context-budget.mjs";
+import { DEFAULT_CONTEXT_BUDGET } from "./lib/context-budget.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
-import { attachCoordinationWorkspaceHost, COORDINATION_BINDING_ENV, createCoordinationWorkspaceHostDeliveryAdapter, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -817,7 +816,7 @@ const allTools = [
       }, required: ["kind", "path"], additionalProperties: false } },
       retain: { type: "boolean", default: false, description: "HEAD selects retention for audit/reuse/handoff; no additional user approval. Ephemeral is the default." },
       timeout_ms: { type: "integer", minimum: 1, maximum: 120000, default: 15000 },
-      budget: { type: "integer", enum: CONTEXT_BUDGET_TIERS },
+      budget: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
     }, required: ["project_root", "task"], additionalProperties: false },
   },
   {
@@ -828,13 +827,13 @@ const allTools = [
   },
   {
     name: "head_context_prepare",
-    description: "Prepare bounded current World/Graph evidence from the user's task text only. Continue the conversation without asking the user for EvidenceNeed JSON, graph IDs, or a budget: provider-neutral HEAD performs semantic inspection, authors any task-required proposal, and calls preview itself. Core selects no meaning and writes no authority or recovery state.",
+    description: "Return source-linked selected context from the exact user task in one read-only call. Reuse this preparation directly; HEAD inspects originals or requests a guided preview only when useful. No World activation, JSON form, compulsory inclusion proof, token tier or new approval. HEAD judges semantic sufficiency; Core grants no authority and writes no recovery state.",
     inputSchema: {
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
         task: { type: "string", minLength: 1 },
-        budget: { type: "integer", enum: CONTEXT_BUDGET_TIERS, default: DEFAULT_CONTEXT_BUDGET },
+        budget: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER, default: DEFAULT_CONTEXT_BUDGET },
       },
       required: ["project_root", "task"],
       additionalProperties: false,
@@ -843,13 +842,13 @@ const allTools = [
   },
   {
     name: "head_context_preview",
-    description: "Preview a deterministic Context Capsule after HEAD has authored any task-required EvidenceNeeds. Keep the user's task byte-identical and continue without asking the user to choose a budget: the read-only wrapper automatically retries fixed tiers up to 512K only for proven context-budget exclusion. It writes nothing, invents no meaning, and never judges semantic sufficiency.",
+    description: "Prepare source-linked selected context from the exact user task, with optional HEAD evidence guidance. Reports omissions and uncertainty without an inclusion-proof gate or fixed token tiers. HEAD expands useful sources and assesses sufficiency. Writes nothing and grants no authority.",
     inputSchema: {
       type: "object",
       properties: {
         project_root: { type: "string", minLength: 1 },
         task: { type: "string", minLength: 1 },
-        budget: { type: "integer", enum: CONTEXT_BUDGET_TIERS, default: DEFAULT_CONTEXT_BUDGET, description: "Starting approximate-token tier for read-only preview. Matching evidence excluded by context-budget triggers deterministic retries through fixed tiers up to the 524288 hard maximum." },
+        budget: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER, default: DEFAULT_CONTEXT_BUDGET, description: "Approximate selected-context limit. HEAD may choose any positive safe integer or inspect more original evidence; this is not a provider-fit proof." },
         evidence_needs: {
           type: "array",
           maxItems: 32,
@@ -1628,32 +1627,6 @@ const allTools = [
     }, required: ["project_root"], additionalProperties: false },
   },
   {
-    name: "head_coordination_send_message",
-    description: "Send one durable project/HEAD-Session/generation-fenced role message. Sender role is derived only from the host-injected endpoint binding; the message has no instruction, decision, review, execution-authorization, promotion, or Canon authority.",
-    inputSchema: { type: "object", properties: {
-      project_root: { type: "string", minLength: 1 }, to_role: { type: "string", pattern: "^[a-z][a-z0-9-]{0,63}$" }, content: { type: "string", minLength: 1, maxLength: 32768 }, evidence_ids: { type: "array", maxItems: 64, uniqueItems: true, items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }, idempotency_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }, lane: { type: "string", enum: ["observe", "session", "run", "authority"], default: "session" },
-    }, required: ["project_root", "to_role", "content", "idempotency_key"], additionalProperties: false },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "head_coordination_read_inbox",
-    description: "Read or boundedly wait for the inbox of the host-bound role and record host-local read markers. Caller role cannot be supplied by tool arguments.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, unread_only: { type: "boolean", default: true }, wait_timeout_ms: { type: "integer", minimum: 0, maximum: 600000, default: 0 } }, required: ["project_root"], additionalProperties: false },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "head_coordination_wait_reply",
-    description: "Boundedly read an immutable reply to one message sent by the host-bound role. Reply observation is separate from delivery acknowledgement and grants no authority.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, message_id: { type: "string", pattern: "^coord-message-[a-f0-9]{32}$" }, wait_timeout_ms: { type: "integer", minimum: 0, maximum: 600000, default: 0 } }, required: ["project_root", "message_id"], additionalProperties: false },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "head_coordination_reply_message",
-    description: "Write one immutable reply as the host-bound role. The reply is coordination evidence only and cannot approve a ReviewDecision, ExecutionContract, or Product Canon change.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, in_reply_to: { type: "string", pattern: "^coord-message-[a-f0-9]{32}$" }, content: { type: "string", minLength: 1, maxLength: 32768 } }, required: ["project_root", "in_reply_to", "content"], additionalProperties: false },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
     name: "head_compact_prepare",
     description: "Create the canonical Session/Run recovery checkpoint and one bounded compaction epoch. This does not invoke a provider or treat a provider summary as recovery authority.",
     inputSchema: { type: "object", properties: {
@@ -1873,7 +1846,8 @@ allTools.push(
       view: { type: "string", enum: ["all", "work", "product"], default: "all" },
       anchor_ids: { type: "array", items: { type: "string" }, maxItems: 32 },
       paths: { type: "array", items: { type: "string" } }, depth: { type: "integer", minimum: 0, maximum: 8, default: 1 },
-      max_nodes: { type: "integer", minimum: 1, maximum: 500, default: 60 }, max_edges: { type: "integer", minimum: 0, maximum: 1000, default: 120 },
+      max_nodes: { type: "integer", minimum: 1, maximum: 500 }, max_edges: { type: "integer", minimum: 0, maximum: 1000 },
+      details: { type: "boolean", default: false, description: "Default returns short core evidence (8 nodes/12 edges). Request details with exact returned anchors to inspect original bounded payloads and relations (60/120 defaults)." },
       world_model_id: { type: "string" }, include_candidates: { type: "boolean", default: true },
       previous_result: { type: "object", description: "Optional prior verified result for identical-basis reuse, supplied by HEAD." },
     }, required: ["project_root"], additionalProperties: false },
@@ -2179,14 +2153,6 @@ function requireMcpConfirmation(value, message, code) {
   throw error;
 }
 
-function mcpCoordinationBindingToken() {
-  const token = String(process.env[COORDINATION_BINDING_ENV] || "").trim();
-  if (token) return token;
-  const error = new Error(`Role coordination requires a trusted host-injected ${COORDINATION_BINDING_ENV} endpoint binding.`);
-  error.code = "COORDINATION_BINDING_REQUIRED";
-  throw error;
-}
-
 async function initializeGraphDbFromMcp(args, transport) {
   requireMcpConfirmation(
     args.confirm_initialize,
@@ -2210,40 +2176,41 @@ async function activateGraphDbFromMcp(args, transport) {
   return (await import("./lib/graphdb-projection-activation.mjs")).activateArcadeDbGraphProjection({ root: args.project_root, transport });
 }
 
-function coordinationHostCall({ root, bindingToken, coordinationWorkspaceHost }) {
-  if (!coordinationWorkspaceHost) return null;
+async function continueSessionFromMcp(args, coordinationWorkspaceHost) {
+  const continuation = await import("./lib/runtime-session-continuation.mjs");
+  if (!coordinationWorkspaceHost) return continuation.continueSessionFromArtifacts({
+    root: args.project_root, checkpointId: args.checkpoint_id || null, runtime: args.runtime,
+  });
+  // Restore P2 before consulting a Host. Endpoint availability is optional P5,
+  // not recovery direction or a new role-binding/token ceremony.
+  const restored = (await import("./lib/session-recovery.mjs")).restoreSessionFromArtifacts({
+    root: args.project_root, checkpointId: args.checkpoint_id || null,
+  });
   if (coordinationWorkspaceHost.projectRoot) {
-    const requested = fs.realpathSync(path.resolve(root));
+    const requested = fs.realpathSync(path.resolve(args.project_root));
     const injected = fs.realpathSync(path.resolve(coordinationWorkspaceHost.projectRoot));
     if (requested !== injected) {
-      const error = new Error("The host-injected coordination project does not match the requested project.");
-      error.code = "COORDINATION_HOST_PROJECT_MISMATCH";
+      const error = new Error("The host-injected attachment project does not match the requested project.");
+      error.code = "HOST_ATTACHMENT_PROJECT_MISMATCH";
       throw error;
     }
   }
-  attachCoordinationWorkspaceHost({
-    root,
-    bindingToken,
-    workspaceHostAdapter: coordinationWorkspaceHost.adapter,
-    caller: coordinationWorkspaceHost.caller,
-  });
-  return createCoordinationWorkspaceHostDeliveryAdapter({
-    root,
-    workspaceHostAdapter: coordinationWorkspaceHost.adapter,
-  });
-}
-
-async function continueSessionFromMcp(args, coordinationWorkspaceHost) {
-  const bindingToken = String(process.env[COORDINATION_BINDING_ENV] || "").trim() || null;
-  if (bindingToken && coordinationWorkspaceHost) {
-    coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost });
+  let hostAttachment = null;
+  try {
+    hostAttachment = coordinationWorkspaceHost.adapter.attach({
+      caller: coordinationWorkspaceHost.caller,
+      boundary: { projectId: restored.projection.projectId, headSessionId: restored.projection.sessionId, role: "head", projectRoot: fs.realpathSync(path.resolve(args.project_root)) },
+    });
+  } catch {
+    // Optional Host availability cannot erase successfully restored direction.
   }
-  return (await import("./lib/runtime-session-continuation.mjs")).continueSessionFromArtifacts({
+  return continuation.continueSessionFromArtifacts({
     root: args.project_root,
     checkpointId: args.checkpoint_id || null,
     runtime: args.runtime,
-    bindingToken,
-    workspaceHostAdapter: bindingToken && coordinationWorkspaceHost ? coordinationWorkspaceHost.adapter : null,
+    hostAttachment,
+    attachmentRequested: true,
+    workspaceHostAdapter: coordinationWorkspaceHost.adapter,
   });
 }
 
@@ -2320,7 +2287,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
         ? (await import("./lib/project-bootstrap.mjs")).inspectProjectExperience({ root: args.project_root })
       : name === "head_project_graph"
         ? (await import("./lib/project-graph.mjs")).queryProjectGraph({ root: args.project_root, query: args.query ?? "", view: args.view ?? "all",
-          anchorIds: args.anchor_ids ?? [], paths: args.paths ?? [], depth: args.depth ?? 1, maxNodes: args.max_nodes ?? 60, maxEdges: args.max_edges ?? 120,
+          anchorIds: args.anchor_ids ?? [], paths: args.paths ?? [], depth: args.depth ?? 1, details: args.details ?? false, maxNodes: args.max_nodes, maxEdges: args.max_edges,
           worldModelId: args.world_model_id ?? "", includeCandidates: args.include_candidates ?? true, previousResult: args.previous_result ?? null })
       : name === "head_project_graph_index"
         ? (await import("./lib/project-graph.mjs")).indexProjectGraph({ root: args.project_root })
@@ -2664,14 +2631,6 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                           })
                           : name === "head_operating_lane_recommend"
                             ? (await import("./lib/operating-lane.mjs")).recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, authorizationStatus: args.authorization_status, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
-                          : name === "head_coordination_send_message"
-                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); return sendCoordinationMessage({ root: args.project_root, bindingToken, toRole: args.to_role, content: args.content, evidenceIds: args.evidence_ids || [], idempotencyKey: args.idempotency_key, lane: args.lane || "session", deliveryAdapter: coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }) }); })()
-                          : name === "head_coordination_read_inbox"
-                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return waitForCoordinationInbox({ root: args.project_root, bindingToken, unreadOnly: args.unread_only ?? true, timeoutMs: args.wait_timeout_ms ?? 0 }); })()
-                          : name === "head_coordination_wait_reply"
-                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return waitForCoordinationReply({ root: args.project_root, bindingToken, messageId: args.message_id, timeoutMs: args.wait_timeout_ms ?? 0 }); })()
-                          : name === "head_coordination_reply_message"
-                            ? (() => { const bindingToken = mcpCoordinationBindingToken(); coordinationHostCall({ root: args.project_root, bindingToken, coordinationWorkspaceHost }); return replyCoordinationMessage({ root: args.project_root, bindingToken, inReplyTo: args.in_reply_to, content: args.content }); })()
                           : name === "head_compact_prepare"
                             ? (await import("./lib/compaction-recovery.mjs")).prepareCompaction({ root: args.project_root, runtime: args.runtime || "manual", userTurnIdAtPrepare: args.user_turn_id_at_prepare, purpose: args.purpose, approvedDecisions: args.approved_decisions, currentPosition: args.current_position, nextExpectedResult: args.next_expected_result, openReviewIds: args.open_review_ids || [] })
                           : name === "head_compact_verify"

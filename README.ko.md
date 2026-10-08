@@ -78,8 +78,8 @@ provider-neutral HEAD가 대화 안에서 task의 의미를 분석하고 task-lo
 사용자에게 JSON, graph ID 또는 token tier 선택을 요구하지 않고 정확한 repository path,
 Product entity, 현재 graph node anchor를 지정할 수 있습니다. status, preparation,
 repository inspection과 preview는 사용자가 조작하는 설정 마법사가 아니라 HEAD 내부
-절차입니다. Context Compiler는 정해진 예산 안에서 실제 포함 여부를 검증하고 제외 정보와 stale coverage를
-기록합니다. lexical overlap은 discovery/fallback ranking일 뿐입니다. Core는 첫 일치 단어로 semantic graph anchor를 고르거나, 현재 file을 탈락시키거나 sufficiency를 선언하지 않습니다.
+절차입니다. Context Compiler는 요청한 예산 안에서 선택된 출처, 제외 정보와
+불확실성을 제공합니다. 포함 증명이나 의미적 충분성 판정은 하지 않습니다. lexical overlap은 discovery/fallback ranking일 뿐입니다. Core는 첫 일치 단어로 semantic graph anchor를 고르거나, 현재 file을 탈락시키거나 sufficiency를 선언하지 않습니다.
 
 그 결과인 Context Capsule은 내용으로 식별되며 재현할 수 있습니다. 검증된
 입력, 컴파일러 버전, 작업과 예산이 같으면 같은 식별자가 만들어지고, 정본이나
@@ -411,12 +411,11 @@ repository inspection으로 구조화 proposal을 작성하고 기존 preview ve
 전달합니다. Core는 evidence kind나 anchor를 선택하지 않으며 lexical candidate
 view에 없다는 사실은 무관하다는 뜻이 아닙니다.
 
-Product/World가 활성화되지 않았다면 준비 결과는 `curated_only`를 반환하고 직접
-Core 작업을 기본 경로로 유지합니다. 재현 가능한 repository·Product·graph Capsule
-evidence를 사용할 수 없다는 점은 공개하지만, 일반 repository inspection은 계속
-가능합니다. HEAD 또는 사용자가 task에 해당 evidence가 필요하다고 판단한 뒤에만
-명시적 Product profile 진입점을 선택적 확장으로 제시하며, preparation이 저장소를
-자동으로 인덱싱하거나 활성화하지는 않습니다.
+Product/World가 활성화되지 않아도 준비 결과는
+`ready_for_head_semantic_assessment`입니다. 저장소 metadata 부재를 공개하고
+사용 가능한 정리된 맥락을 제공합니다. HEAD는 현재 원본 소스를 직접 조사할 수
+있습니다. Preparation은 Product를 활성화하거나 저장소를 인덱싱하거나 복구
+기록을 만들지 않습니다. Product/World 작업은 task에 필요할 때만 선택합니다.
 
 고급 자동화에서는 HEAD가 작성한 structured input으로 preview를 직접 호출할 수
 있습니다.
@@ -428,33 +427,15 @@ head-agent context-preview C:\path\to\project `
   --evidence-needs .\evidence-needs.json
 ```
 
-CLI는 기본적으로 짧고 사람이 읽기 쉬운 결과를 보여줍니다. 전체 Capsule, identity,
-exclusion과 coverage proof가 필요하면 명령에 `--json`을 추가합니다.
+CLI는 기본적으로 짧게 결과를 보여줍니다. `--json`을 추가하면 선택 맥락,
+출처, 누락과 불확실성을 확인할 수 있습니다. 결과가 유용하면 준비 또는 미리보기
+호출 하나로 충분하며 별도 preview는 선택적이지 설정 절차가 아닙니다.
 
-미리보기는 기존의 결정론적 Capsule 내용을 그대로 반환하면서, 작은 읽기 전용
-`workflow` 투영을 추가합니다. World Model이 current·미구축·stale 제외 중
-어느 상태인지, HEAD가 EvidenceNeed를 정의했는지, 실제 포함 coverage, 현재
-고정 예산 계층과 다음 행동 하나를 보여줍니다. 미리보기는 요청 계층에서
-시작하고, 일치 증거가 정확히 `context-budget` 때문에 제외된 경우에만 다음
-고정 계층으로 자동 재시도합니다. `workflow.budget.attempts`는 각 시도의
-계층·Capsule ID·coverage proof digest를 기록하고,
-`workflow.budget.attemptedTiers`는 시도한 계층을 요약합니다. 대표적인 최종
-상태는 다음과 같습니다.
-
-- `evidence_needs_unassessed`: HEAD가 작업에 필요한 증거 종류를 선택하거나
-  기계적 요구가 없다고 명시적으로 판단해야 합니다.
-- `world_evidence_unavailable` 또는 `world_refresh_required`: World 활성화,
-  인덱싱, 갱신은 별도의 명시적 동작으로 남습니다.
-- `evidence_gap_requires_head_action`: 증거 자체가 없으므로 더 큰 예산을
-  사용하지 않거나, 512K 하드 상한에서도 일치 증거가 모두 들어오지 않습니다.
-- `ready_for_head_semantic_assessment`: 포함 coverage는 완전하지만 의미적
-  충분성은 여전히 HEAD가 판단해야 합니다.
-
-준비 및 미리보기 안내 계층은 EvidenceNeed를 만들어내거나, World를 갱신하거나, 미리보기
-Capsule을 저장하거나, 실행 권한을 부여하거나, `coverage-complete`를 승인으로
-바꾸지 않습니다. 자동 확대는 32K·64K·128K·256K·512K 사이의 읽기 전용
-재시도일 뿐이며, 제공자 호출·무제한 컨텍스트 증가·충분성 판정이 아닙니다.
-재시도 사이의 정확한 task와 EvidenceNeed는 바뀌지 않습니다.
+`ready_for_head_semantic_assessment`는 HEAD가 선택 맥락을 판단하라는 뜻이지,
+도구가 완전성을 증명했다는 뜻이 아닙니다. HEAD는 필요한 원본 본문을 읽고
+반환된 graph anchor를 `details: true`로 확대할 수 있습니다.
+World 부재·오래됨은 공개하지만 현재 source를 직접 사용할 수 있습니다.
+고정 예산 계층, 포함 증명서나 추가 사용자 승인은 요구하지 않습니다.
 
 ### 대화 우선 경로
 
@@ -574,27 +555,21 @@ flowchart LR
 저장소를 다시 인덱싱할 수 있으며, 이후 그래프가 그 증거를 투영할 수
 있습니다. 결과, 프로젝션 또는 런타임 효과가 스스로를 승인할 수는 없습니다.
 
-### HEAD가 의미를 판단하고 Compiler가 포함을 증명하는 컨텍스트
+### HEAD가 의미를 판단하고 Compiler가 선택 맥락을 제공하는 컨텍스트
 
 Context Compiler는 명시적인 예산 안에서 작업과 관련된 증거를 선택합니다.
 포함·제외·오래됨·누락·잘림·미확인 항목을 기록합니다. 동일한 정본 입력,
 컴파일러 버전, 탐색 정책, 예산은 동일한 Context Capsule을 재현합니다.
 
-예산은 결정론적인 근사 토큰 계층 다섯 개만 사용합니다. `32768`(기본값),
-`65536`, `131072`, `262144`, `524288`(하드 상한)입니다. 읽기 전용
-미리보기는 32K에서 시작하고, HEAD가 정의한 미충족 need의 일치 증거가
-`context-budget` 때문에 제외된 동안에만 다음 계층으로 자동 확대합니다.
-직접 컴파일과 Capsule 저장은 여전히 하나의 명시적 계층을 사용하며 512K를
-넘지 않습니다. 현재 값은 UTF-16 코드 단위 수를 4로 나눈 근사치이므로,
-실제 호출 전에는 런타임 어댑터가 제공자의 토크나이저, 컨텍스트 창,
-출력 예약분을 별도로 확인해야 합니다.
+예산의 기본값은 근사 token `32768`이며 HEAD가 양의 안전한 정수를 선택할 수 있습니다.
+고정 다섯 계층이나 512K 정책 상한은 없습니다. 실제 provider context window와
+출력 예약분은 계속 적용되며 근사치는 tokenizer 적합성 증명이 아닙니다.
 
-현재 작업에 실제로 필요한 증거는 HEAD가 정합니다. HEAD는 source 또는 test
-증거에는 정확한 repository `paths`, Product Context에는 정확한 Product Canon
-`entityKeys`, 그 밖에는 특정 graph relation과 현재 exact `graphAnchor` node ID 및 traversal bound를 task-local `EvidenceNeed[]`로 지정할 수 있습니다. stale, cross-project, hidden-candidate, tampered 또는 확대된 graph anchor는 fail closed됩니다. Compiler는 모든 작업에 test를 일률적으로 요구하거나 단어 overlap으로 의미를 추론하지 않으며, 일치하는 증거가 실제 Capsule에 포함됐는지만
-`coverageAssessment`로 재현 가능하게 증명합니다. 이후 ExecutionContract가
-정확한 need-set 및 coverage-proof digest와 함께 HEAD의 별도 의미적 수용을
-기록합니다.
+HEAD는 정확한 repository path, Product Canon key, Observation ID 또는 현재의
+bounded graph anchor로 선택을 안내할 수 있습니다. Compiler는 포함 증명 gate 대신
+`evidenceGaps`, `omissions`, `uncertainty`를 제공합니다.
+추가 source가 필요한지는 HEAD가 판단합니다. 저장된 ExecutionContract는
+그 별도 판단을 기록하며 의미적 수용을 기계적으로 만들지 않습니다.
 
 Capsule은 파생된 실행 입력이지 두 번째 Canon이 아닙니다. 다이제스트 또는
 Canon 드리프트는 실패 폐쇄되며, 단순한 읽기·추론 작업은 기본적으로
@@ -785,19 +760,16 @@ Claude Code, Codex, OpenCode는 하나의 `.head/` 권한을 공유하는 프로
 트리를 감독하고, 구조화된 출력을 검증하고, 운영 상태를 프로젝트 밖에
 보관합니다.
 
-역할 통신 표면은 의도적으로 작습니다. 보내기, 받은 편지함 읽기, 제한된
-답장 대기, 변경 불가능한 답장만 제공합니다. 신뢰된 호스트가 각 엔드포인트를
-하나의 프로젝트 역할에 연결하며, 호출자가 자신의 발신자 역할을 주장할 수
-없습니다. 메시지와 전달 영수증은 증거일 뿐 ReviewDecision을 생성하거나,
-계약을 확장하거나, Product Canon을 변경하거나, 복구 방향을 다시 쓸 수
-없습니다.
+일반 위임은 현재 Host의 task, message와 progress를 사용합니다.
+HEAD가 맥락·소유권을 전달하고 성공한 기여를 통합하며 unknown effect를 확인한 뒤
+미완료 부분만 처리합니다. HEAD 역할 token, generation, inbox나 target chain을
+설정하지 않습니다. worker 성공은 Canon 승인이나 복구 방향 쓰기가 아닙니다.
 
-호스트별 pane, socket, CLI, UI 동작은 별도로 소유되는 선택적 어댑터에
-속합니다. Core는 공급자 중립적인 엔드포인트, 프로젝트 루트, 최신 스냅샷,
-증명, 승인 응답, 정리 경계를 유지합니다. 일반적인 공급자 resume과 stream은
-여전히 보류되어 있습니다. 자세한 내용은
-[런타임 어댑터](docs/ko/runtime-adapters.md)와
-[역할 통신](docs/ko/role-coordination.md)을 참고하세요.
+선택적 P2-first exact endpoint attachment는 Host가 사라져도 같은 logical HEAD를
+유지합니다. portable export bridge는 attachment 전용으로 현재 snapshot 하나만
+보존하며 지속 delivery mail service가 아닙니다. Host별 pane/socket/UI 동작은
+Core 밖에 둡니다. [런타임 어댑터](docs/ko/runtime-adapters.md)와
+[Host 위임과 연결](docs/ko/role-coordination.md)을 참고하세요.
 
 ## 선택적 GraphDB
 
@@ -962,7 +934,7 @@ HEAD Agent Core Plugin은
 - [증분 갱신](docs/ko/incremental-refresh.md)
 - [컨텍스트 압축 복구](docs/ko/compaction-recovery.md)
 - [Session 복구](docs/ko/session-recovery.md)
-- [역할 통신](docs/ko/role-coordination.md)
+- [일반 Host 위임과 선택적 연결](docs/ko/role-coordination.md)
 - [그래프 프로젝션 어댑터](docs/ko/graph-projection-adapter.md)
 - [문서 프로젝션 어댑터](docs/ko/document-projection-adapter.md)
 - [Codex 마켓플레이스 배포](docs/ko/codex-marketplace.md)

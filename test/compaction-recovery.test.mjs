@@ -618,8 +618,9 @@ test("compaction recovers only from a canonical checkpoint and consumes continua
   });
   assert.equal(verified.epoch.state, "verified");
   assert.equal(verified.checkpoint.checkpointDigest, prepared.checkpoint.checkpointDigest);
-  assert.equal(verified.recoveryReceipt.recoveryAuthority, false);
-  assert.equal(verified.recoveryReceipt.objectiveRewrite, false);
+  assert.equal(verified.recoverySource, "canonical-session-run-checkpoint");
+  assert.equal(Object.hasOwn(verified, "recoveryReceipt"), false);
+  assert.equal(verified.checkpoint.purpose, prepared.checkpoint.purpose);
   assert.equal(verified.excludedSources.includes("HEADContinuitySnapshot"), true);
 
   const continued = continueCompaction({
@@ -629,7 +630,10 @@ test("compaction recovers only from a canonical checkpoint and consumes continua
     currentUserTurnId: 7,
   });
   assert.equal(continued.epoch.state, "continued");
-  assert.equal(continued.recoveryReceipt.continuationSubmitted, true);
+  assert.equal(continued.status, "compaction_continuation_consumed");
+  assert.equal(continued.providerSubmission, "adapter-or-user-owned");
+  assert.equal(Object.hasOwn(continued, "recoveryReceipt"), false);
+  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "compaction", "receipts")), false);
   assert.equal(continued.checkpoint.purpose, prepared.checkpoint.purpose);
   assert.throws(() => continueCompaction({
     root,

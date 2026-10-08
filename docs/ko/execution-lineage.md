@@ -28,15 +28,19 @@ Session
   -> Session
 ```
 
-Run은 자유 형식 목표에서 시작할 수 없습니다. 영속화되고 다이제스트 검증된 `ExecutionContract`가 필요하며, 이 계약에는 이미 하나의 `WholePlanSnapshot`과 하나의 영속화된 `ContextCapsule`이 바인딩되어 있습니다. 또한 계약은 정확한 EvidenceNeed 집합 다이제스트 및 Compiler 커버리지 증명 다이제스트와 함께 HEAD의 작업 로컬 컨텍스트 수락을 기록합니다. 이것이 의미적 수락 경계입니다. Compiler는 포함 여부를 증명하지만 자신의 컨텍스트를 스스로 수락할 수 없습니다.
+관리형 Run에는 하나의 `WholePlanSnapshot`과 영속 `ContextCapsule`에 연결된,
+다이제스트가 검증된 `ExecutionContract`가 필요합니다. 일반 직접 작업과 Host 위임은
+이 생명주기를 요구하지 않습니다. 계약은 선택 맥락에 대한 HEAD의 작업별 수락을
+기록하며, EvidenceNeed 집합이나 Compiler 커버리지 증명 다이제스트를 게이트로
+요구하지 않습니다. 의미적 충분성은 HEAD가 판단합니다.
 
 Run은 성공 문자열만으로 끝날 수 없습니다. 완료 시 증거와 검증을 포함하는 `ResultPacket`이 생성됩니다. 프로젝트는 Review 모드에 들어가며, HEAD가 `ReviewDecision`을 기록할 때까지 다음 Run을 차단합니다.
 
 완료와 검토는 검증된 정확한 요청을 기존 Run에 먼저 결속하고, 그 artifact·Run 종료
 상태·Session pointer 순으로 게시합니다. 도중에 중단돼도 재시작 후 같은 요청으로
 누락된 쓰기를 마칠 수 있습니다. Artifact는 별도로 검증해야 하며, 처리 의도만으로
-결과나 승인이 생기지 않습니다. Session 전후 hash는 그 사이에 진행된 다른 작업을
-덮어쓰지 못하게 합니다. 완료 응답만 유실된 경우 재시도는 읽기 전용이고, 입력이
+결과나 승인이 생기지 않습니다. Session pointer를 전진시키기 전에 영향을 받는 필드를 대조하며,
+관련 없는 checkpoint 갱신을 전이 충돌로 취급하지 않습니다. 완료 응답만 유실된 경우 재시도는 읽기 전용이고, 입력이
 달라지면 해당 전이만 거부합니다. Checkpoint나 새 검토 게이트, 재시도별 별도 journal을
 만들지 않습니다. 일반 status 조회는 상태를 복구하지 않으며, 명시적 checkpoint
 통합은 계속 별도의 HEAD 작업입니다.

@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.14",
+  "version": "0.3.0-beta.15",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -29,7 +29,7 @@
       "Bounded Graph-first Discovery with Source Fallback",
       "Read-only Readiness and Next-action Guidance",
       "Task-only Conversational Context Preparation",
-      "Reproducible Context Capsules with Exact Evidence Proof",
+      "Source-linked Selected Context with Omissions and Uncertainty",
       "Explicit Product Canon Review",
       "Compaction and Provider-independent Recovery",
       "Automatic Conversation-entry Recovery",

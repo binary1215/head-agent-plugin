@@ -245,17 +245,13 @@ test("accepted worker evidence integrates once through Fresh HEAD into an explic
   const integrated = integrateReviewedRunCheckpoint({ root, ...input });
   assert.equal(integrated.status, "run_result_integrated_checkpointed");
   assert.equal(integrated.checkpoint.authorityBoundary.planeId, "P2");
-  assert.equal(integrated.integrationReceipt.authorityBoundary.planeId, "P3");
-  const request = JSON.parse(fs.readFileSync(path.join(root, ".head", "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`), "utf8"));
-  assert.equal(request.authorityBoundary.planeId, "P3");
-  assert.equal(request.integrationRequestId, integrated.integrationReceipt.integrationRequestId);
-  assert.equal(integrated.integrationReceipt.reviewDecisionCreated, false);
-  assert.equal(integrated.integrationReceipt.resultPacketRole, "reference-evidence-only");
+  assert.equal(integrated.integrationReceipt, undefined);
+  assert.equal(fs.existsSync(path.join(root, ".head/sessions/integrations")), false);
   assert.equal(integrated.checkpoint.reviewedRunIntegration.runId, fixture.run.runId);
   assert.equal(integrated.checkpoint.reviewedRunIntegration.resultPacketId, finished.resultPacket.resultPacketId);
   assert.equal(integrated.checkpoint.reviewedRunIntegration.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
-  assert.equal(integrated.checkpoint.reviewedRunIntegration.integrationRequestId, request.integrationRequestId);
-  assert.equal(integrated.checkpoint.reviewedRunIntegration.integrationInputHash, request.integrationInputHash);
+  assert.equal(integrated.checkpoint.reviewedRunIntegration.integrationRequestId, undefined);
+  assert.match(integrated.checkpoint.reviewedRunIntegration.integrationInputHash, /^[a-f0-9]{64}$/);
   assert.equal(integrated.checkpoint.nextExpectedResult, input.nextExpectedResult);
 
   assert.throws(() => createRecoveryCheckpoint({
@@ -272,20 +268,19 @@ test("accepted worker evidence integrates once through Fresh HEAD into an explic
     purpose: input.purpose,
     approvedDecisions: input.approvedDecisions,
     currentPosition: input.currentPosition,
-    nextExpectedResult: "A direction not frozen by the create-only request",
+    nextExpectedResult: "A direction that differs from the exact stored checkpoint",
     openReviewIds: input.openReviewIds,
     reviewedRunIntegration: {
       runId: input.runId,
       reviewDecisionId: input.reviewDecisionId,
-      integrationRequestId: request.integrationRequestId,
-      integrationInputHash: request.integrationInputHash,
+      integrationInputHash: integrated.integration.integrationInputHash,
     },
-  }), { code: "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT" });
+  }), { code: "RUN_RESULT_INTEGRATION_CONFLICT" });
 
   const retry = integrateReviewedRunCheckpoint({ root, ...input });
   assert.equal(retry.status, "run_result_integration_existing");
   assert.equal(retry.checkpoint.checkpointId, integrated.checkpoint.checkpointId);
-  assert.equal(retry.receipt.integrationReceiptId, integrated.integrationReceipt.integrationReceiptId);
+  assert.deepEqual(retry.integration, integrated.integration);
   assert.throws(() => integrateReviewedRunCheckpoint({ root, ...integrationInput(fixture.run, reviewed.reviewDecision, { nextExpectedResult: "A conflicting direction" }) }), {
     code: "RUN_RESULT_INTEGRATION_CONFLICT",
   });
@@ -294,7 +289,6 @@ test("accepted worker evidence integrates once through Fresh HEAD into an explic
   const resultFile = path.join(root, ".head", "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
   fs.unlinkSync(resultFile);
   const requestFile = path.join(root, ".head", "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`);
-  fs.unlinkSync(requestFile);
   const restored = restoreSessionFromArtifacts({ root });
   assert.equal(restored.projection.consumerInstruction.nextExpectedResult, input.nextExpectedResult);
   assert.equal(restored.projection.integrationEvidence.status, "missing-evidence");
@@ -395,8 +389,9 @@ test("hostless resident HEAD recovery verifier closes crash, concurrency, provid
   const report = JSON.parse(result.stdout);
   assert.equal(report.status, "hostless_resident_head_recovery_verified");
   assert.equal(report.processBoundary.identicalProjectionAcrossCodexOpenCode, true);
-  assert.equal(report.crashRecovery.requestBeforeCheckpointConverged, true);
-  assert.equal(report.crashRecovery.checkpointBeforeReceiptConverged, true);
+  assert.equal(report.crashRecovery.beforeCheckpointConverged, true);
+  assert.equal(report.crashRecovery.checkpointBeforeSessionConverged, true);
+  assert.equal(report.crashRecovery.extraRequestOrReceiptCreated, false);
   assert.equal(report.missingEvidence.missingEvidenceDisclosed, true);
   assert.equal(report.missingEvidence.nextExpectedResultUnchanged, true);
   assert.equal(report.concurrency.checkpointCount, 1);

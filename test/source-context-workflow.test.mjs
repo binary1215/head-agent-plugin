@@ -35,7 +35,8 @@ test("actual isolated Python collection reaches helper and Context, reuses bytes
   assert.equal(first.results[0].includedInContext, true);
   assert.equal(first.context.capsule.observationEvidence.length, 1);
   assert.match(first.context.capsule.observationEvidence[0].payload.details, /target/);
-  assert.equal(first.context.capsule.coverageAssessment.mechanicalCoverageSatisfied, true);
+  assert.deepEqual(first.context.capsule.evidenceGaps, []);
+  assert.equal(first.context.capsule.semanticSufficiencyOwner, "HEAD");
   const second = await prepareSourceContext(args);
   assert.equal(second.results[0].reused, true);
   assert.equal(second.results[0].observationId, first.results[0].observationId);

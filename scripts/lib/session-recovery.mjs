@@ -17,9 +17,6 @@ const fail = (message, code = "SESSION_RECOVERY_ERROR") => {
   throw error;
 };
 
-const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
-const now = () => new Date().toISOString();
-
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === "object") {
@@ -180,7 +177,7 @@ function verifyReviewedRunIntegration(root, checkpoint) {
     resultPacketId: integration.resultPacketId,
     reviewDecisionId: review.reviewDecisionId,
     reviewContextId: review.reviewContextId,
-    integrationRequestId: integration.integrationRequestId,
+    ...(Object.hasOwn(integration, "integrationRequestId") ? { integrationRequestId: integration.integrationRequestId } : { previousCheckpointId: integration.previousCheckpointId }),
     integrationInputHash: integration.integrationInputHash,
     disposition: review.disposition,
     reviewedAt: run.reviewedAt,
@@ -200,7 +197,7 @@ function verifyReviewedRunIntegration(root, checkpoint) {
     || run.executionContractId !== contract.executionContractId || run.capsuleId !== contract.capsuleId
     || review.disposition !== "accept" || review.resultPacketId !== integration.resultPacketId
     || review.wholePlanId !== plan.wholePlanId
-    || !/^run-result-integration-request-[a-f0-9]{24}$/.test(integration.integrationRequestId)
+    || Object.hasOwn(integration, "integrationRequestId") && !/^run-result-integration-request-[a-f0-9]{24}$/.test(integration.integrationRequestId)
     || integration.integrationInputHash !== checkpointInputHash
     || canonicalJson(expected) !== canonicalJson(integration)) {
     fail("Reviewed Run integration reference no longer matches verified lineage.", "SESSION_RESTORE_INTEGRATION_LINEAGE_CONFLICT");
@@ -337,37 +334,6 @@ function integrationInput({ runId, reviewDecisionId, purpose, approvedDecisions,
   };
 }
 
-function preflightAcceptedIntegration(inspected, input) {
-  if (inspected.state.activeRunId || inspected.state.pendingReview || inspected.state.lastReviewDecisionId !== input.reviewDecisionId) {
-    fail("Run result integration requires the current completed review state.", "RUN_RESULT_INTEGRATION_STATE_CONFLICT");
-  }
-  const run = readRun(inspected.project.projectRoot, input.runId);
-  const review = verifiedArtifact(inspected.project.projectRoot, input.reviewDecisionId, "ReviewDecision");
-  if (run.status !== "reviewed" || run.reviewDecisionId !== review.reviewDecisionId || !run.resultPacketId) {
-    fail("Reviewed Run canon does not match the integration request.", "RUN_RESULT_INTEGRATION_RUN_CONFLICT");
-  }
-  const result = verifiedArtifact(inspected.project.projectRoot, run.resultPacketId, "ResultPacket");
-  if (review.disposition !== "accept" || review.resultPacketId !== result.resultPacketId
-    || review.resultPacketId !== run.resultPacketId || review.wholePlanId !== run.wholePlanId) {
-    fail("Only an accepted ResultPacket with exact Fresh HEAD review lineage may be integrated.", "RUN_RESULT_NOT_ACCEPTED");
-  }
-  const contract = verifiedArtifact(inspected.project.projectRoot, result.executionContractId, "ExecutionContract");
-  const plan = verifiedArtifact(inspected.project.projectRoot, review.wholePlanId, "WholePlanSnapshot");
-  const capsule = readContextCapsule({ root: inspected.project.projectRoot, capsuleId: contract.capsuleId }).capsule;
-  const freshReview = buildFreshHeadReview({
-    root: inspected.project.projectRoot,
-    wholePlanId: run.wholePlanId,
-    resultPacketId: run.resultPacketId,
-    sessionId: inspected.state.sessionId,
-    runId: run.runId,
-  }).review;
-  if (contract.executionContractId !== run.executionContractId || contract.wholePlanId !== plan.wholePlanId
-    || run.capsuleId !== contract.capsuleId || !capsule.capsuleHash
-    || review.reviewContextId !== freshReview.reviewContextId) {
-    fail("Reviewed Run integration lineage is inconsistent.", "RUN_RESULT_INTEGRATION_LINEAGE_CONFLICT");
-  }
-}
-
 function verifyIntegrationRequest(root, request, expectedInput = null, expectedInputHash = null) {
   if (request?.kind !== "RunResultIntegrationRequest" || request.protocol?.name !== "head-agent-core-run-result-integration"
     || request.protocol?.version !== SESSION_RECOVERY_VERSION) {
@@ -400,42 +366,6 @@ function verifyIntegrationRequest(root, request, expectedInput = null, expectedI
     fail("Run result integration request belongs to another Project, Session, Run, or ReviewDecision.", "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT");
   }
   return request;
-}
-
-function ensureIntegrationRequest(inspected, input, integrationInputHash) {
-  const file = integrationRequestFile(inspected.project.projectRoot, input.reviewDecisionId);
-  if (fs.existsSync(file)) {
-    return { file, request: verifyIntegrationRequest(inspected.project.projectRoot, readJson(file, "Run result integration request"), input, integrationInputHash) };
-  }
-  const payload = {
-    schemaVersion: SCHEMA_VERSION,
-    kind: "RunResultIntegrationRequest",
-    protocol: { name: "head-agent-core-run-result-integration", version: SESSION_RECOVERY_VERSION },
-    projectId: inspected.project.projectId,
-    sessionId: inspected.state.sessionId,
-    authorityBoundary: artifactAuthorityBoundary("RunResultIntegrationRequest"),
-    runId: input.runId,
-    reviewDecisionId: input.reviewDecisionId,
-    input,
-    integrationInputHash,
-    requestedAt: now(),
-    recoveryAuthority: false,
-    instructionAuthority: false,
-    promotionAuthority: false,
-  };
-  const integrationRequestHash = digest(canonicalJson(payload));
-  const request = {
-    ...payload,
-    integrationRequestId: `run-result-integration-request-${integrationRequestHash.slice(0, 24)}`,
-    integrationRequestHash,
-  };
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  try { fs.writeFileSync(file, json(request), { encoding: "utf8", flag: "wx" }); }
-  catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    return { file, request: verifyIntegrationRequest(inspected.project.projectRoot, readJson(file, "Run result integration request"), input, integrationInputHash) };
-  }
-  return { file, request: verifyIntegrationRequest(inspected.project.projectRoot, request, input, integrationInputHash) };
 }
 
 function verifyIntegrationReceipt(root, receipt, expectedReviewDecisionId = null) {
@@ -479,100 +409,28 @@ function verifyIntegrationReceipt(root, receipt, expectedReviewDecisionId = null
 export function readRunResultIntegration({ root = ".", reviewDecisionId } = {}) {
   const inspected = readyProject(root, "a Run result integration is read");
   const file = integrationFile(inspected.project.projectRoot, reviewDecisionId);
-  if (!fs.existsSync(file)) fail(`Run result integration not found: ${reviewDecisionId}`, "RUN_RESULT_INTEGRATION_NOT_FOUND");
-  return { status: "verified", file, ...verifyIntegrationReceipt(inspected.project.projectRoot, readJson(file, "Run result integration receipt"), reviewDecisionId) };
-}
-
-function checkpointMatchesInput(checkpoint, input, integrationRequest) {
-  return checkpoint.purpose === input.purpose
-    && canonicalJson(checkpoint.approvedDecisions) === canonicalJson(input.approvedDecisions)
-    && checkpoint.currentPosition === input.currentPosition
-    && checkpoint.nextExpectedResult === input.nextExpectedResult
-    && canonicalJson(checkpoint.openReviewIds) === canonicalJson(input.openReviewIds)
-    && checkpoint.reviewedRunIntegration?.runId === input.runId
-    && checkpoint.reviewedRunIntegration?.reviewDecisionId === input.reviewDecisionId
-    && checkpoint.reviewedRunIntegration?.integrationRequestId === integrationRequest.integrationRequestId
-    && checkpoint.reviewedRunIntegration?.integrationInputHash === integrationRequest.integrationInputHash;
-}
-
-function existingIntegrationCheckpoint(root, input, integrationRequest) {
-  const ledger = path.join(root, ".head", "sessions", "ledger");
-  if (!fs.existsSync(ledger)) return null;
+  if (fs.existsSync(file)) return { status: "verified", file, ...verifyIntegrationReceipt(inspected.project.projectRoot, readJson(file, "Run result integration receipt"), reviewDecisionId) };
+  const ledger = path.join(inspected.project.projectRoot, ".head", "sessions", "ledger");
   const matches = [];
-  for (const entry of fs.readdirSync(ledger, { withFileTypes: true })) {
+  for (const entry of fs.existsSync(ledger) ? fs.readdirSync(ledger, { withFileTypes: true }) : []) {
     if (!entry.isFile() || !/^checkpoint-[a-f0-9]{24}\.json$/.test(entry.name)) continue;
     const checkpointId = entry.name.slice(0, -5);
-    let checkpoint;
-    try { checkpoint = readRecoveryCheckpoint({ root, checkpointId }).checkpoint; }
-    catch (error) {
-      if (error.code === "INVALID_RECOVERY_CHECKPOINT") continue;
-      throw error;
-    }
-    if (checkpoint.reviewedRunIntegration?.reviewDecisionId === input.reviewDecisionId) matches.push(checkpoint);
+    const checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId }).checkpoint;
+    if (checkpoint.reviewedRunIntegration?.reviewDecisionId === reviewDecisionId && checkpoint.sessionId === inspected.state.sessionId) matches.push(checkpoint);
   }
   if (matches.length > 1) fail("ReviewDecision is linked to multiple recovery checkpoints.", "RUN_RESULT_INTEGRATION_MULTIPLE_CHECKPOINTS");
-  if (matches[0] && !checkpointMatchesInput(matches[0], input, integrationRequest)) {
-    fail("ReviewDecision was already integrated with a different recovery direction.", "RUN_RESULT_INTEGRATION_CONFLICT");
-  }
-  return matches[0] || null;
-}
-
-function writeIntegrationReceipt(root, input, checkpoint, integrationInputHash, integrationRequest) {
-  const payload = {
-    schemaVersion: SCHEMA_VERSION,
-    kind: "RunResultIntegrationReceipt",
-    protocol: { name: "head-agent-core-run-result-integration", version: SESSION_RECOVERY_VERSION },
-    projectId: checkpoint.projectId,
-    sessionId: checkpoint.sessionId,
-    authorityBoundary: artifactAuthorityBoundary("RunResultIntegrationReceipt"),
-    runId: input.runId,
-    reviewDecisionId: input.reviewDecisionId,
-    resultPacketId: checkpoint.reviewedRunIntegration.resultPacketId,
-    checkpointId: checkpoint.checkpointId,
-    checkpointDigest: checkpoint.checkpointDigest,
-    integrationRequestId: integrationRequest.integrationRequestId,
-    integrationInputHash,
-    integratedAt: now(),
-    checkpointFieldSource: "explicit-head-user-integration-input-only",
-    resultPacketRole: "reference-evidence-only",
-    reviewDecisionCreated: false,
-    recoveryAuthority: false,
-    instructionAuthority: false,
-    promotionAuthority: false,
-  };
-  const integrationReceiptHash = digest(canonicalJson(payload));
-  const receipt = {
-    ...payload,
-    integrationReceiptId: `run-result-integration-${integrationReceiptHash.slice(0, 24)}`,
-    integrationReceiptHash,
-  };
-  const file = integrationFile(root, input.reviewDecisionId);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  try { fs.writeFileSync(file, json(receipt), { encoding: "utf8", flag: "wx" }); }
-  catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    return readRunResultIntegration({ root, reviewDecisionId: input.reviewDecisionId });
-  }
-  return { status: "recorded", file, ...verifyIntegrationReceipt(root, receipt, input.reviewDecisionId) };
+  if (!matches[0]) fail(`Run result integration not found: ${reviewDecisionId}`, "RUN_RESULT_INTEGRATION_NOT_FOUND");
+  const checkpoint = matches[0];
+  return { status: "verified", file: path.join(ledger, `${checkpoint.checkpointId}.json`), checkpoint, integration: verifyReviewedRunIntegration(inspected.project.projectRoot, checkpoint) };
 }
 
 export function integrateReviewedRunCheckpoint({ root = ".", runId, reviewDecisionId, purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] } = {}) {
   const inspected = readyProject(root, "a reviewed Run result is integrated");
   const input = integrationInput({ runId, reviewDecisionId, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
   const integrationInputHash = digest(canonicalJson(input));
-  preflightAcceptedIntegration(inspected, input);
-  const integrationRequest = ensureIntegrationRequest(inspected, input, integrationInputHash).request;
-  const receiptFile = integrationFile(inspected.project.projectRoot, input.reviewDecisionId);
-  if (fs.existsSync(receiptFile)) {
-    const existing = readRunResultIntegration({ root: inspected.project.projectRoot, reviewDecisionId: input.reviewDecisionId });
-    if (existing.receipt.integrationInputHash !== integrationInputHash) {
-      fail("ReviewDecision was already integrated with a different recovery direction.", "RUN_RESULT_INTEGRATION_CONFLICT");
-    }
-    return { ...existing, status: "run_result_integration_existing" };
-  }
-  let checkpoint = existingIntegrationCheckpoint(inspected.project.projectRoot, input, integrationRequest);
-  if (!checkpoint) {
-    checkpoint = createRecoveryCheckpoint({
+  const requestFile = integrationRequestFile(inspected.project.projectRoot, input.reviewDecisionId);
+  const legacy = fs.existsSync(requestFile) ? verifyIntegrationRequest(inspected.project.projectRoot, readJson(requestFile, "Historical integration request"), input, integrationInputHash) : null;
+  const recorded = createRecoveryCheckpoint({
       root: inspected.project.projectRoot,
       purpose: input.purpose,
       approvedDecisions: input.approvedDecisions,
@@ -582,16 +440,14 @@ export function integrateReviewedRunCheckpoint({ root = ".", runId, reviewDecisi
       reviewedRunIntegration: {
         runId: input.runId,
         reviewDecisionId: input.reviewDecisionId,
-        integrationRequestId: integrationRequest.integrationRequestId,
-        integrationInputHash: integrationRequest.integrationInputHash,
+        ...(legacy ? { integrationRequestId: legacy.integrationRequestId } : {}),
+        integrationInputHash,
       },
-    }).checkpoint;
-  }
-  const recorded = writeIntegrationReceipt(inspected.project.projectRoot, input, checkpoint, integrationInputHash, integrationRequest);
+    });
   return {
-    status: "run_result_integrated_checkpointed",
+    status: recorded.status === "existing" ? "run_result_integration_existing" : "run_result_integrated_checkpointed",
     checkpoint: recorded.checkpoint,
-    integrationReceipt: recorded.receipt,
+    integration: recorded.checkpoint.reviewedRunIntegration,
     file: recorded.file,
   };
 }

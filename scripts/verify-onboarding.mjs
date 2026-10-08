@@ -237,7 +237,7 @@ async function verifyExistingProjectPromotion() {
     task: "Resolve opaque ticket omega without relying on vocabulary overlap.",
     evidenceNeeds: [{ id: "accepted-capability", kind: "product-context", entityKeys: ["capability:serve"] }],
   }).capsule;
-  assert.equal(anchoredProductContext.coverageAssessment.status, "coverage-complete");
+  assert.deepEqual(anchoredProductContext.evidenceGaps, []);
   assert.equal(anchoredProductContext.productContext.some((item) => item.entities.some((entity) => entity.semantic?.key === "capability:serve" || entity.key === "capability:serve")), true);
   const multipleProductKeys = compileContext({
     root,
@@ -249,8 +249,9 @@ async function verifyExistingProjectPromotion() {
       minimumItems: 2,
     }],
   }).capsule;
-  assert.equal(multipleProductKeys.coverageAssessment.status, "coverage-complete");
-  assert.equal(multipleProductKeys.coverageAssessment.proofs.find((item) => item.evidenceNeedId === "accepted-product-entities").includedEvidence.length >= 2, true);
+  assert.deepEqual(multipleProductKeys.evidenceGaps, []);
+  const includedKeys = new Set(multipleProductKeys.productContext.flatMap(item => item.entities.map(entity => entity.semantic?.key || entity.key)));
+  assert.equal(includedKeys.has("capability:serve") && includedKeys.has("feature:serve"), true);
   const previousRevision = JSON.parse(fs.readFileSync(path.join(
     root,
     ".head",

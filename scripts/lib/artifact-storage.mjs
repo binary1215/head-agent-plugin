@@ -8,18 +8,26 @@ import path from "node:path";
 function staged(file, content, publish) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  let owner, failure;
+  let owner, failure, descriptor = null, written = false;
   const expected = crypto.createHash("sha256").update(content).digest("hex");
   try {
-    fs.writeFileSync(temporary, content, { flag: "wx" });
-    owner = fs.lstatSync(temporary);
+    descriptor = fs.openSync(temporary, "wx");
+    owner = fs.fstatSync(descriptor);
+    fs.writeFileSync(descriptor, content);
+    written = true;
+    fs.closeSync(descriptor);
+    descriptor = null;
     return publish(temporary);
   } catch (error) { failure = error; throw error;
   } finally {
+    if (descriptor !== null) {
+      try { fs.closeSync(descriptor); }
+      catch (error) { if (failure) failure.descriptorCleanup = { code: error.code }; else throw error; }
+    }
     try {
       const current = fs.lstatSync(temporary);
       if (!owner || !current.isFile() || current.isSymbolicLink() || current.dev !== owner.dev || current.ino !== owner.ino
-        || crypto.createHash("sha256").update(fs.readFileSync(temporary)).digest("hex") !== expected) {
+        || written && crypto.createHash("sha256").update(fs.readFileSync(temporary)).digest("hex") !== expected) {
         throw Object.assign(new Error("Changed staging was preserved, not deleted."), { code: "ARTIFACT_STAGING_CHANGED" });
       }
       fs.unlinkSync(temporary);

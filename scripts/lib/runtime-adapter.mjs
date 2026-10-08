@@ -143,14 +143,14 @@ function hostDescriptor() {
   };
 }
 
-export function verifiedWorkspaceHostDescriptor() {
+export function verifiedWorkspaceHostDescriptor({ deliverySupported = true } = {}) {
   return {
     contractVersion: RUNTIME_ADAPTER_CONTRACT_VERSION,
-    adapterKind: "verified-role-coordination",
+    adapterKind: "verified-host-endpoint",
     workspaceHost: "injected-exact-endpoint",
     transport: "driver-owned",
-    supportedOperations: [...WORKSPACE_HOST_CONTROL_OPERATIONS],
-    disabledOperations: [],
+    supportedOperations: WORKSPACE_HOST_CONTROL_OPERATIONS.filter(operation => deliverySupported || operation !== "send"),
+    disabledOperations: deliverySupported ? [] : ["send"],
     processOwnership: "external-host-owned",
     callerFencing: "fresh-snapshot-exact-endpoint",
     capabilityAuthority: "host-operational-delivery-only",
@@ -163,7 +163,7 @@ export function verifiedWorkspaceHostDescriptor() {
 }
 
 function probeFromDescriptor(kind, descriptor) {
-  const activeWorkspaceHost = kind === "WorkspaceHostProbe" && descriptor.adapterKind === "verified-role-coordination";
+  const activeWorkspaceHost = kind === "WorkspaceHostProbe" && descriptor.adapterKind === "verified-host-endpoint";
   const payload = {
     schemaVersion: 1,
     kind,
@@ -212,7 +212,7 @@ function validateHostDescriptor(descriptor) {
     "processOwnership", "callerFencing", "capabilityAuthority", "controlOperationsEnabled", "instructionAuthority",
     "promotionAuthority", "controlAuthority", "mutatesCanon",
   ], "WorkspaceHostAdapter descriptor");
-  const expected = descriptor.adapterKind === "verified-role-coordination" ? verifiedWorkspaceHostDescriptor() : hostDescriptor();
+  const expected = descriptor.adapterKind === "verified-host-endpoint" ? verifiedWorkspaceHostDescriptor({ deliverySupported: descriptor.supportedOperations?.includes("send") }) : hostDescriptor();
   if (canonicalJson(descriptor) !== canonicalJson(expected)) {
     fail("WorkspaceHostAdapter descriptor violates the contract-only authority boundary.", "INVALID_WORKSPACE_HOST_ADAPTER");
   }
@@ -223,7 +223,7 @@ function validateProbe(document, { kind, descriptorValidator, prefix }) {
   assertFields(document, ["schemaVersion", "kind", "protocol", "descriptor", "status", "availability", "authorityEffect", "probeId", "probeHash"], kind);
   assertFields(document.protocol, ["name", "version"], `${kind} protocol`);
   descriptorValidator(document.descriptor);
-  const activeWorkspaceHost = kind === "WorkspaceHostProbe" && document.descriptor.adapterKind === "verified-role-coordination";
+  const activeWorkspaceHost = kind === "WorkspaceHostProbe" && document.descriptor.adapterKind === "verified-host-endpoint";
   if (document.schemaVersion !== 1 || document.kind !== kind
     || document.protocol.name !== "head-agent-core-runtime-adapter-probe"
     || document.protocol.version !== RUNTIME_ADAPTER_CONTRACT_VERSION
@@ -319,9 +319,9 @@ export class ContractOnlyWorkspaceHostAdapter {
 }
 
 function activationBoundaryFor(workspaceHostProbe) {
-  const workspaceHostMessagingEnabled = workspaceHostProbe.descriptor.adapterKind === "verified-role-coordination";
+  const workspaceHostMessagingEnabled = workspaceHostProbe.descriptor.adapterKind === "verified-host-endpoint" && workspaceHostProbe.descriptor.supportedOperations.includes("send");
   return {
-    phase: workspaceHostMessagingEnabled ? "host-messaging-active" : "contract-only",
+    phase: workspaceHostMessagingEnabled ? "host-messaging-active" : workspaceHostProbe.descriptor.adapterKind === "verified-host-endpoint" ? "host-attachment-active" : "contract-only",
     machineInterfacesVerified: false,
     runtimeControlEnabled: false,
     workspaceHostMessagingEnabled,

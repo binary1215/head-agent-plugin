@@ -23,6 +23,12 @@ and `query` from the task, with optional `anchor_ids`, `paths`, `depth`,
 `world_model_id`, `previous_result`, `include_candidates` and `session_id`.
 Bounds limit transport; they are not a task-sufficiency decision or a user form.
 
+The default compact result selects 8 nodes and 12 edges, retaining identity,
+revision/state, provenance and coverage while omitting rich repeated payload.
+Use `details: true` with returned anchors for original bounded detail and
+relations; detailed defaults are 60 nodes and 120 edges. Explicit bounds can
+expand either view. A short result never proves task sufficiency.
+
 Natural-language questions match bounded display/domain values, excluding
 authority flags and revision/provenance boilerplate. Rare matching terms help
 order results before the transport bound. This is deterministic lexical

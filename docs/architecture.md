@@ -148,7 +148,20 @@ Storage selection defaults to the complete local path. A GraphDB endpoint, datab
 
 The original implementation binds project authority to a live Herdr pane and OpenCode session, installs POSIX services, and uses Unix-oriented paths and process assumptions. Copying that runtime into a Codex plugin would falsely advertise cross-platform support and weaken its cleanup/fencing invariants.
 
-The runtime layer defines explicit `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` boundaries. Claude Code, Codex, and OpenCode plus Windows, macOS, Linux, and the native-process host are represented by deterministic contract artifacts. A current-host machine-discovery composition inspects absolute PATH entries and regular executable candidates without launching them, while bounded version and provider-specific help compositions prove non-session interfaces. `RuntimeProjectBinding` connects those observations to canonical HEAD project and Session identities. One immutable `ExecutionAuthorization` supports a lightweight idle-Session scope and a full contract-bound Run scope while sharing project/caller fences, bounded resources, pre-start single-use consumption, event normalization, cancellation, and cleanup. Session scope binds a user-request digest and optional Capsule without requiring WholePlan or Fresh HEAD review; Run scope still requires the exact Run, ExecutionContract, WholePlan, and Capsule. Durable consumption/release receipts remain in project lineage, while PID/token/owner-lock, supervisor control files, result-schema state, role bindings, and live endpoint targets are confined to a dedicated host-local operational root outside the project. Provider-neutral invocation-record and Run-result-application cores validate authorization/runtime/scope lineage and create canonical ResultPacket evidence without provider-specific identity; only launch arguments and event extraction remain in provider adapters. Windows Job Objects and POSIX process groups provide OS-enforced provider-descendant ownership without transferring authority to the native helper. All three runtimes share deterministic Session/Run and provider-specific protocol-fixture coverage through this supervised core; Codex and OpenCode additionally retain completed live model-call evidence, while Claude Code live model-call conformance remains an explicit opt-in gate. OpenCode provider configuration remains owned by the user's global OpenCode settings and authentication; Claude Code authentication and model routing likewise remain provider-owned. HEAD adds no provider preset. Exact-endpoint WorkspaceHost role delivery and P2-first optional live HEAD attachment are active behind host-issued binding and fresh-snapshot fences; the production host-export reference uses project-external content-addressed snapshots, binding-scoped per-process proofs, and create-only filesystem delivery/claim/ack records. Actual already-running Codex/OpenCode tool consumption is verified; Claude Code host round-trip evidence is not claimed until that separate live gate runs. Host-specific executable/socket/CLI/pane translation, general provider resume/stream, and broader runtime controls remain deferred to separately owned adapters. See [`runtime-adapters.md`](runtime-adapters.md).
+The runtime layer keeps `PlatformAdapter`, `AgentRuntimeAdapter` and
+`WorkspaceHostAdapter` boundaries. Capability observation never grants execution
+authority. Managed invocation retains at-most-once ownership, scope, cancellation
+and cleanup; ordinary Host delegation uses existing Host controls without HEAD
+role tokens, generations, inboxes or target chains. Current user direction and
+unknown actual effects remain preserved.
+
+An optional endpoint attachment restores P2 first and uses the current Host
+snapshot and process-ownership proof. The portable export bridge retains one
+current snapshot, not a delivery mail service. Host loss falls back to the same
+canonical logical HEAD. Earlier live role-message tests are historical evidence,
+not validation of this simplified path. Provider resume/stream and host-specific
+pane/socket/TUI translation remain outside Core.
+See [runtime adapters](runtime-adapters.md).
 
 ## File ownership
 
@@ -160,14 +173,11 @@ The managed manifest records SHA-256 digests. Canonical mutation stops when mana
 
 The Context Compiler sits between canonical project knowledge and HEAD execution. It compiles a bounded, reproducible `ContextCapsule`; it does not become a second authority.
 
-The `ContextWorkflowProjection` is a thin P4-style advisory view over one
-non-persisted preview. It connects verified World availability, HEAD-authored
-EvidenceNeeds, Compiler inclusion proof, fixed budget-tier options, and the next
-HEAD decision without changing any underlying artifact. It may repeat the same
-non-persisted compile at the next fixed tier only for a proven `context-budget`
-exclusion, recording every Capsule identity and proof. It never executes an
-external or mutating operation and never promotes coverage into semantic
-acceptance.
+The `ContextWorkflowProjection` is non-persisted P4 advice over selected context.
+It exposes sources, omissions and uncertainty for HEAD assessment, not inclusion
+proof or fixed token tiers. One preview makes one selection; HEAD may inspect
+original evidence or expand a useful anchor. It never authorizes execution,
+invokes a provider or writes recovery direction.
 
 The same workflow includes a non-persisted `ContextExplanationCard` that groups
 included evidence by kind, summarizes intentional omissions by the Compiler's
@@ -175,14 +185,11 @@ existing reason codes, and states remaining uncertainty. It explains an
 existing Capsule result; it neither adds an EvidenceNeed nor changes selection,
 budget, semantic-sufficiency ownership, or authority.
 
-The preceding `ContextPreparationProjection` is also non-persisted P4. It takes
-only the user's task text and exposes the current Project/World/Graph binding,
-a bounded lexical discovery baseline, and exact node identities for provider
-HEAD inspection. It does not author EvidenceNeeds, choose an anchor, call a
-provider, or interpret lexical absence as irrelevance. HEAD authors the
-structured proposal inside the conversation and submits it to the unchanged
-preview verifier. A provider replacement may recreate this projection, but it
-cannot write P2 recovery direction; stale World or Graph binding fails closed.
+The preceding `ContextPreparationProjection` returns selected context from the exact
+user task without another required tool round trip. Missing/stale World is
+disclosed while direct current source remains usable. Optional HEAD guidance is
+verified against its exact source binding; lexical ranking is not a semantic
+decision or a candidate-eligibility gate.
 
 ```text
 Canonical sources -> Snapshot -> HEAD EvidenceNeeds -> verified packing/budget -> ContextCapsule -> HEAD/Executor
@@ -217,7 +224,9 @@ and verified Run/plan/contract/Capsule lineage. The returned
 identity, transcript, summary, resume, or stream. After an accepted Fresh HEAD
 ReviewDecision, a separate one-shot operation may bind the reviewed Run to a P2
 checkpoint whose recovery fields are explicit HEAD/user input; ResultPacket and
-the P3 integration receipt cannot author or replace that direction. See
+historical P3 integration receipts cannot author or replace that direction.
+New integration stores the exact accepted lineage in the checkpoint itself,
+without separate request or receipt files. See
 [`session-recovery.md`](session-recovery.md).
 
 Provider-neutral launch-wave visibility is a separate P3/P4/P5 composition over
@@ -287,4 +296,4 @@ Non-blocking Conformance reconciliation lets provider HEAD compare exact approve
 
 `GitHistoryAdapter` separately supplies rebuildable, content-addressed commit evidence. The default asynchronous Git CLI adapter may fail open with explicit coverage when process launch is unavailable; a byte-preserving host-export adapter provides the same semantic input in constrained runtimes. Current refs validate reachability, and commit messages remain evidence rather than instructions or promoted decisions.
 
-`RuntimeStateAdapter` supplies strict point-in-time external runtime observations. Its source descriptor is pointer metadata rather than semantic identity; normalized observations are content-addressed and freshness-gated. The adapter is read-only and grants neither instruction nor runtime control authority. Separate `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references make provider/platform/host composition explicit. Current-host discovery, bounded fixed version/help evidence, and `RuntimeProjectBinding` establish capability without authorization. The invocation-authorization layer then derives a non-executing single-call boundary from the exact active HEAD lineage; a durable at-most-once lease consumes it before the supervisor starts and keeps it non-replayable after completion, timeout, cancellation, or caller failure. Event/receipt/draft schemas, native Job Object/process-group fixtures, and live Codex/OpenCode Session/Run evidence prove the control-plane and tree-cleanup shape. Host-derived exact-endpoint role messaging is a separate non-authoritative operational capability whose target chain and delivery receipts never become recovery canon. P2-first exact optional attachment and exact-owned one-shot interrupt/close are active. Provider hydration, general resume/stream, and broader process control remain deferred. AST-accurate graphs and structured Git decision inference also remain deferred. See [`runtime-state.md`](runtime-state.md) and [`runtime-adapters.md`](runtime-adapters.md).
+`RuntimeStateAdapter` supplies strict point-in-time external runtime observations. Its source descriptor is pointer metadata rather than semantic identity; normalized observations are content-addressed and freshness-gated. The adapter is read-only and grants neither instruction nor runtime control authority. Separate `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references make provider/platform/host composition explicit. Current-host discovery, bounded fixed version/help evidence, and `RuntimeProjectBinding` establish capability without authorization. The invocation-authorization layer then derives a non-executing single-call boundary from the exact active HEAD lineage; a durable at-most-once lease consumes it before the supervisor starts and keeps it non-replayable after completion, timeout, cancellation, or caller failure. Event/receipt/draft schemas, native Job Object/process-group fixtures, and live Codex/OpenCode Session/Run evidence prove the control-plane and tree-cleanup shape. Optional exact-endpoint attachment is a non-authoritative Host capability; ordinary tasks use Host-native coordination. P2-first exact optional attachment and exact-owned one-shot interrupt/close are active. Provider hydration, general resume/stream, and broader process control remain deferred. AST-accurate graphs and structured Git decision inference also remain deferred. See [`runtime-state.md`](runtime-state.md) and [`runtime-adapters.md`](runtime-adapters.md).

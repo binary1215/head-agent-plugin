@@ -115,7 +115,18 @@ CLI로 제공되고 `decisionScope: product-canon-bootstrap`이 지정된 `Revie
 
 기존 구현은 프로젝트 권한을 실행 중인 Herdr 창과 OpenCode 세션에 바인딩하고, POSIX 서비스를 설치하며, Unix 중심의 경로와 프로세스 가정을 사용합니다. 그 런타임을 Codex 플러그인에 복사하면 크로스 플랫폼 지원을 거짓으로 내세우고 정리 및 펜싱 불변 조건을 약화하게 됩니다.
 
-런타임 계층은 명시적인 `PlatformAdapter`, `AgentRuntimeAdapter` 및 `WorkspaceHostAdapter` 경계를 정의합니다. Claude Code, Codex, OpenCode와 Windows, macOS, Linux 및 네이티브 프로세스 호스트는 결정론적 계약 아티팩트로 표현됩니다. 현재 호스트의 머신 탐색 구성은 프로그램을 실행하지 않고 절대 PATH 항목과 일반 실행 파일 후보를 검사하며, 범위가 한정된 버전 및 공급자별 도움말 구성은 비세션 인터페이스를 입증합니다. `RuntimeProjectBinding`은 이러한 관찰을 정식 HEAD Project 및 Session ID에 연결합니다. 하나의 불변 `ExecutionAuthorization`은 경량의 유휴 Session 범위와 계약에 바인딩된 완전한 Run 범위를 지원하면서 Project/호출자 펜스, 범위가 한정된 리소스, 시작 전 일회성 소비, 이벤트 정규화, 취소 및 정리를 공유합니다. Session 범위는 WholePlan 또는 Fresh HEAD 검토를 요구하지 않고 사용자 요청 다이제스트와 선택적 Capsule을 바인딩합니다. Run 범위에는 여전히 정확한 Run, ExecutionContract, WholePlan 및 Capsule이 필요합니다. 영속적인 소비/해제 영수증은 프로젝트 리니지에 남지만, PID/token/owner-lock, supervisor 제어 파일, 결과 스키마 상태, 역할 바인딩 및 실행 중인 endpoint 대상은 프로젝트 외부의 전용 호스트 로컬 운영 루트로 한정됩니다. 공급자 중립적 호출 레코드 및 Run 결과 적용 Core는 권한/런타임/범위 리니지를 검증하고 공급자별 ID 없이 정식 ResultPacket 증거를 생성합니다. 공급자 어댑터에는 실행 인수와 이벤트 추출만 남습니다. Windows Job Objects와 POSIX process groups는 네이티브 helper에 권한을 이전하지 않으면서 OS가 강제하는 공급자 하위 프로세스 소유권을 제공합니다. 세 런타임은 모두 이 감독 Core를 통해 결정론적 Session/Run 및 공급자별 프로토콜 픽스처 검증 범위를 공유합니다. Codex와 OpenCode는 완료된 실제 모델 호출 증거도 보유하지만, Claude Code 실제 모델 호출 적합성은 명시적인 옵트인 게이트로 남습니다. OpenCode 공급자 구성은 사용자의 전역 OpenCode 설정 및 인증이 계속 소유하며, Claude Code 인증과 모델 라우팅도 마찬가지로 공급자가 소유합니다. HEAD는 어떤 공급자 프리셋도 추가하지 않습니다. 정확한 endpoint의 WorkspaceHost 역할 전달과 P2-first 선택적 실시간 HEAD 연결은 호스트가 발급한 바인딩 및 최신 스냅샷 펜스 뒤에서 활성화됩니다. 프로덕션 호스트 내보내기 참조는 프로젝트 외부의 콘텐츠 주소 지정 스냅샷, 바인딩 범위의 프로세스별 증명 및 create-only 파일시스템 전달/claim/ack 레코드를 사용합니다. 이미 실행 중인 실제 Codex/OpenCode 도구 소비는 검증되었으며, Claude Code 호스트 왕복 증거는 별도의 실제 게이트가 실행되기 전까지 주장하지 않습니다. 호스트별 실행 파일/socket/CLI/창 변환, 일반 공급자 resume/stream 및 더 광범위한 런타임 제어는 별도로 소유되는 어댑터로 계속 연기됩니다. [`runtime-adapters.md`](runtime-adapters.md)를 참조하세요.
+런타임 계층은 `PlatformAdapter`, `AgentRuntimeAdapter`, `WorkspaceHostAdapter`
+경계를 유지합니다. capability 관찰은 실행 권한을 부여하지 않습니다.
+관리형 invocation은 at-most-once 소유권, 범위, 취소와 정리를 유지하고,
+일반 Host 위임은 HEAD 역할 token·generation·inbox·target chain 없이
+기존 Host 기능을 사용합니다. 현재 사용자 방향과 실제 unknown effect는 보존합니다.
+
+선택적 endpoint attachment는 P2를 먼저 복원하고 현재 Host snapshot과 process
+소유권 proof를 사용합니다. portable export bridge는 현재 snapshot 하나만 보존하며
+delivery mail service가 아닙니다. Host 손실 시 같은 canonical logical HEAD로
+fallback합니다. 이전 live role-message test는 과거 증거이지 새 경량 경로 검증이 아닙니다.
+provider resume/stream과 Host별 pane/socket/TUI 변환은 Core 밖에 둡니다.
+[런타임 어댑터](runtime-adapters.md)를 참고하세요.
 
 ## 파일 소유권
 
@@ -127,14 +138,21 @@ CLI로 제공되고 `decisionScope: product-canon-bootstrap`이 지정된 `Revie
 
 Context Compiler는 정식 프로젝트 지식과 HEAD 실행 사이에 위치합니다. 범위가 한정되고 재현 가능한 `ContextCapsule`을 컴파일하며, 두 번째 권한이 되지는 않습니다.
 
-`ContextWorkflowProjection`은 하나의 비영속 미리보기를 대상으로 하는 얇은 P4 스타일의 자문 뷰입니다. 기반 아티팩트를 변경하지 않고 검증된 World 가용성, HEAD가 작성한 EvidenceNeeds, Compiler 포함 증명, 고정된 예산 티어 옵션 및 다음 HEAD 결정을 연결합니다. 입증된 `context-budget` 제외가 있을 때에만 다음 고정 티어에서 동일한 비영속 컴파일을 반복할 수 있으며, 모든 Capsule ID와 증명을 기록합니다. 외부 작업이나 변경 작업을 절대 실행하지 않으며, 커버리지를 의미적 수락으로 승격하지도 않습니다.
+`ContextWorkflowProjection`은 선택 맥락에 대한 비영속 P4 안내입니다.
+출처, 누락과 불확실성을 HEAD 판단에 제공하며 포함 증명이나 고정 token tier를
+요구하지 않습니다. preview 한 번은 selection 한 번입니다. HEAD가 원본 증거를
+검사하거나 유용한 anchor를 확대할 수 있지만 실행 권한 부여, provider 호출이나
+복구 방향 쓰기는 수행하지 않습니다.
 
 같은 workflow에는 비영속 `ContextExplanationCard`가 포함됩니다. 포함된 증거를
 종류별로 묶고, Compiler가 이미 기록한 사유별 의도적 제외와 남은 불확실성을
 요약합니다. 기존 Capsule 결과를 설명할 뿐 EvidenceNeed를 추가하거나 selection,
 budget, 의미적 충분성의 소유권 또는 권위를 바꾸지 않습니다.
 
-그 앞의 `ContextPreparationProjection`도 비영속 P4입니다. 사용자의 task text만 받아 현재 Project/World/Graph binding, 제한된 lexical discovery baseline과 provider HEAD가 검사할 exact node identity를 보여줍니다. EvidenceNeeds를 작성하거나 anchor를 선택하거나 provider를 호출하지 않으며 lexical 후보에 없다는 사실을 무관하다는 뜻으로 해석하지 않습니다. HEAD가 대화 안에서 구조화 proposal을 작성하고 기존 preview verifier에 제출합니다. provider 교체 후 이 projection을 다시 만들 수 있지만 P2 recovery direction을 쓸 수 없고, 오래된 World 또는 Graph binding은 fail closed됩니다.
+그 앞의 `ContextPreparationProjection`은 정확한 사용자 task로부터 선택 맥락을
+반환하며 추가 tool round trip을 요구하지 않습니다. World 부재·오래됨은 공개하되
+현재 source를 직접 사용할 수 있습니다. 선택적 HEAD 안내는 정확한 출처 결속을
+검증하며 어휘 ranking은 의미 판단이나 후보 자격 gate가 아닙니다.
 
 ```text
 Canonical sources -> Snapshot -> HEAD EvidenceNeeds -> verified packing/budget -> ContextCapsule -> HEAD/Executor
@@ -162,7 +180,8 @@ WholePlanSnapshot
 
 각 아티팩트에는 콘텐츠에서 파생된 ID, 다이제스트 검증 및 타입이 지정된 `LineageLink` 부모가 있습니다. `ResultPacket` 증거는 명시적으로 지시 권한이 없습니다. Fresh HEAD는 숨겨진 모델 세션을 재개하는 대신 이러한 검증된 아티팩트에서 검토 컨텍스트를 재구성합니다.
 
-이제 아티팩트 전용 Session 복원은 정확한 콘텐츠 주소 지정 `SessionRunCheckpoint`, 불변 Session 포인터 및 검증된 Run/plan/contract/Capsule 리니지로부터 현재 소비자 입력을 재구성합니다. 반환되는 `SessionRestoreProjection`은 비영속 P4이며 공급자 세션 ID, 트랜스크립트, 요약, resume 또는 stream을 사용하지 않습니다. Fresh HEAD ReviewDecision이 수락된 후 별도의 일회성 작업은 검토된 Run을 복구 필드가 명시적인 HEAD/사용자 입력인 P2 체크포인트에 바인딩할 수 있습니다. ResultPacket과 P3 통합 영수증은 그 방향을 작성하거나 대체할 수 없습니다. [`session-recovery.md`](session-recovery.md)를 참조하세요.
+이제 아티팩트 전용 Session 복원은 정확한 콘텐츠 주소 지정 `SessionRunCheckpoint`, 불변 Session 포인터 및 검증된 Run/plan/contract/Capsule 리니지로부터 현재 소비자 입력을 재구성합니다. 반환되는 `SessionRestoreProjection`은 비영속 P4이며 공급자 세션 ID, 트랜스크립트, 요약, resume 또는 stream을 사용하지 않습니다. Fresh HEAD ReviewDecision이 수락된 후 별도의 일회성 작업은 검토된 Run을 복구 필드가 명시적인 HEAD/사용자 입력인 P2 체크포인트에 바인딩할 수 있습니다. ResultPacket과 과거 P3 통합 영수증은 그 방향을 작성하거나 대체할 수 없습니다.
+새 통합은 별도 request/receipt 파일 없이 checkpoint 자체에 정확한 수락 계보를 기록합니다. [`session-recovery.md`](session-recovery.md)를 참조하세요.
 
 공급자 중립적인 실행 wave 가시성은 기존 HF-009 디스패치 위에 구성된 별도의 P3/P4/P5 조합입니다. `BoundedWorkerWave`는 권한 부여를 생성하거나 확대할 수 없습니다. 명시적 seal에는 모든 독립적 임대 소비가 필요합니다. status/results는 P4 뷰로, wait는 P5로 유지됩니다. 각 결과는 여전히 Fresh HEAD 검토와 명시적 HF-010 체크포인트 통합을 독립적으로 거칩니다. [`bounded-worker-wave.md`](bounded-worker-wave.md)를 참조하세요.
 
@@ -223,4 +242,4 @@ Graph 계보는 두 번째 이력 저장소를 만들지 않고 보존된 conten
 
 `GitHistoryAdapter`는 재구축 가능하고 콘텐츠 주소가 지정된 commit 증거를 별도로 제공합니다. 기본 비동기 Git CLI 어댑터는 프로세스를 실행할 수 없을 때 명시적인 coverage 정보와 함께 fail-open할 수 있습니다. byte-preserving host-export 어댑터는 제한된 런타임에서 동일한 semantic input을 제공합니다. 현재 refs는 도달 가능성을 검증하며, commit message는 지시나 승격된 결정이 아니라 증거로 남습니다.
 
-`RuntimeStateAdapter`는 엄격한 특정 시점의 외부 런타임 관찰을 제공합니다. source descriptor는 semantic ID가 아니라 pointer metadata이며, 정규화된 관찰은 콘텐츠 주소가 지정되고 최신성 게이트를 거칩니다. 어댑터는 읽기 전용이며 지시 권한이나 런타임 제어 권한을 부여하지 않습니다. 별도의 `PlatformAdapter`, `AgentRuntimeAdapter` 및 `WorkspaceHostAdapter` 참조가 공급자/플랫폼/호스트 구성을 명시적으로 만듭니다. 현재 호스트 탐색, 범위가 한정된 고정 버전/help 증거 및 `RuntimeProjectBinding`은 권한 부여 없이 capability를 확립합니다. 그 다음 호출 권한 부여 계층은 정확한 활성 HEAD 리니지에서 실행 기능이 없는 단일 호출 경계를 도출합니다. 영속적인 at-most-once lease는 supervisor 시작 전에 이를 소비하고, 완료, timeout, 취소 또는 호출자 실패 후에도 재실행할 수 없게 유지합니다. event/receipt/draft 스키마, 네이티브 Job Object/process-group 픽스처 및 실제 Codex/OpenCode Session/Run 증거는 제어 영역과 프로세스 트리 정리 형태를 입증합니다. 호스트에서 파생된 정확한 endpoint 역할 메시징은 별도의 비권위적 운영 기능이며, 그 대상 chain과 전달 영수증은 결코 복구 Canon이 되지 않습니다. P2-first 방식의 정확한 선택적 연결 및 소유권이 정확한 일회성 interrupt/close가 활성화됩니다. 공급자 hydration, 일반 resume/stream 및 더 광범위한 프로세스 제어는 계속 연기됩니다. AST 수준으로 정확한 그래프와 구조화된 Git 결정 추론도 계속 연기됩니다. [`runtime-state.md`](runtime-state.md)와 [`runtime-adapters.md`](runtime-adapters.md)를 참조하세요.
+`RuntimeStateAdapter`는 엄격한 특정 시점의 외부 런타임 관찰을 제공합니다. source descriptor는 semantic ID가 아니라 pointer metadata이며, 정규화된 관찰은 콘텐츠 주소가 지정되고 최신성 게이트를 거칩니다. 어댑터는 읽기 전용이며 지시 권한이나 런타임 제어 권한을 부여하지 않습니다. 별도의 `PlatformAdapter`, `AgentRuntimeAdapter` 및 `WorkspaceHostAdapter` 참조가 공급자/플랫폼/호스트 구성을 명시적으로 만듭니다. 현재 호스트 탐색, 범위가 한정된 고정 버전/help 증거 및 `RuntimeProjectBinding`은 권한 부여 없이 capability를 확립합니다. 그 다음 호출 권한 부여 계층은 정확한 활성 HEAD 리니지에서 실행 기능이 없는 단일 호출 경계를 도출합니다. 영속적인 at-most-once lease는 supervisor 시작 전에 이를 소비하고, 완료, timeout, 취소 또는 호출자 실패 후에도 재실행할 수 없게 유지합니다. event/receipt/draft 스키마, 네이티브 Job Object/process-group 픽스처 및 실제 Codex/OpenCode Session/Run 증거는 제어 영역과 프로세스 트리 정리 형태를 입증합니다. 선택적 exact-endpoint attachment는 비권위적 Host 기능이며 일반 task는 Host-native coordination을 사용합니다. P2-first 방식의 정확한 선택적 연결 및 소유권이 정확한 일회성 interrupt/close가 활성화됩니다. 공급자 hydration, 일반 resume/stream 및 더 광범위한 프로세스 제어는 계속 연기됩니다. AST 수준으로 정확한 그래프와 구조화된 Git 결정 추론도 계속 연기됩니다. [`runtime-state.md`](runtime-state.md)와 [`runtime-adapters.md`](runtime-adapters.md)를 참조하세요.

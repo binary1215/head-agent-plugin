@@ -52,15 +52,15 @@ function snapshot(root) {
 }
 
 function failAt(kind, boundary, after, operation) {
-  const rename = fs.renameSync;
+  const rename = fs.renameSync, link = fs.linkSync;
   let injected = false;
   fs.renameSync = (source, target) => {
     const name = path.basename(target);
     let matches = boundary === "session" && name === "current.json";
     if (boundary === "artifact") matches = path.basename(path.dirname(target)) === (kind === "finish" ? "result-packets" : "review-decisions");
-    if ((boundary === "prepare" || boundary === "run") && name === "run.json") {
+    if (boundary === "run" && name === "run.json") {
       const run = JSON.parse(fs.readFileSync(source, "utf8"));
-      matches = run.sessionTransition?.kind === kind && run.status === (boundary === "prepare" ? kind === "finish" ? "active" : "awaiting_review" : kind === "finish" ? "awaiting_review" : "reviewed");
+      matches = run.sessionTransition?.kind === kind && run.status === (kind === "finish" ? "awaiting_review" : "reviewed");
     }
     if (!injected && matches) {
       injected = true;
@@ -69,8 +69,17 @@ function failAt(kind, boundary, after, operation) {
     }
     return rename(source, target);
   };
+  fs.linkSync = (source, target) => {
+    const matches = boundary === "artifact" && path.basename(path.dirname(target)) === (kind === "finish" ? "result-packets" : "review-decisions");
+    if (!injected && matches) {
+      injected = true;
+      if (after) link(source, target);
+      throw Object.assign(new Error(`Fixture EIO at ${kind} artifact`), { code: "EIO" });
+    }
+    return link(source, target);
+  };
   try { assert.throws(operation, { code: "EIO" }); }
-  finally { fs.renameSync = rename; }
+  finally { fs.renameSync = rename; fs.linkSync = link; }
   assert.equal(injected, true);
 }
 
@@ -89,7 +98,7 @@ function freshRetry(kind, input) {
 
 for (const kind of ["finish", "review"]) {
   test(`${kind} converges before and after every durable boundary in a fresh process`, (t) => {
-    for (const boundary of ["prepare", "artifact", "run", "session"]) {
+    for (const boundary of ["run", "artifact", "session"]) {
       for (const after of [false, true]) {
         const { root, run, contract, finishInput } = fixture(t);
         if (kind === "review") finishRun(finishInput);
@@ -161,17 +170,17 @@ test("already-partial legacy Run records converge only through their exact store
 });
 
 for (const kind of ["finish", "review"]) {
-  test(`${kind} incomplete transition cannot overwrite an intervening explicit checkpoint`, (t) => {
+  test(`${kind} incomplete transition cannot overwrite fields changed by intervening HEAD work`, (t) => {
     const { root, finishInput } = fixture(t);
     if (kind === "review") finishRun(finishInput);
     const input = kind === "finish" ? finishInput : reviewInput(root);
     const operation = kind === "finish" ? finishRun : reviewRun;
     failAt(kind, "artifact", true, () => operation(input));
-    createRecoveryCheckpoint({ root, purpose: "Explicit intervening checkpoint", approvedDecisions: [], currentPosition: "Transition still incomplete", nextExpectedResult: "Inspect the exact interrupted operation", openReviewIds: [] });
+    const sessionFile = path.join(root, ".head/sessions/current.json");
+    fs.writeFileSync(sessionFile, JSON.stringify({ ...inspectProject(root).state, mode: "paused-by-current-head" }));
     const unchanged = snapshot(root);
     assert.throws(() => operation(input), { code: "RUN_TRANSITION_SESSION_DRIFT" });
     assert.deepEqual(snapshot(root), unchanged);
-    assert.equal(restoreSessionFromArtifacts({ root }).status, "session_restored_from_artifacts");
   });
 
   test(`${kind} completed replay preserves later checkpoint metadata but rejects changed operation pointers`, (t) => {
@@ -190,7 +199,7 @@ for (const kind of ["finish", "review"]) {
     assert.deepEqual(snapshot(root), withCheckpoint);
     assert.equal(restoreSessionFromArtifacts({ root }).status, "session_restored_from_artifacts");
     const sessionFile = path.join(root, ".head/sessions/current.json");
-    fs.writeFileSync(sessionFile, JSON.stringify({ ...session, requiredPlanAction: { kind: "user-direction", disposition: "escalate" } }));
+    fs.writeFileSync(sessionFile, JSON.stringify({ ...session, mode: "paused-by-current-head" }));
     const changedDirection = snapshot(root);
     assert.throws(() => operation(input), { code: "RUN_TRANSITION_SESSION_DRIFT" });
     assert.deepEqual(snapshot(root), changedDirection);
@@ -213,7 +222,7 @@ for (const kind of ["finish", "review"]) {
     assert.deepEqual(snapshot(root), prepared);
     const sessionFile = path.join(root, ".head/sessions/current.json");
     const sessionBytes = fs.readFileSync(sessionFile, "utf8");
-    fs.writeFileSync(sessionFile, JSON.stringify({ ...JSON.parse(sessionBytes), updatedAt: "intervening HEAD work" }));
+    fs.writeFileSync(sessionFile, JSON.stringify({ ...JSON.parse(sessionBytes), mode: "intervening HEAD work" }));
     const drifted = snapshot(root);
     assert.throws(() => operation(input), { code: "RUN_TRANSITION_SESSION_DRIFT" });
     assert.deepEqual(snapshot(root), drifted);

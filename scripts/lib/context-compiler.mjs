@@ -6,11 +6,11 @@ import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
 import { loadObservationProjection } from "./observation-projection.mjs";
+import { readProjectDirection } from "./project-direction.mjs";
 
-export const CONTEXT_COMPILER_VERSION = "0.21.0";
-export const CONTEXT_COVERAGE_VERSION = "1.3.0";
-import { CONTEXT_BUDGET_PROTOCOL_VERSION, CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET } from "./context-budget.mjs";
-export { CONTEXT_BUDGET_PROTOCOL_VERSION, CONTEXT_BUDGET_TIERS, DEFAULT_CONTEXT_BUDGET };
+export const CONTEXT_COMPILER_VERSION = "0.22.0";
+import { CONTEXT_BUDGET_PROTOCOL_VERSION, DEFAULT_CONTEXT_BUDGET } from "./context-budget.mjs";
+export { CONTEXT_BUDGET_PROTOCOL_VERSION, DEFAULT_CONTEXT_BUDGET };
 export const EVIDENCE_NEED_KINDS = Object.freeze([
   "claim",
   "decision",
@@ -52,12 +52,11 @@ const approxTokens = (value) => Math.ceil(String(value).length / 4);
 
 function normalizeContextBudget(value) {
   const maxApproxTokens = Number(value);
-  if (!Number.isInteger(maxApproxTokens) || !CONTEXT_BUDGET_TIERS.includes(maxApproxTokens)) {
-    fail(`Context budget must be one of: ${CONTEXT_BUDGET_TIERS.join(", ")}.`, "INVALID_CONTEXT_BUDGET");
+  if (!Number.isSafeInteger(maxApproxTokens) || maxApproxTokens < 1) {
+    fail("Context budget must be a positive safe integer.", "INVALID_CONTEXT_BUDGET");
   }
   return {
     maxApproxTokens,
-    tier: `approx-${maxApproxTokens / 1024}k`,
   };
 }
 
@@ -101,7 +100,8 @@ function normalizedLexicalText(value) {
 
 function terms(value) {
   const result = new Set();
-  for (const token of normalizedLexicalText(value).match(/[\p{L}\p{N}]{2,}/gu) || []) {
+  const originalIdentifiers = String(value).normalize("NFKC").replace(/https?:\/\/[^\s)>\]}]+/giu, " ").toLocaleLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
+  for (const token of new Set([...originalIdentifiers, ...(normalizedLexicalText(value).match(/[\p{L}\p{N}]{2,}/gu) || [])])) {
     if (!STOP_WORDS.has(token)) result.add(token);
     if (!/[\p{Script=Hangul}]/u.test(token)) continue;
     for (const particle of KOREAN_PARTICLES) {
@@ -233,15 +233,15 @@ function loadSources(root, includeRepositoryWorld = true) {
   const raw = Object.fromEntries(Object.entries(files).map(([name, file]) => [name, fs.readFileSync(file, "utf8")]));
   let worldModel = null;
   try { if (includeRepositoryWorld) worldModel = inspectWorldModel({ root }); }
-  catch (error) {
-    if (error.code !== "WORLD_MODEL_NOT_BUILT") throw error;
-  }
-  return { files, raw, knowledge: validateKnowledge(JSON.parse(raw.knowledge)), worldModel };
+  catch (error) { worldModel = { status: "unavailable", reasonCode: error.code || "WORLD_EVIDENCE_UNAVAILABLE" }; }
+  const direction = readProjectDirection({ root });
+  if (direction) raw.projectDirection = canonicalJson(direction);
+  return { files, raw, knowledge: validateKnowledge(JSON.parse(raw.knowledge)), worldModel, direction };
 }
 
 function contextSnapshot(inspected, sources) {
   const sourceDigests = Object.fromEntries(Object.entries(sources.raw).map(([name, value]) => [name, digest(value)]));
-  if (sources.worldModel) sourceDigests.repositoryWorldModel = sources.worldModel.snapshot.worldModelHash;
+  if (sources.worldModel?.snapshot) sourceDigests.repositoryWorldModel = sources.worldModel.snapshot.worldModelHash;
   let coverage = "curated-head-canon-only";
   if (sources.worldModel?.status === "stale") coverage = "curated-head-canon+stale-repository-world-model-excluded";
   else if (sources.worldModel?.status === "current") {
@@ -504,156 +504,55 @@ function repositoryCandidates(worldModel, task, budget = DEFAULT_CONTEXT_BUDGET,
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
-function productContextCandidateForAnchor(worldModel, task, graphProjectionAdapter, anchorTerm, matchingTerms, selectedEntityKey = null, discoveryNeed = null) {
-  const graph = worldModel.snapshot.temporalProvenanceGraph;
-  const productModel = worldModel.snapshot.productModel;
-  const taskTerms = terms(task);
-  const currentRevisionIds = new Map(graph.edges.filter((edge) => edge.type === "CURRENT_REVISION").map((edge) => [edge.from, edge.to]));
-  const exactNodeIds = selectedEntityKey == null ? [] : graph.nodes
-    .filter((node) => PRODUCT_ENTITY_KINDS.has(node.kind) && node.key === selectedEntityKey
-      && node.authorityClass === "canon-projected" && node.freshness === "current")
-    .flatMap((node) => [node.nodeId, currentRevisionIds.get(node.nodeId)].filter(Boolean)).sort();
-  if (selectedEntityKey != null && !exactNodeIds.length) return [];
+function productContextCandidates(worldModel, task, graphProjectionAdapter = null, evidenceNeeds = []) {
+  if (worldModel?.status !== "current") return [];
+  const { temporalProvenanceGraph: graph, productModel } = worldModel.snapshot;
+  if (!graph || !productModel) return [];
+  const taskTerms = terms(task), needs = evidenceNeeds.filter(need => need.kind === "product-context");
+  const currentRevisionIds = new Map(graph.edges.filter(edge => edge.type === "CURRENT_REVISION").map(edge => [edge.from, edge.to]));
+  const logical = graph.nodes.filter(node => PRODUCT_ENTITY_KINDS.has(node.kind)
+    && node.authorityClass === "canon-projected" && node.freshness === "current");
+  const explicit = logical.filter(node => needs.some(need =>
+    (!need.entityKeys.length || need.entityKeys.includes(node.key)) &&
+    facetMatch(facetContentText(productEntityFacetValues(node)), need.facets)));
+  const lexical = rankBounded(logical.filter(node => overlap(taskTerms, terms(facetContentText(productEntityFacetValues(node)))) > 0),
+    taskTerms, node => facetContentText(productEntityFacetValues(node)), 12);
+  const anchors = [...new Map([...explicit, ...lexical].map(node => [node.nodeId, node])).values()];
+  if (!anchors.length) return [];
+  // One bounded relation query serves the selected original identities. Missing
+  // requested entities/facets remain gaps, rather than triggering another state.
   const traversal = queryTemporalProjection(worldModel, graphProjectionAdapter, {
-    ...(selectedEntityKey == null ? { query: anchorTerm } : {
-      anchorIds: exactNodeIds,
-      expectedGraphSnapshotId: graph.graphSnapshotId,
-    }),
-    kinds: [
-      "FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
-      "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision", "Policy", "PolicyRevision",
-      "File", "Symbol", "Test", "ReviewedRelationship", "FeatureMappingReviewDecision",
-      "ChangeSet", "ReviewedImpact", "ChangeImpactReviewDecision", "VcsEvidence", "GitCommit",
-    ],
-    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "MATERIALIZED_AS", "REFERENCES", "PROMOTED_FROM", "PRODUCES", "REVIEWED_BY"],
-    authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"],
-    freshness: ["current"],
-    includeUnreviewedCandidates: false,
-    depth: 3,
-    maxNodes: 100,
-    maxEdges: 200,
+    anchorIds: anchors.slice(0, 32).map(node => node.nodeId), expectedGraphSnapshotId: graph.graphSnapshotId,
+    relations: ["CONTAINS", "REALIZES", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF",
+      "IMPLEMENTS", "VERIFIED_BY", "IMPACTS", "MATERIALIZED_AS", "REFERENCES", "PROMOTED_FROM", "PRODUCES", "REVIEWED_BY"],
+    authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic"], freshness: ["current"],
+    includeUnreviewedCandidates: false, depth: 3, maxNodes: 100, maxEdges: 200,
   });
-  if (traversal.traversalQuery.anchorIds.length === 0) return [];
-  const body = traversal.nodes.map((node) => canonicalJson(node.semantic || { kind: node.kind, key: node.key })).join(" ");
-  const matches = matchedTerms(taskTerms, terms(body));
-  const relevance = matches.length;
-  const exactNodeIdSet = new Set(exactNodeIds);
-  const requiredNodes = traversal.nodes.filter((node) => exactNodeIdSet.has(node.nodeId));
-  if (discoveryNeed) {
-    requiredNodes.push(...rankBounded(traversal.nodes.filter((node) => node.semantic
-      && PRODUCT_ENTITY_KINDS.has(node.kind.replace(/Revision$/, ""))
-      && node.authorityClass === "canon-projected" && node.freshness === "current"
-      && facetMatch(facetContentText(productEntityFacetValues(node)), discoveryNeed.facets)),
-    taskTerms, (node) => canonicalJson(node.semantic), discoveryNeed.minimumItems));
-  }
-  const requiredNodeIds = new Set(requiredNodes.map((node) => node.nodeId));
-  const compactNodes = [...requiredNodes, ...rankBounded(traversal.nodes.filter((node) => !requiredNodeIds.has(node.nodeId)), taskTerms, (node) => canonicalJson(node.semantic || {
-    kind: node.kind,
-    key: node.key,
-    path: node.path,
-    name: node.name,
-  }), Math.max(0, MAX_PRODUCT_CONTEXT_ENTITIES - requiredNodes.length))];
-  const compactEntities = compactNodes.map((node) => ({
-    nodeId: node.nodeId,
-    kind: node.kind,
+  const exactIds = new Set(anchors.slice(0, 32).flatMap(node => [node.nodeId, currentRevisionIds.get(node.nodeId)].filter(Boolean)));
+  const exactNodes = traversal.nodes.filter(node => exactIds.has(node.nodeId));
+  const selectedNodes = [...exactNodes, ...rankBounded(traversal.nodes.filter(node => !exactIds.has(node.nodeId)),
+    taskTerms, node => facetContentText(productEntityFacetValues(node)), Math.max(0, MAX_PRODUCT_CONTEXT_ENTITIES - exactNodes.length))];
+  const entities = selectedNodes.map(node => ({ ...node,
     logicalEntityId: node.logicalEntityId || (PRODUCT_ENTITY_KINDS.has(node.kind) ? node.nodeId : null),
     currentRevisionId: PRODUCT_ENTITY_KINDS.has(node.kind) ? currentRevisionIds.get(node.nodeId) || null
-      : PRODUCT_ENTITY_KINDS.has(node.kind.replace(/Revision$/, "")) ? node.nodeId : null,
-    key: node.key || null,
-    path: node.path || null,
-    name: node.name || null,
-    relationshipType: node.relationshipType || null,
-    changeSetId: node.changeSetId || null,
-    changeIds: node.changeIds || null,
-    targetNodeId: node.targetNodeId || null,
-    objectId: node.objectId || null,
-    subject: node.subject || null,
-    gitHistoryId: node.gitHistoryId || null,
-    semantic: node.semantic || null,
-    authorityClass: node.authorityClass,
-    evidenceIds: node.evidenceIds,
-    freshness: node.freshness,
-  }));
-  const selectedProductNodeIds = new Set(compactEntities.map((item) => item.nodeId));
-  const relationshipBoundary = traversal.edges.filter((edge) => selectedProductNodeIds.has(edge.from) !== selectedProductNodeIds.has(edge.to))
-    .map((edge) => ({ edgeId: edge.edgeId, type: edge.type,
-      includedEndpointId: selectedProductNodeIds.has(edge.from) ? edge.from : edge.to,
-      omittedEndpointId: selectedProductNodeIds.has(edge.from) ? edge.to : edge.from,
-      nextAnchorId: selectedProductNodeIds.has(edge.from) ? edge.to : edge.from }))
-    .sort((left, right) => left.edgeId.localeCompare(right.edgeId));
-  const compactRelationships = traversal.edges.filter((edge) => selectedProductNodeIds.has(edge.from) && selectedProductNodeIds.has(edge.to))
-    .slice(0, MAX_PRODUCT_CONTEXT_RELATIONSHIPS).map((edge) => ({
-    edgeId: edge.edgeId,
-    type: edge.type,
-    from: edge.from,
-    to: edge.to,
-    authorityClass: edge.authorityClass,
-    evidenceIds: edge.evidenceIds,
-  }));
-  const record = {
-    kind: "ProductContext",
-    projectId: worldModel.snapshot.projectId,
-    productModelId: productModel.productModelId,
-    productModelHash: productModel.productModelHash,
-    source: worldModel.snapshot.productModelSource,
-    taskAnchor: { selectedTerm: anchorTerm, selectedEntityKey, matchingTerms,
-      ...(discoveryNeed ? { discoverySelection: { facets: discoveryNeed.facets, minimumItems: discoveryNeed.minimumItems } } : {}),
-    },
-    entities: compactEntities,
-    relationships: compactRelationships,
-    projectionOmissions: {
-      entities: Math.max(0, traversal.nodes.length - compactEntities.length),
-      relationships: Math.max(0, traversal.edges.length - compactRelationships.length),
-    },
-    relationshipBoundary: {
-      items: relationshipBoundary.slice(0, 50),
-      omitted: Math.max(0, relationshipBoundary.length - 50),
-      complete: relationshipBoundary.length === 0,
-    },
-    temporalTraversal: compactTraversalMetadata(traversal),
-    worldModelId: worldModel.snapshot.worldModelId,
-    instructionAuthority: false,
-    promotionAuthority: false,
-    trustBoundary: "derived-projection-of-user-owned-product-canon",
-  };
-  return [{
-    id: `product-context:${discoveryNeed ? digest(canonicalJson(record)) : traversal.resultId}`,
-    kind: "ProductContext",
-    score: relevance * 25 + 20,
-    relevance,
-    matchedTerms: matches,
-    importance: 5,
-    approxTokens: approxTokens(canonicalJson(record)),
-    record,
-  }];
-}
-
-function productContextCandidates(worldModel, task, graphProjectionAdapter = null, evidenceNeeds = []) {
-  if (!worldModel || worldModel.status !== "current") return [];
-  const graph = worldModel.snapshot.temporalProvenanceGraph;
-  const productModel = worldModel.snapshot.productModel;
-  if (!graph || !productModel || graph.summary.productRevisionCount === 0) return [];
-  const taskTerms = terms(task);
-  const productCorpus = graph.nodes.filter((node) => node.semantic).map((node) => canonicalJson(node.semantic).toLocaleLowerCase()).join(" ");
-  const matchingTerms = [...taskTerms].filter((term) => productCorpus.includes(term))
-    .sort((left, right) => right.length - left.length || left.localeCompare(right));
-  const productNeeds = evidenceNeeds.filter((need) => need.kind === "product-context");
-  const entityKeys = [...new Set(productNeeds.flatMap((need) => need.entityKeys || []))].sort();
-  const anchors = entityKeys.map((key) => ({ anchorTerm: key, matchingTerms: [], selectedEntityKey: key }));
-  // Each independent lexical need gets its own bounded discovery, even when
-  // another need requests exact keys. The validated need count bounds queries;
-  // the existing 100-node/200-edge traversal and 24-entity carrier remain fixed.
-  for (const need of productNeeds.filter((item) => !item.entityKeys.length)) {
-    const needTerms = need.facets.length ? need.facets : matchingTerms;
-    const anchorTerm = needTerms.find((term) => productCorpus.includes(term));
-    if (anchorTerm) anchors.push({ anchorTerm, matchingTerms: needTerms, selectedEntityKey: null, discoveryNeed: need });
-  }
-  if (!productNeeds.length && matchingTerms.length) anchors.push({ anchorTerm: matchingTerms[0], matchingTerms, selectedEntityKey: null });
-  const candidates = anchors.flatMap(({ anchorTerm, matchingTerms: anchorMatches, selectedEntityKey, discoveryNeed }) => (
-    productContextCandidateForAnchor(worldModel, task, graphProjectionAdapter, anchorTerm, anchorMatches, selectedEntityKey, discoveryNeed)
-  ));
-  return [...new Map(candidates.map((candidate) => [candidate.id, candidate])).values()]
-    .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
+      : PRODUCT_ENTITY_KINDS.has(node.kind.replace(/Revision$/, "")) ? node.nodeId : null }));
+  const selectedIds = new Set(entities.map(node => node.nodeId));
+  const relationships = traversal.edges.filter(edge => selectedIds.has(edge.from) && selectedIds.has(edge.to)).slice(0, MAX_PRODUCT_CONTEXT_RELATIONSHIPS);
+  const relationshipBoundary = traversal.edges.filter(edge => selectedIds.has(edge.from) !== selectedIds.has(edge.to))
+    .map(edge => ({ edgeId: edge.edgeId, type: edge.type, nextAnchorId: selectedIds.has(edge.from) ? edge.to : edge.from }));
+  const record = { kind: "ProductContext", projectId: worldModel.snapshot.projectId,
+    productModelId: productModel.productModelId, productModelHash: productModel.productModelHash,
+    source: worldModel.snapshot.productModelSource, entities, relationships,
+    projectionOmissions: { entities: traversal.nodes.length - entities.length, relationships: traversal.edges.length - relationships.length,
+      anchoredEntities: Math.max(0, anchors.length - 32), traversalTruncated: Boolean(traversal.truncated), countsScope: "observed-bounded-traversal-only" },
+    relationshipBoundary: { items: relationshipBoundary.slice(0, 50), omitted: Math.max(0, relationshipBoundary.length - 50),
+      complete: relationshipBoundary.length === 0 && !traversal.truncated }, temporalTraversal: compactTraversalMetadata(traversal),
+    worldModelId: worldModel.snapshot.worldModelId, instructionAuthority: false, promotionAuthority: false,
+    trustBoundary: "derived-projection-of-user-owned-product-canon" };
+  const matches = matchedTerms(taskTerms, terms(facetContentText(entities.map(productEntityFacetValues))));
+  return [{ id: `product-context:${traversal.resultId}`, kind: "ProductContext", score: matches.length * 25 + 20,
+    relevance: matches.length, matchedTerms: matches, importance: 5,
+    approxTokens: approxTokens(canonicalJson(record)), record }];
 }
 
 function graphTraversalCandidates(worldModel, evidenceNeeds, graphProjectionAdapter = null) {
@@ -960,17 +859,13 @@ function evidenceNeedContract(task, evidenceNeeds) {
   const contract = {
     owner: "HEAD",
     scope: "task-local-context-compilation",
-    taskDigest: digest(task.trim()),
     needs,
     productCanonAuthority: false,
     instructionAuthority: false,
     reviewAuthority: false,
     recoveryAuthority: false,
   };
-  return {
-    ...contract,
-    evidenceNeedSetDigest: digest(canonicalJson(contract)),
-  };
+  return contract;
 }
 
 function facetMatch(value, facets) {
@@ -1033,12 +928,10 @@ function evidenceItem(candidate, { id = candidate.id, kind, path = null, relatio
   return {
     id,
     carrierCandidateId: candidate.id,
-    carrierProvenance: [{ candidateId: candidate.id, recordDigest: digest(canonicalJson(candidate.record)) }],
     kind,
     path,
     relationType,
     ...(kind?.startsWith("repository-") ? { representation: candidate.record.representation } : {}),
-    digest: digest(canonicalJson(value)),
   };
 }
 
@@ -1120,182 +1013,33 @@ function candidateEvidenceMatches(candidate, need) {
   });
 }
 
-function bindEvidenceNeeds(candidates, needs) {
-  for (const candidate of candidates) {
-    candidate.evidenceNeedMatches = Object.fromEntries(needs.map((need) => [need.id, candidateEvidenceMatches(candidate, need)]));
+// HEAD owns evidence requirements and sufficiency. Match references guide packing
+// and expose missing material; they are not an inclusion proof or execution gate.
+function selectContext(candidates, needs, maximum, baseCost) {
+  const matches = new Map(candidates.map(candidate => [candidate.id,
+    Object.fromEntries(needs.map(need => [need.id, candidateEvidenceMatches(candidate, need)]))]));
+  const ordered = [...candidates].sort((a, b) =>
+    Number(Object.values(matches.get(b.id)).some(items => items.length)) -
+    Number(Object.values(matches.get(a.id)).some(items => items.length)) ||
+    b.score - a.score || a.id.localeCompare(b.id));
+  const included = [], excluded = [];
+  let used = baseCost;
+  for (const candidate of ordered) {
+    const reason = used + candidate.approxTokens > maximum ? "context-budget" : null;
+    if (reason) excluded.push({ id: candidate.id, kind: candidate.kind, reason });
+    else { included.push(candidate); used += candidate.approxTokens; }
   }
-}
-
-function uniqueEvidence(items) {
-  const byId = new Map();
-  for (const item of items) {
-    const existing = byId.get(item.id);
-    if (!existing) byId.set(item.id, { ...item, carrierProvenance: [...item.carrierProvenance] });
-    else for (const carrier of item.carrierProvenance) {
-      if (!existing.carrierProvenance.some((value) => value.candidateId === carrier.candidateId)) existing.carrierProvenance.push(carrier);
-    }
-  }
-  for (const item of byId.values()) item.carrierProvenance.sort((left, right) => left.candidateId.localeCompare(right.candidateId));
-  return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
-}
-
-function selectedEvidenceCount(selected, needId) {
-  return uniqueEvidence(selected.flatMap((candidate) => candidate.evidenceNeedMatches[needId] || [])).length;
-}
-
-function coverageGain(candidate, selected, needs) {
-  return needs.reduce((gain, need) => {
-    const coveredIds = new Set(selected.flatMap((item) => (item.evidenceNeedMatches[need.id] || []).map((evidence) => evidence.id)));
-    const remaining = Math.max(0, need.minimumItems - coveredIds.size);
-    if (!remaining) return gain;
-    const newIds = new Set((candidate.evidenceNeedMatches[need.id] || []).map((evidence) => evidence.id).filter((id) => !coveredIds.has(id)));
-    return gain + Math.min(remaining, newIds.size);
-  }, 0);
-}
-
-function selectCandidates(candidates, budget, baseTokens, needs) {
-  if (baseTokens > budget) fail("Context budget cannot hold the required task, authority, and current-state envelope.", "CONTEXT_BUDGET_TOO_SMALL");
-  let used = baseTokens;
-  const included = [];
-  const includedIds = new Set();
-  const eligible = candidates;
-  while (needs.some((need) => selectedEvidenceCount(included, need.id) < need.minimumItems)) {
-    const fitting = eligible.filter((candidate) => !includedIds.has(candidate.id) && used + candidate.approxTokens <= budget)
-      .map((candidate) => ({ candidate, gain: coverageGain(candidate, included, needs) }))
-      .filter((item) => item.gain > 0)
-      .sort((left, right) => right.gain - left.gain
-        || right.candidate.score - left.candidate.score
-        || left.candidate.approxTokens - right.candidate.approxTokens
-        || left.candidate.id.localeCompare(right.candidate.id));
-    if (!fitting.length) break;
-    const selected = fitting[0].candidate;
-    included.push(selected);
-    includedIds.add(selected.id);
-    used += selected.approxTokens;
-  }
-  if (!needs.length) {
-    for (const candidate of eligible) {
-      if (includedIds.has(candidate.id) || used + candidate.approxTokens > budget) continue;
-      included.push(candidate);
-      includedIds.add(candidate.id);
-      used += candidate.approxTokens;
-    }
-  }
-  const excluded = candidates.filter((candidate) => !includedIds.has(candidate.id)).map((candidate) => {
-    const evidenceNeedIds = Object.entries(candidate.evidenceNeedMatches).filter(([, items]) => items.length).map(([needId]) => needId).sort();
-    const stillNeeded = coverageGain(candidate, included, needs) > 0;
-    const reason = !needs.length || stillNeeded
-      ? "context-budget"
-      : evidenceNeedIds.length
-        ? "evidence-coverage-satisfied"
-        : "outside-head-evidence-contract";
-    return {
-      id: candidate.id,
-      kind: candidate.kind,
-      reason,
-      score: candidate.score,
-      classification: candidate.record.classification || null,
-      recordDigest: digest(canonicalJson(candidate.record)),
-      freshness: candidate.record.freshness || null,
-      trustBoundary: candidate.record.trustBoundary || null,
-      evidenceNeedIds,
-      expansionPath: reason === "context-budget"
-        ? "recompile-with-an-explicit-budget-or-use-bounded-expansion"
-        : reason === "evidence-coverage-satisfied"
-          ? "increase-the-head-defined-minimum-only-if-semantic-assessment-requires-more"
-          : "add-or-revise-a-head-owned-evidence-need-only-after-semantic-analysis",
-    };
+  const includedIds = new Set(included.map(candidate => candidate.id));
+  const evidenceGaps = needs.flatMap(need => {
+    const collect = items => new Set(items.flatMap(candidate => matches.get(candidate.id)[need.id].map(item => item.id))).size;
+    const available = collect(candidates), selected = collect(included);
+    return selected >= need.minimumItems ? [] : [{ id: need.id, kind: need.kind,
+      requestedMinimum: need.minimumItems, selected, available,
+      availabilityScope: "compiled-candidate-material-only", missingEvidenceMayExist: true,
+      reason: available > selected ? "context-budget" : "matching-evidence-unavailable",
+      omittedCandidateIds: candidates.filter(candidate => !includedIds.has(candidate.id) && matches.get(candidate.id)[need.id].length).map(candidate => candidate.id) }];
   });
-  return { included, excluded, used };
-}
-
-function evaluateCoverage(candidates, contract, selection, budget) {
-  const needs = contract.needs;
-  const excludedReasonById = new Map(selection.excluded.map((item) => [item.id, item.reason]));
-  const proofs = needs.map((need) => {
-    const includedEvidence = uniqueEvidence(selection.included.flatMap((candidate) => candidate.evidenceNeedMatches[need.id] || []));
-    const allAvailableEvidence = candidates.flatMap((candidate) => candidate.evidenceNeedMatches[need.id] || []);
-    const availableEvidence = uniqueEvidence(allAvailableEvidence);
-    const availableCandidateIds = [...new Set(allAvailableEvidence.map((item) => item.carrierCandidateId))].sort();
-    return {
-      evidenceNeedId: need.id,
-      requiredMinimumItems: need.minimumItems,
-      includedMatchCount: includedEvidence.length,
-      availableMatchCount: availableEvidence.length,
-      covered: includedEvidence.length >= need.minimumItems,
-      includedEvidence,
-      availableCandidateIds,
-      exclusionReasons: [...new Set(availableCandidateIds.map((id) => excludedReasonById.get(id)).filter(Boolean))].sort(),
-    };
-  });
-  const unmet = proofs.filter((proof) => !proof.covered);
-  const additionalSelected = [];
-  let minimumAdditionalApproxTokens = 0;
-  while (needs.some((need) => selectedEvidenceCount([...selection.included, ...additionalSelected], need.id) < need.minimumItems)) {
-    const options = candidates.filter((candidate) => !selection.included.includes(candidate) && !additionalSelected.includes(candidate))
-      .map((candidate) => ({
-        candidate,
-        gain: coverageGain(candidate, [...selection.included, ...additionalSelected], needs),
-      }))
-      .filter((item) => item.gain > 0)
-      .sort((left, right) => right.gain - left.gain
-        || right.candidate.score - left.candidate.score
-        || left.candidate.approxTokens - right.candidate.approxTokens
-        || left.candidate.id.localeCompare(right.candidate.id));
-    if (!options.length) break;
-    const selected = options[0].candidate;
-    additionalSelected.push(selected);
-    minimumAdditionalApproxTokens += selected.approxTokens;
-  }
-  const canCoverAfterExpansion = needs.every((need) => selectedEvidenceCount([...selection.included, ...additionalSelected], need.id) >= need.minimumItems);
-  const recommendedMinimum = unmet.length && canCoverAfterExpansion
-    ? selection.used + minimumAdditionalApproxTokens
-    : null;
-  const status = !needs.length ? "not-requested" : unmet.length ? "coverage-incomplete" : "coverage-complete";
-  const result = {
-    protocol: { name: "head-agent-core-context-coverage", version: CONTEXT_COVERAGE_VERSION },
-    status,
-    mechanicalCoverageSatisfied: unmet.length === 0,
-    evidenceNeedsSpecified: needs.length > 0,
-    evidenceNeedSetDigest: contract.evidenceNeedSetDigest,
-    bounded: true,
-    hardLimitApproxTokens: budget,
-    proofs,
-    satisfiedEvidenceNeedIds: proofs.filter((proof) => proof.covered).map((proof) => proof.evidenceNeedId),
-    unmetEvidenceNeeds: unmet.map((proof) => ({
-      evidenceNeed: needs.find((need) => need.id === proof.evidenceNeedId),
-      includedMatchCount: proof.includedMatchCount,
-      availableMatchCount: proof.availableMatchCount,
-      shortfall: proof.requiredMinimumItems - proof.includedMatchCount,
-      availableCandidateIds: proof.availableCandidateIds,
-      exclusionReasons: proof.exclusionReasons,
-    })),
-    recommendedMinimumApproxTokens: recommendedMinimum == null || recommendedMinimum > CONTEXT_BUDGET_TIERS.at(-1) ? null : recommendedMinimum,
-    nextAction: !needs.length
-      ? "HEAD-may-define-task-evidence-needs-before-consequential-execution"
-      : unmet.length ? "expand-query-or-recompile-with-a-larger-explicit-budget" : "HEAD-evaluates-semantic-sufficiency",
-    semanticAcceptance: "not-assessed-HEAD-owned",
-    authorityEffect: "none",
-  };
-  return {
-    ...result,
-    proofDigest: digest(canonicalJson({
-      evidenceNeedSetDigest: result.evidenceNeedSetDigest,
-      includedCandidateIds: selection.included.map((candidate) => candidate.id),
-      proofs: result.proofs,
-    })),
-  };
-}
-
-function compatibilitySufficiency(coverageAssessment) {
-  return {
-    deprecated: true,
-    replacedBy: "coverageAssessment",
-    status: coverageAssessment.status === "not-requested" ? "unassessed" : coverageAssessment.status,
-    executionEligible: coverageAssessment.mechanicalCoverageSatisfied,
-    semanticAcceptance: coverageAssessment.semanticAcceptance,
-    authorityEffect: "none",
-  };
+  return { included, excluded, used, evidenceGaps };
 }
 
 export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDGET, evidenceNeeds = [], persist = false, graphProjectionAdapter = null, sourceObservations = [], includeRepositoryWorld = true } = {}) {
@@ -1312,8 +1056,9 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
   const historyClass = historyRelevance(task);
   const needContract = evidenceNeedContract(task, evidenceNeeds);
   const base = {
-    objective: task.trim(),
+    objective: task,
     currentState: projectContext,
+    currentDirection: sources.direction,
     authority: inspected.project.authority,
     coverage: snapshot.coverage,
     evidenceNeedContract: needContract,
@@ -1327,25 +1072,22 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     ...runtimeStateCandidates(sources.worldModel, task),
     ...observationCandidates(projectRoot, inspected.project.projectId, needContract.needs, sourceObservations),
   ].sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
-  bindEvidenceNeeds(candidates, needContract.needs);
-  const selection = selectCandidates(candidates, maxApproxTokens, approxTokens(canonicalJson(base)), needContract.needs);
-  const coverageAssessment = evaluateCoverage(candidates, needContract, selection, maxApproxTokens);
+  const selection = selectContext(candidates, needContract.needs, maxApproxTokens, approxTokens(canonicalJson(base)));
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ContextCapsule",
-    task: task.trim(),
+    task,
     snapshot,
     compiler: {
       name: "head-agent-core-context-compiler",
       version: CONTEXT_COMPILER_VERSION,
-      strategy: "deterministic-head-guided-context-packaging",
+      strategy: "source-linked-head-guided-context-packaging",
       historyRelevance: historyClass,
       lexicalNormalization: "nfkc+url-elision+camel-snake-path+bounded-korean-particle-variants",
       lexicalRole: "fallback-ranking-only-never-candidate-eligibility-or-semantic-acceptance",
     },
     budget: {
-      protocol: { name: "head-agent-core-context-budget-tiers", version: CONTEXT_BUDGET_PROTOCOL_VERSION },
-      tier: normalizedBudget.tier,
+      protocol: { name: "head-agent-core-context-budget", version: CONTEXT_BUDGET_PROTOCOL_VERSION },
       maxApproxTokens,
       usedApproxTokens: selection.used,
       metric: {
@@ -1356,10 +1098,25 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
       },
     },
     evidenceNeedContract: needContract,
-    coverageAssessment,
-    sufficiency: compatibilitySufficiency(coverageAssessment),
+    evidenceGaps: selection.evidenceGaps,
+    omissions: { total: selection.excluded.length, byReason: Object.fromEntries(
+      [...new Set(selection.excluded.map(item => item.reason))].map(reason => [reason, selection.excluded.filter(item => item.reason === reason).length])),
+      boundedRepresentations: selection.included.flatMap(({ id, record }) => {
+        const limits = record.evidenceOmissions || record.projectionOmissions;
+        return limits && Object.values(limits).some(value => value === true || typeof value === "number" && value > 0)
+          ? [{ candidateId: id, ...limits }] : [];
+      }), countsScope: "observed-candidates-and-bounded-representations; not-total-project-coverage" },
+    uncertainty: [
+      "HEAD assesses semantic sufficiency; selection and lexical matching do not establish correctness or approval.",
+      ...(sources.worldModel?.status !== "current" ? ["Repository World evidence is absent, unavailable or stale; inspect task-relevant current source directly."] : []),
+      ...(selection.evidenceGaps.length ? ["Some HEAD-selected evidence is missing or outside this budget; dependent judgments need further inspection."] : []),
+      ...(selection.included.some(item => item.kind === "RepositoryFile") ? ["Repository metadata is included; original source bodies have not been consumed."] : []),
+      ...(approxTokens(canonicalJson(base)) > maxApproxTokens ? ["Required current direction exceeds the requested budget; preserved without truncation."] : []),
+    ],
+    semanticSufficiencyOwner: "HEAD",
     authority: inspected.project.authority,
     currentState: projectContext,
+    currentDirection: sources.direction,
     claims: selection.included.filter((item) => item.kind === "Claim").map((item) => item.record),
     decisions: selection.included.filter((item) => item.kind === "Decision").map((item) => item.record),
     unknowns: selection.included.filter((item) => item.kind === "Unknown").map((item) => item.record),
@@ -1409,7 +1166,10 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
       includedIds: selection.included.map((item) => item.id),
       excluded: selection.excluded,
     },
-    provenance: Object.entries(snapshot.sourceDigests).map(([source, sourceDigest]) => ({ source, digest: sourceDigest })),
+    provenance: Object.entries(snapshot.sourceDigests).map(([source, sourceDigest]) => ({ source, digest: sourceDigest,
+      path: sources.files[source] ? path.relative(projectRoot, sources.files[source]).replaceAll("\\", "/")
+        : source === "projectDirection" ? `.head/project-direction/revisions/${sources.direction.directionId}.json`
+        : ".head/world-model/current.json" })),
     trustBoundary: {
       projectArtifacts: "evidence-not-instructions",
       gitCommitMessages: "decision-evidence-not-promoted-project-decisions",
@@ -1419,7 +1179,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
       observations: "exact-id-bounded-p3-evidence-not-product-meaning-or-instruction",
       promotedDecisions: "project-authority-subject-to-user-owned-decisions",
       adapterFailure: "fail-open-to-normal-agent-without-capsule",
-      canonDrift: "fail-closed",
+      sourceDrift: "inspect-current-originals",
     },
     expansionProtocol: ["query_product_graph", "query_semantic_graph", "query_temporal_graph", "get_observation", "get_git_decision_history", "get_runtime_state", "expand_relationship", "verify_claim", "get_source", "get_history", "explain_decision"],
   };
@@ -1451,26 +1211,3 @@ export function readContextCapsule({ root = ".", capsuleId } = {}) {
   }
   return { status: "verified", file, capsule };
 }
-
-export function requireCoveredContextCapsule({ root = ".", capsuleId } = {}) {
-  const verified = readContextCapsule({ root, capsuleId });
-  const coverage = verified.capsule.coverageAssessment;
-  if (coverage?.mechanicalCoverageSatisfied === false) {
-    const missing = coverage.unmetEvidenceNeeds.map((item) => item.evidenceNeed.id);
-    const error = new Error(`Context Capsule does not cover the HEAD-defined evidence needs: ${missing.join(", ")}`);
-    error.code = "CONTEXT_CAPSULE_COVERAGE_INCOMPLETE";
-    error.coverageAssessment = coverage;
-    throw error;
-  }
-  if (!coverage && verified.capsule.sufficiency?.executionEligible === false) {
-    const error = new Error("Legacy Context Capsule is not eligible for execution.");
-    error.code = "CONTEXT_CAPSULE_INSUFFICIENT";
-    error.sufficiency = verified.capsule.sufficiency;
-    throw error;
-  }
-  return verified;
-}
-
-// Compatibility export. The Compiler now verifies mechanical coverage only;
-// semantic sufficiency remains a HEAD judgment at the ExecutionContract boundary.
-export const requireSufficientContextCapsule = requireCoveredContextCapsule;

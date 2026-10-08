@@ -257,8 +257,9 @@ try {
     budget: 32_768,
   });
   assert.equal(preparation.status, "prepared");
-  assert.equal(preparation.preparation.status, "ready_for_head_evidence_proposal");
-  assert.equal(preparation.preparation.conversation.userInput, "task-text-only");
+  assert.equal(preparation.preparation.status, "ready_for_head_semantic_assessment");
+  assert.equal(preparation.preparation.task, contextTask);
+  assert(preparation.preparation.selectedContext.repositoryFiles.length > 0);
   assert.equal(preparation.preparation.authority.selectsEvidenceNeeds, false);
   assert.equal(preparation.preparation.authority.writesRecoveryDirection, false);
 

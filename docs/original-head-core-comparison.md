@@ -3,7 +3,7 @@
 Reviewed: 2026-08-20
 
 Status: historical source comparison. Later Claude Code support, constitutional
-profile defaults, bounded worker waves, readiness UX, and automatic fixed-tier
+profile defaults, bounded worker waves, readiness UX, and source-linked selected-context
 Context preview expansion are not part of the reviewed source slice and must be
 evaluated from the current architecture and executable tests rather than inferred
 from this document.

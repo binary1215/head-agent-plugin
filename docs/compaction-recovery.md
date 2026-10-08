@@ -58,9 +58,9 @@ The user is not asked to save, approve, or supply protocol fields. See
 ## State transition
 
 ```text
-idle -> prepared -> provider_compacted -> verified -> continued
-                                      \-> superseded
-                                      \-> aborted
+idle -> prepared -> verified -> continued
+                  \-> superseded
+                  \-> aborted
 ```
 
 `compact-prepare` creates a content-addressed `SessionRunCheckpoint` with:
@@ -87,7 +87,7 @@ The same operation creates one `CompactionEpoch`. The epoch contains the checkpo
 
 `compact-verify` accepts explicit provider-success evidence and the current trusted real-user-turn sequence. It re-reads and digest-verifies the checkpoint and current Session/Run pointers. A newer real user turn supersedes the continuation. Provider failure, checkpoint tamper, state drift, or a non-canonical recovery source aborts or rejects recovery; the Core never fills missing direction from a summary.
 
-`compact-continue` revalidates the current checkpoint, Session, Run, and epoch immediately before consuming the checkpoint-bound token through an atomic create. A newer checkpoint invalidates the old continuation even without a new user turn. A successful consumption returns the exact checkpoint plus a bounded continuation instruction; a second consumption fails. The returned `CompactionRecoveryReceipt` is derived evidence with no instruction, recovery, objective-rewrite, Product Canon, or review authority.
+`compact-continue` revalidates the current checkpoint, Session, Run and epoch before atomic at-most-once token consumption. A newer checkpoint or user turn invalidates old continuation. It returns exact checkpoint-bound direction; a second consumption fails. Verification writes one epoch update, without a separate derived recovery receipt or intermediate provider-compacted write.
 
 Prepare validates its inputs and any existing open epoch before changing the
 current checkpoint. Mutating Session/Run recovery operations share a transient

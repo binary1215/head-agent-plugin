@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
+import path from "node:path";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
-import { readCoordinationWorkspaceAttachment } from "./role-coordination.mjs";
 import { restoreSessionFromArtifacts } from "./session-recovery.mjs";
 
 export const RUNTIME_SESSION_CONTINUATION_VERSION = "0.1.0";
@@ -80,37 +80,31 @@ export function verifyContinuationOutcome(document) {
 }
 
 export function continueSessionFromArtifacts({
-  root = ".", checkpointId = null, runtime, environment = process.env, bindingToken = null,
+  root = ".", checkpointId = null, runtime, hostAttachment = null, attachmentRequested = false,
   workspaceHostAdapter = null,
 } = {}) {
   const selectedRuntime = runtimeName(runtime);
   const before = restoreSessionFromArtifacts({ root, checkpointId });
   let attachment = null;
   let status = "fresh-logical-head";
-  let disclosure = "provider-attachment-not-requested";
-  if (typeof bindingToken === "string" && bindingToken.trim()) {
-    try {
-      attachment = readCoordinationWorkspaceAttachment({
-        root, environment, bindingToken: bindingToken.trim(), workspaceHostAdapter,
-      });
-      if (attachment.status === "attached" && attachment.liveVerified === true) {
-        if (attachment.role !== "head" || attachment.runtime !== selectedRuntime) {
-          fail("The current live attachment is not the exact HEAD runtime requested for continuation.", "RUNTIME_CONTINUATION_ATTACHMENT_CONFLICT");
-        }
+  let disclosure = attachmentRequested ? "provider-attachment-unavailable" : "provider-attachment-not-requested";
+  if (hostAttachment !== null) {
+    attachment = hostAttachment;
+    if (attachment.role !== "head" || attachment.runtime !== selectedRuntime) {
+      fail("The live attachment is not the exact HEAD runtime requested for continuation.", "RUNTIME_CONTINUATION_ATTACHMENT_CONFLICT");
+    }
+    if (workspaceHostAdapter !== null) {
+      const received = workspaceHostAdapter.receive({ attachment, boundary: {
+        projectId: before.projection.projectId, headSessionId: before.projection.sessionId,
+        role: "head", projectRoot: path.resolve(root),
+      } });
+      if (received.status === "attached") {
         status = "attached";
         disclosure = "exact-live-provider-attachment";
       } else {
         disclosure = "provider-attachment-unavailable";
       }
-    } catch (error) {
-      if (new Set([
-        "COORDINATION_TARGET_POINTER_MISSING", "STALE_COORDINATION_BINDING", "COORDINATION_BINDING_REQUIRED",
-      ]).has(error?.code)) {
-        disclosure = "provider-attachment-unavailable";
-      } else {
-        throw error;
-      }
-    }
+    } else disclosure = "provider-attachment-unavailable";
   }
   const after = restoreSessionFromArtifacts({ root, checkpointId: before.checkpoint.checkpointId });
   if (after.projection.sessionRestoreId !== before.projection.sessionRestoreId

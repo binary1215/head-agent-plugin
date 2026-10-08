@@ -28,15 +28,19 @@ Session
   -> Session
 ```
 
-A Run cannot start from a free-form goal. It requires a persisted and digest-verified `ExecutionContract`, which already binds one `WholePlanSnapshot` and one persisted `ContextCapsule`. The contract also records HEAD's task-local context acceptance with the exact EvidenceNeed-set digest and Compiler coverage-proof digest. This is the semantic acceptance boundary: the Compiler proves inclusion but cannot accept its own context.
+Managed Runs require a persisted, digest-verified `ExecutionContract` bound to
+one `WholePlanSnapshot` and one persisted `ContextCapsule`. Ordinary direct work
+and Host delegation do not require this lifecycle. The contract records HEAD's
+task-local acceptance of the selected context; there is no EvidenceNeed-set or
+Compiler coverage-proof digest gate. HEAD judges semantic sufficiency.
 
 A Run cannot finish with only a success string. Completion creates a `ResultPacket` containing evidence and verification. The project enters Review mode and blocks the next Run until HEAD records a `ReviewDecision`.
 
 Finish and review bind the exact validated request to the existing Run before
 publishing its artifact, terminal Run state, and Session pointer. If interrupted,
 the same request may finish the missing writes after restart. The artifact must
-still independently verify; an intent is not a result or an approval. Session
-before/after hashes prevent overwriting intervening work. Completed response-loss
+still independently verify; an intent is not a result or an approval. Affected Session fields are compared before advancing the pointer; unrelated
+checkpoint updates do not become transition conflicts. Completed response-loss
 replay is read-only, and changed inputs fail only that transition. No checkpoint,
 new review gate, or separate per-retry journal is created. Normal status reads do
 not repair state; explicit checkpoint integration remains a separate HEAD action.

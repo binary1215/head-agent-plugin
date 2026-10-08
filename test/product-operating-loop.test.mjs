@@ -279,7 +279,7 @@ function productArtifact(payload, prefix, idField, hashField) {
   return { ...payload, [idField]: `${prefix}-${hash.slice(0, 24)}`, [hashField]: hash };
 }
 
-test("recovers an exact accepted Initiative after the final create-only write fails and rejects divergent retries", async (t) => {
+test("recovers an exact accepted Initiative after decision publication fails and rejects divergent retries", async (t) => {
   const root = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const proposed = await proposeProductInitiative({ root, title: "Recover an accepted initiative", reasoning: "A durable user decision must remain replay-safe after a transient output failure." });
@@ -291,12 +291,14 @@ test("recovers an exact accepted Initiative after the final create-only write fa
     featureResolution: { kind: "gap", reason: "The initiative spans more than one current Feature." },
   };
   const reviewedDirectory = path.join(root, ".head", "product-operations", "reviewed-initiatives");
+  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
   const originalLink = fs.linkSync;
   let injected = 0;
   fs.linkSync = function (source, destination, ...rest) {
-    if (!injected && path.dirname(path.resolve(String(destination))) === reviewedDirectory) {
+    if (!injected && path.dirname(path.resolve(String(destination))) === reviewDirectory) {
       injected += 1;
-      throw Object.assign(new Error("Injected one-time EIO at ReviewedProductInitiative publication"), { code: "EIO" });
+      originalLink.call(fs, source, destination, ...rest);
+      throw Object.assign(new Error("Injected one-time EIO after exact decision publication"), { code: "EIO" });
     }
     return originalLink.call(fs, source, destination, ...rest);
   };
@@ -304,7 +306,6 @@ test("recovers an exact accepted Initiative after the final create-only write fa
     await assert.rejects(() => reviewProductInitiative(request), (error) => error.code === "EIO");
   } finally { fs.linkSync = originalLink; }
   assert.equal(injected, 1);
-  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
   const decisionFiles = fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json"));
   assert.equal(decisionFiles.length, 1);
   const durableDecision = JSON.parse(fs.readFileSync(path.join(reviewDirectory, decisionFiles[0]), "utf8"));
@@ -315,18 +316,14 @@ test("recovers an exact accepted Initiative after the final create-only write fa
 
   const recovered = await reviewProductInitiative(request);
   assert.equal(recovered.status, "initiative_accepted");
-  assert.equal(recovered.persistenceStatus, "recovered");
+  assert.equal(recovered.persistenceStatus, "existing");
   assert.equal(inspectProductOperatingLoop({ root, fresh: true }).projection.reviewedInitiatives.length, 1);
   const decisionBytes = fs.readFileSync(path.join(reviewDirectory, decisionFiles[0]), "utf8");
-  const reviewedFile = path.join(reviewedDirectory, `${recovered.reviewedInitiative.initiativeId}.json`);
-  const reviewedBytes = fs.readFileSync(reviewedFile, "utf8");
   await assert.rejects(() => reviewProductInitiative({ ...request, rationale: "A divergent replacement rationale." }), (error) => error.code === "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
   await assert.rejects(() => reviewProductInitiative({ ...request, featureResolution: { kind: "gap", reason: "A different Feature choice." } }), (error) => error.code === "PRODUCT_INITIATIVE_ALREADY_REVIEWED");
   assert.equal(fs.readFileSync(path.join(reviewDirectory, decisionFiles[0]), "utf8"), decisionBytes);
-  assert.equal(fs.readFileSync(reviewedFile, "utf8"), reviewedBytes);
   assert.equal(fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")).length, 1);
-  assert.equal(fs.readdirSync(reviewedDirectory).filter((name) => name.endsWith(".json")).length, 1);
-  assert.equal(fs.readdirSync(reviewedDirectory).some((name) => name.endsWith(".tmp")), false);
+  assert.equal(fs.existsSync(reviewedDirectory), false);
 });
 
 test("keeps completed legacy Initiative reviews readable but never guesses a missing legacy Feature selection", async (t) => {
@@ -360,7 +357,7 @@ test("keeps completed legacy Initiative reviews readable but never guesses a mis
   legacyReviewedPayload.reviewDecisionId = legacyDecision.reviewDecisionId;
   const legacyReviewed = productArtifact(legacyReviewedPayload, "reviewed-product-initiative", "initiativeId", "initiativeHash");
   fs.unlinkSync(currentDecisionFile);
-  fs.unlinkSync(currentReviewedFile);
+  fs.mkdirSync(reviewedDirectory, { recursive: true });
   fs.writeFileSync(path.join(reviewDirectory, `${legacyDecision.reviewDecisionId}.json`), `${JSON.stringify(legacyDecision, null, 2)}\n`);
   fs.writeFileSync(path.join(reviewedDirectory, `${legacyReviewed.initiativeId}.json`), `${JSON.stringify(legacyReviewed, null, 2)}\n`);
   const legacyProjection = inspectProductOperatingLoop({ root, fresh: true }).projection;
@@ -369,7 +366,7 @@ test("keeps completed legacy Initiative reviews readable but never guesses a mis
   assert.equal(exactReplay.persistenceStatus, "existing");
   assert.equal(exactReplay.reviewedInitiative.initiativeId, legacyReviewed.initiativeId);
   fs.unlinkSync(path.join(reviewedDirectory, `${legacyReviewed.initiativeId}.json`));
-  await assert.rejects(() => reviewProductInitiative(request), (error) => error.code === "PRODUCT_INITIATIVE_REVIEW_RECOVERY_UNAVAILABLE" && /create a new candidate/.test(error.message));
+  await assert.rejects(() => reviewProductInitiative(request), (error) => error.code === "PRODUCT_INITIATIVE_REVIEW_RECOVERY_UNAVAILABLE");
 });
 
 test("uses legacy frozen Feature evidence for review and missing-output recovery without another user gate", async (t) => {
@@ -429,10 +426,9 @@ test("uses legacy frozen Feature evidence for review and missing-output recovery
   legacyDecisionPayload.protocol.version = "0.3.0";
   const legacyDecision = productArtifact(legacyDecisionPayload, "product-initiative-review", "reviewDecisionId", "reviewDecisionHash");
   fs.unlinkSync(path.join(reviewDirectory, `${accepted.reviewDecision.reviewDecisionId}.json`));
-  fs.unlinkSync(path.join(reviewedDirectory, `${accepted.reviewedInitiative.initiativeId}.json`));
   fs.writeFileSync(path.join(reviewDirectory, `${legacyDecision.reviewDecisionId}.json`), `${JSON.stringify(legacyDecision, null, 2)}\n`);
   const recovered = await reviewProductInitiative(request);
-  assert.equal(recovered.persistenceStatus, "recovered");
+  assert.equal(recovered.persistenceStatus, "existing");
   assert.equal(recovered.reviewedInitiative.featureResolution.featureCandidateId, featureCandidate.featureCandidateId);
   assert.equal(inspectProductOperatingLoop({ root, fresh: true }).projection.reviewedInitiatives.length, 1);
 });
@@ -532,14 +528,16 @@ test("rejects Product Operating size, count, total-byte, and compound-output lim
   fs.mkdirSync(candidateDirectory, { recursive: true });
   fs.writeFileSync(path.join(candidateDirectory, `${nearLimitCandidate.initiativeCandidateId}.json`), candidateBytes);
   const decisionDirectory = path.join(compoundRoot, ".head", "product-operations", "initiative-reviews");
-  await assert.rejects(() => reviewProductInitiative({
+  const boundedDecision = await reviewProductInitiative({
     root: compoundRoot,
     initiativeCandidateId: nearLimitCandidate.initiativeCandidateId,
     disposition: "accept",
     rationale: "The final reviewed artifact should exceed its bound.",
     featureResolution: { kind: "gap", reason: "Synthetic bound test." },
-  }), (error) => error.code === "PRODUCT_OPERATING_LIMIT");
-  assert.equal(fs.existsSync(decisionDirectory), false);
+  });
+  assert.equal(boundedDecision.status, "initiative_accepted");
+  assert.equal(fs.readdirSync(decisionDirectory).filter((name) => name.endsWith(".json")).length, 1);
+  assert.equal(fs.existsSync(path.join(compoundRoot, ".head/product-operations/reviewed-initiatives")), false);
 });
 
 test("serializes Product Operating writers without turning review or capacity checks into user gates", async (t) => {

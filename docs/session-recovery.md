@@ -26,7 +26,7 @@ alone closes the original dispatch/wait lifecycle.
 |---|---|---|
 | `WholePlanSnapshot`, `ExecutionContract`, `ContextCapsule`, `Run`, `SessionRunCheckpoint` | P2 | recoverable project execution lineage and exact next direction |
 | `ReviewDecision` | P1 | Fresh HEAD's explicit normative judgment |
-| `BoundedWorkerDispatch`, `ResultPacket`, `RunResultIntegrationRequest`, `RunResultIntegrationReceipt` | P3 | worker ownership, result, and integration evidence only |
+| `BoundedWorkerDispatch`, `ResultPacket` | P3 | worker ownership and result evidence; legacy integration request/receipt records remain readable |
 | `SessionRestoreProjection` | P4 | non-persisted, reproducible consumer view |
 | `ContinuationOutcome`, `BoundedWorkerWaitOutcome`, execution lease/process | P5 | optional live attachment and operational progress only |
 | `BoundedWorkerWave`, seal, abandonment | P3 | same-lineage multi-dispatch grouping and non-success handoff evidence |
@@ -212,7 +212,6 @@ BoundedWorkerDispatch (P3)
   -> explicit accept ReviewDecision (P1)
   -> explicit integration input owned by HEAD/user direction
   -> SessionRunCheckpoint (P2)
-  -> RunResultIntegrationReceipt (P3)
 ```
 
 `worker-dispatch` binds one registered non-HEAD role to the exact current Run
@@ -248,25 +247,17 @@ disposition before writing anything. `revise`, `expand`, `rollback`, and
 `escalate` stay on their normal next-plan or user-direction paths and cannot be
 mislabeled as result integration.
 
-One ReviewDecision may bind to at most one recovery checkpoint. An identical
-retry returns the existing checkpoint and receipt. A retry with a different
-purpose, position, decision set, open-review set, or next expected result fails.
-After the complete accepted lineage preflight, a create-only P3 integration
-request freezes those normalized inputs before any checkpoint write. Concurrent
-identical requests converge on that request and a reviewed-time-derived checkpoint
-identity; a concurrent different request fails before creating another checkpoint.
-The P2 checkpoint binds the request ID and input hash, so direct lower-level
-checkpoint construction cannot bypass the transaction or substitute another
-recovery direction. The request remains P3 transaction provenance, not recovery
-authority: after the checkpoint is verified, deleting the request or ResultPacket
-cannot change or block artifact-only restore from the self-contained P2 fields.
-If a process stops after the checkpoint write but before receipt creation, a
-retry finds the sole verified integration checkpoint and completes only the
-missing create-only receipt.
+One ReviewDecision binds to at most one recovery checkpoint. A locked publication
+stores the exact reviewed lineage and explicit HEAD-authored direction in that
+checkpoint. Identical retry reuses it; different direction conflicts.
+If publication stops between ledger and Session pointer, retry completes only
+that pointer update. A later checkpoint is never rolled back by retry.
 
-The receipt records that no ReviewDecision was created by integration and that
-the ResultPacket is reference evidence only. Deleting that ResultPacket later
-does not change the checkpoint or restore projection's next direction.
+New integration produces no separate request or receipt. Historical request and
+receipt formats remain narrowly readable without rewriting original bytes.
+ResultPacket remains reference evidence; its later absence cannot change the
+checkpoint's self-contained direction. Review, operational completion and
+checkpoint publication remain distinct meanings, not duplicate approval ceremonies.
 
 ## Public surfaces
 
@@ -316,8 +307,7 @@ ResultPacket evidence, non-accept review, divergent replay, and CLI/MCP parity.
 `npm run verify:hostless-session-recovery` adds the resident-consumer proof. One
 fresh process integrates, independent Codex/OpenCode-labeled processes restore
 the same projection and execute one read-only next move, and injected inbox text
-cannot author that move. The verifier also covers request-before-checkpoint and
-checkpoint-before-receipt crash recovery, deletion of P3 request and ResultPacket
-evidence, concurrent identical and divergent integration, and non-accept review.
+cannot author that move. The verifier also covers interruption before/after checkpoint
+publication, independent writers, divergent integration and non-accept review.
 It requires no Git repository, GraphDB, WorkspaceHost, Herdr process, or provider
 session resume.

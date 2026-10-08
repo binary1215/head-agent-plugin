@@ -100,12 +100,10 @@ The same rule applies in context and coordination:
   Canon or a ReviewDecision;
 - a Capsule may include a bounded graph traversal only with false instruction and
   promotion authority;
-- the non-persisted ContextWorkflowProjection is advisory UX over one Capsule
-  preview rather than a new semantic artifact; it follows P4 non-amplification
-  constraints and may repeat the same read-only compile at the next fixed tier
-  only for proven `context-budget` exclusion, but cannot select EvidenceNeeds,
-  exceed 512K, invoke a provider, mutate state, assess semantic sufficiency,
-  grant authorization, or write recovery direction;
+- the non-persisted ContextWorkflowProjection is P4 selection advice: sources,
+  omissions and uncertainty, without fixed tiers or an inclusion-proof gate.
+  HEAD judges sufficiency and chooses useful expansion. It cannot select meaning,
+  invoke a provider, mutate state, grant approval or write recovery direction;
 - the non-persisted ContextPreparationProjection is P4 candidate visibility,
   not semantic inference: it accepts task text only, exposes bounded current
   identities and lexical discovery material, and lets provider HEAD author the
@@ -126,7 +124,7 @@ Delivery state preserves that split without adding a new authority plane. A `del
 
 Conformance reconciliation also preserves the split. Finding and resolution candidates plus exact-Finding disposition receipts are P3; preparation, queue, audit graph, and trigger-batch projections are P4; optional process-local trigger bindings are P5. Missing Graph, partial coverage, advisory risk, optional adapter loss, open Findings, and queue length cannot block ordinary work. Only cross-Project evidence, tampering, stale mutation input, path escape, divergent replay, or authority amplification fails the affected operation. A request to fix code still needs the ordinary execution lane, and a request to revise Canon still needs the existing exact user `ReviewDecision`. See [`conformance-reconciliation.md`](conformance-reconciliation.md).
 
-Product Initiative review uses the same non-amplification rule. Its current scoped `ReviewDecision` binds the complete candidate hash and exact reviewed Feature selection before any reviewed output is published. One project-local P5 writer lease serializes capacity checks and the single-decision-per-candidate invariant without becoming a user gate or recovery record. Exact retry may complete only missing outputs from that immutable decision; divergent retry cannot branch it. A legacy candidate's already frozen resolution may be reused as exact recovery evidence, but a missing deferred legacy selection is never guessed.
+Product Initiative review records one scoped decision containing the exact candidate and Feature selection. Reviewed initiative and FeatureCandidate outputs are read-only reconstructions of that decision, not duplicate stored approvals. The existing P5 writer lease serializes competing decisions. Exact retry reuses the decision; a missing legacy deferred selection is never guessed.
 
 ## Graph versus record
 
@@ -149,16 +147,14 @@ or deleted without changing the exact `nextExpectedResult` already frozen in a P
 `SessionRunCheckpoint`. `ReviewDecision` is P1 normative record. The checkpoint is
 the recovery record. Neither substitutes for the other.
 
-An accepted reviewed result may be connected to recovery only by the explicit
-one-shot integration operation. Its caller supplies the checkpoint recovery
-fields; ResultPacket and ReviewDecision are verified references, never implicit
-field sources. A create-only P3 request freezes those caller-supplied fields and
-the P2 checkpoint binds its ID and input hash; direct checkpoint construction
-cannot bypass or diverge from that transaction. The request remains P3 provenance
-and is not required to restore the resulting self-contained P2 checkpoint. The
-resulting receipt remains P3, while artifact-only Session
-restore is a non-persisted P4 projection of the exact P2 checkpoint and current
-verified lineage.
+An accepted reviewed result connects to recovery through explicit integration.
+HEAD supplies direction; verified ResultPacket and ReviewDecision are references,
+not field authors. One locked checkpoint publication binds the exact reviewed
+Run and normalized direction. Identical retries reuse it; divergent direction
+conflicts; interruption resumes only the missing Session pointer update.
+No separate integration request or receipt is newly produced. Historical records
+remain readable through their narrow original-format path. Artifact-only restore
+uses self-contained P2 direction, not a surviving evidence receipt.
 
 The non-persisted recovery checkpoint basis follows P4 non-amplification. It
 binds exact current P2 identities and transition state only so Core can detect a

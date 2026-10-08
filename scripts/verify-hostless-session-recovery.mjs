@@ -146,8 +146,8 @@ function checkpointCount(root, reviewDecisionId) {
   }).filter((checkpoint) => checkpoint?.reviewedRunIntegration?.reviewDecisionId === reviewDecisionId).length;
 }
 
-async function integrateChild(root, inputFile, expectedExitCode = 0) {
-  return spawnJson(["--integrate-child", root, inputFile], { expectedExitCode });
+async function integrateChild(root, inputFile, expectedExitCode = 0, boundary = null) {
+  return spawnJson(["--integrate-child", root, inputFile, ...(boundary ? [boundary] : [])], { expectedExitCode });
 }
 
 async function consumeChild(value, runtime, inboxText) {
@@ -166,8 +166,17 @@ async function consumeChild(value, runtime, inboxText) {
   return result;
 }
 
-async function integrationChildMain(root, inputFile) {
+async function integrationChildMain(root, inputFile, boundary = null) {
   const input = JSON.parse(fs.readFileSync(inputFile, "utf8"));
+  const rename = fs.renameSync;
+  if (boundary) fs.renameSync = (source, target) => {
+    if (path.dirname(path.resolve(target)) === path.join(root, ".head/sessions/ledger")) {
+      if (boundary === "after-ledger") rename(source, target);
+      process.stdout.write(JSON.stringify({ status: "crashed", boundary, pid: process.pid, parentPid: process.ppid, cwd: process.cwd(), ports: [] }) + "\n");
+      process.exit(23);
+    }
+    return rename(source, target);
+  };
   try {
     const result = integrateReviewedRunCheckpoint({ root, ...input });
     process.stdout.write(`${JSON.stringify({ status: "ok", ...result })}\n`);
@@ -225,27 +234,22 @@ async function parentMain() {
     assert.equal(codexConsumer.sessionRestoreId, opencodeConsumer.sessionRestoreId, "Provider replacement changed restore identity.");
     assert.deepEqual(codexConsumer.consumerInstruction, opencodeConsumer.consumerInstruction, "Provider replacement changed consumer direction.");
 
-    const requestCrash = fixture("crash-after-request");
-    const requestFirst = await integrateChild(requestCrash.root, requestCrash.inputFile);
-    const requestPaths = integrationPaths(requestCrash, requestFirst);
-    const requestHash = digest(fs.readFileSync(requestPaths.request));
-    fs.unlinkSync(requestPaths.receipt);
-    fs.unlinkSync(requestPaths.checkpoint);
-    const requestState = JSON.parse(fs.readFileSync(requestPaths.state, "utf8"));
-    requestState.latestCheckpoint = null;
-    fs.writeFileSync(requestPaths.state, `${JSON.stringify(requestState, null, 2)}\n`, "utf8");
-    const requestRecovered = await integrateChild(requestCrash.root, requestCrash.inputFile);
-    assert.equal(requestRecovered.checkpoint.checkpointId, requestFirst.checkpoint.checkpointId, "Request-only retry changed checkpoint identity.");
-    assert.equal(digest(fs.readFileSync(requestPaths.request)), requestHash, "Request-only retry rewrote the create-only request.");
-    assert.equal(checkpointCount(requestCrash.root, requestCrash.input.reviewDecisionId), 1, "Request-only retry created multiple checkpoints.");
+    const beforeLedger = fixture("crash-before-checkpoint");
+    await integrateChild(beforeLedger.root, beforeLedger.inputFile, 23, "before-ledger");
+    assert.equal(checkpointCount(beforeLedger.root, beforeLedger.input.reviewDecisionId), 0);
+    await integrateChild(beforeLedger.root, beforeLedger.inputFile);
+    assert.equal(checkpointCount(beforeLedger.root, beforeLedger.input.reviewDecisionId), 1);
+    assert.equal(fs.existsSync(path.join(beforeLedger.root, ".head/sessions/integrations")), false);
 
     const checkpointCrash = fixture("crash-after-checkpoint");
-    const checkpointFirst = await integrateChild(checkpointCrash.root, checkpointCrash.inputFile);
-    const checkpointPaths = integrationPaths(checkpointCrash, checkpointFirst);
+    await integrateChild(checkpointCrash.root, checkpointCrash.inputFile, 23, "after-ledger");
+    const ledger = path.join(checkpointCrash.root, ".head/sessions/ledger");
+    const saved = fs.readdirSync(ledger).find((name) => /^checkpoint-[a-f0-9]{24}\.json$/.test(name));
+    const originalCheckpoint = JSON.parse(fs.readFileSync(path.join(ledger, saved), "utf8"));
+    const checkpointPaths = integrationPaths(checkpointCrash, { checkpoint: originalCheckpoint });
     const checkpointHash = digest(fs.readFileSync(checkpointPaths.checkpoint));
-    fs.unlinkSync(checkpointPaths.receipt);
     const checkpointRecovered = await integrateChild(checkpointCrash.root, checkpointCrash.inputFile);
-    assert.equal(checkpointRecovered.checkpoint.checkpointId, checkpointFirst.checkpoint.checkpointId, "Checkpoint retry changed checkpoint identity.");
+    assert.equal(checkpointRecovered.checkpoint.checkpointId, originalCheckpoint.checkpointId, "Checkpoint retry changed checkpoint identity.");
     assert.equal(digest(fs.readFileSync(checkpointPaths.checkpoint)), checkpointHash, "Checkpoint retry changed immutable checkpoint bytes.");
     assert.equal(checkpointCount(checkpointCrash.root, checkpointCrash.input.reviewDecisionId), 1, "Checkpoint retry created multiple checkpoints.");
 
@@ -253,7 +257,6 @@ async function parentMain() {
     const evidenceIntegrated = await integrateChild(missingEvidence.root, missingEvidence.inputFile);
     const evidenceBefore = await consumeChild(missingEvidence, "codex", "evidence-only inbox reply");
     const evidencePaths = integrationPaths(missingEvidence, evidenceIntegrated);
-    fs.unlinkSync(evidencePaths.request);
     fs.unlinkSync(evidencePaths.result);
     const evidenceAfter = await consumeChild(missingEvidence, "opencode", "another evidence-only inbox reply");
     assert.equal(evidenceBefore.integrationEvidenceStatus, "verified", "Pre-deletion restore did not verify P3 result evidence.");
@@ -292,12 +295,12 @@ async function parentMain() {
         identicalNextExpectedResult: codexConsumer.consumerInstruction.nextExpectedResult,
       },
       crashRecovery: {
-        requestBeforeCheckpointConverged: true,
-        checkpointBeforeReceiptConverged: true,
+        beforeCheckpointConverged: true,
+        checkpointBeforeSessionConverged: true,
+        extraRequestOrReceiptCreated: false,
         checkpointDigestUnchanged: checkpointHash,
       },
       missingEvidence: {
-        requestDeleted: true,
         resultPacketDeleted: true,
         missingEvidenceDisclosed: true,
         nextExpectedResultUnchanged: true,
@@ -328,7 +331,7 @@ async function parentMain() {
 }
 
 if (process.argv[2] === "--integrate-child") {
-  integrationChildMain(path.resolve(process.argv[3]), path.resolve(process.argv[4]));
+  integrationChildMain(path.resolve(process.argv[3]), path.resolve(process.argv[4]), process.argv[5]);
 } else if (process.argv[2] === "--consume-child") {
   consumerChildMain(path.resolve(process.argv[3]), path.resolve(process.argv[4]), process.argv[5]);
 } else {

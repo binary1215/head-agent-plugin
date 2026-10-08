@@ -33,7 +33,7 @@ export function median(values) {
 export function verifySourceResult(result, kind, expected) {
   assert.equal(result.status, "observed", JSON.stringify(result.results)); assert.equal(result.results.length, 1);
   const item = result.results[0], evidence = result.context.capsule.observationEvidence;
-  assert.equal(item.includedInContext, true); assert.equal(result.context.capsule.coverageAssessment.mechanicalCoverageSatisfied, true);
+  assert.equal(item.includedInContext, true); assert.deepEqual(result.context.capsule.evidenceGaps, []);
   assert.equal(evidence.length, 1); assert.equal(evidence[0].nodeId, item.observationId);
   if (kind === "source") {
     assert.equal(item.omittedSourceBytes, 0); assert.equal(evidence[0].payload.details, expected);

@@ -44,7 +44,8 @@ test("diagnostics preserve generic project bytes and Capsule identity with truth
   assert.equal(report.contextPreview.stableCapsuleIdentity, true);
   for (const sample of report.contextPreview.samples) {
     assert.equal(sample.capsuleHash, expected.capsuleHash);
-    assert.equal(sample.mechanicalCoverage, "not-requested");
+    assert.equal(sample.evidenceGapCount, 0);
+    assert.equal(sample.semanticSufficiencyOwner, "HEAD");
     assert.equal(sample.worldState, "current-verified");
     assert.equal(sample.observedFs.filesystemMutationAttempts, 0);
     assert.ok(sample.observedFs.readFileSyncReturnedPayloadBytes > 0);

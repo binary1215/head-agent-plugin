@@ -429,69 +429,36 @@ export function formatReviewOutcome(value) {
 
 export function formatContextPreparation(value) {
   const preparation = value?.preparation || {};
-  const status = preparation.status;
-  const titles = {
-    curated_only: "HEAD Context: direct work is ready.",
-    ready_for_head_evidence_proposal: "HEAD Context: current repository evidence is ready.",
-    world_refresh_required: "HEAD Context: direct work is ready; stale World evidence remains excluded.",
-  };
-  const next = {
-    curated_only: "HEAD will continue in this conversation and inspect the repository normally when needed.",
-    ready_for_head_evidence_proposal: "HEAD will inspect the task, choose only the evidence it needs, and run the preview itself.",
-    world_refresh_required: "HEAD will continue direct inspection and refresh World only if this task truly needs a reproducible Capsule.",
-  };
   const lines = [
-    titles[status] || `HEAD Context: ${status || value?.status || "prepared"}.`,
-    "Task binding: verified for the supplied task.",
-    "User action: none. You do not need to write EvidenceNeed JSON, choose graph IDs, or select a token budget.",
-    `Next: ${next[status] || compactText(preparation.nextAction?.summary || "HEAD continues with the task.")}`,
+    "HEAD Context: selected evidence is ready for HEAD assessment.",
+    "User action: none. HEAD inspects original sources and expands useful evidence as needed.",
   ];
-  if (status === "curated_only") {
-    lines.push("Product/World remains optional and will be mentioned only if reproducible governed evidence is actually needed.");
-  }
-  lines.push("", "Technical details: rerun with --json");
+  if (preparation.remainingUncertainty?.length) lines.push(`Remaining uncertainty: ${preparation.remainingUncertainty.join(" ")}`);
+  lines.push("No authority or recovery state changed.", "", "Technical details: rerun with --json");
   return `${lines.join("\n")}\n`;
 }
-
 export function formatContextPreview(value) {
+  const capsule = value?.capsule || {};
   const workflow = value?.workflow || {};
-  const coverage = value?.capsule?.coverageAssessment || {};
-  const budget = workflow.budget || value?.capsule?.budget || {};
-  const titles = {
-    ready_for_head_semantic_assessment: "HEAD Context preview: requested evidence is included.",
-    evidence_needs_unassessed: "HEAD Context preview: ready for HEAD task analysis.",
-    world_evidence_unavailable: "HEAD Context preview: direct work remains available; requested World evidence is unavailable.",
-    world_refresh_required: "HEAD Context preview: direct work remains available; stale World evidence was excluded.",
-    evidence_gap_requires_head_action: "HEAD Context preview: some requested evidence is still missing.",
-  };
+  const budget = workflow.budget || capsule.budget || {};
   const lines = [
-    titles[workflow.status] || `HEAD Context preview: ${workflow.status || value?.status || "complete"}.`,
-    `Mechanical coverage: ${coverage.status || workflow.evidenceNeeds?.status || "not requested"}`,
-    `Budget: ${formatBudget(budget.usedApproxTokens)} used at the ${formatBudget(budget.currentTier || budget.maxApproxTokens)} tier`,
+    "HEAD Context preview: selected evidence is ready for HEAD assessment.",
+    `Budget: ${formatBudget(budget.usedApproxTokens)} used of ${formatBudget(budget.requestedApproxTokens || budget.maxApproxTokens)} approximate tokens`,
   ];
-  if ((budget.attemptedTiers || []).length > 1) {
-    lines.push(`Automatic expansion: ${(budget.attemptedTiers || []).map(formatBudget).join(" → ")}`);
-  }
   const explanation = workflow.explanation;
   if (explanation) {
     lines.push(`Included: ${explanation.included.totalCandidateCount} evidence item(s)`);
     if (explanation.intentionallyOmitted.total) {
       const reasons = Object.entries(explanation.intentionallyOmitted.byReason).map(([reason, count]) => `${reason} ${count}`).join(", ");
-      lines.push(`Intentionally omitted: ${explanation.intentionallyOmitted.total} (${reasons})`);
+      lines.push(`Omitted: ${explanation.intentionallyOmitted.total} (${reasons})`);
     }
-    lines.push(`Remaining uncertainty: ${explanation.remainingUncertainty.join(" ")}`);
+    if (explanation.remainingUncertainty.length) lines.push(`Remaining uncertainty: ${explanation.remainingUncertainty.join(" ")}`);
   }
-  if (workflow.status === "ready_for_head_semantic_assessment") {
-    lines.push("User action: none. HEAD now makes the separate semantic sufficiency judgment.");
-  } else if (["evidence_needs_unassessed", "world_evidence_unavailable", "world_refresh_required"].includes(workflow.status)) {
-    lines.push("User action: none unless HEAD explains that a governed, reproducible Capsule is required for this task.");
-  } else {
-    lines.push("Next: HEAD will inspect or gather the missing evidence; this preview is not treated as execution approval.");
-  }
-  lines.push("This preview changed no project state and granted no authority.", "", "Technical details: rerun with --json");
+  if (capsule.evidenceGaps?.length) lines.push(`Evidence gaps: ${capsule.evidenceGaps.length}; HEAD inspects or expands relevant sources.`);
+  lines.push("User action: none. HEAD judges relevance and sufficiency; no inclusion-proof gate.",
+    "This preview changed no project state and granted no authority.", "", "Technical details: rerun with --json");
   return `${lines.join("\n")}\n`;
 }
-
 export function formatCheckpointBasis(value) {
   const basis = value?.basis || {};
   const availability = value?.syncAvailability || "unknown";

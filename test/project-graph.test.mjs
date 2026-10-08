@@ -139,7 +139,7 @@ test("execution contracts/results/reviews keep their own identities and historic
   const reviewContext = buildFreshHeadReview({ root, wholePlanId: plan.wholePlanId, resultPacketId: packet.resultPacketId }).review;
   const review = createReviewDecision({ root, wholePlanId: plan.wholePlanId, resultPacketId: packet.resultPacketId, reviewContext,
     disposition: "accept", rationale: "Accept this exact bounded result." }).artifact;
-  const before = headFiles(root), result = await queryProjectGraph({ root, anchorIds: [review.reviewDecisionId], depth: 3 });
+  const before = headFiles(root), result = await queryProjectGraph({ root, anchorIds: [review.reviewDecisionId], depth: 3, details: true });
   for (const artifactId of [review.reviewDecisionId, packet.resultPacketId, contract.executionContractId, plan.wholePlanId]) assert(result.nodes.some(node => node.nodeId === artifactId));
   assert.equal(result.nodes.find(node => node.nodeId === review.reviewDecisionId).reviewState, "historical-accept");
   assert.equal(result.nodes.find(node => node.nodeId === packet.resultPacketId).outcome, packet.outcome);
@@ -157,7 +157,7 @@ test("exact rejected Policy remains visible as rejected even without World or re
   }
   await reviewProductPolicy({ root, candidateId: proposed.candidate.candidateId, disposition: "reject", rationale: "Do not adopt this policy." });
   fs.appendFileSync(path.join(root, ".head/generated/head-instructions.md"), "\nlocal change\n");
-  const before = headFiles(root), result = await queryProjectGraph({ root, anchorIds: [proposed.candidate.candidateId], depth: 1 });
+  const before = headFiles(root), result = await queryProjectGraph({ root, anchorIds: [proposed.candidate.candidateId], depth: 1, details: true });
   assert.equal(result.nodes.find(node => node.nodeId === proposed.candidate.candidateId).reviewState, "rejected");
   assert(result.summary.reviewStates.rejected > 0);
   assert(result.edges.some(edge => edge.endpointStates.some(endpoint => endpoint.reviewState === "rejected")));

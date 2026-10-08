@@ -45,7 +45,7 @@ HEAD는 결과를 증거로 소비하며 `worker-apply`와 Wave는 Run 전용입
 
 [영어 원문](../runtime-adapters.md)
 
-런타임 어댑터 계약 `0.1.0`은 v0.6 공급자 중립 경계를 확립합니다. Runtime-machine-discovery 프로토콜 `0.1.0`은 현재 호스트에서 읽기 전용 실행 파일 탐색을 추가하고, runtime-version-evidence 프로토콜 `0.1.0`은 세션을 만들지 않는 제한된 직접 버전 호출을 추가하며, runtime-protocol-evidence 프로토콜 `0.2.0`은 고정된 공급자별 도움말 표면과 정확한 일회성 옵션 집합을 관찰하고, runtime-project-binding 프로토콜 `0.1.0`은 이러한 관찰 결과를 정식 HEAD 프로젝트 및 Session ID에 결속합니다. Execution-authorization 프로토콜 `0.3.0`은 `scope.kind: session | run`과 선택적인 정확한 `provider/model` 선택을 담는 하나의 봉투를 추가합니다. execution-lease 프로토콜 `0.3.0`은 내구성 있는 소비/해제 증거를 운영 소유자 상태와 분리합니다. process-supervisor 프로토콜 `0.1.0`과 매니페스트 `0.3.0`(schema `2`), event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, ResultPacket-draft `0.5.0`은 공통 수명 주기 경계를 통과해 범위를 전달합니다. Claude Code, Codex, OpenCode 일회성 어댑터는 동일한 네이티브 하위 프로세스 트리 감독자와 호출 기록 코어를 공유합니다. 세 어댑터 모두 결정론적 Session/Run 권한 부여, 수명 주기, 이벤트, 결과 및 공급자별 프로토콜 fixture 적합성을 통과합니다. Codex와 OpenCode는 완료된 실제 Session/Run 증거도 보존합니다. Claude Code 실제 모델 호출 적합성은 동일한 opt-in 검증기를 통해 확인할 수 있지만, 실행되기 전에는 충족되었다고 주장하지 않습니다. 새 프로세스를 통한 Codex에서 OpenCode로의 아티팩트 복구도 통과합니다. HEAD는 정확히 권한이 부여된 모델과 임시 권한/프라이버시 오버레이만 제공합니다. 공급자 인증과 라우팅은 계속 공급자가 소유합니다. HEAD는 공급자 패키지를 합성하지도, 구성된 endpoint를 다시 쓰지도 않습니다. 공급자 중립적인 호스트 로컬 역할 조정과 정확한 endpoint로의 WorkspaceHost 전달은 각각 별도의 신뢰된 binding 및 호스트 호출자 경계를 통해 활성화됩니다. 공급자별 실행 codec은 Host adapter 경계 뒤에 두며 실효 OS·도구 권한 강제에는 신뢰된 연결 backend가 필요합니다. Herdr 특화 socket·pane·TUI 통합은 Core 밖에 둡니다. 공급자 resume과 일반 런타임 제어는 계속 비활성화되어 있습니다.
+런타임 어댑터 계약 `0.1.0`은 v0.6 공급자 중립 경계를 확립합니다. Runtime-machine-discovery 프로토콜 `0.1.0`은 현재 호스트에서 읽기 전용 실행 파일 탐색을 추가하고, runtime-version-evidence 프로토콜 `0.1.0`은 세션을 만들지 않는 제한된 직접 버전 호출을 추가하며, runtime-protocol-evidence 프로토콜 `0.2.0`은 고정된 공급자별 도움말 표면과 정확한 일회성 옵션 집합을 관찰하고, runtime-project-binding 프로토콜 `0.1.0`은 이러한 관찰 결과를 정식 HEAD 프로젝트 및 Session ID에 결속합니다. Execution-authorization 프로토콜 `0.3.0`은 `scope.kind: session | run`과 선택적인 정확한 `provider/model` 선택을 담는 하나의 봉투를 추가합니다. execution-lease 프로토콜 `0.3.0`은 내구성 있는 소비/해제 증거를 운영 소유자 상태와 분리합니다. process-supervisor 프로토콜 `0.1.0`과 매니페스트 `0.3.0`(schema `2`), event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, ResultPacket-draft `0.5.0`은 공통 수명 주기 경계를 통과해 범위를 전달합니다. Claude Code, Codex, OpenCode 일회성 어댑터는 동일한 네이티브 하위 프로세스 트리 감독자와 호출 기록 코어를 공유합니다. 세 어댑터 모두 결정론적 Session/Run 권한 부여, 수명 주기, 이벤트, 결과 및 공급자별 프로토콜 fixture 적합성을 통과합니다. Codex와 OpenCode는 완료된 실제 Session/Run 증거도 보존합니다. Claude Code 실제 모델 호출 적합성은 동일한 opt-in 검증기를 통해 확인할 수 있지만, 실행되기 전에는 충족되었다고 주장하지 않습니다. 새 프로세스를 통한 Codex에서 OpenCode로의 아티팩트 복구도 통과합니다. HEAD는 정확히 권한이 부여된 모델과 임시 권한/프라이버시 오버레이만 제공합니다. 공급자 인증과 라우팅은 계속 공급자가 소유합니다. HEAD는 공급자 패키지를 합성하지도, 구성된 endpoint를 다시 쓰지도 않습니다. 일반 위임은 Host가 소유하며 선택적 endpoint 연결은 현재 Host snapshot으로 확인합니다. 자체 역할 mail과 전달 bridge는 제거되었습니다. 공급자별 실행 codec은 Host adapter 경계 뒤에 두며 실효 OS·도구 권한 강제에는 신뢰된 연결 backend가 필요합니다. Herdr 특화 socket·pane·TUI 통합은 Core 밖에 둡니다. 공급자 resume과 일반 런타임 제어는 계속 비활성화되어 있습니다.
 
 Supervisor manifest는 프로세스 감독과 파일 효과 진입점을 함께 선언합니다.
 Schema `2` / manifest `0.3.0`은 그대로 유지되는 supervisor protocol `0.1.0`과
@@ -75,7 +75,7 @@ HEAD Core
 
 `AgentRuntimeAdapter`는 메서드 표면 `probe`, `start`, `resume`, `stream`, `interrupt`, `close`를 고정합니다. `PlatformAdapter`는 플랫폼이 소유하는 실행 파일 탐색, 소유 프로세스 시작/검사/종료, 경로, 권한, IPC, 원자적 파일 작업 및 서비스 수명 주기를 고정합니다. `WorkspaceHostAdapter`는 호스트 연결, 메시징, receipt 및 연결 해제를 고정합니다.
 
-참조 계약 어댑터는 정적 `probe`만 지원합니다. 모든 제어 메서드는 `RUNTIME_ADAPTER_CONTROL_NOT_ENABLED`로 실패합니다. 별도로 제공된 검증된 역할 조정 호스트는 `attach`, `send`, `receive`, `detach`만 활성화할 수 있습니다. 이는 AgentRuntime 또는 Platform 제어 메서드를 활성화하지 않고 `workspaceHostMessagingEnabled`만 변경합니다. 기본 계약 매트릭스는 Windows, macOS, Linux의 Claude Code, Codex, OpenCode를 포괄하지만 다음을 명시적으로 기록합니다.
+참조 계약 어댑터는 정적 `probe`만 지원합니다. 모든 제어 메서드는 `RUNTIME_ADAPTER_CONTROL_NOT_ENABLED`로 실패합니다. 검증된 Host composition은 exact 선택적 연결·해제를 활성화할 수 있지만 일반 통신은 현재 Host tool이 소유합니다. AgentRuntime이나 Platform 제어를 활성화하지 않습니다. 기본 계약 행렬은 Windows, macOS, Linux의 Claude Code, Codex, OpenCode를 포함하며 다음을 명시합니다:
 
 - `actualPlatformExecutionValidated: false`;
 - `actualRuntimeControlValidated: false`;
@@ -398,17 +398,24 @@ hardlink 출판이 중단되면 동일 bytes·inode로 검증한 본인 staging 
 알 수 없는 링크는 보존하고 거부합니다. 이는 운영 복구이며 사용자 승인 게이트나
 P2 방향의 출처가 아닙니다.
 
-## 공급자 중립 역할 조정 경계
+## 일반 위임과 선택적 연결
 
-Role coordination 프로토콜 `0.1.0`은 검증된 external operational root를 재사용하지만 `ExecutionAuthorization` 및 provider-session control과 계속 분리되어 있습니다. 신뢰된 host/admin이 generation을 열고 일회성 raw binding token을 검증된 하나의 direct project role에 발급합니다. public send/read/wait-reply/reply operation은 해당 binding에서 caller role을 파생합니다. role과 token은 MCP argument에 없습니다. Project, HEAD Session, generation, binding replacement 및 cross-project fence는 fail-closed합니다.
+일반 bounded 위임에는 현재 Host의 task/message/progress를 사용합니다.
+HEAD 역할 token, generation, inbox나 append-only target chain은 없습니다.
+message와 worker 성공은 증거이지 실행 권한이나 승인이 아닙니다.
+[일반 Host 위임](role-coordination.md)을 참고하세요.
 
-내구성 있는 message acceptance가 선택적 notification delivery보다 먼저 이루어집니다. Inbox, idempotency, read, immutable reply 및 delivery record는 host-local이며 `.head` 또는 Product Canon에 들어가지 않고 process restart 후에도 유지됩니다. 모든 message 및 reply authority flag는 false입니다. ambiguous live delivery는 자동으로 재시도되지 않습니다. state, CLI/MCP, failure 및 current-claim boundary는 [`role-coordination.md`](role-coordination.md)를 참조하세요.
+`VerifiedWorkspaceHostAdapter`는 Project root와 logical HEAD Session 안의
+현재 exact endpoint에 선택적으로 연결합니다. Host 검사 전에 P2를 복원하며,
+연결 불가 시 같은 logical HEAD로 fallback합니다. portable `host-export`
+composition은 외부 현재 snapshot 하나를 저장합니다.
+`workspace-host-export-mcp.mjs`는 Host가 제공한 project/caller/export 설정과
+process-ownership proof만 받습니다. attachment 전용이며 delivery request/claim/ack나
+worker launcher를 제공하지 않습니다.
 
-활성 `VerifiedWorkspaceHostAdapter`는 caller evidence를 host composition에서만 받으며 role tool argument에서는 절대 받지 않습니다. 새로운 unique endpoint를 append-only host-local target chain의 current role binding에 결속합니다. 모든 delivery는 current recipient binding과 target pointer, 새로운 exact host snapshot, exact message/endpoint acknowledgment, 변경되지 않은 post-delivery endpoint 및 변경되지 않은 target pointer를 검증합니다. missing 또는 stale state는 unavailable입니다. partial effect와 unverifiable change는 ambiguous하며 자동으로 재시도되지 않습니다. delivery receipt는 raw endpoint 또는 provider-session identity가 아니라 binding 및 attachment identity만 노출합니다.
-
-플러그인은 이 계약을 host-specific executable, socket, command, pane 또는 TUI protocol로 변환하지 않습니다. 신뢰된 composition은 normalized snapshot과 exact send acknowledgment를 보고하는 driver를 주입합니다. 어댑터는 외부 호스트가 해당 증거를 얻은 방법을 알지 못한 채 protocol identity, unique endpoint identity, runtime, byte bound 및 project-contained canonical CWD를 검증합니다. Host-specific translation은 별도 소유 optional adapter에 속하며 이러한 검사를 약화할 수 없습니다.
-
-`host-export`는 해당 injection boundary의 production portable reference입니다. root는 canonical이며 non-symlinked이고 project 외부에 있어야 하며 project를 포함해서는 안 됩니다. immutable content-addressed snapshot이 verified current pointer에 정보를 제공합니다. Delivery request, pre-effect claim 및 acknowledgment는 hashed endpoint location 아래의 separate create-only file입니다. claim과 acknowledgment는 exact request hash, host instance, endpoint tuple 및 message에 결속됩니다. 또한 claim은 external host가 effect를 적용하기 전에 current snapshot, canonical CWD 및 runtime을 다시 검사합니다. acknowledgment가 없는 claim은 ambiguous하며 자동으로 다시 소비할 수 없습니다. 제한된 wait 뒤에도 acknowledgment가 없으면 마찬가지로 ambiguous합니다. optional MCP entrypoint는 project/caller/export tuple, raw per-process proof 및 coordination binding을 host process environment에서만 받습니다. exported endpoint는 unique binding ID와 domain-separated proof hash만 포함합니다. 모든 snapshot은 possession과 exact binding ownership을 검증한 뒤 sanitized endpoint를 Core에 노출하며, 다른 project에 대한 tool request는 거부됩니다. In-memory fixture driver는 generic adapter contract만 입증하며 production live-caller claim이 아닙니다. process-proof composition input이 없거나 stale하면 `workspace-host-export-mcp.mjs`는 fail-closed하고 해당 fixture로 fallback할 수 없습니다.
+과거 live role-mail test와 새 경량 구현을 동일시하지 않습니다.
+현재 source와 local fixture는 endpoint identity·교체·손실, fallback과 P2 방향
+불변을 검증하며 새 실제 provider E2E는 별도입니다.
 
 ## 권한 및 ID 경계
 
@@ -472,7 +479,7 @@ adapter verifier는 deterministic contract identity, Claude Code/Codex/OpenCode 
 
 ## 다음 활성화 gate
 
-read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, canonical HEAD project/Session capability binding, host-local role coordination, bounded reply waiting, opt-in exact-endpoint WorkspaceHost attachment/delivery 및 exact-owned one-shot `interrupt`/`close`가 활성 상태입니다. host slice에는 deterministic evidence와 production already-running Codex/OpenCode E2E가 있으며, current-endpoint replacement, no spawn-on-claim, worker-question/HEAD-reply waiting 및 별도의 real-provider control cleanup을 입증합니다. 원 저자 source audit는 자문용 개발 근거이며 Product 권위·ReviewDecision·필수 runtime gate가 아닙니다. 일반적인 정적 adapter의 `start`, provider-session `resume`, `stream` 또는 더 광범위한 process-host control을 활성화하기 전에 platform/runtime/host composition은 계속 다음을 검증해야 합니다.
+읽기 전용 경로 탐색, 제한된 비세션 version 호출, provider별 protocol/capability 관찰, canonical HEAD identity 결속, 선택적 exact-endpoint attachment와 exact-owned one-shot interrupt/close가 활성화되어 있습니다. 과거 live role-message 검증은 개발 증거이지 현재 구현 검증이라는 주장이 아닙니다. 일반 static-adapter start, provider-session resume/stream 또는 더 넓은 process-host control을 활성화하기 전에는 composition이 다음을 검증해야 합니다:
 
 1. externalized operational-state root, 정확한 authorization/lease/caller/project fence 및 verified native descendant supervisor를 통해 완료된 live Codex Session conformance evidence를 보존할 것
 2. actual provider input, structured event, isolated file write, ResultPacket evidence 및 provider-neutral schema를 통한 provider-specific error를 포함하여 evidence-led consequential live Codex Run을 대상으로 진단된 large-event fix를 검증할 것

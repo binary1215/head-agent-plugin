@@ -121,7 +121,8 @@ try {
   const installedManifest = JSON.parse(fs.readFileSync(path.join(installedReleaseRoot, "distribution-manifest.json"), "utf8"));
   assert.equal(installedManifest.files.some((file) => file.path === "legacy" || file.path.startsWith("legacy/")), false);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "workspace-host-export-mcp.mjs")), true);
-  assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-live-provider-coordination.mjs")), true);
+  assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-live-provider-coordination.mjs")), false);
+  assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "lib", "role-coordination.mjs")), false);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "verify-hostless-session-recovery.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "scripts", "lib", "workspace-host-export-driver.mjs")), true);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "README.ko.md")), true);
@@ -261,7 +262,7 @@ try {
     failedUpgradePreservedCurrent: true,
     launcherVerified: true,
     workspaceHostExportBridgePackaged: true,
-    liveProviderCoordinationVerifierPackaged: true,
+    retiredRoleAndLiveCoordinationImplementationsExcluded: true,
     hostlessSessionRecoveryVerifierPackaged: true,
     publicInitializeResumeVerified: true,
     constitutionalCoreDefaultVerified: true,

@@ -72,7 +72,7 @@ context와 조정에도 같은 규칙이 적용됩니다.
   immutable candidate set으로 정규화할 수 있지만 Product Canon이나 ReviewDecision을
   생성할 수 없습니다.
 - Capsule은 지시 및 승격 권한이 false인 제한된 그래프 순회만 포함할 수 있습니다.
-- 지속되지 않는 ContextWorkflowProjection은 새로운 의미 artifact가 아니라 하나의 Capsule preview에 관한 조언용 UX입니다. 이는 P4 비증폭 제약을 따르며, 입증된 `context-budget` 제외에 대해서만 다음 고정 tier에서 동일한 읽기 전용 compile을 반복할 수 있습니다. 그러나 EvidenceNeeds를 선택하거나, 512K를 초과하거나, provider를 호출하거나, 상태를 변경하거나, 의미적 충분성을 평가하거나, 승인을 부여하거나, 복구 방향을 쓸 수는 없습니다.
+- 지속되지 않는 ContextWorkflowProjection은 P4 selection 안내입니다. 출처·누락·불확실성을 제공하며 고정 tier나 포함 증명 gate는 없습니다. HEAD가 충분성과 유용한 확대를 판단합니다. 의미 선택, provider 호출, 상태 변경, 승인 또는 복구 방향 쓰기는 할 수 없습니다.
 - 지속되지 않는 ContextPreparationProjection은 의미 추론이 아니라 P4 candidate visibility입니다. task text만 받아 제한된 현재 identity와 lexical discovery material을 보여주고 provider HEAD가 사용자 JSON 없이 구조화 proposal을 작성하게 합니다. EvidenceNeeds나 graph anchor를 선택하거나 provider/session identity를 영속화하거나 P2 방향을 쓸 수 없습니다. 이후 preview는 Project/World/Graph drift를 다시 검증합니다.
 - 검토 전 후보는 Canon context compilation에서 제외됩니다. 일반 탐색은 원래 후보·거절 상태를 표시한 P3 자료를 포함할 수 있지만 관계 확장에서도 승격하지 않습니다.
 - provider 요약, continuity view, inbox message와 reply는 checkpoint 필드를 변경하거나 ReviewDecision을 만들 수 없습니다.
@@ -84,7 +84,7 @@ Delivery state도 새 authority plane 없이 같은 분리를 유지합니다. `
 
 Conformance 재정도 같은 분리를 보존합니다. Finding 및 resolution candidate와 exact-Finding disposition receipt는 P3이고, preparation, queue, audit graph, trigger-batch projection은 P4이며, 선택적 process-local trigger binding은 P5입니다. Graph 부재, partial coverage, advisory risk, 선택적 adapter 손실, 열린 Finding, queue 길이는 일반 작업을 막을 수 없습니다. 교차 Project 증거, tampering, stale mutation input, path escape, divergent replay 또는 authority amplification만 영향받는 동작을 실패시킵니다. 코드 수정 요청에는 여전히 일반 execution lane이 필요하고 Canon 개정 요청에는 기존 exact 사용자 `ReviewDecision`이 필요합니다. [`conformance-reconciliation.md`](conformance-reconciliation.md)를 참고하세요.
 
-Product Initiative review도 같은 non-amplification 규칙을 사용합니다. 현재 범위가 지정된 `ReviewDecision`은 reviewed output을 발행하기 전에 완전한 candidate hash와 exact reviewed Feature selection을 결속합니다. project-local P5 writer lease 하나가 capacity check와 candidate당 단일 decision 불변조건을 직렬화하지만 사용자 gate나 recovery record가 되지는 않습니다. exact retry는 해당 immutable decision에서 누락된 output만 완성할 수 있고 divergent retry는 이를 분기할 수 없습니다. legacy candidate에 이미 동결된 resolution은 exact recovery evidence로 재사용할 수 있지만, 누락된 deferred legacy selection은 절대 추측하지 않습니다.
+Product Initiative review는 exact candidate와 Feature selection을 담은 scoped decision 하나를 기록합니다. reviewed initiative와 FeatureCandidate output은 decision의 읽기 전용 재구성이며 중복 저장 승인이 아닙니다. 기존 P5 writer lease가 경쟁 결정을 직렬화합니다. exact retry는 decision을 재사용하고 legacy의 누락된 deferred selection은 추측하지 않습니다.
 
 ## 그래프와 레코드의 차이
 
@@ -96,7 +96,13 @@ Product Initiative review도 같은 non-amplification 규칙을 사용합니다.
 
 `ResultPacket`과 `WorkerReport`는 P3 증거입니다. P2 `SessionRunCheckpoint`에 이미 고정된 정확한 `nextExpectedResult`를 변경하지 않고도 이를 검토하거나 첨부하거나 삭제할 수 있습니다. `ReviewDecision`은 P1 규범 레코드이고, checkpoint는 복구 레코드입니다. 어느 것도 다른 하나를 대신하지 않습니다.
 
-수락된 검토 결과는 명시적인 일회성 통합 작업으로만 복구에 연결될 수 있습니다. 호출자가 checkpoint 복구 필드를 제공하며, ResultPacket과 ReviewDecision은 검증된 참조일 뿐 암묵적인 필드 출처가 아닙니다. create-only P3 요청은 호출자가 제공한 해당 필드를 고정하고 P2 checkpoint는 요청의 ID와 input hash를 결속합니다. checkpoint를 직접 구성하여 이 transaction을 우회하거나 그와 다르게 만들 수 없습니다. 요청은 P3 provenance로 남으며, 그 결과 생기는 자체 완결적 P2 checkpoint를 복원하는 데 필요하지 않습니다. 결과 receipt는 P3로 남고, artifact-only Session restore는 정확한 P2 checkpoint와 현재 검증된 lineage에 대한 비지속적 P4 projection입니다.
+수락된 검토 결과는 명시적 integration으로 복구에 연결됩니다.
+HEAD가 방향을 제공하며 검증된 ResultPacket과 ReviewDecision은 참조이지 필드 작성자가 아닙니다.
+lock 안의 checkpoint 발행 한 번이 exact reviewed Run과 정규화한 방향을 결속합니다.
+동일 재시도는 재사용하고 다른 방향은 충돌하며, 중단 시 누락된 Session pointer 갱신만
+재개합니다. 별도의 integration request나 receipt는 새로 만들지 않습니다.
+과거 기록은 좁은 원본 형식 reader로 계속 읽습니다. artifact-only restore는
+증거 receipt의 생존 여부가 아닌 자체 완결적인 P2 방향을 사용합니다.
 
 비지속 recovery checkpoint basis는 P4 비증폭 규칙을 따릅니다. Core가 오래됐거나 이미
 수렴한 게시 요청을 구분할 수 있도록 정확한 현재 P2 identity와 전이 상태만 결속합니다.

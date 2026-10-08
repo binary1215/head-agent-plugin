@@ -7,7 +7,7 @@ when a reproducible handoff, durable Run or recovery boundary actually needs a C
 This is context construction, not long-term memory recall or a replacement for HEAD
 judgment. The budget is a hard bound, not evidence that the result is sufficient.
 
-Use only the deterministic approximate-token tiers `32768` (default), `65536`, `131072`, `262144`, and `524288` (hard maximum). The Compiler itself always receives one explicit tier and never changes it. The read-only preview wrapper starts at the caller's tier and deterministically retries the next fixed tier only while matching evidence was excluded by `context-budget`. Because the current estimate is `ceil(UTF-16 code units / 4)`, the runtime adapter must verify actual provider-token fit and output reserve before invocation.
+Use any positive safe integer budget, default `32768` approximate tokens. There are no fixed tiers, tier retry chain or 512K policy ceiling. The estimate is `ceil(UTF-16 code units / 4)`; actual provider context fit and output reserve remain runtime concerns.
 
 ```text
 Canonical sources and promoted knowledge
@@ -113,29 +113,20 @@ the unconfirmed scope and use separate appropriate evidence, not an empty succes
 MCP cancellation/connection loss and CLI interrupt terminate the parse worker
 before settlement. See `docs/observation-adapters.md` for supported scope/limits.
 
-If no World Model exists, preparation returns `curated_only`: direct work and
-ordinary repository inspection remain primary, while reproducible repository,
-Product, and graph evidence is unavailable to the Capsule. Do not reinterpret
-that absence as a requirement to activate Product/World. Offer the explicit
-Product profile only after semantic task analysis by HEAD or an explicit user
-choice establishes that the task needs that evidence. A later preview may fail
-with `world_evidence_unavailable` only when the authored EvidenceNeeds actually
-request World-backed evidence.
+Preparation always returns selected context for HEAD assessment. Missing or stale
+World is disclosed and excluded, while direct current source inspection remains
+available. It is not a requirement to activate Product or refresh the whole World.
 
-Inspect `capsule.coverageAssessment` before consuming a Capsule. `not-requested` means HEAD supplied no mechanical evidence requirements; it is not a sufficiency judgment. For supplied needs, use a Capsule for consequential execution only when `status` is `coverage-complete` and `mechanicalCoverageSatisfied` is true, then make the separate HEAD-owned semantic acceptance decision. A `coverage-incomplete` Capsule remains a reproducible diagnostic: follow its unmet EvidenceNeeds through bounded expansion, gather missing evidence, or change HEAD's requirement only when the original requirement was wrong. Never treat a full budget, a valid digest, successful persistence, or the deprecated `capsule.sufficiency` compatibility field as semantic sufficiency.
+Read `evidenceGaps`, `omissions` and `uncertainty`. New Capsules produce no
+`coverageAssessment` or coverage-proof digest. Selection advice is not a mandatory
+inclusion certificate. HEAD chooses useful requirements, inspects original bodies
+and separately judges relevance and sufficiency before consequential work.
+An incomplete selection is useful context, not a global execution gate.
 
-`head_context_preview` and CLI `context-preview` add a non-persisted
-`ContextWorkflowProjection` beside the unchanged Capsule. It exposes the exact
-task binding, verified/missing/stale-excluded World state, HEAD-owned
-EvidenceNeed authoring questions, mechanical coverage, fixed budget tiers,
-bounded attempt evidence, and one next action. The wrapper retries a larger tier
-only when matching evidence exists, was excluded specifically by
-`context-budget`, and fits a later allowed tier. It preserves the exact task and
-EvidenceNeeds and records each tier, Capsule ID, and coverage-proof digest.
-Missing evidence, a missing World, or a stale World never triggers expansion,
-and 512K is the hard stop. The projection cannot select EvidenceNeeds, mutate or
-refresh World, persist the preview, assess semantic sufficiency, grant
-authorization, create a ReviewDecision, or write recovery direction.
+`head_context_preview` performs one read-only selection with the exact task and
+optional HEAD guidance. It reports sources, World availability, selected evidence,
+omissions, uncertainty and the next HEAD assessment. It cannot invoke a provider,
+mutate World, persist the preview, approve a result or write recovery direction.
 
 The executor may request narrow expansion through `query_product_graph`, `query_semantic_graph`, `query_temporal_graph`, `expand_relationship`, `verify_claim`, `get_source`, `get_history`, or `explain_decision`. Product and temporal expansion must preserve relation, authority, freshness, confidence, depth, node, and edge bounds and record graph/query/result digests. ProductContext remains a derived view of user-owned Product Canon. Discoveries return as candidate knowledge. They become persistent only after evidence verification and appropriate authority approval.
 
@@ -148,10 +139,4 @@ The executor may request narrow expansion through `query_product_graph`, `query_
 
 ## Current coverage
 
-Compiler version `0.21.0` always compiles curated `.head/` canon and, when a verified current World Model exists, keeps every current repository file eligible under the budget. HEAD-anchored exact paths, Product entity keys, and exact current graph anchors receive mechanical need coverage before unanchored fallback ranking; HEAD need coverage determines selection; budget overflow and explicit coverage exclusions remain visible. Repository files no longer receive an implicit temporal traversal from the first lexical match. Each exact `GraphTraversalEvidence` carrier binds its HEAD proposal digest and deterministic GraphSnapshot/query/result identities and has no instruction, promotion, review, Canon, or recovery authority. Optional language-AST relation evidence remains source-separated from the heuristic fallback. A stale or cross-project anchor fails closed; an ordinary stale index remains excluded rather than silently consumed.
-
-Product coverage counts verified logical entity and revision identities, not carrier
-bundles, for both exact-key and facet-only needs. Duplicate carriers preserve
-provenance without inflating coverage. Exact requested keys precede optional
-neighbor ranking, so a discovery limit cannot silently discard HEAD's anchor.
-None of these mechanical checks substitutes for HEAD semantic judgment.
+Compiler version `0.22.0` preserves every current repository file as an eligible candidate when World is current. Exact HEAD paths, Product keys and graph anchors guide bounded selection; lexical matches are fallback navigation. New Capsules record source-linked selections, omissions and uncertainty, not inclusion-proof state. Historical Capsule bytes and identity remain readable. Scope, freshness, relation bounds and Project identity stay explicit; no metadata carrier proves that a source body was read.

@@ -49,9 +49,9 @@ protocol field 입력을 요구하지 않습니다. [`session-recovery.md`](sess
 ## 상태 전이
 
 ```text
-idle -> prepared -> provider_compacted -> verified -> continued
-                                      \-> superseded
-                                      \-> aborted
+idle -> prepared -> verified -> continued
+                  \-> superseded
+                  \-> aborted
 ```
 
 `compact-prepare`는 다음 내용을 갖는 content-addressed `SessionRunCheckpoint`를 만듭니다.
@@ -73,7 +73,7 @@ immutable Session pointer는 provider 독립적인 artifact restore를 반증 �
 
 `compact-verify`는 명시적인 provider-success 증거와 현재의 신뢰된 real-user-turn sequence를 받습니다. checkpoint와 현재 Session/Run pointer를 다시 읽어 digest를 검증합니다. 더 새로운 실제 사용자 turn이 있으면 continuation은 superseded됩니다. Provider failure, checkpoint tamper, state drift 또는 non-canonical recovery source가 있으면 복구를 abort하거나 거부합니다. Core는 누락된 방향을 summary에서 채우지 않습니다.
 
-`compact-continue`는 atomic create로 token을 소비하기 직전에 현재 checkpoint·Session·Run·epoch를 다시 검증합니다. 새 사용자 turn이 없어도 더 새로운 checkpoint가 있으면 이전 continuation은 무효입니다. 성공하면 정확한 checkpoint와 제한된 continuation instruction을 반환하며, 두 번째 소비는 실패합니다. 반환되는 `CompactionRecoveryReceipt`는 instruction, recovery, objective-rewrite, Product Canon 또는 review authority가 없는 파생 증거입니다.
+`compact-continue`는 atomic at-most-once token 소비 전에 현재 checkpoint, Session, Run과 epoch를 재검증합니다. 새 checkpoint 또는 사용자 turn은 이전 continuation을 무효로 만듭니다. 정확한 checkpoint-bound 방향을 반환하며 두 번째 소비는 실패합니다. 검증은 epoch 갱신 하나만 기록하고 별도 파생 recovery receipt나 중간 provider-compacted 쓰기를 만들지 않습니다.
 
 Prepare는 현재 checkpoint를 바꾸기 전에 입력과 기존 open epoch를 검증합니다.
 Session/Run 복구를 변경하는 작업은 프로젝트 로컬의 임시 P5 lock을 공유하며,

@@ -25,7 +25,7 @@ test("aggregation keeps three trials and null local envelopes without counting u
 });
 test("nominal observed status cannot hide omission, missing Context or incorrect source", () => {
   const value = { status: "observed", results: [{ includedInContext: true, observationId: "obs", omittedSourceBytes: 0, reused: false }],
-    context: { capsule: { coverageAssessment: { mechanicalCoverageSatisfied: true }, observationEvidence: [{ nodeId: "obs", payload: { details: "whole" } }] } } };
+    context: { capsule: { evidenceGaps: [], observationEvidence: [{ nodeId: "obs", payload: { details: "whole" } }] } } };
   assert.equal(verifySourceResult(value, "source", "whole").exactEqual, true);
   for (const modify of [(v) => { v.results[0].omittedSourceBytes = 1; }, (v) => { v.results[0].includedInContext = false; },
     (v) => { v.context.capsule.observationEvidence[0].payload.details = "partial"; }]) {

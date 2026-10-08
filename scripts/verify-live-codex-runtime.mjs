@@ -360,7 +360,7 @@ async function main() {
         completedWaitOutcomeId: afterExecution.waitOutcome.waitOutcomeId,
         duplicateWorkerConsumptionRejected,
         integrationCheckpointId: integrated.checkpoint.checkpointId,
-        integrationReceiptId: integrated.integrationReceipt.integrationReceiptId,
+        reviewedRunIntegration: integrated.checkpoint.reviewedRunIntegration,
         actualProviderInvoked: true,
         descendantTreeOwnershipValidated: true,
         exactWorkspaceMutationVerified: true,

@@ -698,8 +698,8 @@ test("binds a Run to an Execution Contract, Result Packet, and ReviewDecision", 
     forbiddenActions: ["Deploy without user authority"],
   });
   assert.equal(contract.artifact.contextAcceptance.authority, "HEAD");
-  assert.equal(contract.artifact.contextAcceptance.evidenceNeedSetDigest, compiled.capsule.evidenceNeedContract.evidenceNeedSetDigest);
-  assert.equal(contract.artifact.contextAcceptance.coverageProofDigest, compiled.capsule.coverageAssessment.proofDigest);
+  assert.equal(Object.hasOwn(contract.artifact.contextAcceptance, "evidenceNeedSetDigest"), false);
+  assert.equal(Object.hasOwn(contract.artifact.contextAcceptance, "coverageProofDigest"), false);
   assert.equal(contract.artifact.contextAcceptance.semanticJudgmentSource, "HEAD-not-context-compiler");
   const started = startRun({ root, executionContractId: contract.artifact.executionContractId });
   assert.match(started.run.runId, /^run-/);
@@ -1048,7 +1048,8 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
     }],
     persist: false,
   });
-  assert.equal(exactGraphCapsule.capsule.coverageAssessment.status, "coverage-complete");
+  assert.deepEqual(exactGraphCapsule.capsule.evidenceGaps, []);
+  assert.equal(Object.hasOwn(exactGraphCapsule.capsule, "coverageAssessment"), false);
   assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence.length, 1);
   assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.anchorMode, "exact-head-proposed");
   assert.deepEqual(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.allowedRelations, [serviceRelation.type]);
@@ -2792,22 +2793,24 @@ test("promotes document edits only through explicit structured Product Canon rev
   const canonTemporary = `${canonFile}.tmp-${process.pid}`;
   const preexistingTemporary = "preexisting temporary owned by another operation\n";
   fs.writeFileSync(canonTemporary, preexistingTemporary, { flag: "wx" });
-  await assert.rejects(
-    () => applyDocumentChangeReview({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }),
-    (error) => error.code === "EEXIST",
-  );
+  // Another operation's old staging name neither blocks a unique new stage nor
+  // permits cleanup of that unrelated file.
   assert.equal(fs.readFileSync(canonTemporary, "utf8"), preexistingTemporary);
   assert.equal(fs.readFileSync(canonFile, "utf8"), canonBeforeFaults);
-  fs.unlinkSync(canonTemporary);
 
   const realOpen = fs.openSync;
   const realWrite = fs.writeFileSync;
   let ownedDescriptor = null;
+  let ownedTemporary = null;
   let partialWriteInjected = false;
   try {
     fs.openSync = function (file, flags) {
       const descriptor = realOpen.apply(this, arguments);
-      if (path.resolve(String(file)) === path.resolve(canonTemporary) && flags === "wx") ownedDescriptor = descriptor;
+      if (path.dirname(path.resolve(String(file))) === path.dirname(canonFile)
+        && path.basename(String(file)).startsWith(".product-model.json.") && flags === "wx") {
+        ownedDescriptor = descriptor;
+        ownedTemporary = String(file);
+      }
       return descriptor;
     };
     fs.writeFileSync = function (file, data, options) {
@@ -2827,12 +2830,15 @@ test("promotes document edits only through explicit structured Product Canon rev
     fs.writeFileSync = realWrite;
   }
   assert.equal(partialWriteInjected, true);
-  assert.equal(fs.existsSync(canonTemporary), false);
+  assert.equal(fs.existsSync(ownedTemporary), false);
+  assert.equal(fs.readFileSync(canonTemporary, "utf8"), preexistingTemporary);
   assert.equal(fs.readFileSync(canonFile, "utf8"), canonBeforeFaults);
   assert.equal(inspectDocumentChangeReviewStatus({ root, candidateSetId: captured.candidateSet.candidateSetId }).status, "reviewed-awaiting-application");
 
   const applied = await applyDocumentChangeReview({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId });
   assert.equal(applied.status, "applied");
+  assert.equal(fs.readFileSync(canonTemporary, "utf8"), preexistingTemporary);
+  fs.unlinkSync(canonTemporary);
   assert.equal(applied.applicationReceipt.canonChanged, true);
   assert.equal(applied.applicationReceipt.canonMutation, "exact-user-reviewed-product-model");
   assert.equal(applied.applicationReceipt.activeRunMutation, "none");

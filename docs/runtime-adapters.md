@@ -51,7 +51,7 @@ identity and integrity without demanding a currently active Run. Creation and
 execution still require current scope. Exact legacy Run dispatch replay reuses
 its immutable bytes rather than rewriting its protocol.
 
-Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation, runtime-protocol-evidence protocol `0.2.0` observes fixed provider-specific help surfaces and exact one-shot option sets, and runtime-project-binding protocol `0.1.0` binds those observations to canonical HEAD project and Session identities. Execution-authorization protocol `0.3.0` adds one envelope with `scope.kind: session | run` and an optional exact `provider/model` selection; execution-lease protocol `0.3.0` separates durable consumption/release evidence from operational owner state; process-supervisor protocol `0.1.0` and manifest `0.3.0` (schema `2`), event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, and ResultPacket-draft `0.5.0` carry scope through the common lifecycle boundary. Claude Code, Codex, and OpenCode one-shot adapters share the same native descendant-tree supervisor and invocation-record core. All three pass deterministic Session/Run authorization, lifecycle, event, result, and provider-specific protocol-fixture conformance. Codex and OpenCode additionally retain completed live Session/Run evidence; Claude Code live model-call conformance is available through the same opt-in verifier but is not claimed until run. Fresh-process Codex-to-OpenCode artifact recovery also passes. HEAD supplies only the exact authorized model plus an ephemeral permission/privacy overlay; provider authentication and routing remain provider-owned. HEAD neither synthesizes provider packages nor rewrites configured endpoints. Provider-neutral host-local role coordination and exact-endpoint WorkspaceHost delivery are active through separate trusted binding and host-caller boundaries. Provider-specific execution codecs stay behind the Host adapter boundary; effective OS/tool enforcement requires a trusted connected backend. Herdr-specific socket, pane and TUI integration remains outside Core. Provider resume and general runtime controls remain disabled.
+Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation, runtime-protocol-evidence protocol `0.2.0` observes fixed provider-specific help surfaces and exact one-shot option sets, and runtime-project-binding protocol `0.1.0` binds those observations to canonical HEAD project and Session identities. Execution-authorization protocol `0.3.0` adds one envelope with `scope.kind: session | run` and an optional exact `provider/model` selection; execution-lease protocol `0.3.0` separates durable consumption/release evidence from operational owner state; process-supervisor protocol `0.1.0` and manifest `0.3.0` (schema `2`), event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, and ResultPacket-draft `0.5.0` carry scope through the common lifecycle boundary. Claude Code, Codex, and OpenCode one-shot adapters share the same native descendant-tree supervisor and invocation-record core. All three pass deterministic Session/Run authorization, lifecycle, event, result, and provider-specific protocol-fixture conformance. Codex and OpenCode additionally retain completed live Session/Run evidence; Claude Code live model-call conformance is available through the same opt-in verifier but is not claimed until run. Fresh-process Codex-to-OpenCode artifact recovery also passes. HEAD supplies only the exact authorized model plus an ephemeral permission/privacy overlay; provider authentication and routing remain provider-owned. HEAD neither synthesizes provider packages nor rewrites configured endpoints. Ordinary delegation is Host-owned; optional exact endpoint attachment uses the current Host snapshot. Role mail and export delivery machinery have been removed. Provider-specific execution codecs stay behind the Host adapter boundary; effective OS/tool enforcement requires a trusted connected backend. Herdr-specific socket, pane and TUI integration remains outside Core. Provider resume and general runtime controls remain disabled.
 
 The supervisor manifest declares both process supervision and file-effect entry
 points. Its schema `2` / manifest `0.3.0` is distinct from the unchanged supervisor
@@ -81,7 +81,7 @@ HEAD Core
 
 `AgentRuntimeAdapter` fixes the method surface `probe`, `start`, `resume`, `stream`, `interrupt`, and `close`. `PlatformAdapter` fixes platform-owned executable discovery, owned-process start/inspection/termination, paths, permissions, IPC, atomic file operations, and service lifecycle. `WorkspaceHostAdapter` fixes host attachment, messaging, receipt, and detachment.
 
-The reference contract adapters support only static `probe`. Every control method fails with `RUNTIME_ADAPTER_CONTROL_NOT_ENABLED`. A separately supplied verified role-coordination host may activate only `attach`, `send`, `receive`, and `detach`; this changes `workspaceHostMessagingEnabled` without enabling any AgentRuntime or Platform control method. The default contract matrix covers Claude Code, Codex, and OpenCode across Windows, macOS, and Linux, but explicitly records:
+The reference contract adapters support only static `probe`. Every control method fails with `RUNTIME_ADAPTER_CONTROL_NOT_ENABLED`. A verified Host composition may activate exact optional attachment and detachment; ordinary messaging stays owned by current Host tools. It does not enable AgentRuntime or Platform control. The default contract matrix covers Claude Code, Codex, and OpenCode across Windows, macOS, and Linux, but explicitly records:
 
 - `actualPlatformExecutionValidated: false`;
 - `actualRuntimeControlValidated: false`;
@@ -460,61 +460,24 @@ known staging link with verified identical bytes and inode; unknown links are
 preserved and rejected. This is operational recovery, not a user approval gate
 or a source of P2 direction.
 
-## Provider-neutral role coordination boundary
+## Ordinary delegation and optional attachment
 
-Role coordination protocol `0.1.0` reuses the validated external operational
-root but remains separate from `ExecutionAuthorization` and provider-session
-control. A trusted host/admin opens a generation and issues a one-time raw
-binding token to one verified direct project role. Public send/read/wait-reply/reply
-operations derive the caller role from that binding; role and token are absent
-from MCP arguments. Project, HEAD Session, generation, binding replacement, and
-cross-project fences fail closed.
+Use current Host tasks/messages/progress for ordinary bounded delegation.
+There is no HEAD role-token, generation, inbox or append-only target chain.
+Messages and worker success are evidence, not execution permission or approval.
+See [ordinary Host delegation](role-coordination.md).
 
-Durable message acceptance precedes optional notification delivery. Inbox,
-idempotency, read, immutable reply, and delivery records are host-local and
-survive process restart without entering `.head` or Product Canon. All message
-and reply authority flags are false. An ambiguous live delivery is not retried
-automatically. See [`role-coordination.md`](role-coordination.md) for the state,
-CLI/MCP, failure, and current-claim boundaries.
+`VerifiedWorkspaceHostAdapter` optionally attaches an exact current endpoint
+within the Project root and logical HEAD Session. P2 restoration precedes any
+Host inspection; unavailable attachment falls back to the same logical HEAD.
+The portable `host-export` composition stores one current external snapshot.
+`workspace-host-export-mcp.mjs` takes only Host-provided project/caller/export
+configuration and process-ownership proof. It supports attachment only, not
+delivery request/claim/ack or a worker launcher.
 
-The active `VerifiedWorkspaceHostAdapter` accepts caller evidence only from the
-host composition, never a role tool argument. It binds a fresh unique endpoint
-to the current role binding in an append-only host-local target chain. Every
-delivery verifies the current recipient binding and target pointer, a fresh exact
-host snapshot, an exact message/endpoint acknowledgment, an unchanged
-post-delivery endpoint, and the unchanged target pointer. Missing or stale state
-is unavailable; partial effects and unverifiable changes are ambiguous and never
-automatically retried. Its delivery receipt exposes only binding and attachment
-identities, not raw endpoint or provider-session identity.
-
-The plugin does not translate this contract into any host-specific executable,
-socket, command, pane, or TUI protocol. A trusted composition injects a driver
-that reports normalized snapshots and exact send acknowledgments. The adapter
-validates protocol identity, unique endpoint identity, runtime, byte bounds, and
-project-contained canonical CWD without knowing how the external host obtained
-that evidence. Host-specific translation belongs to a separately owned optional
-adapter and cannot weaken these checks.
-
-`host-export` is the production portable reference for that injection boundary.
-Its root must be canonical, non-symlinked, outside the project, and must not
-contain the project. Immutable content-addressed snapshots feed a verified current
-pointer. Delivery request, pre-effect claim, and acknowledgment are separate
-create-only files under a hashed endpoint location; claim and acknowledgment are
-bound to the exact request hash, host instance, endpoint tuple, and message. A
-claim also rechecks the current snapshot, canonical CWD, and runtime before the
-external host may apply its effect. A
-claim without acknowledgment is ambiguous and cannot be consumed again
-automatically. Missing acknowledgment after a bounded wait is likewise ambiguous.
-The optional MCP entrypoint receives the project/caller/export tuple, raw
-per-process proof, and coordination binding only from its host process
-environment. The exported endpoint contains the unique binding ID and only the
-domain-separated proof hash. Every snapshot verifies possession plus exact
-binding ownership before exposing the sanitized endpoint to Core, and tool
-requests for another project are rejected.
-The in-memory fixture driver proves the generic adapter contract only; it is not
-a production live-caller claim. `workspace-host-export-mcp.mjs` fails closed
-when any process-proof composition input is absent or stale and cannot fall back
-to that fixture.
+Do not equate historical live role-mail tests with this simplified implementation.
+Current source and local fixtures verify endpoint identity, replacement/loss,
+fallback and unchanged P2 direction; new actual-provider E2E remains separate.
 
 ## Authority and identity boundary
 
@@ -578,7 +541,7 @@ The adapter verifier proves deterministic contract identities, Claude Code/Codex
 
 ## Next activation gate
 
-Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, canonical HEAD project/Session capability binding, host-local role coordination, bounded reply waiting, opt-in exact-endpoint WorkspaceHost attachment/delivery, and exact-owned one-shot `interrupt`/`close` are active. The host slice has deterministic evidence plus a production already-running Codex/OpenCode E2E proving current-endpoint replacement, no spawn-on-claim, worker-question/HEAD-reply waiting, and separate real-provider control cleanup. Original-author source audit is advisory development evidence, not Product authority, a ReviewDecision or a mandatory runtime gate. Before general static-adapter `start`, provider-session `resume`, `stream`, or broader process-host control becomes active, the platform/runtime/host composition must still verify:
+Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, canonical HEAD identity binding, optional exact-endpoint attachment and exact-owned one-shot interrupt/close are active. Historical live role-message conformance remains development evidence, not a current implementation claim. Before general static-adapter start, provider-session resume/stream or broader process-host control becomes active, the composition must verify:
 
 1. preserve the completed live Codex Session conformance evidence through the externalized operational-state root, exact authorization/lease/caller/project fences, and verified native descendant supervisor;
 2. validate the diagnosed large-event fix against evidence-led consequential live Codex Runs, including actual provider input, structured events, isolated file write, ResultPacket evidence, and provider-specific errors through the provider-neutral schemas;

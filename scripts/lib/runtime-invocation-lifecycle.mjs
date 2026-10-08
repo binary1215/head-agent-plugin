@@ -5,7 +5,7 @@ import { assertProjectActionsCurrent, readProjectDirection, assertAuthorizationP
 import { assertRunSession } from "./session-routing.mjs";
 import { spawn } from "node:child_process";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
-import { readContextCapsule, requireCoveredContextCapsule } from "./context-compiler.mjs";
+import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-record.mjs";
@@ -498,7 +498,7 @@ export function buildRuntimeInvocationAuthorization({
     const run = runCanon(projectRoot, inspected.state.activeRunId);
     const contract = lineage(projectRoot, inspected.state.activeExecutionContractId, "ExecutionContract");
     const plan = lineage(projectRoot, contract.wholePlanId, "WholePlanSnapshot");
-    const capsule = requireCoveredContextCapsule({ root: projectRoot, capsuleId: contract.capsuleId }).capsule;
+    const capsule = readContextCapsule({ root: projectRoot, capsuleId: contract.capsuleId }).capsule;
     if (run.executionContractId !== contract.executionContractId || run.wholePlanId !== plan.wholePlanId || run.capsuleId !== capsule.capsuleId) {
       fail("Active Run, ExecutionContract, WholePlanSnapshot, and ContextCapsule do not compose.", "RUNTIME_INVOCATION_LINEAGE_CONFLICT");
     }
@@ -523,7 +523,7 @@ export function buildRuntimeInvocationAuthorization({
       fail("Session execution authorization requires an idle HEAD Session with no active Run or pending review.", "SESSION_EXECUTION_STATE_CONFLICT");
     }
     const capsule = selectedScope.contextCapsuleId === null
-      ? null : requireCoveredContextCapsule({ root: projectRoot, capsuleId: selectedScope.contextCapsuleId }).capsule;
+      ? null : readContextCapsule({ root: projectRoot, capsuleId: selectedScope.contextCapsuleId }).capsule;
     executionScope = {
       kind: "session",
       userRequestDigest: digest(selectedScope.request),

@@ -174,7 +174,8 @@ export function measureContextDiagnostics({ project = null, task = null, iterati
         iteration: index + 1, phase: index === 0 ? "first-preview-in-process" : "repeated-preview-in-process",
         elapsedMs, observedFs, capsuleId: capsule.capsuleId, capsuleHash: capsule.capsuleHash,
         workflowStatus: workflow.status, worldState: workflow.world.state,
-        mechanicalCoverage: capsule.coverageAssessment.status,
+        evidenceGapCount: capsule.evidenceGaps.length,
+        semanticSufficiencyOwner: "HEAD",
         repositoryRecordCount: capsule.repositoryContext.length,
         usedApproxTokens: capsule.budget.usedApproxTokens, maxApproxTokens: capsule.budget.maxApproxTokens,
       });

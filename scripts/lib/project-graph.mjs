@@ -5,7 +5,7 @@ import {
   readGraphRecord, refreshProjectGraphIndex, safeGraphFile,
 } from "./discovery-index.mjs";
 
-export const PROJECT_GRAPH_PROTOCOL_VERSION = "0.1.0";
+export const PROJECT_GRAPH_PROTOCOL_VERSION = "0.2.0";
 export const indexProjectGraph = refreshProjectGraphIndex;
 const layerCache = new Map();
 const resultCache = new Map();
@@ -320,8 +320,10 @@ function limits(options) {
   const strings = (values, max) => { if (values == null) return []; if (!Array.isArray(values) || values.length > max || values.some((value) => typeof value !== "string" || !value || value.length > 512)) fail("INVALID_PROJECT_GRAPH_FILTER"); return [...new Set(values)].sort(); };
   if (!["all", "work", "product"].includes(options.view || "all")) fail("INVALID_PROJECT_GRAPH_VIEW");
   if (options.query != null && (typeof options.query !== "string" || options.query.length > 4096)) fail("INVALID_PROJECT_GRAPH_QUERY");
-  return { query: String(options.query || "").trim(), anchorIds: strings(options.anchorIds, 32), paths: [...new Set(strings(options.paths, 32).map(value => value.replaceAll("\\", "/")))].sort(),
-    view: options.view || "all", depth: integer(options.depth, 1, 8, 0), maxNodes: integer(options.maxNodes, 60, 500), maxEdges: integer(options.maxEdges, 120, 1000),
+  if (options.details != null && typeof options.details !== "boolean") fail("INVALID_PROJECT_GRAPH_DETAILS");
+  const details = options.details === true;
+  return { query: String(options.query || "").trim(), anchorIds: strings(options.anchorIds, 32), paths: [...new Set(strings(options.paths, 32).map(value => value.replaceAll("\\", "/")))].sort(), details,
+    view: options.view || "all", depth: integer(options.depth, 1, 8, 0), maxNodes: integer(options.maxNodes, details ? 60 : 8, 500), maxEdges: integer(options.maxEdges, details ? 120 : 12, 1000),
     includeCandidates: options.includeCandidates !== false };
 }
 
@@ -439,6 +441,32 @@ function navigationState(node) {
   return { reviewState: node.reviewState, freshness: node.freshness, revisionId: node.revisionId || null,
     ...(node.policyKey ? { policyKey: node.policyKey, baseProductModelId: node.baseProductModelId || null,
       resultingProductModelId: node.resultingProductModelId || null, proposedPolicy: node.proposedPolicy || null } : {}) };
+}
+
+function compactNode(node) {
+  const fields = ["nodeId", "kind", "name", "key", "path", "digest", "revisionId", "views", "reviewState", "freshness", "integrity", "sourceAuthority", "sourceReference", "sourceCurrentness", "snapshotState", "policyKey", "baseProductModelId", "resultingProductModelId"];
+  const compact = Object.fromEntries(fields.filter(key => node[key] !== undefined).map(key => [key, node[key]]));
+  const text = searchText(node);
+  const excerpt = text.slice(0, 360);
+  const direction = node.directionEvidence;
+  const directionEvidence = direction ? { goal: direction.goal.slice(0, 240), ...Object.fromEntries(
+    ["constraints", "decisions", "cancelledActions"].map(key => [key, direction[key].slice(0, 3).map(value => value.slice(0, 160))])) } : null;
+  const directionPartial = direction && (node.directionContentCoverage.partial || direction.goal.length > 240
+    || ["constraints", "decisions", "cancelledActions"].some(key => direction[key].length > 3 || direction[key].some(value => value.length > 160)));
+  return { ...compact, excerpt, contentScope: "bounded-navigation-excerpt", contentPartial: excerpt.length < text.length || Boolean(directionPartial),
+    ...(direction ? { directionEvidence, directionContentCoverage: { partial: Boolean(directionPartial),
+      originalExcerptCoverage: node.directionContentCoverage, detailRequiredForCompleteDirection: Boolean(directionPartial) } } : {}),
+    detail: { anchorIds: [node.nodeId], details: true, depth: 0 }, ...authority };
+}
+
+function compactTraversal(traversed) {
+  return { ...traversed, nodes: traversed.nodes.map(compactNode),
+    edges: traversed.edges.map(edge => ({ edgeId: edge.edgeId, type: edge.type, from: edge.from, to: edge.to,
+      endpointStates: edge.endpointStates.map(({ proposedPolicy, ...state }) => state), provenance: edge.provenance, ...authority })),
+    boundary: { items: traversed.boundary.items.slice(0, 8),
+      omittedCount: traversed.boundary.omittedCount + Math.max(0, traversed.boundary.items.length - 8),
+      nextAnchorIds: traversed.boundary.nextAnchorIds.slice(0, 16),
+      omittedAnchorCount: Math.max(0, traversed.boundary.nextAnchorIds.length - 16) } };
 }
 
 export async function queryProjectGraph(options = {}) {
@@ -566,20 +594,24 @@ export async function queryProjectGraph(options = {}) {
   const traversed = viewTraversal(allNodes, graphEdges, normalized);
   const partialDirection = traversed.nodes.some(node => node.directionContentCoverage?.partial);
   const count = (field) => Object.fromEntries([...new Set(traversed.nodes.map((node) => node[field] || "unknown"))].sort().map((key) => [key, traversed.nodes.filter((node) => (node[field] || "unknown") === key).length]));
+  const presentation = normalized.details ? traversed : compactTraversal(traversed);
+  const partialContent = presentation.nodes.some(node => node.contentPartial);
   const payload = { kind: "ProjectGraphDiscoveryProjection", protocol: { name: "head-agent-core-project-graph", version: PROJECT_GRAPH_PROTOCOL_VERSION },
     authorityBoundary: artifactAuthorityBoundary("ProjectGraphDiscoveryProjection"),
-    status: traversed.nodes.length ? "available" : "source-fallback", basis, query: normalized, ...traversed,
+    status: traversed.nodes.length ? "available" : "source-fallback", basis, query: normalized, ...presentation,
+    detailExpansion: { supported: true, tool: "head_project_graph", arguments: { details: true },
+      instruction: "Use selected node IDs as anchor_ids; increase depth for relationships. Full records remain at sourceReference.path." },
     summary: { nodeCount: traversed.nodes.length, edgeCount: traversed.edges.length, reviewStates: count("reviewState"), freshnessStates: count("freshness"),
-      policyReferences: traversed.nodes.filter((node) => node.policyKey).map((node) => ({ nodeId: node.nodeId, ...navigationState(node) })),
-      directionReferences: traversed.nodes.filter(node => node.kind === "ProjectDirection").map(node => ({ nodeId: node.nodeId,
+      policyReferences: traversed.nodes.filter((node) => node.policyKey).map((node) => { const { proposedPolicy, ...state } = navigationState(node); return { nodeId: node.nodeId, ...state, ...(normalized.details ? { proposedPolicy } : {}) }; }),
+      directionReferences: presentation.nodes.filter(node => node.kind === "ProjectDirection").map(node => ({ nodeId: node.nodeId,
         ...navigationState(node), sourceReference: node.sourceReference, contentCoverage: node.directionContentCoverage })),
       semantics: "navigation-evidence; relationship does not prove cause, approval, current effect authority or semantic sufficiency" },
     integrity: { verifiedLayers: layers.filter((layer) => layer.status === "verified").map((layer) => layer.layer), excluded: unavailable },
     freshness: { scope: "referenced-source-bytes-and-retained-revisions", wholeWorldCurrentRequired: false, historicalEvidenceReadable: true },
     coverage: { state: "partial", inventoryBoundReached: !inventory.complete, layers: layers.map(({ reused, ...layer }) => layer), verifiedNodeCount: allNodes.length, matchedNodeCount: traversed.nodes.length,
       emptyResultProvesAbsence: false, semanticSufficiency: "HEAD-owned" },
-    sourceFallback: { available: true, needed: !traversed.nodes.length || traversed.truncated || unavailable.length > 0 || !inventory.complete || partialDirection,
-      action: "Read current original files or the referenced records; expand anchors when useful.", reasonCodes: [...unavailable.map((entry) => entry.reasonCode), ...(partialDirection ? ["PROJECT_DIRECTION_EXCERPT_PARTIAL"] : [])],
+    sourceFallback: { available: true, needed: !traversed.nodes.length || traversed.truncated || unavailable.length > 0 || !inventory.complete || partialDirection || partialContent,
+      action: "Read current original files or the referenced records; expand anchors when useful.", reasonCodes: [...unavailable.map((entry) => entry.reasonCode), ...(partialDirection ? ["PROJECT_DIRECTION_EXCERPT_PARTIAL"] : []), ...(partialContent ? ["PROJECT_GRAPH_COMPACT_CONTENT_PARTIAL"] : [])],
       excludedInputs: unavailable }, adapter, reuse: { status: "fresh-read", semanticSufficiency: "HEAD-owned" }, authority };
   const resultHash = projectGraphDigest(payload), result = { ...payload, resultId: `project-graph-result-${resultHash.slice(0, 24)}`, resultHash };
   boundedCache(resultCache, queryKey, clone(result));

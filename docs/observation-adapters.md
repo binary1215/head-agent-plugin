@@ -232,7 +232,7 @@ records are not migrated or rehashed. New retained records are also checked for
 source drift before Context inclusion. Default retention remains off; no Canon,
 World, ReviewDecision or recovery direction is created by these optional reads.
 
-Context compilation excludes common observations by default. HEAD performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core then proves actual inclusion without lexical eligibility, semantic promotion, or sufficiency judgment.
+Context compilation excludes common observations by default. HEAD performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core preserves selected evidence, exclusions and uncertainty without an inclusion-proof gate, lexical eligibility rule, semantic promotion or sufficiency judgment.
 
 Ordinary inspection remains ephemeral. Persist an Observation only when cross-Run, rebuttal/audit, handoff, or context-loss evidence is required. A Host adapter, not the user, constructs the exact source binding, descriptor, digests, coverage, and provenance confirmation. `observation-ingest` and `head_observation_ingest` are advanced Host/CI surfaces for already bounded input; collect remains the adapter-facing compatibility alias.
 

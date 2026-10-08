@@ -52,7 +52,6 @@ import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectC
 import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "./lib/recovery-checkpoint-diagnosis.mjs";
-import { COORDINATION_BINDING_ENV, inspectRoleCoordination, issueCoordinationRoleBinding, openCoordinationGeneration, replyCoordinationMessage, sendCoordinationMessage, waitForCoordinationInbox, waitForCoordinationReply } from "./lib/role-coordination.mjs";
 import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
 import {
   applyBoundedWorkerDispatchResult,
@@ -81,6 +80,12 @@ export function parse(argv) {
     const item = rest[index];
     if (!item.startsWith("--")) throw new Error(`Unexpected argument: ${item}`);
     const key = item.slice(2);
+    if (key === "details") {
+      const value = rest[index + 1];
+      options[key] = value === "false" ? false : true;
+      if (value === "true" || value === "false") index += 1;
+      continue;
+    }
     if (key === "fresh") {
       options[key] = true;
       continue;
@@ -100,7 +105,7 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       "head --version",
       "head status <project>",
       "head doctor <project>",
-      "head graph-query <project> --query <text> [--view all|work|product] [--paths <path,...>] [--anchors <id,...>] [--depth <n>] [--max-nodes <n>] [--max-edges <n>] [--world-model <id>]",
+      "head graph-query <project> --query <text> [--view all|work|product] [--paths <path,...>] [--anchors <id,...>] [--depth <n>] [--max-nodes <n>] [--max-edges <n>] [--world-model <id>] [--details]",
       "head graph-index <project>",
       "head session-create <project> [--purpose <text>] [--new-session <session-id>]",
       "head session-list <project>",
@@ -241,14 +246,6 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       "head compact-abort <project> --input <abort.json>",
       "head conversation-enter <project>",
       "head compaction-lifecycle-step <project> [--input <head-direction.json>]",
-      "head coordination-open <project>",
-      "head coordination-rotate <project>",
-      "head coordination-bind <project> --role <head|developer|coder|reviewer>",
-      "head coordination-status <project>",
-      "head coordination-send <project> --input <message.json> [--binding-env <environment-name>]",
-      "head coordination-inbox <project> [--unread-only <true|false>] [--wait-timeout-ms <0..600000>] [--binding-env <environment-name>]",
-      "head coordination-wait-reply <project> --message <coordination-message-id> [--wait-timeout-ms <0..600000>] [--binding-env <environment-name>]",
-      "head coordination-reply <project> --input <reply.json> [--binding-env <environment-name>]",
       "head lineage-plan <project> --input <whole-plan.json>",
       "head lineage-next-plan <project> --input <next-whole-plan.json>",
       "head lineage-contract <project> --input <execution-contract.json>",
@@ -300,19 +297,6 @@ function inputJson(options, label) {
 
 function optionalInputJson(options, label) {
   return options.input ? inputJson(options, label) : {};
-}
-
-function coordinationBindingToken(options, { required = true } = {}) {
-  const name = String(options["binding-env"] || COORDINATION_BINDING_ENV).trim();
-  if (!/^[A-Z][A-Z0-9_]{2,127}$/u.test(name)) throw new Error("Coordination binding environment name is invalid.");
-  const token = String(process.env[name] || "").trim();
-  if (!token && !required) return null;
-  if (!token) {
-    const error = new Error(`Coordination binding token is unavailable through environment reference ${name}.`);
-    error.code = "COORDINATION_BINDING_REQUIRED";
-    throw error;
-  }
-  return token;
 }
 
 function readJsonFile(file, label) {
@@ -368,7 +352,7 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "status" || command === "doctor") return inspectProjectExperience({ root });
   if (command === "graph-query") return import("./lib/project-graph.mjs").then(({ queryProjectGraph }) => queryProjectGraph({ root, query: options.query || "", view: options.view || "all",
     paths: options.paths?.split(",") || [], anchorIds: options.anchors?.split(",") || [], depth: options.depth == null ? 1 : Number(options.depth),
-    maxNodes: options["max-nodes"] == null ? 60 : Number(options["max-nodes"]), maxEdges: options["max-edges"] == null ? 120 : Number(options["max-edges"]), worldModelId: options["world-model"] || "" }));
+    details: options.details === true || options.details === "true", maxNodes: options["max-nodes"] == null ? undefined : Number(options["max-nodes"]), maxEdges: options["max-edges"] == null ? undefined : Number(options["max-edges"]), worldModelId: options["world-model"] || "" }));
   if (command === "graph-index") return import("./lib/project-graph.mjs").then(({ indexProjectGraph }) => indexProjectGraph({ root }));
   if (command === "session-create") return createHeadSession({ root, sessionId: options["new-session"], purpose: options.purpose });
   if (command === "session-list") return listHeadSessions({ root });
@@ -741,7 +725,6 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
       root,
       checkpointId: options.checkpoint || null,
       runtime: options.runtime,
-      bindingToken: coordinationBindingToken(options, { required: false }),
     });
   }
   if (command === "compact-prepare") return prepareCompaction({ ...inputJson(options, "Compaction prepare"), root });
@@ -755,34 +738,6 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
     hostAdapter: compactionLifecycleHost,
     direction: options.input ? inputJson(options, "HEAD compaction direction") : null,
   });
-  if (command === "coordination-open") return openCoordinationGeneration({ root });
-  if (command === "coordination-rotate") return openCoordinationGeneration({ root, rotate: true });
-  if (command === "coordination-bind") return issueCoordinationRoleBinding({ root, role: options.role });
-  if (command === "coordination-status") return inspectRoleCoordination({ root });
-  if (command === "coordination-send") {
-    const input = inputJson(options, "Coordination message");
-    const unexpected = Object.keys(input).filter((key) => !new Set(["toRole", "content", "evidenceIds", "idempotencyKey", "lane"]).has(key));
-    if (unexpected.length) throw new Error(`Coordination message contains unsupported fields: ${unexpected.sort().join(", ")}`);
-    return sendCoordinationMessage({ ...input, root, bindingToken: coordinationBindingToken(options) });
-  }
-  if (command === "coordination-inbox") return waitForCoordinationInbox({
-    root,
-    bindingToken: coordinationBindingToken(options),
-    unreadOnly: options["unread-only"] == null ? true : options["unread-only"] === "true",
-    timeoutMs: options["wait-timeout-ms"] == null ? 0 : Number(options["wait-timeout-ms"]),
-  });
-  if (command === "coordination-wait-reply") return waitForCoordinationReply({
-    root,
-    bindingToken: coordinationBindingToken(options),
-    messageId: options.message,
-    timeoutMs: options["wait-timeout-ms"] == null ? 0 : Number(options["wait-timeout-ms"]),
-  });
-  if (command === "coordination-reply") {
-    const input = inputJson(options, "Coordination reply");
-    const unexpected = Object.keys(input).filter((key) => !new Set(["inReplyTo", "content"]).has(key));
-    if (unexpected.length) throw new Error(`Coordination reply contains unsupported fields: ${unexpected.sort().join(", ")}`);
-    return replyCoordinationMessage({ ...input, root, bindingToken: coordinationBindingToken(options) });
-  }
   if (command === "lineage-plan") return createWholePlanSnapshot({ ...inputJson(options, "Whole plan"), root, persist: true });
   if (command === "lineage-next-plan") return createNextWholePlanSnapshot({ ...inputJson(options, "Next whole plan"), root, persist: true });
   if (command === "lineage-contract") return createExecutionContract({ ...inputJson(options, "Execution Contract"), root, persist: true });
