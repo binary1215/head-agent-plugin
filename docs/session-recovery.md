@@ -255,6 +255,15 @@ that pointer update. A later checkpoint is never rolled back by retry.
 
 New integration produces no separate request or receipt. Historical request and
 receipt formats remain narrowly readable without rewriting original bytes.
+The current builder no longer accepts the historical request-ID input variant.
+An already committed historical checkpoint keeps its exact identity on retry.
+If only a verified original request remains, read returns
+`legacy_integration_pending`; integration reports
+`RUN_RESULT_LEGACY_INTEGRATION_PENDING` without writing or automatically finishing
+it. Its original input is P3 reference evidence, not restored P2 direction.
+HEAD inspects actual state and current common direction before manually carrying
+forward still-applicable work. No additional user approval or global ordinary-work
+block is introduced; malformed originals fail only the affected read/integration.
 ResultPacket remains reference evidence; its later absence cannot change the
 checkpoint's self-contained direction. Review, operational completion and
 checkpoint publication remain distinct meanings, not duplicate approval ceremonies.

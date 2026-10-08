@@ -2,6 +2,8 @@ node_modules/
 .agent-work/
 /dist/
 test/*
+!test/observation-query-consolidation.test.mjs
+!test/legacy-integration-read.test.mjs
 !test/authority-plane-contract.test.mjs
 !test/arcadedb-native-bridge.test.mjs
 !test/context-compiler.test.mjs

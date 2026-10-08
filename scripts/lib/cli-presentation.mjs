@@ -57,14 +57,13 @@ export function formatHelp(value) {
       "If delegation never started or has no remaining effects, continue directly or sequentially; inspect uncertain work before replacement.");
   }
   if (value.surface === "managed-maintenance") lines.push("Managed execution: use it when durable ownership, recovery or effect settlement is needed. Original authorization and effect checks apply.");
-    if (value.contextGuidance) lines.push(value.contextGuidance);
-    if (value.compatibilityDiagnostics?.length) lines.push(`Compatibility diagnostics only, not recommended workflow steps: ${value.compatibilityDiagnostics.join(", ")}.`);
+  if (value.contextGuidance) lines.push(value.contextGuidance);
   lines.push("");
   for (const [name, commands] of Object.entries(groups)) {
     if (!commands.length) continue;
     lines.push(`${name}:`, ...commands.map((command) => `  ${command}`), "");
   }
-  if (value.advancedCompatibilityCommand) lines.push(`Advanced ordinary commands: ${value.advancedCompatibilityCommand}`);
+  if (value.advancedCommand) lines.push(`Advanced ordinary commands: ${value.advancedCommand}`);
   lines.push("Machine-readable output: add --json");
   return `${lines.join("\n").trimEnd()}\n`;
 }

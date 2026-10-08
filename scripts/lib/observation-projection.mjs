@@ -137,47 +137,6 @@ export function loadObservationProjection({ projectRoot, projectId, artifacts = 
   return verifyObservationProjection({ ...payload, projectionId: `observation-projection-${projectionHash.slice(0, 24)}`, projectionHash }, projectId);
 }
 
-export function inspectObservations({ root = "." } = {}) {
-  const inspected = inspectProject(root);
-  if (inspected.status !== "ready") fail(`Project must be ready for Observation inspection; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
-  const projection = loadObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
-  const sampleLimit = 20;
-  return {
-    status: projection.observationIds.length || projection.derivedObservationIds.length ? "active" : "not_started",
-    projectId: inspected.project.projectId,
-    sessionId: inspected.state.sessionId,
-    projection: {
-      kind: "ObservationStatusSummary",
-      projectionId: projection.projectionId,
-      projectionHash: projection.projectionHash,
-      counts: {
-        descriptors: projection.descriptorIds.length,
-        observations: projection.observationIds.length,
-        derivedObservations: projection.derivedObservationIds.length,
-        receipts: projection.receiptIds.length,
-        nodes: projection.nodes.length,
-        edges: projection.edges.length,
-      },
-      samples: {
-        observationIds: projection.observationIds.slice(0, sampleLimit),
-        derivedObservationIds: projection.derivedObservationIds.slice(0, sampleLimit),
-      },
-      omitted: {
-        observationIds: Math.max(0, projection.observationIds.length - sampleLimit),
-        derivedObservationIds: Math.max(0, projection.derivedObservationIds.length - sampleLimit),
-      },
-      graphPolicy: projection.graphPolicy,
-      authority: projection.authority,
-      instructionAuthority: false,
-      promotionAuthority: false,
-      recoveryAuthority: false,
-    },
-    graphIntegration: "separate-rebuildable-evidence-view",
-    worldRefreshRequiredForProductGraph: false,
-    authority: { observations: "P3-evidence-only", graph: "P4-derived", productCanon: "unchanged", recovery: "unchanged" },
-  };
-}
-
 function optionalKey(value, label) {
   const normalized = String(value || "").trim();
   if (normalized && (Buffer.byteLength(normalized, "utf8") > 192 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(normalized))) fail(`${label} is invalid.`, "INVALID_OBSERVATION_QUERY");
@@ -293,6 +252,19 @@ export function queryObservations({
     sessionId: inspected.state.sessionId,
     sourceProjectionId: projection.projectionId,
     sourceProjectionHash: projection.projectionHash,
+    inventorySummary: {
+      scope: "all-retained-observations",
+      status: projection.observationIds.length || projection.derivedObservationIds.length ? "active" : "not_started",
+      counts: {
+        descriptors: projection.descriptorIds.length,
+        observations: projection.observationIds.length,
+        derivedObservations: projection.derivedObservationIds.length,
+        receipts: projection.receiptIds.length,
+        nodes: projection.nodes.length,
+        edges: projection.edges.length,
+      },
+      graphPolicy: projection.graphPolicy,
+    },
     filters: normalized,
     limit: boundedLimit,
     totalMatches: records.length,

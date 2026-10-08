@@ -199,8 +199,7 @@ Read only the part needed for the current outcome. These are optional paths,
 not a sequence to perform for every task.
 
 Keep ephemeral learning in the conversation: separate fact, hypothesis and inference
-and cite actual evidence. A ProductLearningNote formatting call adds no verification
-and is not a step in this flow. Persist through existing Observation/Signal contracts
+and cite actual evidence. No Core formatting or lane-recommendation call is needed. Persist through existing Observation/Signal contracts
 only when durable audit, cross-Run reuse or product-state work requires it.
 
 If an optional tool is absent from the default MCP list, use `head_tools_discover`
@@ -224,10 +223,11 @@ resynchronization automatically; do not turn it into a user decision. A real Hos
 adapter owns source access, binding, digests, coverage, and the Host provenance
 confirmation; do not ask the user to compose those fields or to attest to a
 machine observation. `head_observation_ingest` is the advanced Host/CI boundary
-for an already constructed bounded input, while `head_observation_collect`
-remains the adapter-facing compatibility alias. Descriptors define a closed data
+for an already constructed bounded input; configured-source collection stays
+separate because it performs Host access. Descriptors define a closed data
 shape, not Feature meaning, success, causality, policy, or tool routing. Read
-`head_observation_status` only as a bounded P4 summary. To use one of these
+the `inventorySummary` in `head_observation_query` as the unfiltered retained-inventory
+summary alongside the filtered page; a zero-match page does not mean no retained records. To use one of these
 records in task context, HEAD must add an EvidenceNeed of kind `observation` with
 exact current `observationIds`; lexical overlap never makes an Observation
 eligible. If product interpretation should persist, author a non-authoritative
@@ -275,8 +275,10 @@ metric JSON. A numeric comparison remains available when collection conditions
 differ, while adapter key/version/descriptor, source scope, form, duration,
 sample size, and coverage remain visibly `same`, `different`, or `unknown`.
 Never convert that comparison into semantic equivalence or causality. Assessment
-is only a P3 ProductHypothesis; a follow-up remains an initiative candidate and
-uses the existing explicit Product review only if the user chooses to promote it.
+is only a P3 ProductHypothesis. Propose a follow-up with the existing
+`head_product_initiative_propose`, citing its exact hypothesis ID; no metric-specific
+formatter call is needed. It uses the existing explicit Product review only if
+the user chooses to promote it.
 
 When the task asks what is currently deployed or delivered to named targets,
 use `head_delivery_status` and summarize observed `uniform`, `mixed`, or

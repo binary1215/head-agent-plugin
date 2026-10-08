@@ -159,7 +159,7 @@ Metric workflow는 공통 계약을 얇게 사용하는 provider-neutral 경로�
 
 `head_metric_observe`는 정확한 subject, value, time scope, source scope, 알려진 경우 sample size, coverage 및 collection-adapter identity를 기록합니다. Host가 observation time을 다시 제공하지 않고 같은 event를 retry하면 Core는 durable event time을 재사용하며, 같은 source event 아래에서 content가 달라지면 계속 fail closed됩니다. `head_metric_compare`는 정확히 같은 descriptor, subject, unit 및 direction에 대해서만 numeric difference를 허용합니다. Adapter key, adapter version, adapter descriptor digest, source scope, snapshot/aggregate form, period duration, sample size 또는 coverage state가 달라도 approval gate를 추가하지 않습니다. Numeric comparison은 계속 사용할 수 있지만 결과는 조건을 same, different, unknown으로 표시하고 normalization이 적용되지 않았음을 밝히며, like-for-like result로 보이지 않도록 derived coverage를 낮춥니다.
 
-`head_metric_assess`는 P3 ProductHypothesis만 기록하고 causality가 성립하지 않았음을 항상 명시합니다. `head_metric_follow_up`은 Product Initiative candidate만 만들며 승인에는 기존의 명시적 user review가 그대로 필요합니다. `head_metric_status`와 `head_metric_trace`는 bounded read-only P4 view입니다. 어떤 operation도 Product Canon, ReviewDecision, Conformance disposition 또는 P2 recovery direction을 쓰지 않습니다.
+`head_metric_assess`는 P3 ProductHypothesis만 기록하고 causality가 성립하지 않았음을 항상 명시합니다. 후속 제안은 별도 metric 형식화 호출 없이 정확한 평가 hypothesis ID를 인용해 `head_product_initiative_propose`로 만듭니다. Product Initiative candidate일 뿐이며 승인에는 기존의 명시적 user review가 필요합니다. `head_metric_status`와 `head_metric_trace`는 bounded read-only P4 view입니다. 어떤 operation도 Product Canon, ReviewDecision, Conformance disposition 또는 P2 recovery direction을 쓰지 않습니다.
 
 ## Context와 사용법
 
@@ -227,7 +227,7 @@ Context compilation은 기본적으로 공통 observation을 제외합니다. HE
 
 일상적인 inspection은 ephemeral하게 유지합니다. cross-Run, rebuttal/audit, handoff, context-loss evidence가 필요할 때만 Observation을 persist합니다. 사용자가 아니라 Host adapter가 정확한 source binding, descriptor, digest, coverage, provenance confirmation을 구성합니다. `observation-ingest`와 `head_observation_ingest`는 이미 bounded된 input을 위한 고급 Host/CI surface이고 collect는 adapter-facing compatibility alias로 유지됩니다.
 
-`observation-status`와 `head_observation_status`는 전체 payload node 없이 bounded P4 summary를 반환합니다. `observation-query`와 `head_observation_query`는 type, subject, source, time, observed/derived kind로 정확한 현재 identity를 필터링하며 최대 page는 100입니다. cursor continuation은 정확한 현재 `ObservationStatusProjection`에 binding되고 drift 시 fail closed합니다. query result에는 payload body 대신 payload digest가 들어갑니다. exact read surface는 선택한 record, descriptor, bounded receipt 또는 derivation lineage를 반환합니다. query는 discovery일 뿐 semantic selection, Context eligibility, sufficiency judgment가 아닙니다.
+`observation-query`와 `head_observation_query`는 전체 payload node 없이 전체 보존 자료의 개수·graph policy인 `inventorySummary`와 필터된 페이지를 함께 반환합니다. 별도 status 호출은 없습니다. `inventorySummary`는 필터된 match count가 아니며 빈 페이지가 보존 자료의 부재를 뜻하지 않습니다. 조회는 type, subject, source, time, observed/derived kind로 정확한 현재 identity를 필터링하며 최대 page는 100입니다. cursor continuation은 정확한 현재 `ObservationStatusProjection`에 binding되고 drift 시 fail closed합니다. query result에는 payload body 대신 payload digest가 들어갑니다. exact read surface는 선택한 record, descriptor, bounded receipt 또는 derivation lineage를 반환합니다. query는 discovery일 뿐 semantic selection, Context eligibility, sufficiency judgment가 아닙니다.
 
 ## 수락 속성
 

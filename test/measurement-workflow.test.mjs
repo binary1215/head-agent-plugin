@@ -11,10 +11,10 @@ import {
   compareMetricObservations,
   defineMetric,
   inspectMeasurements,
-  proposeMetricFollowUp,
   recordMetricObservation,
   traceMeasurementLineage,
 } from "../scripts/lib/measurement-workflow.mjs";
+import { proposeProductInitiative, reviewProductInitiative } from "../scripts/lib/product-operating-loop.mjs";
 import { queryTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
 import { inspectWorldModel } from "../scripts/lib/world-model.mjs";
 import { runCommand } from "../scripts/head.mjs";
@@ -93,15 +93,17 @@ test("metric evidence remains P3/P4, discloses partial coverage, and requires th
   assert.match(assessed.hypothesis.rationale, /Causality is not established\./);
   assert.equal(assessed.conformanceQueueMutated, false);
 
-  const followUp = await proposeMetricFollowUp({
+  const followUp = await proposeProductInitiative({
     root,
-    hypothesisId: assessed.hypothesis.hypothesisId,
+    hypothesisIds: [assessed.hypothesis.hypothesisId],
     title: "Investigate the measured latency change",
+    reasoning: "Follow up on the exact metric assessment without treating correlation as causation.",
   });
-  assert.equal(followUp.status, "follow-up-candidate-recorded");
-  assert.equal(followUp.explicitInitiativeReviewRequiredForApproval, true);
-  assert.equal(followUp.productCanonMutated, false);
-  assert.equal(followUp.recoveryDirectionMutated, false);
+  assert.equal(followUp.status, "recorded");
+  assert.equal(followUp.initiativeCandidate.authority, "candidate-not-approved-decision");
+  assert.equal(followUp.initiativeCandidate.instructionAuthority, false);
+  assert.equal(followUp.initiativeCandidate.promotionAuthority, false);
+  assert.deepEqual(followUp.initiativeCandidate.hypothesisIds, [assessed.hypothesis.hypothesisId]);
   assert.equal(fs.readFileSync(canonFile, "utf8"), canonBefore);
   assert.equal(fs.readFileSync(sessionFile, "utf8"), sessionBefore);
   assert.equal(fs.existsSync(path.join(root, ".head", "conformance")), false);
@@ -126,6 +128,14 @@ test("metric evidence remains P3/P4, discloses partial coverage, and requires th
   assert.deepEqual(trace.graph.edges, reference.edges);
   assert.equal(trace.authority.ordinaryWorkBlocked, false);
   assert.equal(trace.semantics.correlationImpliesCausation, false);
+  const reviewed = await reviewProductInitiative({ root, initiativeCandidateId: followUp.initiativeCandidate.initiativeCandidateId,
+    disposition: "accept", rationale: "The exact hypothesis is a conditional follow-up, not a proved effect.",
+    featureResolution: { kind: "gap", reason: "No Product Canon feature decision is implied." } });
+  assert.equal(reviewed.reviewDecision.initiativeCandidateId, followUp.initiativeCandidate.initiativeCandidateId);
+  assert.equal(reviewed.reviewDecision.initiativeCandidateHash, followUp.initiativeCandidate.initiativeCandidateHash);
+  assert.equal(reviewed.productCanonMutated, false);
+  assert.equal(fs.readFileSync(canonFile, "utf8"), canonBefore);
+  assert.equal(fs.readFileSync(sessionFile, "utf8"), sessionBefore);
 });
 
 test("metric comparison fails closed only for real comparability mismatches", async (t) => {

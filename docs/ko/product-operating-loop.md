@@ -36,7 +36,7 @@ Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약
 | 승인된 결정 | `ReviewedProductInitiative` | 명시적으로 검토된 이니셔티브이며 Product Canon은 아님 |
 | 파생 프로젝션 | Product Graph 및 `HEADContinuitySnapshot` | 재구축 가능한 참조 뷰일 뿐 |
 
-`ProductSignal → ProductHypothesis → ProductInitiativeCandidate`는 추론의 궤적이지 권한 체인이나 필수 영속화 체인이 아닙니다. 일상적인 관찰, 가설 및 추론된 의미는 콘텐츠 식별자와 그래프 재구축이 없는 비영속 `ProductLearningNote`를 기본으로 합니다. Signal/Hypothesis 아티팩트는 Run 간 경계, 반박/감사 경계, 제품 상태 경계 또는 인계/컨텍스트 손실 경계에서만 영속화합니다. Product Initiative는 `decisionScope: product-initiative`인 명시적 `ReviewDecision`을 통해서만 검토된 상태가 됩니다. Product Canon은 `.head/context/product-model.json`에 그대로 있으며 이 흐름에 의해 변경되지 않습니다.
+`ProductSignal → ProductHypothesis → ProductInitiativeCandidate`는 추론의 궤적이지 권한 체인이나 필수 영속화 체인이 아닙니다. 일상적인 관찰·가설·추론은 근거와 함께 대화에 남깁니다. 형식화 API·콘텐츠 식별자·그래프 재구축은 필요하지 않습니다. Signal/Hypothesis 아티팩트는 Run 간 경계, 반박/감사 경계, 제품 상태 경계 또는 인계/컨텍스트 손실 경계에서만 영속화합니다. Product Initiative는 `decisionScope: product-initiative`인 명시적 `ReviewDecision`을 통해서만 검토된 상태가 됩니다. Product Canon은 `.head/context/product-model.json`에 그대로 있으며 이 흐름에 의해 변경되지 않습니다.
 
 이제 durable `ProductHypothesis`는 별도로 persisted `ProductSignal`이 있거나 없어도 `observationIds`를 통해 정확한 `ObservationRecord` 또는 `DerivedObservationRecord` identity를 인용할 수 있습니다. 이미 검증된 evidence를 사람이 다시 작성할 필요를 없애지만 adapter가 meaning을 작성하지는 않습니다. hypothesis는 여전히 HEAD가 작성하며 reference는 review, promotion, success 또는 recovery authority를 부여하지 않습니다.
 
@@ -95,13 +95,10 @@ World Model은 아티팩트를 `ProductSignal`, `ProductHypothesis`, `ProductIni
 
 `head help`는 Core 작업과 복구를 보여 줍니다. 위험은 HEAD가 직접 판단하고,
 임시 사실·가설·추론과 근거는 대화에서 구분합니다. 영속 Signal/Hypothesis,
-감사나 복구가 필요할 때 `head help-all`로 찾습니다. 기존
-`operating-lane-recommend`와 `product-note`는 명시적인 호환 진단으로 남으며,
-권장 작업 단계나 권한 판단이 아닙니다.
+감사나 복구가 필요할 때 `head help-all`로 찾습니다. 실행 수단과 임시 학습은
+HEAD가 직접 판단하고 표현하며 Core 분류기나 메모 형식화 호출은 없습니다.
 
 ```text
-head operating-lane-recommend <project> --input <risk.json>
-head product-note <project> --input <note.json>
 head product-signal-record <project> --input <signal.json>
 head product-hypothesis-record <project> --input <hypothesis.json>
 head product-initiative-propose <project> --input <initiative.json>
@@ -115,14 +112,9 @@ record/review/observe 명령은 동일한 작업에서 로컬 World Model과 Pro
 
 ## MCP
 
-Operating-lane 권고는 위험과 지속성을 나타내며 실행 수단을 선택하지 않습니다.
-HEAD 직접 작업이 기본이고, 유용하면 기존 Host 위임을 사용하며, 관리형 보장이
-필요할 때만 관리형 실행을 선택합니다. `dependencyCount`에는 독립 워커 수가 아닌
-영속 계보가 필요한 실제 의존 결과를, `failureBranches`에는 일반 오류 처리가 아닌
-지속 복구 분기를 반영합니다. Run이 모든 보조 작업을 관리형으로 만들지는 않습니다.
-`minimumContracts`는 일반 Host 호출에 관리형 권한을 요구하지 않으며, 별도
-`executionMeans` 안내가 관리형 전용 요구를 구분합니다. 어느 투영도 권한을 부여하거나
-새 사용자 폼·승인 단계를 만들지 않습니다.
+HEAD 직접 작업이 기본이고, 유용하면 일반 Host 위임을 사용합니다.
+실제 복구·효과 추적이 필요할 때만 관리형 실행을 선택하며 워커 수를 위험 점수로
+쓰지 않습니다. 보호 전이는 lane 권고를 신뢰하지 않고 기존 권한 검사를 수행합니다.
 
 선택적인 typed MCP 목록에는 다음 도구가 있습니다.
 
@@ -142,10 +134,5 @@ HEAD 직접 작업이 기본이고, 유용하면 기존 Host 위임을 사용하
 HEAD가 계약을 이미 알면 사전 탐색을 생략할 수 있습니다. 지속 작업에 유용한
 관리형 변경은 `head_tools_call`의 `execution_mode: "managed"`를 사용하고
 사용자 unlock 없이 원래 검사를 유지합니다.
-
-`head_operating_lane_recommend`와 `head_product_note`는 명시적인 호환 진단
-탐색이나 알려진 직접 호출로만 사용합니다. 임시 메모 형식화는 근거를 검증하지
-않고, 과거 lane 조언은 기존 승인 방향 내 checkpoint 갱신을 통제하지 않습니다.
-실제 보호 전이의 권한 검사를 따릅니다.
 
 Initiative 검토에는 `confirm_user_review: true`가 필요합니다. 이 확인은 사용자가 소유한 검토 권한을 기록합니다. MCP를 사용할 수 있다는 사실만으로 그 권한이 부여되지는 않습니다.

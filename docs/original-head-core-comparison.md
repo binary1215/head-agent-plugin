@@ -52,7 +52,10 @@ The reference establishes six portable principles that this plugin must retain:
 
 The original design rejects permanent machinery that has not earned its
 coordination, context, or maintenance cost. The source slice reviewed at
-alpha.66 applied that correction at executable boundaries:
+alpha.66 applied that correction at executable boundaries. This is historical
+comparison evidence: beta.16 removes its advisory lane classifier and ephemeral
+note formatter entirely, leaving judgment and prose to HEAD:
+
 
 - `ProductLearningNote` keeps an observation, hypothesis, or inferred meaning
   ephemeral by default. It has no content identity, graph node, persistence, or

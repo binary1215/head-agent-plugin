@@ -35,7 +35,7 @@ The loop uses five epistemic classes:
 | approved decision | `ReviewedProductInitiative` | explicit reviewed initiative; not Product Canon |
 | derived projection | Product Graph and `HEADContinuitySnapshot` | rebuildable reference view only |
 
-`ProductSignal → ProductHypothesis → ProductInitiativeCandidate` is a reasoning trail, not an authority chain or a required persistence chain. Everyday observations, hypotheses, and inferred meanings default to a non-persisted `ProductLearningNote` with no content identity and no graph rebuild. Persist Signal/Hypothesis artifacts only at cross-Run, rebuttal/audit, product-state, or handoff/context-loss boundaries. A Product Initiative becomes reviewed only through an explicit `ReviewDecision` with `decisionScope: product-initiative`. Product Canon remains `.head/context/product-model.json` and is not mutated by this flow.
+`ProductSignal → ProductHypothesis → ProductInitiativeCandidate` is a reasoning trail, not an authority chain or a required persistence chain. Everyday observations, hypotheses, and inferred meanings remain plain conversation content with their evidence; they need no formatting API, content identity, or graph rebuild. Persist Signal/Hypothesis artifacts only at cross-Run, rebuttal/audit, product-state, or handoff/context-loss boundaries. A Product Initiative becomes reviewed only through an explicit `ReviewDecision` with `decisionScope: product-initiative`. Product Canon remains `.head/context/product-model.json` and is not mutated by this flow.
 
 A durable `ProductHypothesis` may now cite exact `ObservationRecord` or `DerivedObservationRecord` identities through `observationIds`, with or without a separately persisted `ProductSignal`. This removes manual restatement of already verified evidence without letting an adapter author meaning: HEAD still writes the hypothesis, and the reference grants no review, promotion, success, or recovery authority.
 
@@ -100,12 +100,10 @@ Repeated `product-operating-status` and `head-continuity` reads in the same proc
 `head help` exposes Core work and recovery. Reason about risk directly and keep
 ephemeral facts, hypotheses, inferences and their evidence in the conversation.
 Use `head help-all` only when durable Signal/Hypothesis, audit or recovery work is
-needed. The old `operating-lane-recommend` and `product-note` commands remain
-explicit compatibility diagnostics, not recommended workflow steps or authority.
+needed. HEAD chooses means and expresses ephemeral learning directly; no Core
+lane classifier or note-formatting operation is retained.
 
 ```text
-head operating-lane-recommend <project> --input <risk.json>
-head product-note <project> --input <note.json>
 head product-signal-record <project> --input <signal.json>
 head product-hypothesis-record <project> --input <hypothesis.json>
 head product-initiative-propose <project> --input <initiative.json>
@@ -119,15 +117,10 @@ The record/review/observe commands rebuild the local World Model and Product Gra
 
 ## MCP
 
-Operating-lane advice describes risk and persistence, not execution means.
-HEAD works directly by default, uses existing Host delegation when useful, and
-selects managed execution only for required managed guarantees. In
-`dependencyCount` count genuinely dependent outcomes requiring durable lineage,
-not independent workers; `failureBranches` describes durable recovery branches,
-not ordinary error handling. A Run does not make every helper managed.
-`minimumContracts` does not require managed authorization for an ordinary Host
-call; the separate `executionMeans` advice lists managed-only requirements.
-Neither projection grants permission or creates a new user form or approval.
+HEAD works directly by default and uses ordinary Host delegation when useful.
+Managed execution is selected only when actual recovery/effect tracking requires
+it; worker count is not a risk score. Existing protected transitions verify their
+own authority, rather than trusting a lane recommendation.
 
 The optional typed MCP catalog includes:
 
@@ -147,10 +140,5 @@ or extra user approval is added. Read-only calls retain a separate read-only rou
 Discovery can be skipped when HEAD already knows the contract. Managed mutations
 use the explicit managed route when useful for durable work: `head_tools_call`
 with `execution_mode: "managed"`, preserving the original checks without user unlock.
-
-`head_operating_lane_recommend` and `head_product_note` are available only through
-explicit compatibility discovery or known direct calls. Formatting an ephemeral
-note verifies no evidence, and old lane advice does not govern checkpoint updates
-within existing approved direction. Use actual protected-transition checks instead.
 
 Initiative review requires `confirm_user_review: true`. The confirmation records user-owned review authority; MCP availability alone does not grant it.

@@ -46,8 +46,13 @@ test("small default catalog discovers every ordinary contract without registerin
     assert.deepEqual(tool.inputSchema, catalogTools.find(x => x.name === tool.name).inputSchema);
     assert.equal(tool.invokeWith, tool.annotations.readOnlyHint ? "head_tools_read" : "head_tools_call");
   }
-  assert.equal(discoverTools({ prefix: "compatibility" }).tools.length, 2);
-  assert(discoverTools({ name: "head_product_note" }).tools[0].compatibilityDiagnostic);
+  assert.equal(discoverTools({ prefix: "compatibility" }).tools.length, 0);
+  for (const name of ["head_operating_lane_recommend", "head_product_note", "head_metric_follow_up", "head_observation_status", "head_observation_collect"]) {
+    assert.throws(() => discoverTools({ name }), /Unknown or unavailable tool/);
+    assert((await call(name, {})).error, name);
+    assert((await call("head_tools_call", { name, arguments: {} })).error, name);
+    assert(!usage({ all: true }).commands.some(command => command.split(/\s+/)[1] === name.replace(/^head_/, "").replaceAll("_", "-")));
+  }
   assert((await call("head_tools_discover", { name: "head_product_note", prefix: "head_" })).error);
 });
 
@@ -70,7 +75,7 @@ test("direct small work, optional context, status and recovery preserve authorit
   assert.deepEqual(snapshot(root), current);
   assert.equal(usage().contextPreparationRequired, false);
   assert(!usage().commands.some(command => /context-prepare|operating-lane-recommend|product-note/.test(command)));
-  assert.deepEqual(usage({ all: true }).compatibilityDiagnostics, ["operating-lane-recommend", "product-note"]);
+  assert.equal(usage({ all: true }).compatibilityDiagnostics, undefined);
   const diagnosis = runCommand(["checkpoint-diagnose", root]);
   assert.equal(diagnosis.diagnosis.state, "no-current-checkpoint");
 });

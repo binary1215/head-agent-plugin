@@ -18,7 +18,7 @@ import {
   inspectObservationSources,
 } from "../scripts/lib/observation-adapter.mjs";
 import { createObservationTypeDescriptor } from "../scripts/lib/observation-contract.mjs";
-import { inspectObservations, loadObservationProjection, queryObservations } from "../scripts/lib/observation-projection.mjs";
+import { loadObservationProjection, queryObservations } from "../scripts/lib/observation-projection.mjs";
 import { recordCollectedObservation, recordDerivedObservation } from "../scripts/lib/observation-store.mjs";
 import { prepareObservationEvidence } from "../scripts/lib/observation-workflow.mjs";
 import { recordProductHypothesis, recordProductSignal } from "../scripts/lib/product-operating-loop.mjs";
@@ -373,7 +373,7 @@ test("scopes at-most-once replay to the exact adapter and source binding", async
   const first = await ingestStructuredObservation({ root, binding: firstBinding, descriptor: type, input: observed });
   const second = await ingestStructuredObservation({ root, binding: secondBinding, descriptor: type, input: observed });
   assert.notEqual(first.observation.observationId, second.observation.observationId);
-  assert.equal(inspectObservations({ root }).projection.counts.observations, 2);
+  assert.equal(queryObservations({ root }).inventorySummary.counts.observations, 2);
   await assert.rejects(() => ingestStructuredObservation({ root, binding: firstBinding, descriptor: type, input: { ...observed, payload: { value: 2 } } }), (error) => error.code === "DIVERGENT_OBSERVATION_REPLAY");
 });
 
@@ -408,7 +408,7 @@ test("exposes the same bounded contract through CLI and MCP while requiring Host
   fs.writeFileSync(cliInput, JSON.stringify({ binding: binding(), descriptor: type, input: observed }));
   const cli = await runCommand(["observation-ingest", root, "--input", cliInput]);
   assert.equal(cli.observation.typeKey, "head.test.summary");
-  assert.equal(runCommand(["observation-status", root]).projection.counts.observations, 1);
+  assert.equal(runCommand(["observation-query", root]).inventorySummary.counts.observations, 1);
   assert.equal(runCommand(["observation-sources", root]).dynamicProjectCodeLoading, false);
   const cliQuery = runCommand(["observation-query", root, "--type-key", type.typeKey, "--limit", "1"]);
   assert.equal(cliQuery.results[0].observationId, cli.observation.observationId);
@@ -477,9 +477,9 @@ test("bounds Observation status and cursor query without semantic selection", as
     descriptor: type,
     input: { ...input({ suffix: `query-${index}`, subjectType: "example.query.subject", payload: { value: index } }), temporalScope: { observedAt: `2026-09-01T00:0${index}:00.000Z`, start: null, end: null } },
   });
-  const status = inspectObservations({ root });
-  assert.equal(status.projection.counts.observations, 3);
-  assert.equal(status.projection.nodes, undefined);
+  const status = queryObservations({ root });
+  assert.equal(status.inventorySummary.counts.observations, 3);
+  assert.equal(status.inventorySummary.nodes, undefined);
   const first = queryObservations({ root, typeKey: type.typeKey, limit: 2 });
   assert.equal(first.returned, 2);
   assert.equal(first.semanticSelection, false);
@@ -584,7 +584,7 @@ test("publishes one Observation and one receipt when divergent writers collide a
   assert.equal(records.length, 1);
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0].observationId, records[0].observationId);
-  assert.equal(inspectObservations({ root }).projection.counts.observations, 1);
+  assert.equal(queryObservations({ root }).inventorySummary.counts.observations, 1);
   assert.equal((await ingestStructuredObservation({ root, binding: binding(), descriptor: type, input: secondInput })).status, "existing");
   await assert.rejects(() => ingestStructuredObservation({ root, binding: binding(), descriptor: type, input: firstInput }), (error) => error.code === "DIVERGENT_OBSERVATION_REPLAY");
   assert.deepEqual(observationAuthorityDigests(root), before);
@@ -651,6 +651,6 @@ test("keeps divergent Observation replay process-safe across independent Node wr
   assert.equal(records.length, 1);
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0].observationId, records[0].observationId);
-  assert.equal(inspectObservations({ root }).projection.counts.observations, 1);
+  assert.equal(queryObservations({ root }).inventorySummary.counts.observations, 1);
   assert.deepEqual(observationAuthorityDigests(root), before);
 });

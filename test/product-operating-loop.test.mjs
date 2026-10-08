@@ -13,7 +13,6 @@ import {
   buildHeadContinuitySnapshot,
   inspectProductOperatingLoop,
   observeProductOutcome,
-  prepareProductLearningNote,
   PRODUCT_OPERATING_LOOP_VERSION,
   productOperatingCanonicalJson,
   productOperatingDigest,
@@ -23,7 +22,7 @@ import {
   reviewProductInitiative,
   verifyProductHypothesis,
 } from "../scripts/lib/product-operating-loop.mjs";
-import { recommendOperatingLane } from "../scripts/lib/operating-lane.mjs";
+import * as productOperatingAPI from "../scripts/lib/product-operating-loop.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
 import { buildWorldModel, inspectWorldModel, queryWorldTemporalGraph } from "../scripts/lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
@@ -154,55 +153,15 @@ test("connects the minimal Product Operating Loop while keeping Product Canon an
   assert.equal(inspectProductOperatingLoop({ root }).projection.outcomeObservations.length, 1);
 });
 
-test("keeps everyday learning ephemeral, defers Feature resolution to review, and caches only verified reads", async (t) => {
+test("removes prose formatting, defers Feature resolution to review, and caches only verified reads", async (t) => {
   const root = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const productCanonFile = path.join(root, ".head", "context", "product-model.json");
   const canonBefore = fs.readFileSync(productCanonFile, "utf8");
   await buildWorldModel({ root, persist: true });
-  const worldPointerFile = path.join(root, ".head", "world-model", "current.json");
-  const pointerBefore = fs.readFileSync(worldPointerFile, "utf8");
-
-  const note = prepareProductLearningNote({ root, statement: "A universal default should avoid persistence ritual.", epistemicClass: "hypothesis", rationale: "Same-Session reasoning does not cross an authority or recovery boundary." });
-  assert.equal(note.status, "ephemeral");
-  assert.equal(note.note.persisted, false);
-  assert.equal(note.note.contentIdentityAssigned, false);
-  assert.equal(note.persistence.recommended, false);
-  assert.equal("requiredLane" in note, false);
-  assert.equal(fs.readFileSync(worldPointerFile, "utf8"), pointerBefore);
+  assert.equal(productOperatingAPI.prepareProductLearningNote, undefined);
   assert.equal(fs.existsSync(path.join(root, ".head", "product-operations")), false);
-
-  const handoffNote = prepareProductLearningNote({ root, statement: "Another Run must rebut this observation.", epistemicClass: "observed-fact", referencedByAnotherRun: true, needsRebuttal: true });
-  assert.deepEqual(handoffNote.persistence.reasons, ["rebuttal-or-audit-needed", "referenced-by-another-run"]);
-
-  assert.equal(recommendOperatingLane({ root }).lane, "observe");
-  const sessionLane = recommendOperatingLane({ root, intent: "execute", providerInvocation: true, workspaceEffect: "reversible" });
-  assert.equal(sessionLane.lane, "session");
-  assert.equal(sessionLane.minimumContracts.includes("WholePlanSnapshot"), false);
-  const runLane = recommendOperatingLane({ root, intent: "execute", dependencyCount: 2, failureBranches: true });
-  assert.equal(runLane.lane, "run");
-  assert.equal(runLane.minimumContracts.includes("FreshHeadReview"), true);
-  const authorityLane = recommendOperatingLane({ root, externalWrite: true });
-  assert.equal(authorityLane.lane, "authority");
-  assert.equal(authorityLane.minimumContracts.includes("explicit-user-decision-at-affected-boundary"), true);
-  assert.equal(authorityLane.minimumContracts.includes("WholePlanSnapshot"), false);
-  assert.equal(recommendOperatingLane({ root, usesCredentials: true }).lane, "observe");
-  const secondOpinion = recommendOperatingLane({ root, intent: "observe", workspaceEffect: "none", dependencyCount: 0, providerInvocation: true, independentReview: true });
-  assert.equal(secondOpinion.lane, "session");
-  assert.equal(secondOpinion.minimumContracts.includes("WholePlanSnapshot"), false);
-  assert.equal(secondOpinion.reasons.includes("bounded-independent-review"), true);
-  assert.equal(recommendOperatingLane({ root, independentReview: true, dependencyCount: 2 }).lane, "run");
-  assert.equal(recommendOperatingLane({ root, independentReview: true, failureBranches: true }).lane, "run");
-  const approvedWrite = recommendOperatingLane({ root, externalWrite: true, authorizationStatus: "within-approved-scope" });
-  assert.equal(approvedWrite.lane, "session");
-  assert.equal(approvedWrite.authorizationAssessment.permissionGranted, false);
-  assert.equal(approvedWrite.minimumContracts.includes("WholePlanSnapshot"), false);
-  assert.equal(recommendOperatingLane({ root, externalWrite: true, authorizationStatus: "within-approved-scope", irreversible: true }).lane, "run");
-  assert.equal(recommendOperatingLane({ root, productCanonMutation: true, authorizationStatus: "within-approved-scope" }).lane, "authority");
-  assert.equal(recommendOperatingLane({ root, authorizationStatus: "requires-user-decision" }).lane, "authority");
-  assert.throws(() => recommendOperatingLane({ root, authorizationStatus: "assume-approved" }), { code: "INVALID_OPERATING_LANE_INPUT" });
   assert.equal(runCommand(["help"]).commands.includes("head product-signal-record <project> --input <signal.json>"), false);
-  assert.equal(runCommand(["help"]).laneRecommendationRequired, false);
   assert.equal(runCommand(["help-all"]).commands.includes("head product-signal-record <project> --input <signal.json>"), true);
 
   const proposed = await proposeProductInitiative({
@@ -253,16 +212,6 @@ test("keeps everyday learning ephemeral, defers Feature resolution to review, an
   await recordProductSignal({ root, statement: "A write must invalidate the verified read cache." });
   assert.equal(inspectProductOperatingLoop({ root }).readVerification.mode, "fresh-full-verification");
 
-  const noteInput = path.join(root, "note.json");
-  fs.writeFileSync(noteInput, JSON.stringify({ statement: "CLI notes are ephemeral.", epistemicClass: "observed-fact" }));
-  assert.equal(runCommand(["product-note", root, "--input", noteInput]).note.persisted, false);
-  const laneInput = path.join(root, "lane.json");
-  fs.writeFileSync(laneInput, JSON.stringify({ intent: "execute", workspaceEffect: "reversible" }));
-  assert.equal(runCommand(["operating-lane-recommend", root, "--input", laneInput]).lane, "session");
-  const noteMcp = await dispatchMcp({ jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "head_product_note", arguments: { project_root: root, statement: "MCP notes are ephemeral.", epistemic_class: "hypothesis" } } });
-  assert.equal(noteMcp.result.structuredContent.note.persisted, false);
-  const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
-  assert.equal(graph.nodes.some((node) => node.statement === "CLI notes are ephemeral." || node.statement === "MCP notes are ephemeral."), false);
 
   const tamperedCandidate = JSON.parse(candidateBytes);
   tamperedCandidate.title = "Tampered cached candidate";

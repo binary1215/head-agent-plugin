@@ -515,8 +515,6 @@ export function coreContract() {
     "mcp-markdown-projection-build",
     "actual-provider-session-project-binding",
     "product-operating-loop",
-    "non-persisted-product-learning-notes",
-    "risk-proportional-operating-lane-recommendation",
     "write-invalidated-verified-snapshot-read-cache",
     "inline-initiative-reasoning-with-review-time-feature-resolution",
     "epistemically-typed-product-signals-and-hypotheses",

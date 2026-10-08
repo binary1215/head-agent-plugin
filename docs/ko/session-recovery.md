@@ -236,6 +236,13 @@ ledger와 Session pointer 사이에서 중단되면 누락된 pointer 갱신만 
 
 새 integration은 별도 request나 receipt를 만들지 않습니다.
 과거 request와 receipt 형식은 좁은 reader로 원본 bytes를 바꾸지 않고 읽습니다.
+현재 builder는 과거 request-ID 입력 변형을 받지 않습니다. 이미 기록된 과거
+checkpoint는 재시도에서도 원래 identity를 유지합니다. 검증된 원본 request만
+남아 있으면 읽기는 `legacy_integration_pending`을 반환하고, integration은
+`RUN_RESULT_LEGACY_INTEGRATION_PENDING`을 보고하며 쓰거나 자동 완료하지 않습니다.
+원본 입력은 P3 참조 근거이며 복원된 P2 방향이 아닙니다. HEAD가 실제 상태와 현재
+공통 방향을 살펴 여전히 적용할 수 있는 작업만 수동으로 이어갑니다. 추가 사용자
+승인이나 일반 작업 전체 차단은 없습니다. 손상된 원본은 해당 읽기·통합에만 영향을 줍니다.
 ResultPacket은 참조 증거로 남으며 나중에 없어져도 checkpoint의 자체 완결적인
 방향이 바뀌지 않습니다. review, 운영 완료와 checkpoint 발행은 의미상 구분되지만
 중복 승인 절차를 만들지 않습니다.

@@ -35,18 +35,17 @@ import { executeRuntimeInvocation } from "./lib/runtime-one-shot-exec.mjs";
 import { applyRuntimeRunResult, readRuntimeInvocationResult } from "./lib/runtime-run-result-application.mjs";
 import { readRepositorySourceScope, writeRepositorySourceScope } from "./lib/repository-source-scope.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "./lib/project-bootstrap.mjs";
-import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, prepareProductLearningNote, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
+import { buildHeadContinuitySnapshot, inspectProductOperatingLoop, observeProductOutcome, proposeProductInitiative, recordProductHypothesis, recordProductSignal, reviewProductInitiative } from "./lib/product-operating-loop.mjs";
 import { inspectProductPolicyStatus, proposeProductPolicy, readProductPolicyCandidate, readProductPolicyReviewDecision, reviewProductPolicy } from "./lib/product-policy.mjs";
-import { assessMetricComparison, compareMetricObservations, defineMetric, inspectMeasurements, proposeMetricFollowUp, recordMetricObservation, traceMeasurementLineage } from "./lib/measurement-workflow.mjs";
+import { assessMetricComparison, compareMetricObservations, defineMetric, inspectMeasurements, recordMetricObservation, traceMeasurementLineage } from "./lib/measurement-workflow.mjs";
 import { inspectReleaseObservations, observeReleaseState } from "./lib/release-observation.mjs";
 import { inspectDeliveryState, recordDeliveryObservation } from "./lib/delivery-observation.mjs";
 import { collectRegisteredObservation, ingestJsonObservationEventFile, ingestStructuredObservation, inspectObservationSources } from "./lib/observation-adapter.mjs";
-import { inspectObservations, queryObservations } from "./lib/observation-projection.mjs";
+import { queryObservations } from "./lib/observation-projection.mjs";
 import { diffGraphLineage, inspectGraphLineage, traceGraphLineage } from "./lib/graph-lineage.mjs";
 import { readObservation, recordDerivedObservation } from "./lib/observation-store.mjs";
 import { prepareObservationEvidence } from "./lib/observation-workflow.mjs";
 import { inspectConformanceQueue, prepareConformanceAssessment, proposeConformanceFindings, proposeConformanceResolution, readConformanceFinding, recordConformanceDisposition } from "./lib/conformance-reconciliation.mjs";
-import { recommendOperatingLane, operatingExecutionGuidance } from "./lib/operating-lane.mjs";
 import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, inspectRecoveryCheckpointBasis, prepareCompaction, syncRecoveryCheckpoint, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
@@ -164,8 +163,6 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       "head conformance-read <project> --finding <conformance-finding-id>",
       "head conformance-disposition <project> --input <user-confirmed-disposition.json>",
       "head conformance-resolution-propose <project> --input <provider-head-resolution.json>",
-      "head operating-lane-recommend <project> --input <risk.json>",
-      "head product-note <project> --input <note.json>",
       "head product-policy-propose <project> --input <policy-candidate.json>",
       "head product-policy-review <project> --input <review.json>",
       "head product-policy-status <project> --candidate <policy-candidate-id>",
@@ -175,7 +172,6 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       "head metric-observe <project> --input <metric-observation.json>",
       "head metric-compare <project> --input <metric-comparison.json>",
       "head metric-assess <project> --input <metric-assessment.json>",
-      "head metric-follow-up <project> --input <follow-up.json>",
       "head metric-status <project>",
       "head metric-trace <project> (--anchor <node-id> | --metric <metric-key>) [--type-version <version>] [--depth <0..3>]",
       "head product-signal-record <project> --input <signal.json>",
@@ -186,13 +182,11 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       "head observation-sources <project>",
       "head observation-prepare <project> --type-key <key> [--subject-type <key>] [--subject-key <key>] [--adapter-key <key>] [--observed-after <timestamp>] [--observed-before <timestamp>] [--source-availability <state>] [--existing-limit <1-100>] [--source-limit <1-64>] [--source-projection <id> --source-cursor <source-id>]",
       "head observation-source-collect <project> --source <observation-source-id>",
-      "head observation-collect <project> --input <observation.json>",
       "head observation-ingest <project> --input <observation.json>",
       "head observation-file-ingest <project> --input <host-source.json>",
       "head observation-derive <project> --input <derived-observation.json>",
       "head observation-read <project> --observation <observation-id>",
       "head observation-query <project> [--type-key <key>] [--subject-type <key>] [--subject-key <key>] [--adapter-key <key>] [--observed-after <timestamp>] [--observed-before <timestamp>] [--record-kind <all|observed|derived>] [--limit <1-100>] [--projection <observation-projection-id> --cursor <observation-id>]",
-      "head observation-status <project>",
       "head product-hypothesis-record <project> --input <hypothesis.json>",
       "head product-initiative-propose <project> --input <initiative.json>",
       "head product-initiative-review <project> --input <review.json>",
@@ -271,7 +265,7 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
     "head session-list <project>  # use --session <logical-session-id> on project commands when needed",
     "head checkpoint-diagnose <project>  # only when recovery needs attention",
     "head compact-status <project>",
-    "head help-all  # advanced, compatibility, audit, and recovery commands",
+    "head help-all  # advanced, audit, and recovery commands",
   ];
   return {
     surface: surface === "managed-maintenance" ? surface : all ? "ordinary-complete" : "light-default",
@@ -279,12 +273,23 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       ? allCommands.map(line => line.replace(/^head /u, "head managed-maintenance "))
       : all ? allCommands.filter(line => !isManagedMutation(line.split(" ")[1])) : defaultCommands,
     laneRecommendationRequired: false,
-    executionMeans: operatingExecutionGuidance(),
+    executionMeans: {
+      default: "head-direct",
+      delegation: "existing-host-tools-when-useful",
+      delegationReasons: ["independently-reviewable-result", "preserve-judgment-context-in-long-sequential-work"],
+      managedWhen: ["durable-ownership", "recovery-after-interruption", "effect-retry-or-duplicate-integration-control"],
+      managedSelectionIsAutomatic: false,
+      contextTransfer: "fork-or-fresh-is-separate-from-execution-and-authority",
+      requiresUserSelection: false,
+      hostFallback: ["head-direct", "sequential"],
+      fallbackCondition: "not-started-or-confirmed-no-remaining-effects",
+      uncertainOutcome: "inspect-affected-work-before-replacement",
+      grantsPermission: false,
+    },
     durableProductRecordCommandsAreDefault: false,
     contextPreparationRequired: false,
     contextGuidance: "Read needed files directly; compile only for reproducible selected-context handoff, durable Run or recovery needs.",
-    compatibilityDiagnostics: all ? ["operating-lane-recommend", "product-note"] : [],
-    advancedCompatibilityCommand: all ? null : "head help-all",
+    advancedCommand: all ? null : "head help-all",
   };
 }
 
@@ -505,8 +510,6 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "conformance-read") return readConformanceFinding({ root, findingId: options.finding });
   if (command === "conformance-disposition") return recordConformanceDisposition({ ...inputJson(options, "Conformance user disposition"), root });
   if (command === "conformance-resolution-propose") return proposeConformanceResolution({ ...inputJson(options, "Conformance provider-HEAD resolution"), root });
-  if (command === "operating-lane-recommend") return recommendOperatingLane({ ...inputJson(options, "Operating lane risk input"), root });
-  if (command === "product-note") return prepareProductLearningNote({ ...inputJson(options, "Product learning note"), root });
   if (command === "product-policy-propose") return proposeProductPolicy({ ...inputJson(options, "Product Policy proposal"), root });
   if (command === "product-policy-review") return reviewProductPolicy({ ...inputJson(options, "Product Policy ReviewDecision"), root });
   if (command === "product-policy-status") return inspectProductPolicyStatus({ root, candidateId: options.candidate });
@@ -516,7 +519,6 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "metric-observe") return recordMetricObservation({ ...inputJson(options, "Metric observation"), root });
   if (command === "metric-compare") return compareMetricObservations({ ...inputJson(options, "Metric comparison"), root });
   if (command === "metric-assess") return assessMetricComparison({ ...inputJson(options, "Metric assessment"), root });
-  if (command === "metric-follow-up") return proposeMetricFollowUp({ ...inputJson(options, "Metric follow-up"), root });
   if (command === "metric-status") return inspectMeasurements({ root });
   if (command === "metric-trace") return traceMeasurementLineage({ root, anchorId: options.anchor || "", metricKey: options.metric || "", typeVersion: options["type-version"] || "", depth: options.depth == null ? 3 : Number(options.depth) });
   if (command === "product-signal-record") return recordProductSignal({ ...inputJson(options, "ProductSignal"), root });
@@ -555,7 +557,7 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
     sourceCursor: options["source-cursor"] || "",
   });
   if (command === "observation-source-collect") return collectRegisteredObservation({ root, registry: observationRegistry, sourceId: options.source });
-  if (command === "observation-collect" || command === "observation-ingest") {
+  if (command === "observation-ingest") {
     const value = inputJson(options, "Observation collection");
     return ingestStructuredObservation({ root, binding: value.binding, descriptor: value.descriptor, input: value.input });
   }
@@ -588,7 +590,6 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
     projectionId: options.projection || "",
     cursor: options.cursor || "",
   });
-  if (command === "observation-status") return inspectObservations({ root });
   if (command === "head-continuity") return buildHeadContinuitySnapshot({ root, fresh: options.fresh === true });
   if (command === "world-index") return buildWorldModel({
     root,

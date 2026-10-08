@@ -12,7 +12,7 @@ import {
   registerObservationType,
 } from "./observation-store.mjs";
 import { buildWorldModel, inspectWorldModel, queryWorldTemporalGraph } from "./world-model.mjs";
-import { proposeProductInitiative, recordProductHypothesis } from "./product-operating-loop.mjs";
+import { recordProductHypothesis } from "./product-operating-loop.mjs";
 
 export const MEASUREMENT_WORKFLOW_VERSION = "0.1.0";
 const METRIC_PREFIX = "metric.";
@@ -336,25 +336,6 @@ export async function assessMetricComparison({ root = ".", comparisonObservation
     causalityEstablished: false,
     ordinaryWorkBlocked: false,
     conformanceQueueMutated: false,
-  };
-}
-
-export async function proposeMetricFollowUp({ root = ".", hypothesisId, title, description = "", reasoning = "", featureResolution = null } = {}) {
-  const candidate = await proposeProductInitiative({
-    root,
-    title: requiredText(title, "Metric follow-up title", 1000),
-    description: String(description || "").trim(),
-    reasoning: requiredText(reasoning || "Follow up on the exact metric assessment without treating correlation as causation.", "Metric follow-up reasoning", 4000),
-    hypothesisIds: [requiredText(hypothesisId, "Metric hypothesis id", 128)],
-    featureResolution,
-  });
-  return {
-    ...candidate,
-    status: "follow-up-candidate-recorded",
-    explicitInitiativeReviewRequiredForApproval: true,
-    productCanonMutated: false,
-    recoveryDirectionMutated: false,
-    ordinaryWorkBlocked: false,
   };
 }
 

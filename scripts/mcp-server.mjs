@@ -201,9 +201,7 @@ const supplementalReadOnlyHints = {
   head_graph_lineage_trace: true,
   head_graph_lineage_diff: true,
   head_runtime_state: true,
-  head_operating_lane_recommend: true,
   head_compact_status: true,
-  head_product_note: true,
   head_product_operating_status: true,
   head_release_status: true,
   head_delivery_status: true,
@@ -225,7 +223,6 @@ const supplementalReadOnlyHints = {
   head_metric_observe: false,
   head_metric_compare: false,
   head_metric_assess: false,
-  head_metric_follow_up: false,
   head_product_hypothesis_record: false,
   head_product_initiative_propose: false,
   head_product_initiative_review: false,
@@ -528,12 +525,6 @@ const allTools = [
     name: "head_metric_assess",
     description: "Record a bounded P3 ProductHypothesis interpreting one exact metric comparison. Supports/contradicts/inconclusive are hypotheses, not causal findings or Canon changes.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, comparison_observation_id: { type: "string", minLength: 1 }, assessment: { type: "string", enum: ["supports", "contradicts", "inconclusive"] }, statement: { type: "string", minLength: 1, maxLength: 4000 }, rationale: { type: "string", maxLength: 4000 } }, required: ["project_root", "comparison_observation_id", "assessment", "statement"], additionalProperties: false },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "head_metric_follow_up",
-    description: "Propose a P3 Product Initiative from an exact metric hypothesis. The existing explicit initiative ReviewDecision is still required before approval.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, hypothesis_id: { type: "string", minLength: 1 }, title: { type: "string", minLength: 1, maxLength: 1000 }, description: { type: "string" }, reasoning: { type: "string", maxLength: 4000 }, feature_resolution: { type: ["object", "null"] } }, required: ["project_root", "hypothesis_id", "title"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -1619,14 +1610,6 @@ const allTools = [
     }
   },
   {
-    name: "head_operating_lane_recommend",
-    description: "Optional risk/persistence advice for Observe, Session, Run, or Authority, not selection of an execution mechanism. Direct HEAD is default; useful ordinary delegation uses available Host tools. Worker count is not dependency_count; a Run does not require every delegate to be managed. Creates no authority or artifacts; do not ask the user for a lane form.",
-    inputSchema: { type: "object", properties: {
-      project_root: { type: "string", minLength: 1 }, intent: { type: "string", enum: ["observe", "execute"], default: "observe" }, workspace_effect: { type: "string", enum: ["none", "reversible", "consequential"], default: "none" }, dependency_count: { type: "integer", minimum: 0, maximum: 32, default: 0, description: "Actual dependent outcomes requiring durable lineage, not the number of independent workers." },
-      provider_invocation: { type: "boolean", default: false, description: "A provider call may need Session-level scope, but does not by itself require managed ExecutionAuthorization." }, handoff: { type: "boolean", default: false }, context_replacement: { type: "boolean", default: false }, independent_review: { type: "boolean", default: false }, failure_branches: { type: "boolean", default: false, description: "Durable recovery branches, not merely a possible Host error or sequential fallback." }, human_decision_during_execution: { type: "boolean", default: false }, irreversible: { type: "boolean", default: false }, external_write: { type: "boolean", default: false }, uses_credentials: { type: "boolean", default: false }, authorization_status: { type: "string", enum: ["unknown", "within-approved-scope", "requires-user-decision"], default: "unknown", description: "HEAD assessment of existing scope, not a permission grant." }, product_canon_mutation: { type: "boolean", default: false }, product_initiative_decision: { type: "boolean", default: false }, recovery_checkpoint_replacement: { type: "boolean", default: false },
-    }, required: ["project_root"], additionalProperties: false },
-  },
-  {
     name: "head_compact_prepare",
     description: "Create the canonical Session/Run recovery checkpoint and one bounded compaction epoch. This does not invoke a provider or treat a provider summary as recovery authority.",
     inputSchema: { type: "object", properties: {
@@ -1652,11 +1635,6 @@ const allTools = [
     name: "head_compact_abort",
     description: "Abort one open compaction epoch without changing its canonical Session/Run checkpoint or Product Canon.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, epoch_id: { type: "string", pattern: "^compaction-epoch-[a-f0-9-]{36}$" }, reason: { type: "string", minLength: 1 } }, required: ["project_root", "epoch_id", "reason"], additionalProperties: false },
-  },
-  {
-    name: "head_product_note",
-    description: "Prepare a non-persisted epistemically typed product-learning note. It receives no content identity and does not rebuild the World Model.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, statement: { type: "string", minLength: 1 }, epistemic_class: { type: "string", enum: ["observed-fact", "hypothesis", "inferred-meaning"] }, source: { type: "string" }, rationale: { type: "string" }, evidence_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, referenced_by_another_run: { type: "boolean", default: false }, needs_rebuttal: { type: "boolean", default: false }, affects_product_state: { type: "boolean", default: false }, handoff: { type: "boolean", default: false } }, required: ["project_root", "statement", "epistemic_class"], additionalProperties: false },
   },
   {
     name: "head_product_signal_record",
@@ -1749,12 +1727,6 @@ const allTools = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
-    name: "head_observation_collect",
-    description: "Compatibility alias for ingesting one already collected, bounded Host Observation through an exact source binding. It does not open or infer an external source and cannot create ProductSignal, ReviewDecision, Product Canon, or recovery direction.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, binding: observationBindingSchema, descriptor: observationDescriptorSchema, observation: observationInputSchema, confirm_host_observation: { type: "boolean" } }, required: ["project_root", "binding", "descriptor", "observation", "confirm_host_observation"], additionalProperties: false },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  },
-  {
     name: "head_observation_ingest",
     description: "Ingest one already constructed bounded CI or Host Observation. The Host adapter owns source access, binding, digests, coverage, and provenance confirmation; this tool does not ask the user to attest to machine evidence.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, binding: observationBindingSchema, descriptor: observationDescriptorSchema, observation: observationInputSchema, confirm_host_observation: { type: "boolean" } }, required: ["project_root", "binding", "descriptor", "observation", "confirm_host_observation"], additionalProperties: false },
@@ -1808,7 +1780,7 @@ const allTools = [
   },
   {
     name: "head_observation_query",
-    description: "Query a bounded P4 summary of current Observation identities by exact type, subject, source, time, and record-kind filters. This is discovery only; it does not select semantic relevance or make records Context-eligible.",
+    description: "Read global retained inventory counts and query a bounded P4 page of current Observation identities by exact type, subject, source, time, and record-kind filters. This is discovery only; it does not select semantic relevance or make records Context-eligible.",
     inputSchema: { type: "object", properties: {
       project_root: { type: "string", minLength: 1 },
       type_key: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" },
@@ -1822,12 +1794,6 @@ const allTools = [
       projection_id: { type: "string", pattern: "^observation-projection-[a-f0-9]{24}$" },
       cursor: { type: "string", pattern: "^(?:observation|derived-observation)-[a-f0-9]{24}$" },
     }, required: ["project_root"], additionalProperties: false },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: "head_observation_status",
-    description: "Read a bounded summary of the rebuildable P4 Observation graph. Use head_observation_query for exact current IDs instead of loading full payload nodes; Product semantic edges remain absent.",
-    inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -1892,7 +1858,6 @@ for (const tool of allTools) {
 }
 
 // Stateless discovery, not a registration store or permission/activation system.
-const compatibilityTools = new Set(["head_operating_lane_recommend", "head_product_note"]);
 const defaultToolNames = new Set([
   "head_core_contract", "head_project_initialize_or_resume", "head_conversation_enter", "head_project_graph",
   "head_project_status", "head_checkpoint_diagnose", "head_checkpoint_basis",
@@ -1909,10 +1874,10 @@ const routedInputSchema = {
 const discoveryTools = [
   {
     name: "head_tools_discover",
-    description: "Read optional HEAD capability prefixes, or exact schemas by name/prefix. No Project, registration, activation or approval needed. Use only when the task needs Product, Graph, Observation, Context or retained-work diagnostics; page with nextOffset. Compatibility advice is explicit-only via prefix compatibility.",
+    description: "Read optional HEAD capability prefixes, or exact schemas by name/prefix. No Project, registration, activation or approval needed. Use only when the task needs Product, Graph, Observation, Context or retained-work diagnostics; page with nextOffset.",
     inputSchema: { type: "object", properties: {
       name: { type: "string", description: "One exact tool name; mutually exclusive with prefix." },
-      prefix: { type: "string", description: "A returned tool prefix, or compatibility for old advisory diagnostics." },
+      prefix: { type: "string", description: "A returned tool prefix." },
       offset: { type: "integer", minimum: 0, default: 0 },
       limit: { type: "integer", minimum: 1, maximum: 20, default: 8 },
     }, additionalProperties: false },
@@ -1934,11 +1899,11 @@ const discoveryTools = [
   },
 ];
 // Complete ordinary schemas for programmatic consumers; tools/list stays small.
-export const catalogTools = allTools.filter(tool => !compatibilityTools.has(tool.name));
+export const catalogTools = allTools;
 export function toolsForSurface(surface = "ordinary") {
   requireSurface(surface);
   return [...allTools.filter(tool => surface === "managed-maintenance"
-    ? !compatibilityTools.has(tool.name) : defaultToolNames.has(tool.name)), ...discoveryTools];
+    ? true : defaultToolNames.has(tool.name)), ...discoveryTools];
 }
 export const tools = toolsForSurface();
 
@@ -1953,22 +1918,19 @@ export function discoverTools({ name, prefix, offset = 0, limit = 8 } = {}, surf
     maintenanceEntry: "scripts/mcp-managed-maintenance.mjs (same managed execution contract; retained reader supported)" };
   if (name == null && prefix == null) {
     const counts = new Map();
-    for (const tool of available.filter(tool => !compatibilityTools.has(tool.name))) {
+    for (const tool of available) {
       const key = `head_${tool.name.split("_")[1]}_`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
     return { ...scope, prefixes: [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([prefix, count]) => ({ prefix, count })),
-      compatibility: "Explicit diagnostic lookup only; not a recommended workflow.", nextOffset: null };
+      nextOffset: null };
   }
-  const matches = available.filter(tool => name != null ? tool.name === name : prefix === "compatibility"
-    ? compatibilityTools.has(tool.name) : !compatibilityTools.has(tool.name) && tool.name.startsWith(prefix));
+  const matches = available.filter(tool => name != null ? tool.name === name : tool.name.startsWith(prefix));
   if (name != null && !matches.length) throw new Error(`Unknown or unavailable tool on ${surface}: ${name}`);
   return { ...scope, total: matches.length, offset, nextOffset: offset + limit < matches.length ? offset + limit : null,
     tools: matches.slice(offset, offset + limit).map(tool => ({ ...tool,
       invokeWith: tool.annotations?.readOnlyHint === true ? "head_tools_read" : "head_tools_call",
       ...(isManagedMutation(tool.name) ? { executionMode: "managed" } : {}),
-      ...(compatibilityTools.has(tool.name) ? { compatibilityDiagnostic: true,
-        guidance: "Historical formatting/advice only; reason directly as HEAD. Not a decision or evidence verifier." } : {}),
     })) };
 }
 
@@ -2381,8 +2343,6 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
         ? (await import("./lib/measurement-workflow.mjs")).compareMetricObservations({ root: args.project_root, baselineObservationId: args.baseline_observation_id, currentObservationId: args.current_observation_id })
       : name === "head_metric_assess"
         ? (await import("./lib/measurement-workflow.mjs")).assessMetricComparison({ root: args.project_root, comparisonObservationId: args.comparison_observation_id, assessment: args.assessment, statement: args.statement, rationale: args.rationale || "" })
-      : name === "head_metric_follow_up"
-        ? (await import("./lib/measurement-workflow.mjs")).proposeMetricFollowUp({ root: args.project_root, hypothesisId: args.hypothesis_id, title: args.title, description: args.description || "", reasoning: args.reasoning || "", featureResolution: args.feature_resolution ?? null })
       : name === "head_metric_status"
         ? (await import("./lib/measurement-workflow.mjs")).inspectMeasurements({ root: args.project_root })
       : name === "head_metric_trace"
@@ -2630,8 +2590,6 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                             kind: args.kind || "",
                             limit: args.limit ?? 50,
                           })
-                          : name === "head_operating_lane_recommend"
-                            ? (await import("./lib/operating-lane.mjs")).recommendOperatingLane({ root: args.project_root, intent: args.intent, workspaceEffect: args.workspace_effect, dependencyCount: args.dependency_count, providerInvocation: args.provider_invocation, handoff: args.handoff, contextReplacement: args.context_replacement, independentReview: args.independent_review, failureBranches: args.failure_branches, humanDecisionDuringExecution: args.human_decision_during_execution, irreversible: args.irreversible, externalWrite: args.external_write, usesCredentials: args.uses_credentials, authorizationStatus: args.authorization_status, productCanonMutation: args.product_canon_mutation, productInitiativeDecision: args.product_initiative_decision, recoveryCheckpointReplacement: args.recovery_checkpoint_replacement })
                           : name === "head_compact_prepare"
                             ? (await import("./lib/compaction-recovery.mjs")).prepareCompaction({ root: args.project_root, runtime: args.runtime || "manual", userTurnIdAtPrepare: args.user_turn_id_at_prepare, purpose: args.purpose, approvedDecisions: args.approved_decisions, currentPosition: args.current_position, nextExpectedResult: args.next_expected_result, openReviewIds: args.open_review_ids || [] })
                           : name === "head_compact_verify"
@@ -2656,8 +2614,6 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                                 openReviewIds: args.direction.open_review_ids,
                               },
                             })
-                          : name === "head_product_note"
-                            ? (await import("./lib/product-operating-loop.mjs")).prepareProductLearningNote({ root: args.project_root, statement: args.statement, epistemicClass: args.epistemic_class, source: args.source || "", rationale: args.rationale || "", evidenceIds: args.evidence_ids || [], referencedByAnotherRun: args.referenced_by_another_run ?? false, needsRebuttal: args.needs_rebuttal ?? false, affectsProductState: args.affects_product_state ?? false, handoff: args.handoff ?? false })
                           : name === "head_product_signal_record"
                             ? (await import("./lib/product-operating-loop.mjs")).recordProductSignal({ root: args.project_root, statement: args.statement, observedAt: args.observed_at, source: args.source || "", evidenceIds: args.evidence_ids || [] })
                           : name === "head_product_hypothesis_record"
@@ -2680,7 +2636,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                             ? (await import("./lib/observation-workflow.mjs")).prepareObservationEvidence({ root: args.project_root, registry: observationRegistry, typeKey: args.type_key, subjectType: args.subject_type || "", subjectKey: args.subject_key || "", adapterKey: args.adapter_key || "", observedAfter: args.observed_after || "", observedBefore: args.observed_before || "", existingLimit: args.existing_limit ?? 20, sourceLimit: args.source_limit ?? 20, sourceAvailability: args.source_availability || "", sourceProjectionId: args.source_projection_id || "", sourceCursor: args.source_cursor || "" })
                           : name === "head_observation_collect_source"
                             ? (await import("./lib/observation-adapter.mjs")).collectRegisteredObservation({ root: args.project_root, registry: observationRegistry, sourceId: args.source_id })
-                          : name === "head_observation_collect" || name === "head_observation_ingest"
+                          : name === "head_observation_ingest"
                             ? (requireMcpConfirmation(args.confirm_host_observation, "Observation collection requires explicit confirmation that the payload came from the exact Host source binding.", "OBSERVATION_HOST_CONFIRMATION_REQUIRED"), (await import("./lib/observation-adapter.mjs")).ingestStructuredObservation({ root: args.project_root, binding: observationBindingFromMcp(args.binding), descriptor: observationDescriptorFromMcp(args.descriptor), input: observationInputFromMcp(args.observation) }))
                           : name === "head_observation_derive"
                             ? (requireMcpConfirmation(args.confirm_host_derivation, "Derived Observation recording requires explicit confirmation that the payload came from the named deterministic algorithm.", "OBSERVATION_DERIVATION_CONFIRMATION_REQUIRED"), (await import("./lib/observation-store.mjs")).recordDerivedObservation({ root: args.project_root, descriptor: observationDescriptorFromMcp(args.descriptor), input: { subject: args.subject, temporalScope: { observedAt: args.temporal_scope.observed_at, start: args.temporal_scope.start, end: args.temporal_scope.end }, inputObservationIds: args.input_observation_ids, algorithm: args.algorithm, coverage: observationCoverageFromMcp(args.coverage), payload: args.payload } }))
@@ -2688,8 +2644,6 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                             ? (await import("./lib/observation-store.mjs")).readObservation({ root: args.project_root, observationId: args.observation_id })
                           : name === "head_observation_query"
                             ? (await import("./lib/observation-projection.mjs")).queryObservations({ root: args.project_root, typeKey: args.type_key || "", subjectType: args.subject_type || "", subjectKey: args.subject_key || "", adapterKey: args.adapter_key || "", observedAfter: args.observed_after || "", observedBefore: args.observed_before || "", recordKind: args.record_kind || "all", limit: args.limit ?? 25, projectionId: args.projection_id || "", cursor: args.cursor || "" })
-                          : name === "head_observation_status"
-                            ? (await import("./lib/observation-projection.mjs")).inspectObservations({ root: args.project_root })
                           : name === "head_continuity_snapshot"
                             ? (await import("./lib/product-operating-loop.mjs")).buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());

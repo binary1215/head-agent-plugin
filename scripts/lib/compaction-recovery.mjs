@@ -13,7 +13,6 @@ import { operationPointerHash, sessionStateHash } from "./run-lineage.mjs";
 
 export const COMPACTION_RECOVERY_VERSION = "0.3.0";
 export const RECOVERY_CHECKPOINT_SYNC_VERSION = "0.1.0";
-const RUN_RESULT_INTEGRATION_VERSION = "0.1.0";
 
 const OPEN_STATES = new Set(["preparing", "prepared", "provider_compacted", "verified"]);
 const TERMINAL_STATES = new Set(["continued", "superseded", "aborted"]);
@@ -380,66 +379,20 @@ export function inspectRecoveryCheckpointBasis({ root = "." } = {}) {
   };
 }
 
-function verifyIntegrationRequest(inspected, input, checkpointInput) {
-  const requestFile = path.join(
-    inspected.project.projectRoot,
-    ".head",
-    "sessions",
-    "integrations",
-    "requests",
-    `${input.reviewDecisionId}.json`,
-  );
-  if (!fs.existsSync(requestFile)) {
-    fail("Reviewed Run integration requires its create-only P3 request.", "RUN_RESULT_INTEGRATION_REQUEST_REQUIRED");
-  }
-  const request = readJson(requestFile, "Run result integration request");
-  if (request.kind !== "RunResultIntegrationRequest"
-    || request.protocol?.name !== "head-agent-core-run-result-integration"
-    || request.protocol?.version !== RUN_RESULT_INTEGRATION_VERSION
-    || request.projectId !== inspected.project.projectId
-    || request.sessionId !== inspected.state.sessionId
-    || request.runId !== input.runId
-    || request.reviewDecisionId !== input.reviewDecisionId
-    || request.integrationRequestId !== input.integrationRequestId
-    || request.integrationInputHash !== input.integrationInputHash
-    || request.recoveryAuthority !== false
-    || request.instructionAuthority !== false
-    || request.promotionAuthority !== false) {
-    fail("Run result integration request does not match the current transaction.", "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT");
-  }
-  verifyArtifactAuthorityBoundary("RunResultIntegrationRequest", request.authorityBoundary);
-  const payload = { ...request };
-  const recordedId = payload.integrationRequestId;
-  const recordedHash = payload.integrationRequestHash;
-  delete payload.integrationRequestId;
-  delete payload.integrationRequestHash;
-  const actualHash = digest(canonicalJson(payload));
-  if (recordedHash !== actualHash
-    || recordedId !== `run-result-integration-request-${actualHash.slice(0, 24)}`
-    || request.integrationInputHash !== digest(canonicalJson(request.input))
-    || canonicalJson(request.input) !== canonicalJson(checkpointInput)) {
-    fail("Run result integration request cannot author a different recovery direction.", "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT");
-  }
-  return request;
-}
-
 function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
   if (input == null) return null;
   const keys = Object.keys(input).sort();
-  const legacy = Object.hasOwn(input, "integrationRequestId");
-  if (canonicalJson(keys) !== canonicalJson(legacy ? ["integrationInputHash", "integrationRequestId", "reviewDecisionId", "runId"] : ["integrationInputHash", "reviewDecisionId", "runId"])) {
+  if (canonicalJson(keys) !== canonicalJson(["integrationInputHash", "reviewDecisionId", "runId"])) {
     fail("Reviewed Run integration requires the exact decision and caller direction.", "INVALID_RUN_RESULT_INTEGRATION");
   }
   const runId = requiredText(input.runId, "Reviewed Run id");
   const reviewDecisionId = requiredText(input.reviewDecisionId, "Reviewed Run ReviewDecision id");
-  const integrationRequestId = legacy ? requiredText(input.integrationRequestId, "Run result integration request id") : null;
   const integrationInputHash = requiredText(input.integrationInputHash, "Run result integration input hash");
   if (!/^run-[0-9]+-[a-f0-9]{6}$/.test(runId) || !/^review-decision-[a-f0-9]{24}$/.test(reviewDecisionId)
-    || legacy && !/^run-result-integration-request-[a-f0-9]{24}$/.test(integrationRequestId) || !/^[a-f0-9]{64}$/.test(integrationInputHash)) {
+    || !/^[a-f0-9]{64}$/.test(integrationInputHash)) {
     fail("Reviewed Run integration identities are invalid.", "INVALID_RUN_RESULT_INTEGRATION");
   }
   if (integrationInputHash !== digest(canonicalJson(checkpointInput))) fail("Integration direction differs from the exact caller input.", "RUN_RESULT_INTEGRATION_CONFLICT");
-  if (legacy) verifyIntegrationRequest(inspected, { runId, reviewDecisionId, integrationRequestId, integrationInputHash }, checkpointInput);
   if (inspected.state.activeRunId || inspected.state.pendingReview || inspected.state.lastReviewDecisionId !== reviewDecisionId) {
     fail("Reviewed Run integration requires the current completed review state.", "RUN_RESULT_INTEGRATION_STATE_CONFLICT");
   }
@@ -480,7 +433,7 @@ function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
     resultPacketId: result.resultPacketId,
     reviewDecisionId: review.reviewDecisionId,
     reviewContextId: review.reviewContextId,
-    ...(legacy ? { integrationRequestId } : { previousCheckpointId: inspected.state.latestCheckpoint || null }),
+    previousCheckpointId: inspected.state.latestCheckpoint || null,
     integrationInputHash,
     disposition: review.disposition,
     reviewedAt: requiredText(run.reviewedAt, "Reviewed Run timestamp"),
@@ -540,8 +493,7 @@ function createRecoveryCheckpointLocked({ root = ".", purpose, approvedDecisions
   const inspected = readyProject(root, "a recovery checkpoint is created");
   if (reviewedRunIntegration) {
     const keys = Object.keys(reviewedRunIntegration).sort();
-    const expectedKeys = Object.hasOwn(reviewedRunIntegration, "integrationRequestId")
-      ? ["integrationInputHash", "integrationRequestId", "reviewDecisionId", "runId"] : ["integrationInputHash", "reviewDecisionId", "runId"];
+    const expectedKeys = ["integrationInputHash", "reviewDecisionId", "runId"];
     if (canonicalJson(keys) !== canonicalJson(expectedKeys) || !/^[a-f0-9]{64}$/.test(reviewedRunIntegration.integrationInputHash || "")) fail("Reviewed integration requires the exact decision and input identity.", "INVALID_RUN_RESULT_INTEGRATION");
     const direction = normalizeCheckpointDirection(inspected, { purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
     const inputHash = digest(canonicalJson({ runId: reviewedRunIntegration.runId, reviewDecisionId: reviewedRunIntegration.reviewDecisionId, ...direction }));
@@ -568,6 +520,13 @@ function createRecoveryCheckpointLocked({ root = ".", purpose, approvedDecisions
         return persistRecoveryCheckpoint(inspected, checkpoint);
       }
       return { status: "existing", file: checkpointFile(inspected.project.projectRoot, checkpoint.checkpointId), checkpoint, state: inspected.state };
+    }
+    // A historical request records a pending operation, not permission to
+    // manufacture a replacement checkpoint. The Session recovery reader owns
+    // original verification and the bounded manual HEAD transfer diagnostic.
+    const requestFile = path.join(inspected.project.projectRoot, ".head", "sessions", "integrations", "requests", `${reviewedRunIntegration.reviewDecisionId}.json`);
+    if (fs.existsSync(requestFile)) {
+      fail(`Historical integration remains pending at ${requestFile}; read the original with readRunResultIntegration and transfer its verified direction through HEAD.`, "RUN_RESULT_LEGACY_INTEGRATION_PENDING");
     }
   }
   const payload = recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds, reviewedRunIntegration });

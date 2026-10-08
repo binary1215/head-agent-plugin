@@ -14,7 +14,7 @@ try {
   assert(!(await call("head_core_contract")).error);
   assert(!(await call("head_tools_discover", { prefix: "head_world_" })).error);
   const cold = [...loaded];
-  for (const file of ["world-model", "context-compiler", "bounded-worker-job", "bounded-worker-wave", "worker-integration-workflow", "product-operating-loop", "observation-adapter", "operating-lane"]) {
+  for (const file of ["world-model", "context-compiler", "bounded-worker-job", "bounded-worker-wave", "worker-integration-workflow", "product-operating-loop", "observation-adapter"]) {
     assert(!cold.some(url => url.endsWith(`/lib/${file}.mjs`)), file);
   }
   const unavailable = await call("head_tools_read", { name: "head_world_model", arguments: { project_root: "." } });

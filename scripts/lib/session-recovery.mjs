@@ -406,6 +406,22 @@ function verifyIntegrationReceipt(root, receipt, expectedReviewDecisionId = null
   return { receipt, checkpoint };
 }
 
+function pendingHistoricalIntegration(root, reviewDecisionId) {
+  const file = integrationRequestFile(root, reviewDecisionId);
+  if (!fs.existsSync(file)) return null;
+  const request = verifyIntegrationRequest(root, readJson(file, "Historical integration request"));
+  if (request.reviewDecisionId !== reviewDecisionId) fail("Historical request does not match its original path.", "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT");
+  return {
+    status: "legacy_integration_pending", file, request,
+    historicalInput: request.input,
+    originalRole: "historical-P3-reference-evidence-not-restored-P2-direction",
+    currentProjectDirection: readProjectDirection({ root }),
+    nextAction: "HEAD may inspect the verified historical P3 input and current common direction, then independently derive current direction and manually transfer only still-applicable work. The request is not restored P2 direction and is never automatically adopted or completed.",
+    recoveryAuthority: false, instructionAuthority: false, promotionAuthority: false,
+    persisted: false, ordinaryWorkBlocked: false, userDecisionRequired: false, headActionRequired: true,
+  };
+}
+
 export function readRunResultIntegration({ root = ".", reviewDecisionId } = {}) {
   const inspected = readyProject(root, "a Run result integration is read");
   const file = integrationFile(inspected.project.projectRoot, reviewDecisionId);
@@ -423,7 +439,11 @@ export function readRunResultIntegration({ root = ".", reviewDecisionId } = {}) 
     if (checkpoint.reviewedRunIntegration?.reviewDecisionId === reviewDecisionId && checkpoint.sessionId === inspected.state.sessionId) matches.push(checkpoint);
   }
   if (matches.length > 1) fail("ReviewDecision is linked to multiple recovery checkpoints.", "RUN_RESULT_INTEGRATION_MULTIPLE_CHECKPOINTS");
-  if (!matches[0]) fail(`Run result integration not found: ${reviewDecisionId}`, "RUN_RESULT_INTEGRATION_NOT_FOUND");
+  if (!matches[0]) {
+    const pending = pendingHistoricalIntegration(inspected.project.projectRoot, reviewDecisionId);
+    if (pending) return pending;
+    fail(`Run result integration not found: ${reviewDecisionId}`, "RUN_RESULT_INTEGRATION_NOT_FOUND");
+  }
   const checkpoint = matches[0];
   return { status: "verified", file: path.join(ledger, `${checkpoint.checkpointId}.json`), checkpoint, integration: verifyReviewedRunIntegration(inspected.project.projectRoot, checkpoint) };
 }
@@ -433,7 +453,16 @@ export function integrateReviewedRunCheckpoint({ root = ".", runId, reviewDecisi
   const input = integrationInput({ runId, reviewDecisionId, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
   const integrationInputHash = digest(canonicalJson(input));
   const requestFile = integrationRequestFile(inspected.project.projectRoot, input.reviewDecisionId);
-  const legacy = fs.existsSync(requestFile) ? verifyIntegrationRequest(inspected.project.projectRoot, readJson(requestFile, "Historical integration request"), input, integrationInputHash) : null;
+  if (fs.existsSync(requestFile)) {
+    verifyIntegrationRequest(inspected.project.projectRoot, readJson(requestFile, "Historical integration request"), input, integrationInputHash);
+    const original = readRunResultIntegration({ root: inspected.project.projectRoot, reviewDecisionId: input.reviewDecisionId });
+    if (original.status === "legacy_integration_pending") {
+      const error = new Error(`Historical integration remains pending at ${original.file}. ${original.nextAction}`);
+      error.code = "RUN_RESULT_LEGACY_INTEGRATION_PENDING";
+      error.pendingIntegration = original;
+      throw error;
+    }
+  }
   const recorded = createRecoveryCheckpoint({
       root: inspected.project.projectRoot,
       purpose: input.purpose,
@@ -444,7 +473,6 @@ export function integrateReviewedRunCheckpoint({ root = ".", runId, reviewDecisi
       reviewedRunIntegration: {
         runId: input.runId,
         reviewDecisionId: input.reviewDecisionId,
-        ...(legacy ? { integrationRequestId: legacy.integrationRequestId } : {}),
         integrationInputHash,
       },
     });

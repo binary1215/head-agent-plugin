@@ -88,54 +88,6 @@ function readyProject(root, action) {
   return inspected;
 }
 
-export function prepareProductLearningNote({
-  root = ".",
-  statement,
-  epistemicClass,
-  source = "",
-  rationale = "",
-  evidenceIds = [],
-  referencedByAnotherRun = false,
-  needsRebuttal = false,
-  affectsProductState = false,
-  handoff = false,
-} = {}) {
-  const inspected = readyProject(root, "a non-persisted product learning note is prepared");
-  if (!["observed-fact", "hypothesis", "inferred-meaning"].includes(epistemicClass)) fail("Product learning note epistemicClass must be observed-fact, hypothesis, or inferred-meaning.", "INVALID_PRODUCT_LEARNING_NOTE");
-  for (const [label, value] of Object.entries({ referencedByAnotherRun, needsRebuttal, affectsProductState, handoff })) {
-    if (typeof value !== "boolean") fail(`Product learning note ${label} must be a boolean.`, "INVALID_PRODUCT_LEARNING_NOTE");
-  }
-  const persistenceReasons = [
-    referencedByAnotherRun && "referenced-by-another-run",
-    needsRebuttal && "rebuttal-or-audit-needed",
-    affectsProductState && "affects-product-state",
-    handoff && "handoff-or-context-loss",
-  ].filter(Boolean).sort();
-  return {
-    status: "ephemeral",
-    note: {
-      kind: "ProductLearningNote",
-      projectId: inspected.project.projectId,
-      sessionId: inspected.state.sessionId,
-      statement: requiredText(statement, "Product learning note statement"),
-      epistemicClass,
-      source: optionalText(source, "Product learning note source"),
-      rationale: optionalText(rationale, "Product learning note rationale"),
-      evidenceIds: sortedIds(evidenceIds, "Product learning note evidenceIds"),
-      authority: epistemicClass === "observed-fact" ? "non-authoritative-observation" : epistemicClass === "hypothesis" ? "non-authoritative-hypothesis" : "non-authoritative-inferred-meaning",
-      persisted: false,
-      contentIdentityAssigned: false,
-      instructionAuthority: false,
-      promotionAuthority: false,
-    },
-    persistence: {
-      recommended: persistenceReasons.length > 0,
-      reasons: persistenceReasons,
-      rule: "persist-only-at-handoff-audit-product-state-or-cross-run-boundaries",
-    },
-  };
-}
-
 function safeDirectory(projectRoot, relative) {
   const root = path.resolve(projectRoot);
   const directory = path.resolve(root, ...relative.split("/"));
