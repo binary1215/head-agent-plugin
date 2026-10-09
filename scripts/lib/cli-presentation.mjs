@@ -203,6 +203,9 @@ export function formatConversationRecovery(value) {
     const suffix = value.presentation.mode === "notice" ? `; ${value.attention?.items?.length || 0} optional item(s) remain available when relevant` : "";
     return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified direction — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n`;
   }
+  for (const attention of entry?.attention?.items || []) {
+    if (attention.actionability === "immediate") lines.push(`${attention.owner} follow-up: ${compactText(attention.summary, 300)}`);
+  }
   if (value?.status === "host_lifecycle_unavailable") {
     lines.push("Host compaction hooks are unavailable; first-turn artifact restore still works and provider compaction remains Host-owned.");
   } else if (value?.status === "compaction_lifecycle_prepared") {

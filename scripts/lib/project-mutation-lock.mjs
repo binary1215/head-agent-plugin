@@ -10,6 +10,8 @@ import { setTimeout as delay } from "node:timers/promises";
 const context = new AsyncLocalStorage();
 const pause = new Int32Array(new SharedArrayBuffer(4));
 const WAIT_MS = 10_000;
+const READ_ATTEMPTS = 6;
+const READ_RETRY_MS = 10;
 const HOST = crypto.createHash("sha256").update(os.hostname()).digest("hex").slice(0, 16);
 const OWNER = /^owner-([a-f0-9]{16})-([1-9][0-9]*)-([a-f0-9]{32})\.json$/;
 
@@ -22,7 +24,7 @@ function lockFor(root, scope) {
   const canonicalRoot = fs.realpathSync(path.resolve(root));
   const headRoot = path.join(canonicalRoot, ".head");
   if (!fs.existsSync(headRoot)) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
-  safeDirectory(headRoot);
+  retryLockRead(() => safeDirectory(headRoot));
   return path.join(headRoot, ".operations", `${scope}.lock`);
 }
 
@@ -30,6 +32,38 @@ function safeDirectory(directory) {
   const stat = fs.lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail("Unsafe mutation lock path.", "INVALID_PROJECT_MUTATION_LOCK");
   return stat;
+}
+
+function retryLockRead(read) {
+  // Windows can deny an enumeration while a competing owner removes its
+  // directory. Errno alone cannot distinguish that from persistent ACL denial.
+  // Retry only pre-effect reads, finitely, preserving the first original error.
+  let firstError;
+  for (let attempt = 0; attempt < READ_ATTEMPTS; attempt += 1) {
+    try { return read(); }
+    catch (error) {
+      if (error.code !== "EPERM" && error.code !== "EACCES") throw error;
+      firstError ??= error;
+      if (attempt === READ_ATTEMPTS - 1) throw firstError;
+      Atomics.wait(pause, 0, 0, READ_RETRY_MS);
+    }
+  }
+}
+
+function readLockPath(directory, target, read) {
+  return retryLockRead(() => {
+    // Revalidate the complete lock namespace on every read attempt. Never
+    // convert an unsafe replacement into transient contention.
+    const parent = path.dirname(directory);
+    safeDirectory(path.dirname(parent));
+    safeDirectory(parent);
+    if (target !== parent) safeDirectory(target);
+    return read();
+  });
+}
+
+function lockEntries(directory, target = directory) {
+  return readLockPath(directory, target, () => fs.readdirSync(target));
 }
 
 function absent(pid) {
@@ -55,12 +89,11 @@ function release(owner) {
 
 function attempt(directory) {
   fs.mkdirSync(path.dirname(directory), { recursive: true });
-  try { safeDirectory(path.dirname(directory)); }
+  try { readLockPath(directory, path.dirname(directory), () => {}); }
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
   if (fs.existsSync(directory)) {
     try {
-      safeDirectory(directory);
-      const files = fs.readdirSync(directory);
+      const files = lockEntries(directory);
       for (const name of files) {
         const match = OWNER.exec(name);
         if (!match) fail("Unexpected mutation lock entry.", "INVALID_PROJECT_MUTATION_LOCK");
@@ -102,8 +135,7 @@ function cleanInterruptedStaging(directory) {
   if (!fs.existsSync(parent)) return;
   let files;
   try {
-    safeDirectory(parent);
-    files = fs.readdirSync(parent);
+    files = lockEntries(directory, parent);
   } catch (error) { if (error.code === "ENOENT") return; throw error; }
   const prefix = `.${path.basename(directory)}-`;
   for (const name of files) {
@@ -113,8 +145,7 @@ function cleanInterruptedStaging(directory) {
     if (!match || match[1] !== HOST || !absent(Number(match[2]))) continue;
     const staging = path.join(parent, name);
     try {
-      safeDirectory(staging);
-      const entries = fs.readdirSync(staging);
+      const entries = lockEntries(directory, staging);
       if (entries.some((entry) => entry !== ownerName)) fail("Unexpected staged mutation lock entry.", "INVALID_PROJECT_MUTATION_LOCK");
       if (entries.length) release({ directory: staging, file: path.join(staging, ownerName) });
       else fs.rmdirSync(staging);
@@ -138,7 +169,7 @@ export function withProjectMutation({ root = ".", scope }, operation) {
     // A synchronous caller cannot wait for an unrelated async owner in this
     // event loop: doing so would prevent that owner from releasing its lock.
     try {
-      if (fs.readdirSync(directory).some((name) => {
+      if (lockEntries(directory).some((name) => {
         const match = OWNER.exec(name);
         return match?.[1] === HOST && match[2] === String(process.pid);
       })) {

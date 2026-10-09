@@ -353,7 +353,8 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
   return [
     {
       id: "direct-work",
-      availability: blocked || "available",
+      // Core readiness scopes HEAD-managed capabilities, never ordinary work.
+      availability: "available",
       useWhen: "The task can be completed coherently in the current Project and Session without durable execution governance.",
       entrypoint: "Use the active coding conversation; HEAD artifacts are not required for ordinary edits.",
     },

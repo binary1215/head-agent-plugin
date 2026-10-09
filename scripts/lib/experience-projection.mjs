@@ -44,8 +44,8 @@ export function buildAttentionProjection(experience) {
     id: "recovery-verification",
     owner: "HEAD",
     severity: "integrity",
-    summary: `Inspect recovery evidence before checkpoint-dependent work (${recovery.reasonCode || recovery.state}).`,
-    blockedOperations: ["checkpoint-dependent-work"],
+    summary: `Inspect recovery readiness for the affected HEAD operations (${recovery.reasonCode || recovery.state}).`,
+    blockedOperations: recovery.blockedOperations || [],
   }));
   if (product.state === "review_required") items.push(item({
     id: "product-canon-review",
@@ -133,5 +133,7 @@ export function buildPresentationProjection(attention) {
 
 export function withExperienceProjections(experience) {
   const attention = buildAttentionProjection(experience);
-  return { ...experience, attention, presentation: buildPresentationProjection(attention) };
+  // Public action flags describe the whole entry. Recovery-only flags retain
+  // their narrower meaning under readiness.recovery.
+  return { ...experience, ...actionability(attention), attention, presentation: buildPresentationProjection(attention) };
 }

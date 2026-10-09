@@ -879,7 +879,8 @@ test("detects managed file drift and blocks canonical mutation", (t) => {
   assert.equal(experience.attention.ordinaryWorkBlocked, false);
   assert.equal(experience.attention.blockedOperations.includes("head-managed-mutation"), true);
   assert.equal(experience.nextAction.entrypoint.note.includes("explicit repair"), true);
-  assert.equal(experience.capabilities.every((item) => item.availability === "blocked-until-core-ready"), true);
+  assert.equal(experience.capabilities.find((item) => item.id === "direct-work").availability, "available");
+  assert.equal(experience.capabilities.filter((item) => item.id !== "direct-work").every((item) => item.availability === "blocked-until-core-ready"), true);
   assert.throws(() => createRecoveryCheckpoint({
     root,
     purpose: "must fail",

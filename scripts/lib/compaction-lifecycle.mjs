@@ -9,6 +9,7 @@ import {
   verifyCompaction,
 } from "./compaction-recovery.mjs";
 import { inspectProjectExperience, recoveryReadiness } from "./project-bootstrap.mjs";
+import { actionability } from "./experience-projection.mjs";
 
 export const COMPACTION_LIFECYCLE_VERSION = "0.1.0";
 const EVENT_KINDS = new Set(["conversation-entry", "provider-replaced", "before-compaction", "after-compaction"]);
@@ -135,6 +136,7 @@ function conversationProjection(root, recovery) {
   delete publicRecovery.restore;
   const projectStatus = inspectProjectExperience({ root, recoveryOverride: publicRecovery });
   return {
+    ...actionability(projectStatus),
     projectStatus,
     attention: projectStatus.attention,
     runtime: projectStatus.runtime,
