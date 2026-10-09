@@ -100,7 +100,17 @@ func newPlatformController() (platformController, error) {
 
 func (controller *windowsController) Strategy() string { return "windows-job-object" }
 
-func (controller *windowsController) Configure(command *exec.Cmd) {}
+func (controller *windowsController) Configure(command *exec.Cmd) {
+	// Providers use the supervisor's pipes, not a visible console. Hiding the
+	// owner does not hide a console child started from a detached owner.
+	// This is presentation only: keep Job Object ownership and inherited handles.
+	const createNoWindow = 0x08000000
+	if command.SysProcAttr == nil {
+		command.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	command.SysProcAttr.HideWindow = true
+	command.SysProcAttr.CreationFlags |= createNoWindow
+}
 
 func (controller *windowsController) Terminate(pid int, force bool) error {
 	process, err := os.FindProcess(pid)
