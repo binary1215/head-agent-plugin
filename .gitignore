@@ -28,6 +28,7 @@ test/*
 !test/multi-session.test.mjs
 !test/graph-session-entry.test.mjs
 !test/project-graph-retrieval.test.mjs
+!test/project-graph-coherence.test.mjs
 !test/artifact-storage.test.mjs
 !test/atomic-artifact-storage.test.mjs
 !test/decision-storage-reduction.test.mjs

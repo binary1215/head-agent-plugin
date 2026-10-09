@@ -24,6 +24,9 @@
 `world_model_id`, `previous_result`, `include_candidates`, `session_id`를
 지정합니다. 한도는 전송 크기를 제한하며 의미적 충분성 판정이나 사용자 양식이
 아닙니다.
+양 끝을 포함하는 정수 범위는 depth 0–8, node 1–500, edge 0–1000입니다.
+edge 0은 Core·CLI·MCP에서 node만 조회하는 지원 값이며 node 0을 뜻하지 않습니다.
+범위 밖 값과 정수가 아닌 typed 입력은 변환해서 받아들이지 않고 거부합니다.
 
 기본 compact 결과는 node 8개·edge 12개를 선택하고 identity, revision/state,
 provenance와 coverage를 보존하면서 반복되는 큰 payload를 생략합니다.
@@ -57,6 +60,47 @@ head-agent graph-query <project> --session <logical-session> --query "<task>"
 부분 결과는 사실 부재의 증명이 아닙니다. 반환된 원본 fallback을 사용하고 부족한
 맥락만 확대합니다. 충분한 이전 결과나 동일 기준의 알려진 adapter 실패는 재호출
 없이 재사용하고 관련 기준이 달라지면 다시 조회합니다. 현재 효과 검사는 별개입니다.
+
+### 범위를 명시한 반복 조회
+
+텍스트·경로 검색이 없고 World·사용자 store·adapter가 없는 정확한 로컬 anchor는
+프로세스 내 이전 탐색을 재사용할 수 있습니다. Project·색인 bytes, 디렉터리 이름·타입,
+선택 원본, 관계 생성 원본과 잘린 이웃 endpoint, 선택 소스 bytes와 숨은
+review·lineage·Session·Run 근거를 검사합니다. 무관한 추가 Session의 현재 상태 본문을
+제외한 모든 typed 기록은 바이트 증명에 남깁니다. 색인이 없거나 stale이거나,
+membership·증명 검사가 달라지면 새 게이트 없이 기존 원본 탐색으로 돌아갑니다.
+
+더 좁은 결과는 별도 ID와 `scoped-originals-reused` 상태를 갖습니다.
+`verifiedLayers`는 비어 있고, `retainedVerifiedLayers`는 이전 typed 탐색을,
+`verifiedRecordPaths`는 현재 바이트 검증 경로를 최대 256개까지 표시하며,
+`verifiedRecordCount`와 `omittedVerifiedRecordPathCount`로 전체·생략 개수를 밝힙니다. 목록·관계의 basis digest는
+보존 탐색 기준이지 전체 프로젝트의 현재성 증명이 아닙니다. Coverage는 무관한
+기록 본문을 재검증하지 않았음을 밝히고, 현재 membership은 이름·타입만 뜻합니다.
+선택·boundary 밖 소스와 읽지 않은 Session 본문 수정으로 새로 생긴 관계는 미확인입니다.
+원본 fallback은 계속 가능하며 필요한 상태입니다. 효과 전에는 관련 현재 원본과 별도
+효과 권한 검사를 사용합니다. 새 anchor나 전체 검색으로 외부 변경을 다시 발견할 때
+추가 사용자 승인은 필요하지 않습니다.
+
+최초 조회, 어휘·경로 검색, 원본 수집 실패 anchor, 보존 World와 선택적·사용자 adapter 조회는 기존 전체 경로를
+유지합니다. Membership·색인 bytes는 기록 수에 따라 증가하고 최초 준비에는 증명·색인·
+membership 작업이 추가됩니다. Warm 파일 읽기 감소가 상수 bytes나 지연시간 개선을
+뜻하지 않으며 작은 프로젝트는 색인 때문에 더 많은 bytes를 읽을 수 있습니다.
+조회는 기록을 쓰거나 watcher를 설치하지 않습니다.
+
+### 설치 패키지와 활성 연결의 구분
+
+설치 파일 무결성과 현재 대화의 MCP schema·runtime은 별도로 확인합니다.
+해당 대화의 기존 읽기 전용 entry·graph 도구를 의도한 root에서 호출하며 임의 Project를
+초기화하거나 다른 채팅의 성공을 이 채팅의 reload 증거로 삼지 않습니다. edge 0 거부는
+import·설치 실패가 아닙니다. 새 CLI나 따로 실행한 app-server도 데스크톱 대화의
+활성 연결을 검증하지 않습니다.
+
+[공식 app-server 문서](https://learn.chatgpt.com/docs/app-server)는
+`config/mcpServer/reload`가 디스크 설정을 다시 읽고 로드된 thread의 refresh를
+예약한다고 설명합니다. 해당 기능이 실제 노출되고 승인된 Host에서만 지원 reload를
+사용한 뒤 대상 대화를 다시 확인합니다. 이 플러그인은 그 데스크톱 Host 기능을 제공하지
+않습니다. 사용할 수 없다면 활성 연결 미검증을 밝히며 공유 MCP 프로세스 종료,
+캐시 편집이나 자동 복구 완료를 주장하지 않습니다.
 
 선택적 ArcadeDB는 활성 temporal-query 검증과 embedded fallback을 보존합니다.
 공통 원본 조회는 Core/로컬에서 수행하며 전체 조회 가속을 주장하지 않습니다.

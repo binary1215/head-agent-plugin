@@ -4,6 +4,7 @@ import {
   canonicalGraphJson, collectProjectGraphInventory, projectGraphDigest,
   readGraphRecord, refreshProjectGraphIndex, safeGraphFile,
 } from "./discovery-index.mjs";
+import { beginScopedDiscovery, rememberScopedDiscovery, reuseScopedDiscovery } from "./project-graph-scoped-reuse.mjs";
 
 export const PROJECT_GRAPH_PROTOCOL_VERSION = "0.2.0";
 export const indexProjectGraph = refreshProjectGraphIndex;
@@ -316,14 +317,14 @@ function safeObservationPayload(document) {
 }
 
 function limits(options) {
-  const integer = (value, defaultValue, max, minimum = 1) => { const number = value == null ? defaultValue : Number(value); if (!Number.isInteger(number) || number < minimum || number > max) fail("INVALID_PROJECT_GRAPH_BOUND"); return number; };
+  const integer = (value, defaultValue, max, minimum = 1) => { const number = value === undefined ? defaultValue : value; if (!Number.isInteger(number) || number < minimum || number > max) fail("INVALID_PROJECT_GRAPH_BOUND"); return number; };
   const strings = (values, max) => { if (values == null) return []; if (!Array.isArray(values) || values.length > max || values.some((value) => typeof value !== "string" || !value || value.length > 512)) fail("INVALID_PROJECT_GRAPH_FILTER"); return [...new Set(values)].sort(); };
   if (!["all", "work", "product"].includes(options.view || "all")) fail("INVALID_PROJECT_GRAPH_VIEW");
   if (options.query != null && (typeof options.query !== "string" || options.query.length > 4096)) fail("INVALID_PROJECT_GRAPH_QUERY");
   if (options.details != null && typeof options.details !== "boolean") fail("INVALID_PROJECT_GRAPH_DETAILS");
   const details = options.details === true;
   return { query: String(options.query || "").trim(), anchorIds: strings(options.anchorIds, 32), paths: [...new Set(strings(options.paths, 32).map(value => value.replaceAll("\\", "/")))].sort(), details,
-    view: options.view || "all", depth: integer(options.depth, 1, 8, 0), maxNodes: integer(options.maxNodes, details ? 60 : 8, 500), maxEdges: integer(options.maxEdges, details ? 120 : 12, 1000),
+    view: options.view || "all", depth: integer(options.depth, 1, 8, 0), maxNodes: integer(options.maxNodes, details ? 60 : 8, 500), maxEdges: integer(options.maxEdges, details ? 120 : 12, 1000, 0),
     includeCandidates: options.includeCandidates !== false };
 }
 
@@ -477,6 +478,9 @@ function compactTraversal(traversed) {
 
 export async function queryProjectGraph(options = {}) {
   const normalized = limits(options);
+  const scoped = reuseScopedDiscovery(options, normalized);
+  if (scoped) return scoped;
+  const initialMembership = beginScopedDiscovery(options, normalized);
   let inventory;
   try { inventory = collectProjectGraphInventory(options.root || "."); }
   catch (error) { return fallbackProjection(normalized, reason(error)); }
@@ -621,6 +625,7 @@ export async function queryProjectGraph(options = {}) {
       excludedInputs: unavailable }, adapter, reuse: { status: "fresh-read", semanticSufficiency: "HEAD-owned" }, authority };
   const resultHash = projectGraphDigest(payload), result = { ...payload, resultId: `project-graph-result-${resultHash.slice(0, 24)}`, resultHash };
   boundedCache(resultCache, queryKey, clone(result));
+  rememberScopedDiscovery({ options, normalized, inventory, result, nodes: allNodes, edges: graphEdges, world, sourceCurrentness, initialMembership });
   return result;
 }
 

@@ -2250,7 +2250,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
         ? (await import("./lib/project-bootstrap.mjs")).inspectProjectExperience({ root: args.project_root })
       : name === "head_project_graph"
         ? (await import("./lib/project-graph.mjs")).queryProjectGraph({ root: args.project_root, query: args.query ?? "", view: args.view ?? "all",
-          anchorIds: args.anchor_ids ?? [], paths: args.paths ?? [], depth: args.depth ?? 1, details: args.details ?? false, maxNodes: args.max_nodes, maxEdges: args.max_edges,
+          anchorIds: args.anchor_ids ?? [], paths: args.paths ?? [], depth: args.depth, details: args.details ?? false, maxNodes: args.max_nodes, maxEdges: args.max_edges,
           worldModelId: args.world_model_id ?? "", includeCandidates: args.include_candidates ?? true, previousResult: args.previous_result ?? null })
       : name === "head_project_graph_index"
         ? (await import("./lib/project-graph.mjs")).indexProjectGraph({ root: args.project_root })

@@ -22,6 +22,9 @@ and `query` from the task, with optional `anchor_ids`, `paths`, `depth`,
 `max_nodes`, `max_edges`, `view` (`all`, `work`, `product`),
 `world_model_id`, `previous_result`, `include_candidates` and `session_id`.
 Bounds limit transport; they are not a task-sufficiency decision or a user form.
+Inclusive integer bounds are depth 0–8, nodes 1–500 and edges 0–1000. Zero edges
+is a supported nodes-only query in Core, CLI and MCP; it does not mean zero nodes.
+Out-of-range values and non-integer typed inputs are rejected rather than coerced.
 
 The default compact result selects 8 nodes and 12 edges, retaining identity,
 revision/state, provenance and coverage while omitting rich repeated payload.
@@ -58,6 +61,51 @@ facts do not exist. Use the returned original-source fallback and widen only the
 missing context. A sufficient previous result or known same-basis adapter failure
 may be reused without another adapter request. Requery when its relevant basis
 changes. Current-effect checks remain independent.
+
+### Scoped repeat reads
+
+For an exact local anchor with no text/path search and no World/custom store or
+adapter, Core may reuse a process-local discovery after checking Project and
+index bytes, directory names/types, selected originals, relation producers and
+boundary endpoints, selected source bytes, and hidden review/lineage/Session/Run
+dependencies. All typed records except unrelated additional Session current-state
+bodies remain in the byte proof. Missing/stale index, membership change or proof
+failure silently uses the existing original-backed discovery, not a new gate.
+
+This narrower result has its own identity and `scoped-originals-reused` status.
+`verifiedLayers` is empty; `retainedVerifiedLayers` describes the earlier typed
+discovery and `verifiedRecordPaths` lists up to 256 current byte-proof paths;
+`verifiedRecordCount` and `omittedVerifiedRecordPathCount` disclose the remainder. Basis digests
+for the inventory/relations remain a retained discovery basis, not whole-project
+currentness. Coverage says unrelated record bytes were not reverified and current
+membership means names/types only. Sources outside selected/boundary nodes and
+new relations introduced by edits to unread Session bodies remain unverified;
+original-source fallback stays available and needed. Before effects, read the
+affected originals and use the independent current-effect checks. New anchors
+and broad queries can rediscover external changes without extra user approval.
+
+Cold reads, ranked/path searches, source-collection-failure anchors, retained World and optional/custom adapter
+queries still use the full existing path. Membership and index bytes grow with
+the record set; cold preparation adds proof/index/membership work. Fewer warm
+file reads is not a constant-byte or latency claim, and small projects can read
+more bytes due to the index. No query writes a record or installs a watcher.
+
+### Installed package versus active connection
+
+Installed-file integrity and the current conversation's MCP schema/runtime are
+separate checks. Use that conversation's existing read-only entry and graph
+tools on the intended root; do not initialize an arbitrary Project or treat a
+different chat's successful call as proof that this chat reloaded. A zero-edge
+bound rejection is not an import/installation failure. A fresh CLI or a separately
+launched app-server also does not verify the desktop conversation's connection.
+
+The [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
+describes `config/mcpServer/reload` as reloading disk configuration and queuing
+refresh for loaded threads. Use a supported Host reload only where that operation
+is actually exposed and authorized, then check the target conversation again.
+This plugin does not provide that desktop Host operation. If unavailable, report
+the active connection as unverified rather than killing shared MCP processes,
+editing caches or claiming automatic repair.
 
 Optional ArcadeDB preserves activated temporal-query verification and embedded
 fallback. Combined original-record traversal remains Core/local; this path does
