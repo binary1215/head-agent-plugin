@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "head_core": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs"
+      ],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "kind": "HeadAgentWorkerManifest",
+  "manifestVersion": "0.1.0",
+  "workerProtocolVersion": "0.2.0",
+  "target": {
+    "platform": "win32",
+    "arch": "x64",
+    "directory": "windows-x64"
+  },
+  "binary": {
+    "relativePath": "head-agent-worker.exe",
+    "sha256": "2aef22f941e15d2f940cfd416e4ea0e241c0a5c1f96fc95841e9aebe42269e6c",
+    "size": 2893312
+  },
+  "operations": [
+    "worker.health.v1"
+  ],
+  "processModel": {
+    "stdio": "single-request-single-response-json",
+    "descendants": "forbidden",
+    "network": "forbidden",
+    "projectWrites": "forbidden"
+  },
+  "authority": {
+    "kind": "computation-only",
+    "instructionAuthority": false,
+    "promotionAuthority": false,
+    "controlAuthority": false,
+    "mutatesProject": false,
+    "mutatesCanon": false
+  },
+  "manifestId": "go-worker-manifest-cd0835bfbff7160aed6214d1",
+  "manifestHash": "cd0835bfbff7160aed6214d19e4f81593a12d15891284acb936911281d4bc5d5"
+}

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "kind": "HeadAgentWorkerManifest",
+  "manifestVersion": "0.1.0",
+  "workerProtocolVersion": "0.2.0",
+  "target": {
+    "platform": "darwin",
+    "arch": "x64",
+    "directory": "darwin-x64"
+  },
+  "binary": {
+    "relativePath": "head-agent-worker",
+    "sha256": "66d3d5c9b2c532c872350be1960e340c22f7b0dd2bd0ec37c90dcc3296385819",
+    "size": 2797392
+  },
+  "operations": [
+    "worker.health.v1"
+  ],
+  "processModel": {
+    "stdio": "single-request-single-response-json",
+    "descendants": "forbidden",
+    "network": "forbidden",
+    "projectWrites": "forbidden"
+  },
+  "authority": {
+    "kind": "computation-only",
+    "instructionAuthority": false,
+    "promotionAuthority": false,
+    "controlAuthority": false,
+    "mutatesProject": false,
+    "mutatesCanon": false
+  },
+  "manifestId": "go-worker-manifest-4164dc7b46881f2d9ca580aa",
+  "manifestHash": "4164dc7b46881f2d9ca580aa4470e728c93ac52b4201186fbba5bdaa0144447f"
+}

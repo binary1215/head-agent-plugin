@@ -1,0 +1,1012 @@
+<div align="center">
+
+# HEAD Agent Core Plugin
+
+[English](README.md) | [한국어](README.ko.md) | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
+
+**Keep long-running AI development on one reviewed product direction<br>
+even when the tool, agent, or conversation changes.**
+
+Recover safely after compaction. Give each task only the context it needs.
+Keep the reason behind every accepted change.
+
+[![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
+![Status](https://img.shields.io/badge/status-beta-blue)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
+![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
+
+[Why use it](#why-use-it) ·
+[Who it is for](#who-it-is-for) ·
+[How to use it](#how-to-use-it) ·
+[Install](#install) ·
+[Advanced use](#cli-automation-and-advanced-setup) ·
+[Core model](#core-model) ·
+[Graph](#graph-and-records) ·
+[Capabilities](#capability-status) ·
+[Docs](#documentation)
+
+</div>
+
+## What HEAD Agent Core does
+
+HEAD Agent Core keeps the direction and evidence of AI-assisted development with
+the project instead of trapping them inside one model conversation. Across
+Claude Code, Codex, and OpenCode, it connects:
+
+- what the user has approved about the product;
+- what the repository and tests currently show;
+- what one task actually needs to know;
+- what an agent changed, how it was checked, and what happens next.
+
+It does not primarily make a model write better code. It helps many AI-assisted
+changes accumulate into the same reviewed product direction without making a
+model session, Git host, generated document, or GraphDB the hidden source of
+truth.
+
+## Why use it
+
+The benefits become more valuable as a project outlives one conversation.
+
+### Continue after compaction or session loss
+
+Conversation compaction is lossy, and provider summaries can omit a constraint
+or quietly change the next step. For recovery-sensitive work, HEAD checkpoints
+the exact purpose, approved decisions, current position, and next expected
+result. After compaction it verifies that the project direction did not drift
+before continuing. On conversation entry, provider replacement, or a Host-
+reported compaction boundary, this restore is automatic: the user keeps talking
+about the task and does not supply checkpoint IDs, turn counters, tokens, or
+recovery JSON. A newer real user request always wins over an older prepared
+continuation.
+
+When durable direction really changes, HEAD handles checkpoint publication too:
+it reads an exact current basis, derives direction in the conversation, and asks
+Core to create or reuse the checkpoint under one lock. Identical retries write
+nothing; stale direction cannot overwrite newer work. This runs only at useful
+boundaries such as a changed objective, verified stage, failure/wait, completion,
+handoff, or likely context loss—not on every turn and not for a short read-only
+task. The user does not operate this protocol.
+
+This restores the work direction, not a transcript or a model persona. When a
+Host has no native compaction hook, first-turn artifact restore still happens
+automatically while the provider's compaction action remains Host-owned. See
+[Compaction recovery](docs/compaction-recovery.md) and
+[Session recovery](docs/session-recovery.md).
+
+### Give each task bounded, reviewable context
+
+More context is not always better. The user can state the task in ordinary
+language; the provider-neutral HEAD performs semantic task analysis and authors
+task-local EvidenceNeeds in the conversation. It can name exact repository
+paths, Product entities, and current graph node anchors without asking the user
+to write JSON, choose a graph ID, or manage a token tier. Status, preparation,
+repository inspection, and preview are internal HEAD steps rather than a setup
+wizard the user must operate. The Context Compiler provides selected sources, exclusions and uncertainty
+under the requested budget. It does not certify inclusion or semantic sufficiency. Lexical overlap remains fallback
+discovery/ranking only; Core no longer chooses a semantic graph anchor from the
+first matching word, makes a current file ineligible, or declares sufficiency.
+
+The resulting Context Capsule is content-derived and reproducible. The same
+verified inputs, compiler version, task, and budget produce the same identity;
+Canon or digest drift stops reuse. This reduces noise, makes delegation easier to
+review, and avoids treating the whole repository as prompt context. See
+[Context Compiler](docs/context-compiler.md).
+
+### Review why a change happened
+
+Git can show which bytes changed. HEAD also preserves the reviewed reasoning
+around the change:
+
+```text
+whole plan
+  -> execution scope + task context
+  -> agent result + verification evidence
+  -> Fresh HEAD review + explicit decision
+  -> ChangeSet + next checkpoint
+```
+
+A result cannot approve itself, and the next non-trivial Run waits for review.
+Later, a maintainer can inspect the intended outcome, allowed scope, evidence,
+decision, affected revisions, and next direction without reconstructing them
+from a transcript or commit message. See
+[Execution Lineage](docs/execution-lineage.md) and
+[ChangeSets](docs/change-sets.md).
+
+### Connect product intent to code and tests
+
+HEAD can propose evidence-linked relationships from reviewed Features and
+Capabilities to Files, Symbols, and Tests. It can then derive reviewable change-
+impact candidates from exact before/after revisions. Inference remains a
+candidate until explicit review, so a heuristic match never silently becomes a
+product decision. See [Feature mapping](docs/feature-mapping.md).
+
+### Additional benefits
+
+| Common AI-development problem | What HEAD provides |
+| --- | --- |
+| Agents and runtimes build different interpretations | Claude Code, Codex, OpenCode, HEAD, and bounded workers use the same project-scoped `.head/` identities. |
+| Model inference quietly becomes a decision | Inferred concepts and impacts remain reviewable candidates until an explicit user decision accepts them. |
+| A handoff loses the current position | Provider-independent checkpoints preserve the exact work direction for another session, tool, or teammate. |
+| A graph or generated document becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable views over verified records. |
+| A large repository overwhelms the prompt | Source Scope and bounded compilation keep unrelated generated, vendored, or copied material out of normal task context. |
+| Several agents blur responsibility | Bounded execution, result evidence, and independent review stay distinct while HEAD integrates them into one outcome. |
+| Existing managed parallel work is hard to inspect | Retained wave diagnostics show requested, started, returned, waiting, succeeded, and failed workers without merging their authorizations or treating wave completion as approval. Ordinary Host delegation does not create a wave. |
+| Git and deployment history must be typed by hand | Provider-neutral observations turn current product refs and host-reported deployment results into immutable P3 evidence, while only an approved successful exact-commit/ref match becomes a non-authoritative ReleaseObservation. |
+| Every product exposes different operational data | A Project-bound Host registry lets HEAD collect a configured source by opaque ID, while product-specific adapters normalize it into one evidence-only contract and Core proves coverage and replay. |
+| Code and reviewed policy drift apart between releases | Provider HEAD proposes evidence-linked Conformance Findings into a non-blocking queue; Core verifies exact anchors and replay while only the user can disposition or accept a fresh resolution. Missing Graph or connector data remains a disclosure, not a gate on ordinary work. |
+| A product rule silently spreads through a hierarchy | Policy applies only to the exact Feature or FeatureGroup named in an immutable proposal and may cite exact Requirement, Constraint, or Decision keys. The user reviews one compact decision; group membership never creates hidden inheritance. Later evidence drift is shown without silently invalidating the decision. |
+| Before/after metrics look comparable when collection changed | HEAD keeps the numeric comparison available but shows adapter revision, source scope, form, duration, sample size, and coverage as same, different, or unknown. It never silently normalizes or claims causality. |
+
+> A conventional coding agent optimizes the current task. HEAD Agent Core
+> optimizes for many tasks to accumulate into the same reviewed product
+> direction.
+
+These benefits reinforce one another:
+
+```text
+reviewed direction + current repository evidence
+  -> bounded Context Capsule + HEAD sufficiency judgment
+  -> bounded execution and explicit review
+  -> decision and change history
+  -> exact checkpoint for handoff, session loss, or compaction
+```
+
+## Who it is for
+
+HEAD Agent Core is for people who must keep an AI-assisted product coherent
+across more than one prompt, task, agent, or runtime.
+
+| You are... | HEAD helps you... |
+| --- | --- |
+| A solo developer building a product over many AI sessions | Continue from the approved direction without re-explaining the project from scratch. |
+| A technical lead coordinating several agents or bounded workers | Separate planning, implementation, and review while integrating results into one whole outcome. |
+| A maintainer working in a large or long-lived repository | Give each task only the current repository evidence and history it actually needs. |
+| A team using Claude Code, Codex, OpenCode, or changing providers | Keep one provider-independent project state instead of separate truth in every conversation. |
+| A team that needs auditability or reliable handoff | Retain the purpose, evidence, explicit decision, impact, and recovery state behind an accepted change. |
+| A product team connecting intent to implementation | Follow reviewed Features through code, tests, revisions, ChangeSets, and review evidence. |
+
+It may be unnecessary for a one-off script, a short experiment with no recovery
+needs, or work where conversation history is sufficient. It is also a poor fit
+when inferred model output should be accepted without review, or when GraphDB is
+expected to become the unquestioned source of project meaning.
+
+## How to use it
+
+### Separate conversations, shared direction
+
+Tell HEAD what to do. It can route independent work to separate logical Sessions
+while preserving the common Project goal and constraints. Each Session keeps its
+own progress and recovery; a new conversation does not replace another's work.
+A common deployment cancellation stays current even when an earlier Session is
+restored. HEAD handles the routing and current-direction updates from your request;
+you do not maintain IDs or fill a direction form. See
+[Graph discovery and independent Sessions](docs/graph-discovery.md).
+
+
+Install HEAD Agent Core once, open your project in Codex, Claude Code, or a
+configured OpenCode workspace, and describe your work in ordinary language.
+You do not have to operate HEAD as a separate application.
+
+The first request can include the real task. You do not need a separate setup
+turn:
+
+```text
+Use HEAD Agent Core for this project. Resume its existing state if one exists;
+otherwise initialize the Core. Then find the cause of this login failure and fix it.
+```
+
+HEAD keeps that original task and continues it after initialization, status, and
+any verified recovery step. After that, keep asking for work as you normally
+would:
+
+After compaction or provider replacement, the HEAD Skill runs the read-only
+conversation-entry recovery automatically. You do not need to announce that
+compaction happened, request recovery, or provide a checkpoint ID. When the
+Host exposes no trustworthy lifecycle hook, the next conversation entry still
+restores P2 artifacts; it does not pretend that provider compaction itself was
+observed.
+
+```text
+Prepare only the code and decision evidence needed for this change, then proceed.
+```
+
+```text
+Keep one overall plan and use parallel workers only for the independent parts.
+```
+
+HEAD normally works directly. When delegation helps, it uses the current Host's
+available fork/spawn and wait/cancel tools, gives each worker a short brief and
+ownership boundary, then checks and combines the results. If the Host cannot
+delegate, HEAD continues directly or sequentially. Forked context must fit your
+input scope; otherwise HEAD uses supported fresh context. You do not configure
+a worker registry or supply IDs.
+
+Delegation can also help HEAD keep the context needed to judge your goal,
+constraints and acceptance criteria. Before deep execution or detailed review,
+HEAD considers whether that detail may crowd out the overall task and separates
+the work when useful—even for a sequential task with no parallel speedup. It asks
+for goal-related findings, important new facts, uncertainty and checkable evidence,
+then checks the needed evidence and judges whether the result meets your goal.
+Simple work stays direct. This adds no score, token threshold, required fork or
+approval step, and no particular conversation becomes the sole recovery source.
+
+If a delegate fails, HEAD keeps completed work and continues only the unfinished
+part after checking whether anything is still running or already applied. It
+preserves your edits and checks uncertain overlapping effects before replacement;
+independent work can continue. No extra worker setup or approval ceremony is added.
+
+Managed jobs keep their history, status and exact cancellation tools.
+Choose [explicit managed execution](skills/head-agent-core/references/runtime-composition.md#explicit-managed-execution)
+for new or retained work when interruption recovery, durable ownership or unknown
+and duplicate effects need tracking. Original authorization/effect checks apply;
+file edits, worker count and ordinary failure alone do not require it. A Run describes risk and recovery needs, not a
+requirement that every helper use a managed launcher.
+
+HEAD checks or resumes the project, chooses the lightest safe operating lane,
+and prepares durable context or recovery artifacts only when the task needs
+them. It first queries nearby graph relations or reuses sufficient same-basis
+results, then reads original sources when needed. Product governance, full World
+construction, databases and durable Runs remain optional rather than setup requirements.
+
+You do **not** need to write structured JSON, choose a token budget, find graph
+or session IDs, operate GraphDB, select an Observe/Session/Run lane, or decide
+which CLI or MCP operation to call. Those are internal or advanced interfaces.
+HEAD asks for a decision only when the authority really belongs to you—for
+example, approving Product meaning, resolving an ambiguous scope, or allowing
+an external, consequential, or destructive change.
+
+The P1-P5 model is therefore an internal safety system, not a workflow the user
+must perform. The CLI sections below expose the same Core for automation,
+diagnosis, CI, and recovery; they are not prerequisites for normal conversation.
+
+## Install
+
+Choose one installation path. The Codex and Claude Code marketplace paths
+install the conversation Skill, typed MCP server, and verified native bundle for
+all supported hosts. Only the exact current-host binary can be selected at
+runtime. The user-scoped path also provides the global `head-agent` command for
+automation and recovery and obtains its native package from the matching GitHub
+Release.
+
+### Codex Git marketplace
+
+```powershell
+codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplace
+codex plugin add head-agent-core@head-agent-plugin
+```
+
+Restart Codex after installation, start a new task so the installed Skill and
+MCP server are loaded, then ask:
+
+```text
+Initialize or resume the small HEAD Core for this project and report readiness.
+```
+
+The marketplace install does not initialize a project, contact GraphDB, choose
+a model, or approve Product Canon. Those transitions still require the typed
+Core boundary and, where consequential, explicit user review.
+
+### Claude Code Git marketplace
+
+```powershell
+claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
+claude plugin install head-agent-core@head-agent-plugin
+```
+
+Restart Claude Code after installation so the installed Skill and `head_core`
+MCP server are loaded, then ask:
+
+```text
+Initialize or resume the small HEAD Core for this project and report readiness.
+```
+
+Claude Code copies the plugin into its versioned cache. The generated Claude
+distribution therefore projects its MCP entry through `${CLAUDE_PLUGIN_ROOT}`;
+the source Core and `.head/` identities remain unchanged. Installation does not
+authorize project mutation, Product Canon review, GraphDB access, or a model
+choice.
+
+### Claude Code and OpenCode project projections
+
+When using the user-scoped installation below, initialize the project with
+`--runtime claude,codex,opencode`. Marketplace-installed Claude Code users can
+request the same initialization through the bundled Skill. HEAD creates
+`CLAUDE.md` plus `.mcp.json` for Claude Code, `AGENTS.md` for Codex, and
+`opencode.json` for OpenCode only when those project files are absent. Existing
+files are preserved and generated manual-integration projections remain under
+`.head/generated/`.
+
+After initialization, start `claude` or `opencode` in the project. Claude Code
+asks for project MCP approval before using the shared `head_core` server. The
+runtime-native instruction/config files are projections; `.head/` remains the
+only canonical HEAD state.
+
+### User-scoped CLI
+
+Requirements: a current Node.js LTS release and either Git or a downloaded
+source archive. Git inside the target project, Go, GraphDB, and a provider
+runtime are optional.
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/binary1215/head-agent-plugin.git
+Set-Location .\head-agent-plugin
+.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
+
+head-agent --version
+head-agent doctor C:\path\to\project
+```
+
+macOS or Linux:
+
+```bash
+git clone https://github.com/binary1215/head-agent-plugin.git
+cd head-agent-plugin
+./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
+
+head-agent --version
+head-agent doctor /path/to/project
+```
+
+The installer stages a content-verified release in the current user's data
+directory and writes launchers to `~/.local/bin`. It does not edit a shell
+profile, a Codex cache, remote GraphDB, or an existing project before the
+explicit `--project` initialization step.
+
+## CLI, automation, and advanced setup
+
+The normal path is the conversation-first flow above. Use the following CLI
+surface when a script, CI job, offline recovery procedure, or host integration
+needs the same deterministic Core behavior without a guided conversation.
+
+The default path initializes only the provider-neutral HEAD constitution and its
+fixed Project/Session recovery anchors:
+
+```powershell
+head-agent init C:\path\to\project --runtime claude,codex,opencode
+```
+
+It returns `core_ready`, preserving identities and updating the lightweight
+existing-observation index where available. Product inference, governed World
+construction and document governance remain optional. The same bounded status is available
+at any time:
+
+```powershell
+head-agent status C:\path\to\project
+```
+
+Successful human-readable status is intentionally one line. Exceptions name
+the owner, reason, affected operation, and next action; `doctor` or `--json`
+shows Core, optional Product governance, Context readiness, loaded/configured
+package versions, and technical details. The structured projection separates
+`readiness.core`, `readiness.product`, and `readiness.context`, names one
+`nextAction`, and lists optional capabilities with their real prerequisites.
+For example, Product appears as `available-not-activated`, while bounded workers
+appear as `requires-session-or-run-authorization` for retained managed work.
+Ordinary second opinions use available Host delegation; worker count alone does
+not require a Run. This is a non-persisted advisory
+projection: reading it never activates Product, creates a Run, grants authority,
+or repairs drift. `profile` remains a choice for one initialize/resume operation,
+not a hidden project mode.
+
+Top-level status is deliberately actionable: `core_ready`,
+`product_evidence_required`, `product_review_required`, `product_ready`,
+`product_refresh_required`, or `core_drifted`. The exact lower-level onboarding
+state remains visible under `readiness.product.onboardingStatus`.
+
+### Conversational Context preparation and preview
+
+In conversation, describe the task once. Ordinary reading and editing use the
+needed files directly. Only when reproducible selected-context handoff, a durable
+Run or recovery actually needs a Capsule does the HEAD Skill call
+`head_context_prepare`, perform semantic repository inspection, author any
+task-required `EvidenceNeed[]`, and call `head_context_preview` without asking
+the user to operate those steps. Missing or stale optional World evidence does
+not block direct work, and justified budget expansion is automatic.
+The final preview includes one explanation card with included evidence by kind,
+intentional omissions by reason, and remaining uncertainty. It does not add a
+new gate: mechanical coverage still belongs to Core and semantic sufficiency
+still belongs to HEAD.
+
+The default MCP list stays focused on Core work, recovery and retained-work
+status/cancellation. HEAD can find optional Product, Graph, Observation or Context
+schemas with `head_tools_discover`, then use the returned read-only or effectful
+route. You do not need to unlock capabilities, select a profile on every request
+or type JSON. Discovery adds no authority; existing operation checks still apply.
+
+The same Core operations remain available from the CLI for automation and
+diagnosis:
+
+```powershell
+head-agent context-prepare C:\path\to\project --task "<task>"
+```
+
+This task-only, non-persisted P4 projection returns the current Project,
+World Model, and GraphSnapshot binding plus bounded lexical discovery material
+and exact node identities. The user does not write `EvidenceNeed[]`. HEAD uses
+ordinary semantic reasoning and repository inspection to author the structured
+proposal, then gives that proposal to the existing preview verifier. Core does
+not select evidence kinds or anchors, and absence from the lexical candidate
+view never means irrelevance.
+
+If Product/World has not been activated, preparation still returns
+`ready_for_head_semantic_assessment`, discloses missing repository metadata and
+provides available curated context. HEAD may inspect current source directly.
+Preparation never activates Product, indexes the repository or creates recovery
+records. Optional Product/World work is chosen only when the task needs it.
+
+Advanced automation may call the preview directly with HEAD-authored structured
+input:
+
+```powershell
+head-agent context-preview C:\path\to\project `
+  --task "Keep this exact task text across retries" `
+  --budget 32768 `
+  --evidence-needs .\evidence-needs.json
+```
+
+CLI output is concise by default. Add `--json` for selected context, sources,
+omissions and uncertainty. One preparation or preview call is enough when its
+evidence is useful; a separate preview is optional, not a setup ritual.
+
+`ready_for_head_semantic_assessment` means HEAD should assess the selected
+context, not that the tool has proved completeness. HEAD reads original bodies
+when needed and can expand a returned graph anchor with `details: true`.
+Missing/stale World is disclosed; direct current source remains available.
+No fixed budget tiers, inclusion certificate or extra user approval is required.
+
+### Conversation-first path
+
+The bundled `head-agent-onboarding` Skill is the preferred interactive entry.
+It inspects the current state, asks only for material choices such as repository
+scope or storage mode, semantically analyzes bounded current evidence, submits a
+typed proposal for Core verification, presents the resulting evidence-linked
+candidates, and uses explicit review before Product Canon changes. It selects
+the `product` profile explicitly. The provider proposal remains P3 evidence.
+
+### Optional Product profile CLI path
+
+Initialize or resume the same project and HEAD Session identities:
+
+```powershell
+head-agent init C:\path\to\project --runtime claude,codex,opencode --profile product
+head-agent onboarding-status C:\path\to\project
+```
+
+Without a structured user brief, first use intentionally returns
+`awaiting-evidence`; Core does not invent product concepts from symbols. The
+conversation Skill normally supplies the fresh semantic proposal. CLI users may
+pass the same `semanticProposal` inside `--input`; after Core verifies the exact
+SourceSnapshot, paths, lines, optional symbols, and Product Model references, an
+immutable candidate-set ID is returned. Inspect it before review:
+
+```powershell
+$onboarding = head-agent onboarding-status C:\path\to\project | ConvertFrom-Json
+head-agent onboarding-candidates C:\path\to\project `
+  --candidate-set $onboarding.state.candidateSetId
+```
+
+Create `onboarding-review.json` only after reviewing the evidence. This compact
+example accepts the complete bootstrap batch; selection or revision is safer
+when any candidate should be renamed, split, merged, or excluded.
+
+```json
+{
+  "candidateSetId": "onboarding-candidates-<id>",
+  "disposition": "accept-all",
+  "rationale": "I reviewed every evidence-linked candidate and adopt this bootstrap batch."
+}
+```
+
+Apply the decision and verify the resulting views:
+
+```powershell
+head-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
+head-agent graph-query C:\path\to\project --query "<task>"
+head-agent world-status C:\path\to\project
+head-agent context-preview C:\path\to\project `
+  --task "Find implementation evidence for one reviewed Feature" --budget 32768
+head-agent world-docs-build C:\path\to\project
+head-agent resume C:\path\to\project --runtime claude,codex,opencode --profile product
+```
+
+`accept-all` is supported for a fully inspected batch, but it is not the default
+recommendation. Review can instead accept a dependency-complete selection,
+revise or reject the batch, request more evidence, or retain explicit Unknowns.
+See [Onboarding](docs/onboarding.md) for the complete contract.
+
+### Source scope
+
+For repositories with generated output, vendored dependencies, copied projects,
+large fixtures, or model bundles, define a project-relative observation boundary
+before the first index:
+
+```json
+{
+  "mode": "existing",
+  "sourceScope": {
+    "includeRoots": ["src", "packages"],
+    "excludeRoots": ["dist", "vendor", "generated", "fixtures"]
+  }
+}
+```
+
+Pass it with `head-agent init ... --profile product --input .\onboarding.json`. Source Scope
+controls observation only; it cannot define Product Canon, approve a candidate,
+or grant execution authority.
+
+## Core model
+
+HEAD separates meaning, recovery, evidence, views, and effects so that one
+representation cannot inherit another's authority.
+
+| Plane | Owns | Examples | Does not authorize |
+| --- | --- | --- | --- |
+| P1 Normative authority | approved meaning and explicit decisions | Product Canon, ReviewDecision | inference from a graph, result, or message |
+| P2 Recovery and lineage | provider-independent project direction | Session, Run, plan, Capsule, contract, checkpoint | rewriting direction from a summary or result |
+| P3 Evidence | reviewable observations and results | candidates, ResultPacket, ChangeSet, receipts | self-promotion or checkpoint authorship |
+| P4 Derived views | reproducible retrieval and human views | GraphSnapshot, traversal, Markdown, continuity | Canon mutation or unique recovery |
+| P5 Operational effects | host-local execution and delivery | PID, lease, endpoint, inbox, delivery receipt | execution, review, promotion, or recovery authority |
+
+Distribution and host integrations package or execute these contracts; neither
+becomes a sixth source of product meaning. The complete executable boundary is
+documented in [Authority planes](docs/authority-plane-contract.md).
+
+The smaller normative root and the formal Record/Graph boundary are documented
+in [Provider-neutral HEAD constitution](docs/head-constitution.md).
+
+### Architecture at a glance
+
+```mermaid
+flowchart LR
+    U[User objective] --> H[Whole-plan HEAD]
+    PC[Product Canon] --> WM[World Model + GraphSnapshot]
+    RE[Repository evidence] --> WM
+    H --> CC[Context Compiler]
+    WM -->|bounded evidence| CC
+    CC --> RA[Runtime adapter]
+    RA --> RP[ResultPacket]
+    RP --> FR[Fresh HEAD review]
+    WM --> PX[Local / ArcadeDB / Markdown projections]
+```
+
+The feedback path is explicit: an accepted result may become reviewed lineage,
+the repository can be re-indexed, and a later graph may project that evidence.
+No result, projection, or runtime effect accepts itself.
+
+### HEAD judgment with reproducible selected context
+
+The Context Compiler selects task-relevant evidence under an explicit budget.
+It records what was included, excluded, stale, missing, truncated, or unknown.
+The same canonical inputs, compiler version, traversal policy, and budget
+reproduce the same Context Capsule.
+
+The default budget is `32768` approximate tokens, and HEAD may use any positive
+safe integer. There is no five-tier ladder or 512K policy ceiling. Actual provider
+context fit and output reserve still apply; the estimate is not a tokenizer proof.
+
+HEAD may guide selection with exact repository paths, Product Canon keys,
+Observation IDs or bounded current graph anchors. The compiler supplies
+`evidenceGaps`, `omissions` and `uncertainty`, not an inclusion-proof gate.
+HEAD decides whether more source evidence is needed. A persisted ExecutionContract
+records that separate judgment; it does not manufacture semantic acceptance.
+
+A Capsule is a derived execution input, not a second Canon. Digest or Canon drift
+fails closed; simple read/reason work does not create a Capsule by default.
+
+### Execution and recovery
+
+Non-trivial execution follows a durable, reviewable sequence:
+
+```text
+WholePlanSnapshot
+  → ExecutionContract + ContextCapsule
+  → runtime or bounded worker
+  → ResultPacket
+  → Fresh HEAD ReviewDecision
+  → accepted lineage or a revised plan
+```
+
+Provider loss does not require importing a transcript. `session-restore`
+reconstructs the current input from the exact P2 checkpoint and verified lineage.
+After an accepted result, `run-integrate-checkpoint` can bind that review to a new
+checkpoint only when HEAD or the user explicitly supplies its recovery fields.
+
+Intentional context compaction uses the same boundary internally:
+
+1. provider HEAD writes or reuses the exact P2 direction before compaction;
+2. a provider-neutral Host adapter retains the one-time transport token outside
+   project Canon and performs the provider-owned compaction;
+3. Core restores P2 first, then verifies trusted real-user-turn evidence and
+   rejects drift, uncertain replay, or summary-derived recovery;
+4. the Host submits the checkpoint-bound continuation at most once, or HEAD
+   continues as a disclosed fresh logical HEAD from the verified artifacts.
+
+The normal UX is simply to continue the task. `head_conversation_enter` is the
+automatic read-only entry projection used by the Skill, while the `compact-*`
+and `head_compaction_lifecycle_step` surfaces are advanced adapter and diagnostic
+operations. Missing Host hooks do not create a setup gate and never block
+ordinary work.
+
+For a durable direction update, the Skill internally uses the read-only
+`head_checkpoint_basis` and idempotent `head_checkpoint_sync` surfaces. Core
+returns `created`, `reused`, `deferred`, or `conflict`; only the affected recovery
+path pauses, and none of these outcomes asks the user for checkpoint JSON.
+
+When recovery needs explanation, `head_checkpoint_diagnose` gives one bounded,
+read-only answer: the current pointer, artifact-restore result, mechanical update
+availability, and the next HEAD action. It writes no lock or cache and never calls
+another model merely to read status. Matching IDs and hashes prove artifact
+consistency, not that checkpoint prose still matches the latest user intent.
+Changed sequential reads require a retry; the result explicitly does not claim an
+atomic filesystem snapshot or ABA detection. Ordinary independent work remains
+available while only checkpoint-dependent work pauses on a real recovery fault.
+
+A newer real user turn wins over a pending continuation. See
+[Compaction recovery](docs/compaction-recovery.md) and
+[Session recovery](docs/session-recovery.md).
+
+### Product learning
+
+Everyday observations can remain non-persisted notes. Durable artifacts are
+created only when another Run, audit, product-state transition, or handoff needs
+them:
+
+```text
+Signal → Hypothesis → Initiative candidate → user ReviewDecision
+       → reviewed Initiative → accepted execution → OutcomeObservation
+```
+
+This is not one automatic promotion chain. Evidence remains evidence,
+hypotheses remain hypotheses, and a reviewed Initiative remains distinct from
+Product Canon. HEAD judges risk and persistence directly, without a recommendation
+API or a note-formatting call:
+
+- Observe for read and reasoning work;
+- Session for one bounded, reversible result;
+- Run for dependent or recovery-sensitive work;
+- Explicit authority for Canon, initiative decisions or effects outside the current
+  approved scope. Updating a useful checkpoint within already approved direction
+  is not a new user decision.
+
+See [Product Operating Loop](docs/product-operating-loop.md).
+Git ref and deployment plumbing is documented in
+[Release observation](docs/release-observation.md).
+Per-environment and per-target application, failure, and rollback history is
+documented in [Delivery state observation](docs/delivery-observation.md).
+
+## Graph and records
+
+For new project information, HEAD uses bounded `head_project_graph` discovery
+first, or reuses sufficient results from the same basis. Work and Product views
+reference the same original records. The result keeps revision, provenance,
+coverage and candidate/rejection state, including intact history. Missing or
+failed layers lead to original-source inspection without requiring whole-World
+currentness, Product approval, Run/Capsule or ArcadeDB. Empty partial results do
+not prove absence; effects separately recheck current sources and authority.
+The query does not generate a new artifact per read. See
+[Graph discovery and independent Sessions](docs/graph-discovery.md).
+
+
+A `GraphSnapshot` is the immutable, content-addressed evidence graph embedded in
+one verified Repository World Model. It is not a graph UI screenshot, database
+backup, or mutable latest-node collection. The same verified inputs produce the
+same `graphSnapshotId`; semantic changes create a new snapshot with explicit
+ancestry.
+
+`head_world_model` verifies that complete model and current repository, then
+returns a bounded status projection instead of transporting the full snapshot.
+Counts, IDs, digests, samples, and omission metadata stay available; deeper
+inspection uses the bounded graph, history, runtime, and semantic query tools.
+This keeps MCP responses small without skipping any freshness or digest check.
+
+```mermaid
+flowchart LR
+    C[Product Canon] <-->|reviewed meaning| F[Features]
+    F <-->|implements / verifies| S[Code and tests]
+    S <-->|revisions| CH[ChangeSets]
+    CH <-->|results / review| E[Execution lineage]
+```
+
+Raw prompts stay outside this graph. Product meaning enters only through
+reviewed Canon. General discovery may show labelled candidates/rejected records
+without promoting them; they remain excluded from Canon Context compilation.
+
+Common Observations keep their exact descriptor, receipt, and derivation
+lineage in the same temporal graph. A ProductHypothesis may point to an exact
+Observation, but that edge remains evidence for a hypothesis rather than a
+promotion of measured data into product truth. If Observation storage is
+damaged, only that graph layer is reported unavailable; unrelated product work
+continues.
+
+Delivery observations add practical operational genealogy without turning the
+graph into a deployment controller. Each Host event names an environment,
+target, artifact revision, explicit sequence, and predecessor. The read-only
+current-state card shows uniform, mixed, or unknown observed state; failed
+attempts do not erase the last applied revision, rollback remains in history,
+and unobserved targets are never guessed successful. Exact retained source
+revisions receive verified `AT_REVISION` links; declared strings stay visibly
+unverified.
+
+Policy genealogy stays equally explicit. A proposed create, revision, or
+retirement is P3 evidence until the user accepts that exact candidate. The
+accepted decision points to the resulting Product Model revision and to the
+matching current Policy revision, even after an unrelated Policy is added.
+General graph discovery retains an unreviewed Policy candidate's original state;
+legacy governed traversal can exclude it and Canon compilation does not promote it.
+
+Source relations are structural evidence, not product meaning. The default
+heuristic import/call graph remains available, while an optional provider-neutral
+language-AST adapter may add separately labeled, exact-file-bound evidence. One
+source never silently overwrites the other, and neither can approve a decision.
+
+### Graph versus record
+
+The direction is deliberate:
+
+```text
+P1 Product Canon + observed source + verified P2/P3 records
+  → P4 Repository World Model containing a recoverable GraphSnapshot
+      → replaceable graph materialization: local JSON / optional ArcadeDB
+      → replaceable human projection: Markdown
+```
+
+The graph owns navigation, not meaning or recovery direction. Deleting GraphDB
+or generated Markdown must leave Product Canon, Session/Run recovery, and review
+lineage intact. A stale, tampered, or semantically divergent projection fails
+closed instead of redefining the graph.
+
+### Query the graph
+
+```powershell
+head-agent world-status C:\path\to\project
+head-agent world-temporal C:\path\to\project `
+  --query "<Feature, symbol, path, ChangeSet, or ReviewDecision>" `
+  --depth 3 --limit 100 --edge-limit 200
+head-agent graph-lineage-status C:\path\to\project
+head-agent graph-lineage-trace C:\path\to\project --anchor <exact-node-id>
+head-agent graph-lineage-diff C:\path\to\project `
+  --from <older-world-model-id> --to <newer-world-model-id>
+head-agent context-preview C:\path\to\project --task "<task>" --budget 32768
+```
+
+Traversal returns snapshot, query, and result identities plus inclusion,
+exclusion, and truncation reasons. Embedded, local JSON, and activated ArcadeDB
+backends must preserve the same semantic result.
+
+The lineage commands reuse retained content-addressed World snapshots and do
+not create another history stream. Their Hot/Warm/Cold status, trace, execution
+overlay, and diff are non-persisted P4 views. An exact-content file move is only
+reported as a possible move; semantic identity is never asserted automatically.
+
+## Runtime and coordination
+
+Claude Code, Codex, and OpenCode are projections over one `.head/` authority. Runtime adapters
+observe capability, consume one exact authorization at most once, supervise the
+owned process tree, validate structured output, and keep operational state
+outside the project.
+
+Ordinary delegation uses the current Host's tasks, messages and progress.
+HEAD provides context and ownership, combines successful contributions, inspects
+unknown effects, and handles only the unfinished part. There is no HEAD role-token,
+generation, inbox or target-chain setup. Worker success cannot approve Canon or
+write recovery direction.
+
+Optional P2-first exact endpoint attachment preserves the same logical HEAD when
+the Host disappears. The portable export bridge is attachment-only; it retains one
+current snapshot, not a durable delivery mail service. Host-specific pane/socket/UI
+behavior stays outside Core. See [Runtime adapters](docs/runtime-adapters.md)
+and [Host delegation and attachment](docs/role-coordination.md).
+
+## Optional GraphDB
+
+Local storage is the safe default. GraphDB is not required for onboarding,
+context compilation, execution lineage, or recovery.
+
+ArcadeDB can be explicitly activated as a derived graph projection. Credentials
+are resolved only through environment-variable references and never enter
+project artifacts, graph identities, generated documents, or receipts. Remote
+activation must prove semantic conformance with the recoverable embedded graph.
+
+The JavaScript bridge is the semantic reference. When a verified native package
+is present, read-only prepared queries may use a content-addressed Go query-batch
+bridge; JavaScript still verifies the pointer, topology, traversal, request
+binding, and receipt. Set `HEAD_AGENT_ARCADEDB_NATIVE_MODE` to:
+
+- `auto` — use the verified native bridge when available, otherwise disclose and
+  use the JavaScript reference path;
+- `off` — always use the JavaScript path;
+- `required` — fail when the verified native path is unavailable.
+
+Manifest, binary, and post-selection digest mismatches always fail closed.
+Exact children receive only configured credential-reference variables and a
+bounded OS, TLS, locale, and proxy allowlist. The compute worker itself remains
+network-free and authority-free. See
+[Graph projection adapter](docs/graph-projection-adapter.md).
+
+## Installation lifecycle
+
+### Native packages
+
+User-scoped install and upgrade default to `--native auto`. The installer selects
+the exact version and platform package, verifies release checksum, archive paths,
+build metadata, and native manifests, then includes the binaries in the release
+identity. Use `--native off` for JavaScript-only installation or
+`--native required` when fallback is unacceptable.
+
+Codex and Claude marketplace snapshots carry the same verified packages for all
+five supported targets, so those installs do not need a runtime download. A
+missing target, mixed build commit, or manifest/digest mismatch blocks
+marketplace publication.
+
+Native components have separate contracts for authority-free computation, owned
+process supervision, and read-only ArcadeDB batching. Installing one never
+changes Product Canon, graph identity, review authority, or lineage.
+
+### Status, upgrade, rollback, and removal
+
+Run lifecycle commands from the newly downloaded source tree:
+
+```powershell
+node .\scripts\distribution.mjs upgrade
+node .\scripts\distribution.mjs status
+node .\scripts\distribution.mjs rollback
+node .\scripts\distribution.mjs uninstall
+```
+
+Upgrade stages and verifies an immutable release before replacing the active
+pointer. Normal removal deletes launchers and the active pointer but preserves
+verified releases for recovery. `uninstall --purge` also removes the user-scoped
+release store. Neither form traverses or deletes project `.head` state, Git data,
+generated project documents, or GraphDB data.
+
+Provider configuration and authentication remain owned by Claude Code, Codex,
+or OpenCode. HEAD passes only the exact authorized `provider/model` plus an
+ephemeral permission/privacy overlay; it does not install provider presets,
+copy credentials, or rewrite endpoints.
+
+## Capability status
+
+Status labels are evidence claims, not roadmap promises:
+
+- **Available** — implemented in the current source distribution;
+- **Experimental** — implemented behind an explicit or limited activation path;
+- **Planned** — accepted direction but not shipped;
+- **Deferred** — intentionally outside the current milestone.
+
+| Area | Capability | Status |
+| --- | --- | --- |
+| Project | initialization, Source Scope, review-gated Product Canon | **Available** |
+| Knowledge | graph-first bounded discovery with source fallback, World Model, incremental refresh, optional Context Capsules | **Available** |
+| Sessions | request-local logical Sessions and current common direction with exact-basis updates | **Available** |
+| Lineage | Runs, ResultPackets, Fresh HEAD review, P2 Session and conversation-entry recovery | **Available** |
+| Host lifecycle | provider-neutral injected compaction contract | **Experimental** |
+| Host lifecycle | packaged Claude Code, Codex, and OpenCode compaction event bindings | **Deferred** |
+| Runtime | Claude Code, Codex, and OpenCode one-shot Session/Run execution | **Available** |
+| Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | **Available** |
+| Runtime evidence | Claude Code live model-call conformance | **Experimental** |
+| Release evidence | provider-neutral Git ref, deployment-result, and release observations | **Available** |
+| Delivery evidence | provider-neutral per-environment/target applied, failed, and rollback history with exact optional source-revision links | **Available** |
+| Common observations | reuse-first exact evidence preparation plus paged Host source discovery and opaque-ID collection | **Available** |
+| Product policy | schema-v2 Policy proposal, exact application and semantic references, user review, evidence-currentness diagnostics, revision and retirement lineage | **Available** |
+| Measurement | versioned metric definitions, exact observations, condition-aware comparison, non-causal assessment and bounded lineage | **Available** |
+| Workers | bounded dispatch, wait, result, review, integration | **Available** |
+| Coordination | durable role messaging and exact-endpoint host delivery | **Available** |
+| Projection | local graph and Markdown | **Available** |
+| Projection | ArcadeDB | **Experimental** |
+| Distribution | user-scoped install, native delivery, rollback, safe removal | **Available** |
+| Distribution | verified Git-backed Codex marketplace | **Available** |
+| Distribution | verified Git-backed Claude Code marketplace | **Available** |
+| Distribution | OpenAI universal plugin directory | **Planned** |
+| Runtime | general provider-session resume and streaming | **Deferred** |
+| Documents | Obsidian and Notion adapters | **Deferred** |
+
+For exact claims and acceptance evidence, use the subsystem documents and source
+verification rather than inferring capability from this summary.
+
+## Design principles
+
+HEAD Agent Core Plugin is inspired by
+[Won6314/head-agent-core](https://github.com/Won6314/head-agent-core) and
+independently reworked as a provider-neutral plugin. It is not an official
+upstream release or a drop-in replacement. See the
+[source-grounded comparison](docs/original-head-core-comparison.md).
+
+This implementation retains the foundational HEAD principles while expressing
+them through provider-neutral contracts:
+
+- HEAD owns the connected whole outcome;
+- the user retains consequential authority;
+- semantic sufficiency belongs to HEAD; bounded verified context beats maximum context;
+- durable Canon survives temporary model sessions;
+- delegation stays bounded and non-authoritative;
+- completion requires connected primary evidence;
+- graphs are retrieval indexes, not unquestioned authority;
+- project meaning remains separate from runtime mechanisms.
+
+Read the upstream
+[Foundations](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/FOUNDATIONS.md)
+and
+[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/TECHNICAL_ARCHITECTURE.md)
+for the original design context.
+
+## Documentation
+
+Browse the [complete English documentation index](docs/README.md) or the
+[complete Korean documentation index](docs/ko/README.md). Every public English
+subsystem document has a Korean counterpart; code, command names, protocol
+identifiers, and artifact field names remain unchanged across languages.
+
+Start with these documents:
+
+- [Architecture](docs/architecture.md) — the provider-neutral composition;
+- [Authority planes](docs/authority-plane-contract.md) — the executable
+  Graph/record and non-amplification contract;
+- [Onboarding](docs/onboarding.md) — HEAD semantic proposals, Core verification, and explicit review;
+- [Context Compiler](docs/context-compiler.md) — reproducible task context;
+- [Work artifact storage](docs/artifact-storage.md) — where to save evidence without extra ceremony.
+- [Execution Lineage](docs/execution-lineage.md) — plans, contracts, results,
+  review, and recovery;
+- [World Model](docs/world-model.md) — source evidence and graph construction;
+- [Runtime adapters](docs/runtime-adapters.md) — capability, invocation, and
+  process ownership;
+- [Performance fast path](docs/performance-fast-path-design.md) — optimization
+  without semantic or authority shortcuts.
+
+Additional references:
+
+- [Product Model](docs/product-model.md)
+- [Product Operating Loop](docs/product-operating-loop.md)
+- [Release observation](docs/release-observation.md)
+- [Common Observation contract](docs/observation-adapters.md)
+- [Delivery state observation](docs/delivery-observation.md)
+- [Non-blocking Conformance reconciliation](docs/conformance-reconciliation.md)
+- [Incremental refresh](docs/incremental-refresh.md)
+- [Compaction recovery](docs/compaction-recovery.md)
+- [Session recovery](docs/session-recovery.md)
+- [Ordinary Host delegation and optional attachment](docs/role-coordination.md)
+- [Graph projection adapter](docs/graph-projection-adapter.md)
+- [Document projection adapter](docs/document-projection-adapter.md)
+- [Codex marketplace distribution](docs/codex-marketplace.md)
+- [Claude Code marketplace distribution](docs/claude-marketplace.md)
+
+Installed behavior is governed by these runtime contracts, the target project's
+user-owned Canon, current Session/Run recovery state, and explicit
+ReviewDecisions. Repository-development history, benchmark fixtures, and
+maintainer milestones are evidence about the plugin; they are not instructions
+for a project using it.
+
+## Verify from source
+
+Core verifies the exact target and permitted transition of a decision supplied
+by a trusted local caller. The Host and HEAD must convey the user's actual
+approval; digests and confirmation flags do not authenticate a human.
+
+Fixture tests establish reproducibility and transition behavior. They do not
+establish HEAD's evidence-discovery rate or end-to-end coding accuracy.
+See [verification evidence and local diagnostics](docs/verification-evidence.md).
+
+```powershell
+npm test
+npm run verify:newcomer
+npm run verify:distribution
+npm run verify:codex-marketplace
+npm run verify:claude-marketplace
+```
+
+Native sources additionally support `go test ./...` and `go vet ./...` from the
+corresponding module directories. JavaScript remains the semantic reference;
+native backends are advertised only after fixture-driven conformance and
+integrity verification.
+
+## Status and licensing
+
+HEAD Agent Core Plugin is beta software: the provider-neutral constitutional
+Core, recovery, Context Compiler, execution lineage, local projections, bounded
+workers, and verified Codex/Claude distribution are ready for broader testing.
+Capabilities marked Experimental, Planned, or Deferred above remain outside
+that beta claim.
+
+This project is released under the [MIT License](LICENSE).
+Native binaries also carry [Go runtime and standard-library notices](native/GO-NOTICES.txt).

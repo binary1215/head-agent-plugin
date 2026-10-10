@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "HeadAgentArcadeDbBridgeManifest",
+  "manifestVersion": "0.1.0",
+  "bridgeProtocolVersion": "0.1.0",
+  "target": {
+    "platform": "linux",
+    "arch": "arm64",
+    "directory": "linux-arm64"
+  },
+  "binary": {
+    "relativePath": "head-agent-arcadedb-bridge",
+    "sha256": "4f120f5f014ae3eebd784bb5ee2f1995dd8f05a11359a362446c31689a9608b1",
+    "size": 5701794
+  },
+  "operations": [
+    "query-batch"
+  ],
+  "processModel": {
+    "stdio": "single-request-single-response-json",
+    "descendants": "forbidden",
+    "network": "request-selected-http-or-https-endpoint",
+    "databaseWrites": "forbidden-by-query-endpoint",
+    "projectWrites": "forbidden"
+  },
+  "authority": {
+    "kind": "read-only-transport",
+    "instructionAuthority": false,
+    "promotionAuthority": false,
+    "canonicalAuthority": false,
+    "mutatesProject": false,
+    "mutatesCanon": false
+  },
+  "manifestId": "arcadedb-bridge-manifest-696c8516fc51ed5515a8f73e",
+  "manifestHash": "696c8516fc51ed5515a8f73e38f62aad9c809fee3d8c855d64dea93007bc0e78"
+}
