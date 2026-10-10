@@ -552,6 +552,7 @@ export function formatDeliveryStatus(value) {
 }
 
 export function formatMcpToolContent(name, value) {
+  if (name === "head_project_graph") return formatProjectGraph(value);
   if (name === "head_bounded_worker_prepare") return formatWorkerPreparation(value);
   if (["head_worker_integration_status", "head_worker_integration"].includes(name)) return formatWorkerGuidance(value);
   if (["head_bounded_worker_wave_status", "head_bounded_worker_wave_wait"].includes(name)) return formatWorkerGuidance(value);
@@ -574,6 +575,59 @@ export function formatMcpToolContent(name, value) {
   if (name === "head_checkpoint_diagnose") return formatCheckpointDiagnosis(value);
   if (name === "head_checkpoint_sync") return formatCheckpointSync(value);
   return JSON.stringify(value);
+}
+
+// Presentation of the already bounded selection, never another selection pass.
+// Every record field is emitted, including extensions unknown to this renderer.
+function formatProjectGraph(value) {
+  const record = item => item !== null && typeof item === "object" && !Array.isArray(item);
+  if (value?.kind !== "ProjectGraphDiscoveryProjection" || value.query?.details !== false
+    || !Array.isArray(value.nodes) || !Array.isArray(value.edges)
+    || !value.nodes.every(node => record(node) && typeof node.nodeId === "string")
+    || !value.edges.every(edge => record(edge) && [edge.edgeId, edge.type, edge.from, edge.to].every(item => typeof item === "string"))) {
+    return JSON.stringify(value);
+  }
+  const authorityFields = ["plane", "persistence", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "executionAuthority", "ordinaryWorkBlocked"];
+  const sharedAuthority = record(value.authority) && Object.keys(value.authority).length === authorityFields.length
+    && authorityFields.every(key => Object.hasOwn(value.authority, key) && ["string", "boolean"].includes(typeof value.authority[key]));
+  const lines = [`Project graph: ${JSON.stringify(value.status)} — ${value.nodes.length} nodes, ${value.edges.length} relationships (selected order).`,
+    "Navigation evidence, not approval, execution permission or semantic sufficiency.",
+    "Shared authority means identical projection fields, never sourceAuthority. Internal detail.anchorIds is not MCP anchor_ids; see detailExpansion.",
+    "Read basis, coverage and original-source checks:"];
+  for (const [key, item] of Object.entries(value)) {
+    if (!["nodes", "edges"].includes(key)) lines.push(`  ${JSON.stringify(key)}: ${JSON.stringify(item)}`);
+  }
+  const render = (item, groups) => {
+    const remaining = new Set(Object.keys(item));
+    if (sharedAuthority && authorityFields.every(key => Object.hasOwn(item, key) && item[key] === value.authority[key])) {
+      lines.push("  authority: graph authority (identical)");
+      for (const key of authorityFields) remaining.delete(key);
+    }
+    for (const [label, fields] of groups) {
+      const keys = fields.filter(key => remaining.has(key));
+      if (!keys.length) continue;
+      lines.push(`  ${label}: ${JSON.stringify(Object.fromEntries(keys.map(key => [key, item[key]])))}`);
+      for (const key of keys) remaining.delete(key);
+    }
+    if (remaining.size) lines.push(`  other fields: ${JSON.stringify(Object.fromEntries([...remaining].map(key => [key, item[key]])))}`);
+  };
+  value.nodes.forEach((node, index) => {
+    lines.push(`Node ${index + 1}`);
+    render(node, [
+      ["identity", ["nodeId", "kind", "name", "key", "views"]],
+      ["state", ["reviewState", "status", "disposition", "applicationStatus", "freshness", "integrity", "revisionId", "snapshotState", "mode", "sessionId", "runId", "activeRunId", "latestCheckpoint", "policyKey", "baseProductModelId", "resultingProductModelId"]],
+      ["source", ["path", "digest", "sourceAuthority", "sourceReference", "sourceCurrentness"]],
+      ["included excerpt", ["excerpt", "contentScope", "contentPartial"]],
+      ["direction and cancellation excerpt / coverage", ["directionEvidence", "directionContentCoverage"]],
+      ["internal detail reference", ["detail"]],
+    ]);
+  });
+  value.edges.forEach((edge, index) => {
+    lines.push(`Relationship ${index + 1}`);
+    render(edge, [["identity and direction", ["edgeId", "type", "from", "to"]],
+      ["endpoint states", ["endpointStates"]], ["provenance", ["provenance"]]]);
+  });
+  return `${lines.join("\n")}\n`;
 }
 
 export function formatCliError(error) {
