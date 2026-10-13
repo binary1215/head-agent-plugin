@@ -2902,8 +2902,17 @@ function inspectPreparedGraphProjection({ projectRoot, graph, adapter }) {
 }
 
 export function queryGraphProjection({ projectRoot, graph, adapter = null, query = {} } = {}) {
-  const selected = createGraphProjectionAdapter({ projectRoot, adapter });
   const expected = queryTemporalProvenanceGraph(graph, query);
+  // Existing remote/prepared traversal contracts cannot prove a domain mask.
+  // Keep the original verified graph/hash and use deterministic local expansion;
+  // do not query, materialize or rewrite the remote store to emulate support.
+  if (query.eligibility) return { result: expected, diagnostics: {
+    executionMode: "embedded-domain-eligibility-fallback", fallbackUsed: true,
+    fallbackReasonCode: "GRAPH_PROJECTION_DOMAIN_ELIGIBILITY_UNSUPPORTED",
+    originalGraphSnapshotId: graph.graphSnapshotId, originalGraphSnapshotHash: graph.graphSnapshotHash,
+    domainEligibilityHash: expected.traversalQuery.domainEligibilityHash,
+  } };
+  const selected = createGraphProjectionAdapter({ projectRoot, adapter });
   const prepared = supportsPreparedTraversal(selected);
   const inspected = prepared
     ? inspectPreparedGraphProjection({ projectRoot, graph, adapter: selected })

@@ -64,7 +64,7 @@ checkpoint cannot drive current effect execution merely by being readable.
 
 1. digest-verifies the content-addressed `SessionRunCheckpoint`;
 2. requires current protocol `0.3.0` and its immutable `sessionPointer`;
-3. compares that pointer with the selected logical Session record (`current.json`
+3. preserves the historical pointer separately from the selected Session record (`current.json`
    for the preserved default, or `by-id/<session-id>/current.json`);
 4. re-verifies the current WholePlan and, when active, exact Run,
    ExecutionContract, and ContextCapsule digest;
@@ -77,11 +77,13 @@ The read-only project experience may run this exact verification to report
 consume a continuation token, or attach a provider. HEAD reads the full restore
 projection only when a verified current checkpoint exists.
 
-The projection carries the checkpoint's exact purpose, position, and next
-expected result as the consumer instruction. It does not read or persist a
-provider session ID, transcript, or summary and does not enable provider resume
-or streaming. Pointer drift, tamper, missing P2 lineage, or a historical
-checkpoint fails closed rather than reconstructing plausible state.
+Projection 0.2 preserves exact checkpoint meaning and exposes current execution
+separately. Old position/next result is labelled under
+`consumerInstruction.historicalCheckpointContext`, not issued as a current next
+action. Pointer differences alone do not fail ordinary restore. Tamper,
+owner/reference contradictions and required current lineage loss remain scoped
+failures. Provider identities, transcript/summary, resume/stream remain outside
+this view. See [state separation](recovery-state-separation.md).
 
 `head_conversation_enter` is the automatic conversation-facing composition of
 this same read-only restore plus existing bounded project-status facts. The

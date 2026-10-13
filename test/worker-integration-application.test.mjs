@@ -11,6 +11,7 @@ import { invokeWorkerFileEffect, prepareWorkerFileEffectInvocation, invokePrepar
 import { integrationDigest as hash, integrationJson as canonicalJson } from "../scripts/lib/worker-integration-store.mjs";
 import { workerIntegrationFixture } from "./helpers/worker-integration-fixture.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
+import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { applyWorkerPatchIntegration, readWorkerPatchApplication, readOutstandingWorkerEffects,
   reconcileWorkerPatchIntegration, settleIncompleteWorkerPatchIntegration, workerEffectPathsOverlap } from "../scripts/lib/worker-integration-application.mjs";
 
@@ -379,10 +380,11 @@ function nextRun(f, replaceSession = false) {
   reviewRun({ root: f.root, reviewContextId: getPendingReviewContext({ root: f.root }).review.reviewContextId,
     disposition: "accept", rationale: "Accept this diagnostic record, not successful effect completion.", nextActions: ["Reconcile outstanding effects"] });
   if (replaceSession) {
-    // Deliberately model a replacement current Session pointer. Retained old
-    // authorization/dispatch/Run records remain untouched and fully verified.
-    const state = JSON.parse(fs.readFileSync(f.sessionFile, "utf8"));
-    fs.writeFileSync(f.sessionFile, JSON.stringify({ ...state, sessionId: "session-11111111-2222-4333-8444-555555555555" }));
+    // Use the supported independent logical Session route. Rewriting only the
+    // default state's owner would leave foreign last-reviewed pointers and is
+    // invalid P2, not a valid replacement Session. Old effect evidence remains.
+    const replacement = createHeadSession({ root: f.root, purpose: "Replacement caller" });
+    return withSessionRoute(f.root, replacement.sessionId, () => startRun({ root: f.root, executionContractId: f.contract.executionContractId })).run;
   }
   return startRun({ root: f.root, executionContractId: f.contract.executionContractId }).run;
 }
@@ -400,6 +402,7 @@ test("outstanding unknown paths block overlap across Run/Session changes but not
     fs.renameSync(journal, `${journal}.retired-by-test`);
     const next = nextRun(f, replaceSession);
     assert.notEqual(next.runId, unknown.intent.lineage.runId);
+    await withSessionRoute(f.root, next.sessionId, async () => {
     const overlapping = await f.addIntegration({ workers: [{ path: "a.txt", after: "alternative A" }] });
     const overlapInput = { root: f.root, integrationId: overlapping.integrationId };
     const collisions = readOutstandingWorkerEffects(overlapInput);
@@ -420,6 +423,7 @@ test("outstanding unknown paths block overlap across Run/Session changes but not
     assert.equal((await applyWorkerPatchIntegration(unrelatedInput, native.host)).status, "applied");
     assert.equal(current(f).effectResults[0].status, "unknown");
     assert.equal(current(f).outstanding, true);
+    });
     });
   }
 });

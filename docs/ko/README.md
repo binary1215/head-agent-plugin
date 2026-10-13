@@ -8,6 +8,8 @@
 
 ## 먼저 읽을 문서
 
+- [복구 의미·Session 선택·World 도메인](recovery-state-separation.md)
+
 - [아키텍처 결정](architecture.md)
 - [공급자 중립 HEAD 헌법](head-constitution.md)
 - [권한 평면과 Graph/기록 경계](authority-plane-contract.md)

@@ -77,8 +77,10 @@ idle -> prepared -> verified -> continued
 
 An active-Run pointer binds the exact Run, WholePlanSnapshot, ExecutionContract, and ContextCapsule digest. The checkpoint—not the Capsule—owns recovery direction.
 
-The immutable Session pointer makes provider-independent artifact restore
-falsifiable: the current Session canon must still match the checkpoint exactly.
+The immutable Session pointer makes exact one-shot continuation falsifiable:
+its current target must still match the checkpoint. Ordinary artifact recovery
+instead separates historical meaning from verified current execution facts; see
+[state separation](recovery-state-separation.md).
 Protocol `0.1.0` and `0.2.0` checkpoints remain digest-readable for audit, but
 they do not contain the complete pointer required by current artifact-only
 restore. See [Session restore and reviewed-result integration](session-recovery.md).

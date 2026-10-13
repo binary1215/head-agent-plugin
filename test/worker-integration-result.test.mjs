@@ -212,14 +212,20 @@ for (const boundary of ["run", "artifact", "session"]) {
       if (!injected && match) { injected = true; link(source, target); throw Object.assign(new Error("Synthetic artifact crash"), { code: "EIO" }); }
       return link(source, target);
     };
-    try { await assert.rejects(publishWorkerIntegrationResult(f.publication), { code: "EIO" }); }
+    try {
+      if (boundary === "session") {
+        const committed = await publishWorkerIntegrationResult(f.publication);
+        assert.equal(committed.canonicalCommit, "committed");
+        assert.equal(committed.executionReplayAllowed, false);
+      } else await assert.rejects(publishWorkerIntegrationResult(f.publication), { code: "EIO" });
+    }
     finally { fs.renameSync = rename; fs.linkSync = link; }
     assert.equal(injected, true);
     const packetFile = path.join(f.root, ".head/lineage/result-packets", `${f.verification.wholeResultPacket.resultPacketId}.json`);
     assert.equal(JSON.parse(fs.readFileSync(f.runFile)).resultPacketId, f.verification.wholeResultPacket.resultPacketId);
     assert.equal(fs.existsSync(packetFile), boundary !== "run", "the frozen Run precedes the exact artifact publication");
     assert.equal(inspectProject(f.root).state.pendingReview?.runId ?? null, boundary === "session" ? f.run.runId : null);
-    assert.equal(fs.existsSync(receiptFile(f)), false);
+    assert.equal(fs.existsSync(receiptFile(f)), boundary === "session", "exact committed Session publication can acknowledge storage despite staging cleanup failure");
     const beforeRead = files(f.root);
     inspectProject(f.root);
     assert.deepEqual(files(f.root), beforeRead, "inspection does not repair an interrupted publication");
@@ -279,7 +285,7 @@ test("an existing corrupt target packet is rejected before preparing a P2 finish
   const before = p2(f);
   await assert.rejects(publishWorkerIntegrationResult(f.publication), { code: "LINEAGE_DIGEST_MISMATCH" });
   assert.deepEqual(p2(f), before);
-  assert.equal(JSON.parse(before.run).sessionTransition, undefined);
+  assert.equal(JSON.parse(before.run).sessionTransition.kind, "start", "corrupt result cannot replace the existing exact start transition with finish");
   assert.equal(fs.existsSync(receiptFile(f)), false);
 });
 

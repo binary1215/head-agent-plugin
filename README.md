@@ -4,6 +4,8 @@
 
 [English](README.md) | [한국어](README.ko.md) | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
+[Recovery, Session selection and World freshness](docs/recovery-state-separation.md)
+
 **Keep long-running AI development on one reviewed product direction<br>
 even when the tool, agent, or conversation changes.**
 

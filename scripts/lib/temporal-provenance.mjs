@@ -4074,8 +4074,20 @@ export function queryTemporalProvenanceGraph(graph, {
   depth = 1,
   maxNodes = 100,
   maxEdges = 200,
+  eligibility = null,
 } = {}) {
   verifyTemporalProvenanceGraph(graph);
+  const originalNodeIds = eligibility ? new Set(graph.nodes.map(node => node.nodeId)) : null;
+  const originalEdgeIds = eligibility ? new Set(graph.edges.map(edge => edge.edgeId)) : null;
+  if (eligibility && (eligibility.graphSnapshotId !== graph.graphSnapshotId || eligibility.graphSnapshotHash !== graph.graphSnapshotHash
+    || !Array.isArray(eligibility.nodeIds) || !Array.isArray(eligibility.edgeIds)
+    || new Set(eligibility.nodeIds).size !== eligibility.nodeIds.length || new Set(eligibility.edgeIds).size !== eligibility.edgeIds.length
+    || eligibility.nodeIds.some(id => !originalNodeIds.has(id))
+    || eligibility.edgeIds.some(id => !originalEdgeIds.has(id)))) {
+    fail("Domain eligibility must refer to the original verified GraphSnapshot.", "TEMPORAL_ELIGIBILITY_SNAPSHOT_MISMATCH");
+  }
+  const eligibleDomainNodes = eligibility ? new Set(eligibility.nodeIds) : null;
+  const eligibleDomainEdges = eligibility ? new Set(eligibility.edgeIds) : null;
   const normalizedQuery = String(query || "").trim().toLocaleLowerCase();
   const exactAnchorIds = anchorIds == null ? [] : anchorIds;
   if (!Array.isArray(exactAnchorIds)
@@ -4115,9 +4127,11 @@ export function queryTemporalProvenanceGraph(graph, {
   ]);
   const candidatePolicyAllows = (record) => includeUnreviewedCandidates || !candidateSurfaceKinds.has(record.kind);
   const nodeEligible = (node) => allowedKinds.includes(node.kind) && allowedAuthorityClasses.includes(node.authorityClass)
-    && allowedFreshness.includes(node.freshness) && confidenceOf(node) >= safeMinimumConfidence && candidatePolicyAllows(node);
+    && allowedFreshness.includes(node.freshness) && confidenceOf(node) >= safeMinimumConfidence && candidatePolicyAllows(node)
+    && (!eligibleDomainNodes || eligibleDomainNodes.has(node.nodeId));
   const edgeEligible = (edge) => allowedRelations.includes(edge.type) && allowedAuthorityClasses.includes(edge.authorityClass)
-    && allowedFreshness.includes(edge.freshness) && confidenceOf(edge) >= safeMinimumConfidence;
+    && allowedFreshness.includes(edge.freshness) && confidenceOf(edge) >= safeMinimumConfidence
+    && (!eligibleDomainEdges || eligibleDomainEdges.has(edge.edgeId));
   const eligibleNodes = graph.nodes.filter(nodeEligible);
   const eligibleNodeIds = new Set(eligibleNodes.map((node) => node.nodeId));
   const nodesById = new Map(graph.nodes.map((node) => [node.nodeId, node]));
@@ -4205,6 +4219,7 @@ export function queryTemporalProvenanceGraph(graph, {
     maxNodes: safeMaxNodes,
     maxEdges: safeMaxEdges,
     ordering: "nodeId-then-edgeId-ascending",
+    ...(eligibility ? { domainEligibilityHash: digest(canonicalJson(eligibility)) } : {}),
   };
   const queryHash = digest(canonicalJson(traversalQuery));
   const resultPayload = {
@@ -4226,6 +4241,8 @@ export function queryTemporalProvenanceGraph(graph, {
       nodeLimitExcluded: nodeLimitExcludedIds.size,
       edgeLimitExcluded: edgeLimitExcludedIds.size,
       unreviewedCandidatesExcluded: graph.nodes.filter((node) => candidateSurfaceKinds.has(node.kind) && !includeUnreviewedCandidates).length,
+      ...(eligibility ? { domainExcludedNodes: graph.nodes.length - eligibleDomainNodes.size,
+        domainExcludedEdges: graph.edges.length - eligibleDomainEdges.size, domainFreshness: eligibility.domains } : {}),
     },
     boundary: {
       items: boundedBoundaryItems,

@@ -165,8 +165,8 @@ test("same checkpoint bytes never become a mechanical semantic-freshness claim a
   startFixtureRun(root, "new Session lineage after checkpoint");
   const diagnosis = inspectRecoveryCheckpointDiagnosis({ root });
   assert.equal(diagnosis.currentCheckpoint.checkpointId, current.checkpointId);
-  assert.equal(diagnosis.diagnosis.state, "checkpoint-reference-drift");
-  assert.equal(diagnosis.diagnosis.reasonCode, "SESSION_RESTORE_POINTER_DRIFT");
+  assert.equal(diagnosis.diagnosis.state, "verified-checkpoint");
+  assert.equal(diagnosis.diagnosis.reasonCode, "CHECKPOINT_ARTIFACT_RECOVERY_VERIFIED");
   assert.equal(diagnosis.checkpointUpdate.status, "ready");
   assert.equal(diagnosis.checkpointUpdate.freshDirectionPublishable, true);
   assert.equal(diagnosis.semanticFreshness.mechanicallyDetermined, false);

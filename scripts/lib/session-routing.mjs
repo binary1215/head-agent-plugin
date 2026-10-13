@@ -9,9 +9,36 @@ export { readProjectDirection, updateProjectDirection } from "./project-directio
 
 // Routing is request-local Host selection, never a persisted global selector.
 const routes = new AsyncLocalStorage();
+const callContexts = new WeakSet();
 const fail = (message, code) => { throw Object.assign(new Error(message), { code }); };
 const canonicalRoot = (root) => fs.realpathSync(path.resolve(root || "."));
 const validId = (id) => typeof id === "string" && /^session-[a-fA-F0-9-]{36}$/.test(id);
+
+// Shared call boundary, not a permission or a read-only/effect classification.
+// These CLI entries consume the same Project-only evidence as their MCP peers;
+// unclassified CLI operations retain routing rather than guessing independence.
+const independentCliInfo = new Set(["help", "--help", "-h", "help-all", "version", "--version"]);
+const cliProjectCalls = new Map(Object.entries({
+  "graph-query": "head_project_graph", "graph-index": "head_project_graph_index",
+  "project-direction-read": "head_project_direction_read", "project-direction-update": "head_project_direction_update",
+  "session-list": "head_session_list", "session-create": "head_session_create",
+  "world-query": "head_world_query", "world-history": "head_git_history",
+  "observation-sources": "head_observation_sources", "observation-read": "head_observation_read", "observation-query": "head_observation_query",
+  "source-context": "head_source_context", "source-observation-read": "head_source_observation_read",
+  "context-read": "head_context_capsule", "lineage-read": "head_lineage_artifact",
+}));
+const selectedSessionCalls = new Set(["head_project_initialize_or_resume", "head_project_status", "head_conversation_enter", "head_session_restore", "head_session_continue",
+  "head_pending_review", "head_runtime_adapters", "head_runtime_state", "head_world_model", "head_context_prepare", "head_context_preview", "head_compaction_lifecycle_step",
+  "head_continuity_snapshot", "head_product_operating_status"]);
+export function sessionCallRequiresBinding(name, surface = "mcp") {
+  if (surface === "cli") {
+    if (independentCliInfo.has(name)) return false;
+    const peer = cliProjectCalls.get(name);
+    return peer ? sessionCallRequiresBinding(peer) : true;
+  }
+  return /^(head_checkpoint_|head_run_|head_runtime_invocation_|head_bounded_worker_|head_worker_integration|head_compact_)/u.test(name || "")
+    || selectedSessionCalls.has(name);
+}
 
 export function safeSessionPath(root, ...parts) {
   const base = canonicalRoot(root);
@@ -42,6 +69,51 @@ export function assertRunSession(root, run, state) {
 
 function selectedRoute(root) { return routes.getStore()?.get(canonicalRoot(root)) || null; }
 function selectedId(root) { return selectedRoute(root)?.sessionId || null; }
+
+// A trusted embedding Host owns one context per caller, not per Project or
+// shared MCP process. No provider identity or selector is written into Canon.
+export function createSessionCallContext() {
+  const bindings = new Map();
+  const context = Object.freeze({
+    read(root) { return bindings.get(canonicalRoot(root)) || Object.freeze({ status: "unselected", revision: 0 }); },
+    select(root, sessionId, expectedRevision = null) {
+      const base = canonicalRoot(root), before = this.read(base);
+      if (expectedRevision != null && before.revision !== expectedRevision) fail("Host Session binding changed.", "HEAD_SESSION_BINDING_CONFLICT");
+      const defaultId = read(defaultSessionStatePath(base)).sessionId;
+      const selected = sessionId == null || sessionId === "" ? defaultId : sessionId;
+      withSessionRoute(base, selected, () => {});
+      const value = Object.freeze({ status: selected === defaultId ? "default" : "bound", sessionId: selected, revision: before.revision + 1 });
+      bindings.set(base, value);
+      return value;
+    },
+    lose(root) {
+      const base = canonicalRoot(root), before = this.read(base);
+      bindings.set(base, Object.freeze({ status: "lost", revision: before.revision + 1 }));
+    },
+  });
+  callContexts.add(context);
+  return context;
+}
+
+export function withSessionCallContext({ root, sessionId, context = null }, operation) {
+  if (!context) return withSessionRoute(root, sessionId, operation);
+  if (!callContexts.has(context)) fail("Expected a trusted caller-scoped Host context.", "INVALID_HEAD_SESSION_CALL_CONTEXT");
+  const binding = sessionId !== undefined ? context.select(root, sessionId) : context.read(root);
+  if (binding.status === "lost") fail("Selected logical Session was lost; do not silently substitute default.", "HEAD_SESSION_SELECTION_LOST");
+  return withSessionRoute(root, binding.sessionId, operation);
+}
+
+export function sessionSelectionUnresolved(root) {
+  const project = read(safeSessionPath(root, ".head", "project.json"));
+  if (project.projectRoot !== canonicalRoot(root)) fail("Project root identity differs.", "PROJECT_IDENTITY_MISMATCH");
+  return { status: "session_selection_unresolved", reasonCode: "HEAD_SESSION_SELECTION_LOST",
+    projectId: project.projectId, sessionId: null, sessionSelection: { status: "lost" },
+    ordinaryWorkBlocked: false, recoveryDependentWorkBlocked: true,
+    headActionRequired: true, userDecisionRequired: false,
+    affectedOperations: ["selected-session-read", "selected-session-mutation"],
+    nextHeadAction: "Restore a verified caller binding or explicit logical Session only for dependent work; continue independent Project/source work.",
+    persisted: false, recoveryAuthority: false };
+}
 
 export function sessionStatePath(root) {
   const route = selectedRoute(root);

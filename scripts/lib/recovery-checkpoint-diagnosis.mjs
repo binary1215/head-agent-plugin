@@ -496,6 +496,8 @@ export function inspectRecoveryCheckpointDiagnosis({ root = ".", includeRestore 
 
   const resultEvidence = optionalResultEvidence(restoreAttempt.value.projection);
   const missingOptionalEvidence = resultEvidence.status === "missing-evidence";
+  const executionStatus = restoreAttempt.value.projection.currentExecution?.status || "verified";
+  const executionBlocked = new Set(["incomplete", "conflict"]).has(executionStatus);
   const projection = baseProjection({
     project: projectAfter,
     checkpoint: currentCheckpoint(projectAfter, secondBasis),
@@ -503,16 +505,17 @@ export function inspectRecoveryCheckpointDiagnosis({ root = ".", includeRestore 
       state: missingOptionalEvidence
         ? "verified-checkpoint-with-missing-result-evidence"
         : "verified-checkpoint",
-      reasonCode: missingOptionalEvidence ? "OPTIONAL_RESULT_PACKET_EVIDENCE_MISSING" : "CHECKPOINT_ARTIFACT_RECOVERY_VERIFIED",
+      reasonCode: executionBlocked ? (executionStatus === "conflict" ? "RUN_TRANSITION_SESSION_DRIFT" : "RUN_TRANSITION_INCOMPLETE") : missingOptionalEvidence ? "OPTIONAL_RESULT_PACKET_EVIDENCE_MISSING" : "CHECKPOINT_ARTIFACT_RECOVERY_VERIFIED",
       failureClass: null,
       summary: missingOptionalEvidence
         ? "The P2 checkpoint verifies, while optional P3 ResultPacket evidence is missing."
-        : "The checkpoint and exact artifact recovery tuple verify across the observed reads.",
+        : "Historical checkpoint meaning and current execution facts verify separately across the observed reads.",
     },
     artifactRecovery: {
       status: missingOptionalEvidence ? "verified-with-missing-optional-evidence" : "verified",
       reasonCode: missingOptionalEvidence ? "OPTIONAL_RESULT_PACKET_EVIDENCE_MISSING" : null,
       sessionRestoreId: restoreAttempt.value.projection.sessionRestoreId,
+      currentExecutionStatus: executionStatus,
       optionalResultEvidence: resultEvidence,
     },
     checkpointUpdate: checkpointUpdateFromBasis(secondBasis, true),
@@ -523,17 +526,20 @@ export function inspectRecoveryCheckpointDiagnosis({ root = ".", includeRestore 
       restoreTupleMatched: true,
       retryRequired: false,
     }),
-    nextHeadAction: missingOptionalEvidence
+    nextHeadAction: executionBlocked ? {
+      id: "inspect-affected-run-storage",
+      summary: "Historical meaning remains readable. Inspect the exact incomplete/conflicting Run storage before dependent effects; do not replay external work or rewrite checkpoint direction.",
+    } : missingOptionalEvidence
       ? {
           id: "recover-result-evidence-if-review-is-needed",
           summary: "Continue from verified P2 direction; recover or reproduce the named P3 ResultPacket only before review-dependent work.",
         }
       : {
           id: "continue-from-verified-artifacts",
-          summary: "Continue from verified P2 artifacts. If direction may have changed semantically, the current provider HEAD must assess it before any sync.",
+          summary: "Read current execution and common direction alongside historical checkpoint meaning. Do not replay historical next actions or require checkpoint sync for ordinary work.",
         },
-    headActionRequired: false,
-    recoveryDependentWorkBlocked: false,
+    headActionRequired: executionBlocked,
+    recoveryDependentWorkBlocked: executionBlocked,
     reviewDependentWorkBlocked: missingOptionalEvidence,
   });
   if (includeRestore) projection.restore = restoreAttempt.value;

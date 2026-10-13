@@ -4,7 +4,7 @@ import { assertRunSession } from "./session-routing.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { inspectProject } from "./head-core.mjs";
 import { buildFreshHeadReview, createResultPacket, readLineageArtifact } from "./execution-lineage.mjs";
-import { finishRun, getPendingReviewContext } from "./run-lineage.mjs";
+import { finishRun, getPendingReviewContext, inspectRunStorageTransition } from "./run-lineage.mjs";
 import { withProjectMutationAsync } from "./project-mutation-lock.mjs";
 import { readWorkerPatchIntegration, requireCurrentWorkerPatchIntegration } from "./worker-patch-integration.mjs";
 import { readWorkerIntegrationBasis } from "./worker-integration-basis.mjs";
@@ -245,17 +245,21 @@ function currentTarget(root, intent, packet) {
     || run.resultPacketId && run.resultPacketId !== packet.resultPacketId
     || !state.activeRunId && (run.status !== "awaiting_review" || state.pendingReview.wholePlanId !== lineage.wholePlanId
       || state.pendingReview.resultPacketId !== packet.resultPacketId || run.resultPacketId !== packet.resultPacketId)) fail("Whole result target differs from exact Run canon.");
-  if (run.sessionTransition && (run.sessionTransition.kind !== "finish" || run.sessionTransition.artifactId !== packet.resultPacketId
+  if (run.sessionTransition?.kind === "start") {
+    const storage = inspectRunStorageTransition({ root, inspected });
+    if (storage.status !== "committed" || storage.runId !== lineage.runId) fail("Run start storage is not exact and committed.");
+  } else if (run.sessionTransition && (run.sessionTransition.kind !== "finish" || run.sessionTransition.artifactId !== packet.resultPacketId
     || run.sessionTransition.projectId !== lineage.projectId || run.sessionTransition.sessionId !== lineage.headSessionId
     || run.sessionTransition.runId !== lineage.runId)) fail("Run already froze a different exact result transition.");
   if (run.status === "awaiting_review" && !run.sessionTransition) fail("Completed result lacks its exact finish transition.");
-  return { replay: Boolean(run.sessionTransition) };
+  return { replay: run.sessionTransition?.kind === "finish" };
 }
 
 export async function publishWorkerIntegrationResult({ root = ".", integrationId, verificationId } = {}, inspection = {}) {
   return withProjectMutationAsync({ root, scope: "session-recovery" }, async () => {
     const historical = readWorkerIntegrationResult({ root, integrationId, verificationId });
-    if (historical.application) return { ...historical, status: "already-published", freshHeadReview: null };
+    if (historical.application) return { ...historical, status: "already-published", freshHeadReview: null,
+      canonicalCommit: "committed", executionReplayAllowed: false, projectionUpdate: { status: "not-requested", ordinaryWorkBlocked: false } };
     const { intent, verification } = historical;
     if (!verification) fail("An exact HEAD integration verification is required.");
     const packet = verification.wholeResultPacket;
@@ -298,6 +302,7 @@ export async function publishWorkerIntegrationResult({ root = ".", integrationId
       status: "whole-result-published-awaiting-review", freshHeadReviewRequired: true, ...flags },
     "worker-integration-result-application", "applicationId", "applicationHash");
     publishIntegrationJson(fileFor(root, integrationId, "result-application", true), application);
-    return { status: "published", intent, application, verification, resultPacket: packet, freshHeadReview: fresh.review, ...flags };
+    return { status: "published", intent, application, verification, resultPacket: packet, freshHeadReview: fresh.review,
+      canonicalCommit: result.canonicalCommit, projectionUpdate: result.projectionUpdate, executionReplayAllowed: false, ...flags };
   });
 }

@@ -9,7 +9,7 @@ import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
-import { operationPointerHash, sessionStateHash } from "./run-lineage.mjs";
+import { operationPointerHash, sessionStateHash, inspectRunStorageTransition } from "./run-lineage.mjs";
 
 export const COMPACTION_RECOVERY_VERSION = "0.3.0";
 export const RECOVERY_CHECKPOINT_SYNC_VERSION = "0.1.0";
@@ -209,6 +209,10 @@ function inspectRunTransitionState(inspected) {
   const { run, lineage } = loaded;
   const transition = run.sessionTransition;
   if (!transition) return { status: "stable", lineage, transition: null };
+  if (transition.kind === "start") {
+    const inspectedTransition = inspectRunStorageTransition({ inspected });
+    return { ...inspectedTransition, lineage };
+  }
   if (transition.before && transition.patch) {
     if (!new Set(["finish", "review"]).has(transition.kind)
       || transition.projectId !== inspected.project.projectId || transition.sessionId !== inspected.state.sessionId

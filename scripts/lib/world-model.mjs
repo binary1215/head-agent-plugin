@@ -79,8 +79,10 @@ import {
 } from "./document-projection-adapter.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 import { readGraphProject, safeGraphFile } from "./discovery-index.mjs";
+import { SOURCE_ANALYSIS_VERSION } from "./source-analysis.mjs";
+import { withSessionRoute } from "./session-routing.mjs";
 
-export const WORLD_MODEL_VERSION = "0.18.0";
+export const WORLD_MODEL_VERSION = "0.19.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
 export const WORLD_MODEL_STATUS_PROJECTION_VERSION = "0.1.0";
 export const WORLD_MODEL_STATUS_PROJECTION_MAX_BYTES = 512 * 1024;
@@ -382,7 +384,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
     }
   }
   if (snapshot.temporalProvenanceGraph) verifyTemporalProvenanceGraph(snapshot.temporalProvenanceGraph);
-  if (new Set(["0.11.0", "0.12.0", "0.13.0", "0.14.0", "0.15.0", "0.16.0", "0.17.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
+  if (new Set(["0.11.0", "0.12.0", "0.13.0", "0.14.0", "0.15.0", "0.16.0", "0.17.0", "0.18.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
     const projection = snapshot.onboardingProjection;
     const graphProjection = snapshot.temporalProvenanceGraph?.onboardingProjection;
     if (!projection || projection.authority !== "derived-projection-manifest-not-project-canon"
@@ -394,7 +396,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
       || canonicalJson(projection.productModelRevisionIds) !== canonicalJson(graphProjection?.productModelRevisionIds)) {
       fail("World Model onboarding projection and temporal graph disagree.", "ONBOARDING_TEMPORAL_IDENTITY_MISMATCH");
     }
-    if (snapshot.protocol?.version === WORLD_MODEL_VERSION) {
+    if (["0.18.0", WORLD_MODEL_VERSION].includes(snapshot.protocol?.version)) {
       const policyProjection = snapshot.productPolicyProjection;
       const graphPolicyProjection = snapshot.temporalProvenanceGraph?.productPolicyProjection;
       if (!policyProjection || policyProjection.authority !== "derived-projection-manifest-not-project-canon"
@@ -455,7 +457,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
       || canonicalJson(operatingProjection.outcomeObservationIds) !== canonicalJson(graphOperatingProjection?.outcomeObservationIds)) {
       fail("World Model product-operating projection and temporal graph disagree.", "PRODUCT_OPERATING_TEMPORAL_IDENTITY_MISMATCH");
     }
-    if (new Set(["0.15.0", "0.16.0", "0.17.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
+    if (new Set(["0.15.0", "0.16.0", "0.17.0", "0.18.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
       const releaseProjection = snapshot.releaseObservationProjection;
       const graphReleaseProjection = snapshot.temporalProvenanceGraph?.releaseObservationProjection;
       if (!releaseProjection || releaseProjection.authority !== "derived-projection-manifest-not-release-authority"
@@ -468,7 +470,7 @@ function verifiedSnapshot(snapshot, expectedId = "") {
         fail("World Model release-observation projection and temporal graph disagree.", "RELEASE_OBSERVATION_TEMPORAL_IDENTITY_MISMATCH");
       }
     }
-    if (new Set(["0.16.0", "0.17.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
+    if (new Set(["0.16.0", "0.17.0", "0.18.0", WORLD_MODEL_VERSION]).has(snapshot.protocol?.version)) {
       const observationProjection = snapshot.observationProjection;
       const graphObservationProjection = snapshot.temporalProvenanceGraph?.observationProjection;
       if (!observationProjection || observationProjection.authority !== "derived-projection-manifest-not-observation-or-product-authority"
@@ -493,6 +495,10 @@ function verifiedSnapshot(snapshot, expectedId = "") {
   }
   if (snapshot.gitDecisionHistory) verifyGitDecisionHistory(snapshot.gitDecisionHistory);
   if (snapshot.externalRuntimeState) verifyExternalRuntimeState(snapshot.externalRuntimeState);
+  if (snapshot.protocol?.version === WORLD_MODEL_VERSION
+    && (!snapshot.analysisBasis || canonicalJson(snapshot.domainBases) !== canonicalJson(domainBasesFor(snapshot)))) {
+    fail("World Model domain bases disagree with retained evidence.", "WORLD_DOMAIN_BASIS_MISMATCH");
+  }
   const identityBytes = Buffer.byteLength(`,"worldModelHash":${JSON.stringify(recordedHash)},"worldModelId":${JSON.stringify(recordedId)}`, "utf8");
   verifiedSnapshotByteLengths.set(snapshot, Buffer.byteLength(canonicalPayload, "utf8") + identityBytes);
   return snapshot;
@@ -568,6 +574,7 @@ function indexerState() {
   return {
     worldModelVersion: WORLD_MODEL_VERSION,
     repositoryScanVersion: REPOSITORY_SCAN_VERSION,
+    sourceAnalysisVersion: SOURCE_ANALYSIS_VERSION,
     semanticGraphVersion: SEMANTIC_GRAPH_VERSION,
     productModelVersion: PRODUCT_MODEL_VERSION,
     onboardingGraphProjectionVersion: ONBOARDING_GRAPH_PROJECTION_VERSION,
@@ -637,6 +644,156 @@ function sourceDigestFor(files, sourceScope, productModel, onboardingProjection,
     indexer,
     temporalParents: { parentSourceSnapshotIds, revisionParentIds, logicalLineageState },
   }));
+}
+
+const WORLD_DOMAINS = Object.freeze(["code", "product", "git", "runtime", "observations"]);
+const projectionBasis = (value) => value?.projectionInputHash || null;
+function codeAnalysisBasis(semanticGraph) {
+  return {
+    repositoryScanVersion: REPOSITORY_SCAN_VERSION,
+    sourceAnalysisVersion: SOURCE_ANALYSIS_VERSION,
+    semanticGraphVersion: SEMANTIC_GRAPH_VERSION,
+    sourceRelationEvidenceVersion: SOURCE_RELATION_EVIDENCE_VERSION,
+    sourceRelationAnalyzer: semanticGraph?.sourceRelationEvidence?.analyzer || null,
+    sourceRelationEvidenceHash: semanticGraph?.sourceRelationEvidence?.evidenceSetHash || null,
+  };
+}
+function domainBasesFor(snapshot, domains = WORLD_DOMAINS) {
+  const bases = {
+    code: () => digest(canonicalJson({
+      files: snapshot.files.map(({ path, digest, language, classification }) => ({ path, digest, language, classification })),
+      sourceScope: snapshot.repositoryScan?.sourceScope || null,
+      analysisBasis: snapshot.analysisBasis || null,
+      rules: snapshot.rules,
+    })),
+    product: () => digest(canonicalJson({
+      productModel: snapshot.productModel?.productModelHash || null,
+      projections: [snapshot.onboardingProjection, snapshot.productPolicyProjection, snapshot.featureMappingProjection,
+        snapshot.changeSetProjection, snapshot.documentChangeProjection].map(projectionBasis),
+    })),
+    git: () => digest(canonicalJson({ git: snapshot.git, release: projectionBasis(snapshot.releaseObservationProjection) })),
+    runtime: () => digest(canonicalJson({ capturedSession: snapshot.runtimeState, external: snapshot.externalRuntimeState?.runtimeStateHash || null })),
+    observations: () => digest(canonicalJson({ observation: snapshot.observationProjection?.projectionHash || null,
+      status: snapshot.observationProjection?.status, reason: snapshot.observationProjection?.reasonCode,
+      operating: projectionBasis(snapshot.productOperatingProjection) })),
+  };
+  return Object.fromEntries(domains.map(domain => [domain, bases[domain]()]));
+}
+
+// A scoped read validates retained bytes first, then ONLY the requested live
+// domains. Unrelated invalid Product/runtime records are not a code gate.
+// These are P4 observations, never a refreshed snapshot or P2 recovery source.
+export function inspectWorldDomainFreshness({ root = ".", domains = WORLD_DOMAINS,
+  worldModelId = "", storeAdapter = null, runtimeStateAdapter = null } = {}) {
+  if (!Array.isArray(domains) || !domains.length || domains.some(domain => !WORLD_DOMAINS.includes(domain))) {
+    fail("World freshness domains are invalid.", "INVALID_WORLD_FRESHNESS_DOMAINS");
+  }
+  const stored = readWorldModelForDiscovery({ root, worldModelId, storeAdapter });
+  const snapshot = stored.snapshot, projectRoot = snapshot.projectRoot;
+  const { project } = readGraphProject(projectRoot);
+  const result = {};
+  for (const domain of [...new Set(domains)]) {
+    try {
+      if (!snapshot.domainBases?.[domain] || !snapshot.analysisBasis) {
+        result[domain] = { status: "unknown", reasonCode: "WORLD_DOMAIN_BASIS_UNRECORDED", fallback: "original-source" };
+        continue;
+      }
+      let current = { ...snapshot };
+      if (domain === "code") {
+        const sourceScope = readRepositorySourceScope({ projectRoot }).sourceScope;
+        const scan = inspectRepositoryScanFreshness({ projectRoot, sourceScope,
+          managedRootFiles: managedRootFilesForProject(project), storedFiles: snapshot.files });
+        current = { ...current, files: scan.files, analysisBasis: codeAnalysisBasis(snapshot.semanticGraph),
+          repositoryScan: { ...snapshot.repositoryScan, sourceScope },
+          rules: { ...snapshot.rules, sourceScope, maxFileBytes: REPOSITORY_SCAN_DEFAULTS.maxFileBytes,
+            maxFiles: REPOSITORY_SCAN_DEFAULTS.maxFiles, maxTotalBytes: REPOSITORY_SCAN_DEFAULTS.maxTotalBytes,
+            maxSymbolsPerFile: REPOSITORY_SCAN_DEFAULTS.maxSymbolsPerFile,
+            excludedDirectories: REPOSITORY_SCAN_EXCLUDED_DIRECTORIES, managedRootProjectionsExcluded: managedRootFilesForProject(project) } };
+      } else if (domain === "product") {
+        const model = readProductModelCanon({ projectRoot }).model;
+        const input = { projectRoot, projectId: project.projectId, currentProductModelId: model.productModelId };
+        current = { ...current, productModel: model,
+          onboardingProjection: loadOnboardingGraphProjection(input), productPolicyProjection: loadProductPolicyGraphProjection(input),
+          featureMappingProjection: loadFeatureMappingProjection(input), changeSetProjection: loadChangeSetProjection(input),
+          documentChangeProjection: loadDocumentChangeProjection(input) };
+      } else if (domain === "git") {
+        current = { ...current, git: gitHeadState(projectRoot),
+          releaseObservationProjection: loadReleaseObservationProjection({ projectRoot, projectId: project.projectId }) };
+      } else if (domain === "observations") {
+        const observation = loadObservationProjectionForWorld({ projectRoot, projectId: project.projectId });
+        current = { ...current, observationProjection: { ...observation.projection, status: observation.status, reasonCode: observation.reasonCode },
+          productOperatingProjection: loadProductOperatingProjection({ projectRoot, projectId: project.projectId }) };
+        if (observation.status === "unavailable") {
+          result[domain] = { status: "unavailable", reasonCode: observation.reasonCode, fallback: "original-source" };
+          continue;
+        }
+      } else if (domain === "runtime") {
+        // World captured one Session. Selecting another Session does not
+        // transfer the captured observation's owner or rewrite its identity.
+        const captured = withSessionRoute(projectRoot, snapshot.runtimeState.sessionId, () => readyProject(projectRoot));
+        const selected = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer?.sourceAdapters?.runtimeState);
+        current = { ...current, runtimeState: runtimeStateFor(captured.state),
+          externalRuntimeState: buildExternalRuntimeState({ projectRoot, adapter: selected }).runtimeState };
+      }
+      const currentBasis = domainBasesFor(current, [domain])[domain];
+      result[domain] = { status: currentBasis === snapshot.domainBases[domain] ? "current" : "stale",
+        storedBasis: snapshot.domainBases[domain], currentBasis,
+        ...(domain === "runtime" ? { capturedSessionId: snapshot.runtimeState.sessionId } : {}) };
+    } catch (error) {
+      result[domain] = { status: "unavailable", reasonCode: error.code || "WORLD_DOMAIN_READER_UNAVAILABLE", fallback: "original-source" };
+    }
+  }
+  return { ...stored, status: Object.values(result).every(item => item.status === "current") ? "current" : "partial",
+    freshness: { domains: result, scope: "requested-domains-only", fullWorldCurrentClaim: false },
+    authority: "derived-observation-only", instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false };
+}
+
+const CODE_NODE_KINDS = new Set(["File", "FileRevision", "Symbol", "SymbolRevision", "Test", "TestRevision", "RevisionReference"]);
+const NEUTRAL_NODE_KINDS = new Set(["Repository", "SourceSnapshot", "SourceSnapshotReference"]);
+const PRODUCT_NODE_KINDS = new Set(["FeatureGroup", "FeatureGroupRevision", "Capability", "CapabilityRevision", "Feature", "FeatureRevision",
+  "Requirement", "RequirementRevision", "Constraint", "ConstraintRevision", "Decision", "DecisionRevision", "Policy", "PolicyRevision",
+  "OnboardingCandidateSet", "OnboardingProductCandidate", "OnboardingEvidence", "OnboardingUnknown", "OnboardingReviewDecision",
+  "ProductConceptReference", "ProductModelRevision", "FeatureMappingCandidateSet", "FeatureMappingCandidate", "FeatureMappingEvidence",
+  "FeatureMappingUnknown", "FeatureMappingReviewDecision", "ReviewedRelationship", "MappingEndpointReference", "ChangeSet", "ChangeRevisionReference",
+  "ChangeImpactCandidateSet", "ChangeImpactCandidate", "ChangeImpactUnknown", "ChangeImpactReviewDecision", "ReviewedImpact", "ChangeProductReference",
+  "DocumentChangeCandidateSet", "DocumentChangeCandidate", "DocumentChangeReviewDecision", "DocumentChangeApplication", "DocumentProductModelRevision",
+  "DocumentProjectionReference", "ProductModelRevisionReference", "ProductPolicyCandidate", "ProductPolicyEvidence", "ProductPolicyReviewDecision",
+  "HistoricalOnboardingCandidateReference"]);
+const OBSERVATION_NODE_KINDS = new Set(["ProductSignal", "ProductHypothesis", "ProductInitiativeCandidate", "ProductInitiativeReviewDecision",
+  "ReviewedProductInitiative", "ProductFeatureCandidate", "ProductFeatureReference", "OutcomeObservation", "ObservationTypeDescriptor",
+  "ObservationCollectionReceipt", "ObservationRecord", "DerivedObservationRecord"]);
+const GIT_NODE_KINDS = new Set(["VcsEvidence", "GitCommit", "BranchStateObservation", "DeploymentResultObservation", "ReleaseObservation"]);
+function worldNodeDomains(node) {
+  if (CODE_NODE_KINDS.has(node.kind)) return ["code"];
+  if (NEUTRAL_NODE_KINDS.has(node.kind)) return [];
+  if (PRODUCT_NODE_KINDS.has(node.kind)) return ["product"];
+  if (OBSERVATION_NODE_KINDS.has(node.kind)) return ["observations"];
+  if (GIT_NODE_KINDS.has(node.kind)) return ["git"];
+  if (node.kind === "ExecutionLineageReference") return ["runtime"];
+  return ["unknown"];
+}
+function worldRelationDomains(edge) {
+  if (new Set(["REALIZES", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS"]).has(edge.type)) return ["code", "product"];
+  if (new Set(["AT_REVISION", "OBSERVED_ON", "DEPLOYS"]).has(edge.type)) return ["git"];
+  if (new Set(["CONTAINS", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES",
+    "PROPOSES_FROM", "PROPOSES_TO", "SUPPORTED_BY", "REVIEWED_BY", "ACCEPTED_BY", "REJECTED_BY", "PROMOTED_FROM",
+    "PRODUCES", "CHANGES", "SUPERSEDES", "MATERIALIZED_AS", "OBSERVES", "EVIDENCED_BY", "CONFORMS_TO", "DERIVED_FROM", "HISTORICALLY_FOLLOWS"]).has(edge.type)) return [];
+  return ["unknown"];
+}
+// Mask the original graph BEFORE traversal. Never manufacture a new snapshot
+// identity for a filtered graph, and never let a stale bridge expand a query.
+export function buildWorldTraversalEligibility(snapshot, domainFreshness) {
+  const graph = snapshot.temporalProvenanceGraph;
+  verifyTemporalProvenanceGraph(graph);
+  const nodes = new Map(graph.nodes.map(node => [node.nodeId, node]));
+  const eligible = (record, required) => required.every(domain => domain !== "unknown")
+    && (record.freshness !== "current" || required.every(domain => domainFreshness?.[domain]?.status === "current"));
+  const nodeIds = graph.nodes.filter(node => eligible(node, worldNodeDomains(node))).map(node => node.nodeId);
+  const allowed = new Set(nodeIds);
+  const edgeIds = graph.edges.filter(edge => allowed.has(edge.from) && allowed.has(edge.to)
+    && eligible(edge, [...new Set([...worldNodeDomains(nodes.get(edge.from)), ...worldNodeDomains(nodes.get(edge.to)), ...worldRelationDomains(edge)])])).map(edge => edge.edgeId);
+  return { graphSnapshotId: graph.graphSnapshotId, graphSnapshotHash: graph.graphSnapshotHash,
+    nodeIds, edgeIds, domains: domainFreshness, authority: "read-only-domain-eligibility-not-graph-snapshot" };
 }
 
 export function readWorldModel({ root = ".", storeAdapter = null } = {}) {
@@ -786,7 +943,8 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     projectId: inspected.project.projectId,
   });
   const git = gitHeadState(inspected.project.projectRoot);
-  const runtimeState = runtimeStateFor(inspected.state);
+  const runtimeState = withSessionRoute(inspected.project.projectRoot, stored.snapshot.runtimeState.sessionId,
+    () => runtimeStateFor(readyProject(inspected.project.projectRoot).state));
   const selectedRuntimeAdapter = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer.sourceAdapters?.runtimeState);
   const externalRuntimeResult = buildExternalRuntimeState({ projectRoot: inspected.project.projectRoot, adapter: selectedRuntimeAdapter });
   const externalRuntimeState = externalRuntimeResult.runtimeState;
@@ -836,10 +994,23 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
     || observationIntegration.reasonCode !== stored.snapshot.observationProjection?.reasonCode;
   const productOperatingProjectionChanged = productOperatingProjection.projectionInputHash !== stored.snapshot.productOperatingProjection?.projectionInputHash;
   const releaseObservationProjectionChanged = releaseObservationProjection.projectionInputHash !== stored.snapshot.releaseObservationProjection?.projectionInputHash;
+  const domainSnapshot = { ...stored.snapshot, files: scan.files, analysisBasis: codeAnalysisBasis(stored.snapshot.semanticGraph),
+    repositoryScan: { ...stored.snapshot.repositoryScan, sourceScope }, rules: { ...stored.snapshot.rules, sourceScope },
+    productModel: productCanon.model, onboardingProjection, productPolicyProjection, featureMappingProjection, changeSetProjection,
+    documentChangeProjection, observationProjection: { ...observationProjection, status: observationIntegration.status, reasonCode: observationIntegration.reasonCode },
+    productOperatingProjection, releaseObservationProjection, git, runtimeState, externalRuntimeState };
+  const domainBases = domainBasesFor(domainSnapshot);
+  const domainFreshness = Object.fromEntries(WORLD_DOMAINS.map(domain => [domain, stored.snapshot.domainBases?.[domain]
+    ? { status: domainBases[domain] === stored.snapshot.domainBases[domain] ? "current" : "stale",
+      storedBasis: stored.snapshot.domainBases[domain], currentBasis: domainBases[domain] }
+    : { status: "unknown", reasonCode: "WORLD_DOMAIN_BASIS_UNRECORDED", fallback: "original-source" }]));
   return {
     ...stored,
     status: currentSourceDigest === stored.snapshot.sourceDigest ? "current" : "stale",
     currentSourceDigest,
+    freshness: { domains: domainFreshness, scope: "full-world-aggregate-and-domains" },
+    selectedSessionState: runtimeStateFor(inspected.state),
+    capturedRuntimeSessionId: stored.snapshot.runtimeState.sessionId,
     changes: {
       ...fileChanges,
       sourceScopeChanged,
@@ -942,6 +1113,7 @@ export function buildWorldModelStatusProjection(inspection, { sampleLimit = WORL
     },
     counts,
     freshness: {
+      domains: inspection.freshness?.domains || {},
       files: {
         counts: freshnessCounts,
         nonActiveSample: nonActiveFiles.slice(0, sampleLimit),
@@ -1385,6 +1557,8 @@ async function buildWorldModelLocked({
       runtimeObservationCount: externalRuntimeState.summary.observationCount,
     },
   };
+  payload.analysisBasis = codeAnalysisBasis(semanticGraph);
+  payload.domainBases = domainBasesFor(payload);
   const worldModelHash = digest(canonicalJson(payload));
   const worldModelId = `world-model-${worldModelHash.slice(0, 24)}`;
   const snapshot = { ...payload, worldModelId, worldModelHash };
@@ -1526,11 +1700,16 @@ export async function buildWorldModel(options = {}) {
 }
 
 export function queryWorldModel({ root = ".", query, depth = 1, maxResults = 100, storeAdapter = null } = {}) {
-  const inspected = inspectWorldModel({ root, storeAdapter });
-  if (inspected.status !== "current") fail("Repository World Model is stale and cannot answer semantic queries.", "WORLD_MODEL_STALE");
+  const inspected = inspectWorldDomainFreshness({ root, storeAdapter, domains: ["code"] });
+  if (inspected.freshness.domains.code.status !== "current") return {
+    status: inspected.freshness.domains.code.status, worldModelId: inspected.snapshot.worldModelId,
+    freshness: inspected.freshness, nodes: [], edges: [], fallback: "original-source",
+    reasonCode: "WORLD_CODE_EVIDENCE_NOT_CURRENT", instructionAuthority: false,
+  };
   if (!inspected.snapshot.semanticGraph) fail("Repository World Model has no semantic graph.", "SEMANTIC_GRAPH_NOT_BUILT");
   return {
     status: "current",
+    freshness: inspected.freshness,
     worldModelId: inspected.snapshot.worldModelId,
     ...querySemanticGraph(inspected.snapshot.semanticGraph, { query, depth, maxResults }),
   };
@@ -1553,9 +1732,11 @@ export function queryWorldTemporalGraph({
   storeAdapter = null,
   graphProjectionAdapter = null,
 } = {}) {
-  const inspected = inspectWorldModel({ root, storeAdapter });
-  if (inspected.status !== "current") fail("Repository World Model is stale and cannot answer temporal provenance queries.", "WORLD_MODEL_STALE");
+  const inspected = inspectWorldDomainFreshness({ root, storeAdapter });
   if (!inspected.snapshot.temporalProvenanceGraph) fail("Repository World Model has no temporal provenance graph.", "TEMPORAL_PROVENANCE_NOT_BUILT");
+  const graph = inspected.snapshot.temporalProvenanceGraph;
+  const eligibility = buildWorldTraversalEligibility(inspected.snapshot, inspected.freshness.domains);
+  const needsMask = eligibility.nodeIds.length !== graph.nodes.length || eligibility.edgeIds.length !== graph.edges.length;
   const projected = queryGraphProjection({
     projectRoot: inspected.snapshot.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
@@ -1573,10 +1754,12 @@ export function queryWorldTemporalGraph({
       depth,
       maxNodes,
       maxEdges,
+      ...(needsMask ? { eligibility } : {}),
     },
   });
   return {
-    status: "current",
+    status: inspected.status === "current" ? "current" : "domain-scoped",
+    freshness: inspected.freshness,
     worldModelId: inspected.snapshot.worldModelId,
     ...projected.result,
     graphProjection: projected.diagnostics,
@@ -1669,22 +1852,24 @@ export function readWorldDocumentChangeCandidateSet({ root = ".", candidateSetId
 }
 
 export function queryWorldHistory({ root = ".", query = "", limit = 50, storeAdapter = null } = {}) {
-  const inspected = inspectWorldModel({ root, storeAdapter });
-  if (inspected.status !== "current") fail("Repository World Model is stale and cannot answer Git history queries.", "WORLD_MODEL_STALE");
+  const inspected = inspectWorldDomainFreshness({ root, storeAdapter, domains: ["git"] });
+  if (inspected.freshness.domains.git.status !== "current") fail("Captured Git evidence is not current; unrelated code/runtime domains are not a gate.", "WORLD_MODEL_STALE");
   if (!inspected.snapshot.gitDecisionHistory) fail("Repository World Model has no Git decision history.", "GIT_DECISION_HISTORY_NOT_BUILT");
   return {
     status: "current",
+    freshness: inspected.freshness,
     worldModelId: inspected.snapshot.worldModelId,
     ...queryGitDecisionHistory(inspected.snapshot.gitDecisionHistory, { query, limit }),
   };
 }
 
 export function queryWorldRuntimeState({ root = ".", query = "", runtime = "", state = "", kind = "", limit = 50, storeAdapter = null, runtimeStateAdapter = null } = {}) {
-  const inspected = inspectWorldModel({ root, storeAdapter, runtimeStateAdapter });
-  if (inspected.status !== "current") fail("Repository World Model is stale and cannot answer runtime state queries.", "WORLD_MODEL_STALE");
+  const inspected = inspectWorldDomainFreshness({ root, storeAdapter, runtimeStateAdapter, domains: ["runtime"] });
+  if (inspected.freshness.domains.runtime.status !== "current") fail("Captured runtime evidence is not current; unrelated code/Product domains are not a gate.", "WORLD_MODEL_STALE");
   if (!inspected.snapshot.externalRuntimeState) fail("Repository World Model has no external runtime state.", "EXTERNAL_RUNTIME_STATE_NOT_BUILT");
   return {
     status: "current",
+    freshness: inspected.freshness,
     worldModelId: inspected.snapshot.worldModelId,
     ...queryExternalRuntimeState(inspected.snapshot.externalRuntimeState, { query, runtime, state, kind, limit }),
   };

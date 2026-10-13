@@ -176,7 +176,7 @@ test("conversation entry restores current P2 direction automatically and otherwi
   const restored = enterConversationRecovery({ root });
   assert.equal(restored.status, "conversation_direction_restored");
   assert.equal(restored.restore.checkpoint.checkpointId, canonical.checkpointId);
-  assert.equal(restored.restore.projection.consumerInstruction.nextExpectedResult, canonical.nextExpectedResult);
+  assert.equal(restored.restore.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, canonical.nextExpectedResult);
   assert.equal(restored.restore.projection.providerBoundary.providerTranscriptUsed, false);
   assert.equal(restored.userDecisionRequired, false);
   assert.equal(Buffer.byteLength(JSON.stringify(restored), "utf8") < 64 * 1024, true);
@@ -224,7 +224,7 @@ test("lifecycle restores newer P2 direction when its transport token becomes sta
   assert.equal(result.ordinaryWorkBlocked, false);
   assert.equal(result.recoveryDependentWorkBlocked, false);
   assert.equal(result.conversationEntry.restore.checkpoint.checkpointId, newer.checkpointId);
-  assert.equal(result.conversationEntry.restore.projection.consumerInstruction.nextExpectedResult, newer.nextExpectedResult);
+  assert.equal(result.conversationEntry.restore.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, newer.nextExpectedResult);
   assert.equal(inspectCompaction({ root }).epoch.state, "aborted");
   host.acknowledge = acknowledge;
   const replay = processCompactionLifecycle({ root, hostAdapter: host });

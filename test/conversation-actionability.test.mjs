@@ -116,7 +116,7 @@ test("corrupt checkpoint blocks only dependent recovery and never promotes injec
   assert.deepEqual(entry.blockedOperations, ["checkpoint-dependent-work"]);
 });
 
-test("Session pointer drift remains fail-closed only for recovery-dependent work", async (t) => {
+test("orphan current contract remains fail-closed only for recovery-dependent work", async (t) => {
   const root = fixture(t);
   checkpoint(root);
   const file = path.join(root, ".head/sessions/current.json");
@@ -124,7 +124,7 @@ test("Session pointer drift remains fail-closed only for recovery-dependent work
   state.activeExecutionContractId = "execution-contract-000000000000000000000000";
   fs.writeFileSync(file, JSON.stringify(state));
   const entry = await verifySurfaces(root, { headActionRequired: true, recoveryHeadAction: true, recoveryBlocked: true });
-  assert.equal(entry.reasonCode, "SESSION_RESTORE_POINTER_DRIFT");
+  assert.equal(entry.reasonCode, "SESSION_RESTORE_ACTIVE_RUN_CONFLICT");
   assert.equal(Object.hasOwn(entry, "restore"), false);
 });
 

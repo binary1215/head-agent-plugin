@@ -1,7 +1,10 @@
 # Recovery and compaction
 
-Restore the selected logical Session from `.head/project.json`, its routed Session
-record, and the exact content-addressed checkpoint. The legacy
+Read historical meaning from the exact content-addressed checkpoint alongside
+current selected Session/Run facts and `.head/project.json`. Do not require past
+execution pointers to equal current ones or replay the historical next action.
+`consumerInstruction.historicalCheckpointContext` is historical context; HEAD
+judges current action using `currentExecution` and common direction. The legacy
 `.head/sessions/current.json` remains the default record. Apply current common
 project direction too: an old checkpoint cannot undo a later shared cancellation. Provider resume or live attachment is
 optional and occurs only after artifact recovery succeeds.

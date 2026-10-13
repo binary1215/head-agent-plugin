@@ -140,7 +140,8 @@ test("the public checkpoint surface creates one content-addressed P2 canon and r
   const opencode = childRestore(root, { OPENCODE_SESSION_ID: "provider-secret-opencode-session" });
   assert.equal(codex.projection.sessionRestoreId, opencode.projection.sessionRestoreId);
   assert.equal(codex.projection.sessionRestoreHash, opencode.projection.sessionRestoreHash);
-  assert.equal(codex.projection.consumerInstruction.nextExpectedResult, "Continue from the verified artifact projection");
+  assert.equal(codex.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, "Continue from the verified artifact projection");
+  assert.equal(codex.projection.consumerInstruction.nextExpectedResult, undefined);
   assert.equal(codex.projection.providerBoundary.providerSessionIdentityRequired, false);
   assert.equal(codex.projection.providerBoundary.resumeEnabled, false);
   assert.equal(codex.projection.authorityBoundary.planeId, "P4");
@@ -173,13 +174,14 @@ test("artifact-only restore revalidates the exact active Run lineage and rejects
   const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   state.activeExecutionContractId = "execution-contract-000000000000000000000000";
   fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
-  assert.throws(() => restoreSessionFromArtifacts({ root }), { code: "SESSION_RESTORE_POINTER_DRIFT" });
+  assert.equal(restoreSessionFromArtifacts({ root }).projection.currentExecution.status, "conflict");
   const attention = inspectProjectExperience({ root });
-  assert.equal(attention.readiness.recovery.state, "attention-required");
+  assert.equal(attention.readiness.recovery.state, "verified-current-checkpoint");
   assert.equal(attention.readiness.recovery.userDecisionRequired, false);
   assert.equal(attention.readiness.recovery.headActionRequired, true);
   assert.equal(attention.readiness.recovery.ordinaryWorkBlocked, false);
-  assert.equal(attention.readiness.recovery.reasonCode, "SESSION_RESTORE_POINTER_DRIFT");
+  assert.equal(attention.readiness.recovery.reasonCode, "RUN_TRANSITION_SESSION_DRIFT");
+  assert.equal(attention.readiness.recovery.currentExecutionStatus, "conflict");
   assert.equal(attention.nextAction.id, "work_directly");
 });
 
@@ -230,7 +232,7 @@ test("checkpoint direction survives deletion of pending ResultPacket evidence wi
   assert.equal(restored.projection.checkpoint.nextExpectedResult, nextExpectedResult);
   assert.equal(restored.projection.pendingReview.resultEvidence.status, "missing-evidence");
   assert.equal(restored.projection.pendingReview.freshHeadReviewContextId, null);
-  assert.equal(restored.projection.consumerInstruction.nextExpectedResult, nextExpectedResult);
+  assert.equal(restored.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, nextExpectedResult);
   assert.equal(restored.projection.recoveryAuthority, false);
 });
 
@@ -290,7 +292,7 @@ test("accepted worker evidence integrates once through Fresh HEAD into an explic
   fs.unlinkSync(resultFile);
   const requestFile = path.join(root, ".head", "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`);
   const restored = restoreSessionFromArtifacts({ root });
-  assert.equal(restored.projection.consumerInstruction.nextExpectedResult, input.nextExpectedResult);
+  assert.equal(restored.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, input.nextExpectedResult);
   assert.equal(restored.projection.integrationEvidence.status, "missing-evidence");
   assert.equal(restored.projection.reviewedRunIntegration.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
   assert.equal(fs.existsSync(requestFile), false);
@@ -362,7 +364,7 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
   });
   assert.equal(restored.result.structuredContent.status, "session_restored_from_artifacts");
   assert.equal(restored.result.structuredContent.projection.providerBoundary.resumeEnabled, false);
-  assert.equal(restored.result.structuredContent.projection.consumerInstruction.nextExpectedResult, input.nextExpectedResult);
+  assert.equal(restored.result.structuredContent.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, input.nextExpectedResult);
 
   const continued = await dispatch({
     jsonrpc: "2.0",

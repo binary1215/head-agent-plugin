@@ -91,7 +91,7 @@ test("concurrent public MCP awaits and CLI operations keep two Session checkpoin
     assert.equal(checkpoints[index].checkpoint.sessionId, ids[index]);
     const restored = await runCommand(["session-restore", root, "--session", ids[index]]);
     assert.equal(restored.projection.sessionId, ids[index]);
-    assert.equal(restored.projection.consumerInstruction.currentPosition, `${index}: independent progress`);
+    assert.equal(restored.projection.consumerInstruction.historicalCheckpointContext.currentPosition, `${index}: independent progress`);
   }
   const crossed = await dispatch(request("head_session_restore", { project_root: root, session_id: ids[0],
     checkpoint_id: checkpoints[1].checkpoint.checkpointId }));

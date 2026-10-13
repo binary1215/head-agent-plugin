@@ -67,7 +67,9 @@ idle -> prepared -> verified -> continued
 
 active-Run pointer는 정확한 Run, WholePlanSnapshot, ExecutionContract와 ContextCapsule digest를 결속합니다. 복구 방향은 Capsule이 아니라 checkpoint가 소유합니다.
 
-immutable Session pointer는 provider 독립적인 artifact restore를 반증 가능하게 만듭니다. 현재 Session canon은 여전히 checkpoint와 정확히 일치해야 합니다. Protocol `0.1.0`과 `0.2.0` checkpoint는 감사를 위해 계속 digest-readable하지만, 현재 artifact-only restore에 필요한 완전한 pointer는 포함하지 않습니다. [Session restore and reviewed-result integration](session-recovery.md)을 참조하세요.
+immutable Session pointer는 exact one-shot continuation 대상을 검증합니다. 일반 artifact 복구는 과거 의미와 현재 실행 사실을 분리하며 과거 pointer와의 일치가 필요하지 않습니다. Protocol `0.1.0`과 `0.2.0` checkpoint는 감사를 위해 계속 digest-readable하지만 완전한 pointer는 포함하지 않습니다. [상태 분리](recovery-state-separation.md)를 참조하세요.
+
+[Session 복구와 검토 결과 통합](session-recovery.md)에 일반 복구 계약이 있습니다.
 
 같은 작업은 하나의 `CompactionEpoch`도 만듭니다. epoch에는 checkpoint identity, 준비 시점의 real-user-turn sequence, state와 추측 불가능한 continuation token에 결속된 hash가 담깁니다. raw token은 한 번만 반환되며 지속되지 않습니다. provider-session identity는 저장되지 않습니다.
 

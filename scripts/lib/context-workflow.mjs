@@ -1,17 +1,21 @@
 import { compileContext, DEFAULT_CONTEXT_BUDGET } from "./context-compiler.mjs";
 
-export const CONTEXT_WORKFLOW_PROTOCOL_VERSION = "0.5.0";
+export const CONTEXT_WORKFLOW_PROTOCOL_VERSION = "0.6.0";
 export const CONTEXT_PREPARATION_PROTOCOL_VERSION = "0.3.0";
 
 function projection(capsule) {
   const coverage = capsule.snapshot.coverage;
-  const world = coverage.includes("stale-repository-world-model-excluded") ? "stale-excluded"
+  const domains = capsule.repositoryWorldFreshness?.domains;
+  const world = domains?.code?.status === "current" ? "current-verified"
+    : domains?.code?.status === "unknown" ? "unknown-excluded"
+    : domains?.code?.status === "unavailable" ? "unavailable-excluded"
+    : domains?.code?.status === "stale" || coverage.includes("stale-repository-world-model-excluded") ? "stale-excluded"
     : coverage.includes("repository-world-model") ? "current-verified" : "not-built";
   return {
     kind: "ContextWorkflowProjection", protocolVersion: CONTEXT_WORKFLOW_PROTOCOL_VERSION,
     status: "ready_for_head_semantic_assessment", task: capsule.task,
     world: { state: world, coverage, worldModelDigest: capsule.snapshot.sourceDigests.repositoryWorldModel || null,
-      fullSnapshotReturned: false },
+      ...(domains ? { domains } : {}), fullSnapshotReturned: false },
     evidenceNeeds: { owner: "HEAD", specifiedCount: capsule.evidenceNeedContract.needs.length,
       unmet: capsule.evidenceGaps, semanticAcceptance: "not-assessed-HEAD-owned" },
     budget: { requestedApproxTokens: capsule.budget.maxApproxTokens,

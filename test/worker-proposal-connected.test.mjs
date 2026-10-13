@@ -265,7 +265,7 @@ test("two native-owned model-free proposals reach exact HEAD effects, combined b
   assert.equal(integrated.checkpoint.authorityBoundary.planeId, "P2");
   assert.equal(integrated.checkpoint.reviewedRunIntegration.resultPacketId, published.resultPacket.resultPacketId);
   const restored = restoreSessionFromArtifacts({ root: f.root });
-  assert.equal(restored.projection.consumerInstruction.nextExpectedResult, recoveryInput.nextExpectedResult);
+  assert.equal(restored.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, recoveryInput.nextExpectedResult);
   assert.equal(restored.projection.reviewedRunIntegration.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
   assert.equal(restored.projection.recoveryAuthority, false);
   assert.equal(inspectWorkerIntegration({ integrationId }, { root: f.root }).result.resultPacket.resultPacketId, published.resultPacket.resultPacketId);

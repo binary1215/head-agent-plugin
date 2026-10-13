@@ -6,6 +6,7 @@ import { isManagedMutation, requireOperationSurface, requireSurface } from "./li
 import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { DEFAULT_CONTEXT_BUDGET } from "./lib/context-budget.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
+import { sessionCallRequiresBinding } from "./lib/session-routing.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -1848,6 +1849,16 @@ allTools.push(
   },
 );
 
+allTools.push({
+  name: "head_run_start",
+  description: "Start the existing contract-bound Run transaction. An optional Core request key makes exact retries converge; historical acknowledgments never authorize provider/worker replay. HEAD supplies the key without another prepare call or user form.",
+  inputSchema: { type: "object", properties: {
+    project_root: { type: "string", minLength: 1 }, execution_contract_id: { type: "string", pattern: "^execution-contract-[a-f0-9]{24}$" },
+    start_request_id: { type: "string", minLength: 1, maxLength: 256 },
+  }, required: ["project_root", "execution_contract_id"], additionalProperties: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+});
+
 for (const tool of allTools) {
   if (tool.inputSchema?.properties?.project_root) {
     tool.inputSchema.properties.session_id = { type: "string", description: "Optional logical HEAD Session route, selected by HEAD/Host. Omit for the existing default. Never a provider session ID." };
@@ -2190,16 +2201,50 @@ export async function dispatch(request, options = {}) {
   const outer = request.params?.arguments;
   const routed = request.params?.name === "head_tools_read" || request.params?.name === "head_tools_call";
   const args = routed ? outer?.arguments : outer;
-  if (request.method === "tools/call" && args && Object.hasOwn(args, "session_id")) {
+  const hasSelection = args && Object.hasOwn(args, "session_id");
+  const requestedName = routed ? outer?.name : request.params?.name;
+  // Only views/effects that actually consume the selected Session need its
+  // binding. Project-scoped Product/Observation/source work is independent.
+  const dependent = sessionCallRequiresBinding(requestedName);
+  let sessionContext = options.sessionContext;
+  let bindingFailure = null;
+  if (args?.project_root && (hasSelection || dependent) && !sessionContext && options.resolveSessionContext) {
+    try { sessionContext = await options.resolveSessionContext(request); }
+    catch (error) {
+      if (hasSelection) {
+        // Exact explicit routing is independent of optional Host persistence.
+        // Existing route validation below still rejects invalid/foreign IDs.
+        bindingFailure = error.code || "HEAD_SESSION_CONTEXT_UNAVAILABLE";
+      } else {
+        const routing = await import("./lib/session-routing.mjs");
+        const value = { ...routing.sessionSelectionUnresolved(args.project_root), reasonCode: error.code || "HEAD_SESSION_CONTEXT_UNAVAILABLE",
+          currentProjectDirection: routing.readProjectDirection({ root: args.project_root }), executionReplayAllowed: false };
+        return success(request.id ?? null, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+      }
+    }
+  }
+  if (request.method === "tools/call" && args?.project_root && (hasSelection || sessionContext)) {
     try {
       const name = routed ? outer.name : request.params.name;
       const selected = allTools.find(tool => tool.name === name);
       if (!selected?.inputSchema?.properties?.session_id) throw new Error("This operation has no project Session route.");
+      if (hasSelection && typeof args.session_id !== "string") throw new Error("An explicit logical Session route must be text; omit it for an unspecified route.");
       const cleanArgs = { ...args }; delete cleanArgs.session_id;
       const clean = { ...request, params: { ...request.params, arguments: routed ? { ...outer, arguments: cleanArgs } : cleanArgs } };
-      const { withSessionRoute } = await import("./lib/session-routing.mjs");
-      return await withSessionRoute(args.project_root, args.session_id, () => dispatchRouted(clean, options));
-    } catch (error) { return failure(request.id ?? null, error.message); }
+      if (!hasSelection && !dependent) return dispatchRouted(clean, options);
+      const { withSessionCallContext } = await import("./lib/session-routing.mjs");
+      const response = await withSessionCallContext({ root: args.project_root, sessionId: hasSelection ? args.session_id : undefined, context: sessionContext }, () => dispatchRouted(clean, options));
+      if (bindingFailure && response?.result) response.result._meta = { ...response.result._meta,
+        headSessionBinding: { status: "unavailable", reasonCode: bindingFailure, scope: "current-explicit-request-only", retainedForSubsequentCalls: false, persisted: false } };
+      return response;
+    } catch (error) {
+      if (error.code === "HEAD_SESSION_SELECTION_LOST") {
+        const routing = await import("./lib/session-routing.mjs");
+        const value = { ...routing.sessionSelectionUnresolved(args.project_root), currentProjectDirection: routing.readProjectDirection({ root: args.project_root }), executionReplayAllowed: false };
+        return success(request.id ?? null, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+      }
+      return failure(request.id ?? null, error.message);
+    }
   }
   return dispatchRouted(request, options);
 }
@@ -2231,7 +2276,9 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
       args = args.arguments;
     }
     requireOperationSurface(name, surface);
-    const value = await (name === "head_core_contract"
+    const value = await (name === "head_run_start"
+      ? (await import("./lib/run-lineage.mjs")).startRun({ root: args.project_root, executionContractId: args.execution_contract_id, startRequestId: args.start_request_id })
+      : name === "head_core_contract"
       ? {
         ...coreContract(),
         runtime: {
@@ -2657,7 +2704,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
   }
 }
 
-export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null } = {}) {
+export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, sessionContext = null, resolveSessionContext = null } = {}) {
   requireSurface(surface);
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   const sourceRequests = new Map();
@@ -2682,7 +2729,7 @@ export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = nul
         if (sourceRequests.has(sourceRequestId)) throw new Error("Duplicate active source request id.");
         controller = new AbortController(); sourceRequests.set(sourceRequestId, controller); ownsSourceRequest = true;
       }
-      response = await dispatch(request, { surface, coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor,
+      response = await dispatch(request, { surface, coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, sessionContext, resolveSessionContext,
         signal: controller?.signal, onProcess: (event) => process.stderr.write(`${JSON.stringify({ sourceProcess: event })}\n`) });
     }
     catch (error) { response = failure(null, `Parse error: ${error.message}`); }

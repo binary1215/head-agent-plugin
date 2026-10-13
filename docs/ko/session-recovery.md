@@ -63,7 +63,7 @@ authorization을 만들지 않습니다. 온전한 과거 자료는 탐색할 �
 
 1. content-addressed `SessionRunCheckpoint`를 digest 검증합니다.
 2. 현재 protocol `0.3.0`과 그 불변 `sessionPointer`를 요구합니다.
-3. pointer를 선택된 논리 Session 기록과 비교합니다. 기본 `current.json`과 추가 `by-id/<session-id>/current.json`은 독립적으로 유지됩니다.
+3. 과거 pointer와 선택 Session의 현재 사실을 구분합니다. 기본 `current.json`과 추가 `by-id/<session-id>/current.json`은 독립적으로 유지됩니다.
 4. 현재 WholePlan과, 활성 상태인 경우 정확한 Run, ExecutionContract 및 ContextCapsule
    digest를 다시 검증합니다.
 5. ResultPacket 증거가 있으면 보류 중인 review 계보를 다시 검증합니다.
@@ -75,11 +75,11 @@ authorization을 만들지 않습니다. 온전한 과거 자료는 탐색할 �
 연결하지 않습니다. HEAD는 검증된 현재 체크포인트가 있을 때만 전체 복원 프로젝션을
 읽습니다.
 
-projection은 checkpoint의 정확한 purpose, position 및 next expected result를 consumer
-instruction으로 전달합니다. 공급자 session ID, transcript 또는 summary를 읽거나
-지속하지 않으며 공급자 resume 또는 streaming을 활성화하지도 않습니다. pointer drift,
-tamper, 누락된 P2 lineage 또는 historical checkpoint가 있으면 그럴듯한 상태를 재구성하는
-대신 fail-closed로 중단됩니다.
+projection 0.2는 checkpoint 의미와 현재 실행 사실을 분리합니다. 옛 위치·다음 결과는
+`consumerInstruction.historicalCheckpointContext`에 표시하고 현재 지시로 재발행하지
+않습니다. pointer 차이만으로 복구를 거부하지 않되 변조·소유/참조 모순·현재 필수
+계보 유실은 관련 작업에 표시합니다. 공급자 ID·transcript·summary를 사용하거나
+resume/streaming을 활성화하지 않습니다. [상태 분리](recovery-state-separation.md)를 참조하세요.
 
 `head_conversation_enter`는 같은 읽기 전용 restore와 기존의 범위 제한 프로젝트 상태
 사실을 대화용으로 자동 구성합니다. Skill은 사용자가 recovery를 요청하거나 identity를

@@ -1004,7 +1004,8 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.equal(stale.fileFreshness.find((item) => item.path === "src/service.mjs").status, "stale");
   assert.equal(stale.changes.gitChanged, true);
   const staleCapsule = compileContext({ root, task: "Find Worker and dependency-a", budget: 32_768, persist: false });
-  assert.equal(staleCapsule.capsule.snapshot.coverage, "curated-head-canon+stale-repository-world-model-excluded");
+  assert.ok(staleCapsule.capsule.snapshot.coverage.includes("repository-code-evidence-excluded"));
+  assert.equal(staleCapsule.capsule.repositoryWorldFreshness.domains.code.status, "stale");
   assert.deepEqual(staleCapsule.capsule.repositoryContext, []);
   const second = await buildWorldModel({ root, gitHistoryAdapter });
   assert.notEqual(second.snapshot.worldModelId, first.snapshot.worldModelId);

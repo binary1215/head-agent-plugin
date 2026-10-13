@@ -615,7 +615,7 @@ test("fresh public frontends restore HEAD direction and rediscover completed and
   const lease = () => leases.inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: authorization.projectId, authorizationId: authorization_id });
   assert.equal(lease().singleUseConsumed, true);
   for (const restored of [await f.publicCli(["session-restore"]), await f.publicMcp("head_session_restore")]) {
-    assert.equal(restored.projection.consumerInstruction.nextExpectedResult, direction);
+    assert.equal(restored.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, direction);
   }
   assert.equal((await f.publicMcp("head_bounded_worker_job_status", { authorization_id: f.prepared[0].authorizationId })).status, "completed");
   const rediscovered = await f.publicMcp("head_bounded_worker_reconcile", { task_key: held.taskKey });

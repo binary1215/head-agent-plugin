@@ -4,6 +4,8 @@
 
 [English](README.md) | **한국어** | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
+[복구·Session 선택·World 최신성 안내](docs/ko/recovery-state-separation.md)
+
 **도구와 에이전트, 대화가 바뀌어도<br>
 AI 개발이 하나의 검토된 제품 방향으로 이어지게 합니다.**
 

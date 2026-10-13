@@ -8,6 +8,8 @@ work logs are intentionally excluded from the distribution and are not runtime a
 
 ## Start here
 
+- [Recovery meaning, Session selection and World domains](recovery-state-separation.md)
+
 - [Architecture decision](architecture.md)
 - [Provider-neutral HEAD constitution](head-constitution.md)
 - [Authority planes and the Graph/record boundary](authority-plane-contract.md)

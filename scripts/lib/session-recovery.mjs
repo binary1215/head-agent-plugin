@@ -3,13 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { readProjectDirection } from "./project-direction.mjs";
 import { assertRunSession } from "./session-routing.mjs";
+import { inspectRunStorageTransition } from "./run-lineage.mjs";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { COMPACTION_RECOVERY_VERSION, createRecoveryCheckpoint, readRecoveryCheckpoint } from "./compaction-recovery.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
-export const SESSION_RECOVERY_VERSION = "0.1.0";
+export const SESSION_RECOVERY_VERSION = "0.2.0";
+// Frozen historical integration originals do not share the projection version.
+const HISTORICAL_INTEGRATION_VERSION = "0.1.0";
 
 const fail = (message, code = "SESSION_RECOVERY_ERROR") => {
   const error = new Error(message);
@@ -78,7 +81,9 @@ function readRun(root, runId) {
   const file = runFile(root, runId);
   if (!fs.existsSync(file)) fail(`Run canon not found: ${runId}`, "SESSION_RUN_NOT_FOUND");
   const run = readJson(file, "Run canon");
-  assertRunSession(root, run, inspectProject(root).state);
+  const inspected = inspectProject(root);
+  assertRunSession(root, run, inspected.state);
+  if (run.projectId !== inspected.project.projectId) fail("Run belongs to another Project.", "SESSION_RUN_IDENTITY_MISMATCH");
   if (run.runId !== runId) fail("Run canon identity is invalid.", "SESSION_RUN_IDENTITY_MISMATCH");
   return run;
 }
@@ -89,7 +94,7 @@ function verifiedArtifact(root, artifactId, kind) {
   return artifact;
 }
 
-function verifiedActiveRun(root, pointer, checkpointRunPointer) {
+function verifiedActiveRun(root, pointer) {
   const run = readRun(root, pointer.activeRunId);
   if (run.status !== "active" || run.executionContractId !== pointer.activeExecutionContractId
     || run.wholePlanId !== pointer.currentWholePlanId) {
@@ -105,8 +110,8 @@ function verifiedActiveRun(root, pointer, checkpointRunPointer) {
     contextCapsuleDigest: capsule.capsuleHash,
     currentResultPacketId: pointer.lastResultPacketId,
   };
-  if (canonicalJson(expected) !== canonicalJson(checkpointRunPointer)) {
-    fail("Active Run lineage does not match the recovery checkpoint.", "SESSION_RESTORE_ACTIVE_RUN_CHECKPOINT_CONFLICT");
+  if (contract.wholePlanId !== plan.wholePlanId || contract.capsuleId !== run.capsuleId) {
+    fail("Active Run contract, plan and Capsule disagree.", "SESSION_RESTORE_ACTIVE_RUN_CONFLICT");
   }
   return expected;
 }
@@ -212,6 +217,10 @@ function verifyPointerShape(pointer) {
   if (pointer.activeRunId && pointer.pendingReview) {
     fail("Session cannot have an active Run and pending review simultaneously.", "SESSION_RESTORE_MODE_CONFLICT");
   }
+  if (Boolean(pointer.activeRunId) !== Boolean(pointer.activeExecutionContractId)
+    || pointer.activeRunId && !pointer.currentWholePlanId) {
+    fail("Current Session has an orphan Run/contract/plan reference.", "SESSION_RESTORE_ACTIVE_RUN_CONFLICT");
+  }
   if ((pointer.mode === "run") !== Boolean(pointer.activeRunId)
     || (pointer.mode === "review") !== Boolean(pointer.pendingReview)
     || (pointer.mode === "session") !== (!pointer.activeRunId && !pointer.pendingReview)) {
@@ -237,27 +246,40 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
   }
   const currentPointer = { sessionId: inspected.state.sessionId, ...sessionPointer(inspected.state) };
   const checkpointPointer = { sessionId: checkpoint.sessionId, ...checkpoint.sessionPointer };
-  if (canonicalJson(currentPointer) !== canonicalJson(checkpointPointer)) {
-    fail("Current Session canon diverged from the checkpoint Session pointer.", "SESSION_RESTORE_POINTER_DRIFT");
-  }
+  // The checkpoint preserves meaning and its historical position. Current P2
+  // facts are verified on their own, not made to equal that past position.
+  const checkpointMatchesCurrentExecution = canonicalJson(currentPointer) === canonicalJson(checkpointPointer);
   verifyPointerShape(currentPointer);
+  const storageTransition = inspectRunStorageTransition({ root: inspected.project.projectRoot, inspected });
+  const currentRunId = currentPointer.activeRunId || currentPointer.pendingReview?.runId || inspected.state.lastReviewedRunId;
+  const currentRunBasis = currentRunId ? digest(fs.readFileSync(runFile(inspected.project.projectRoot, currentRunId))) : null;
+  const executionIncomplete = new Set(["incomplete", "conflict"]).has(storageTransition.status);
   if (currentPointer.currentWholePlanId) verifiedArtifact(inspected.project.projectRoot, currentPointer.currentWholePlanId, "WholePlanSnapshot");
-  const activeRun = currentPointer.activeRunId
-    ? verifiedActiveRun(inspected.project.projectRoot, currentPointer, checkpoint.runPointer)
+  const activeRun = currentPointer.activeRunId && !executionIncomplete
+    ? verifiedActiveRun(inspected.project.projectRoot, currentPointer)
     : null;
-  if (!currentPointer.activeRunId && checkpoint.runPointer !== null) {
-    fail("Checkpoint carries an active Run pointer while the Session does not.", "SESSION_RESTORE_ACTIVE_RUN_CHECKPOINT_CONFLICT");
-  }
-  const pendingReview = currentPointer.pendingReview
+  const pendingReview = currentPointer.pendingReview && !executionIncomplete
     ? verifiedPendingReview(inspected.project.projectRoot, currentPointer)
     : null;
   const lastReviewDecision = verifyLastReview(inspected.project.projectRoot, currentPointer);
-  const reviewedRunIntegration = verifyReviewedRunIntegration(inspected.project.projectRoot, checkpoint);
+  let reviewedRunIntegration;
+  try { reviewedRunIntegration = verifyReviewedRunIntegration(inspected.project.projectRoot, checkpoint); }
+  catch (error) {
+    if (!new Set(["SESSION_RUN_NOT_FOUND", "CAPSULE_NOT_FOUND", "LINEAGE_ARTIFACT_NOT_FOUND"]).has(error.code)) throw error;
+    reviewedRunIntegration = { ...checkpoint.reviewedRunIntegration, status: "historical-reference-unavailable", reasonCode: error.code };
+  }
   const lastResultEvidence = optionalResultEvidence(inspected.project.projectRoot, currentPointer.lastResultPacketId);
   const integrationEvidence = reviewedRunIntegration?.resultPacketId
     ? optionalResultEvidence(inspected.project.projectRoot, reviewedRunIntegration.resultPacketId)
     : { status: "not-applicable", resultPacketId: null, artifactHash: null };
   const currentProjectDirection = readProjectDirection({ root: inspected.project.projectRoot });
+  const after = inspectProject(inspected.project.projectRoot);
+  const directionAfter = readProjectDirection({ root: inspected.project.projectRoot });
+  if (canonicalJson(after.state) !== canonicalJson(inspected.state)
+    || (directionAfter?.directionId || null) !== (currentProjectDirection?.directionId || null)
+    || (currentRunId ? digest(fs.readFileSync(runFile(inspected.project.projectRoot, currentRunId))) : null) !== currentRunBasis) {
+    fail("Session or common direction changed during restore; reread only this observation.", "SESSION_RESTORE_OBSERVATION_CHANGED");
+  }
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "SessionRestoreProjection",
@@ -275,7 +297,9 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
       nextExpectedResult: checkpoint.nextExpectedResult,
       openReviewIds: checkpoint.openReviewIds,
     },
-    sessionPointer: checkpoint.sessionPointer,
+    sessionPointer: sessionPointer(inspected.state),
+    checkpointMatchesCurrentExecution,
+    currentExecution: { status: executionIncomplete ? storageTransition.status : "verified", sessionPointer: currentPointer, activeRun, pendingReview, lastReviewDecision, storageTransition },
     activeRun,
     pendingReview,
     lastReviewDecision,
@@ -285,8 +309,10 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
     consumerInstruction: {
       mode: "fresh-logical-head-from-verified-artifacts",
       purpose: checkpoint.purpose,
-      currentPosition: checkpoint.currentPosition,
-      nextExpectedResult: checkpoint.nextExpectedResult,
+      historicalCheckpointContext: { currentPosition: checkpoint.currentPosition, nextExpectedResult: checkpoint.nextExpectedResult },
+      currentExecution: { status: executionIncomplete ? storageTransition.status : "verified", sessionPointer: currentPointer, activeRun, pendingReview, lastReviewDecision, storageTransition },
+      nextActionOwner: "current-head-assessment-not-historical-checkpoint-replay",
+      historicalApprovalGrantsCurrentEffect: false,
       ...(currentProjectDirection ? { currentProjectDirection,
         commonDirectionPrecedence: "current-common-constraints-and-cancellations-apply-before-historical-session-intent" } : {}),
     },
@@ -336,7 +362,7 @@ function integrationInput({ runId, reviewDecisionId, purpose, approvedDecisions,
 
 function verifyIntegrationRequest(root, request, expectedInput = null, expectedInputHash = null) {
   if (request?.kind !== "RunResultIntegrationRequest" || request.protocol?.name !== "head-agent-core-run-result-integration"
-    || request.protocol?.version !== SESSION_RECOVERY_VERSION) {
+    || request.protocol?.version !== HISTORICAL_INTEGRATION_VERSION) {
     fail("Run result integration request is invalid.", "INVALID_RUN_RESULT_INTEGRATION_REQUEST");
   }
   const expectedInputKeys = ["approvedDecisions", "currentPosition", "nextExpectedResult", "openReviewIds", "purpose", "reviewDecisionId", "runId"];
@@ -370,7 +396,7 @@ function verifyIntegrationRequest(root, request, expectedInput = null, expectedI
 
 function verifyIntegrationReceipt(root, receipt, expectedReviewDecisionId = null) {
   if (receipt?.kind !== "RunResultIntegrationReceipt" || receipt.protocol?.name !== "head-agent-core-run-result-integration"
-    || receipt.protocol?.version !== SESSION_RECOVERY_VERSION || receipt.reviewDecisionId !== (expectedReviewDecisionId || receipt.reviewDecisionId)) {
+    || receipt.protocol?.version !== HISTORICAL_INTEGRATION_VERSION || receipt.reviewDecisionId !== (expectedReviewDecisionId || receipt.reviewDecisionId)) {
     fail("Run result integration receipt is invalid.", "INVALID_RUN_RESULT_INTEGRATION_RECEIPT");
   }
   verifyArtifactAuthorityBoundary("RunResultIntegrationReceipt", receipt.authorityBoundary);

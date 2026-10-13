@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
+import { inspectRunStorageTransition } from "./run-lineage.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-record.mjs";
 import { captureWorkerSourceBasis, verifyWorkerSourceBasis, requireCurrentWorkerSourceBasis } from "./worker-source-basis.mjs";
@@ -244,11 +245,22 @@ function runCanon(projectRoot, runId) {
   const run = readJson(file, "Run canon");
   assertRunSession(projectRoot, run, inspectProject(projectRoot).state);
   if (run.runId !== runId || run.status !== "active") fail("Runtime invocation requires the exact active Run canon.", "RUNTIME_INVOCATION_RUN_NOT_ACTIVE");
-  // startRun creates no transition. An active Run with a prepared finish has
+  // A verified committed start is storage provenance, not an authorization.
+  // An active Run with a prepared finish has
   // already frozen its result, even if its Session pointer has not committed.
   // Only the exact finish retry may complete that transition; it is not an
   // opportunity to authorize or prepare another execution/file effect.
   if (run.sessionTransition != null) {
+    if (run.sessionTransition.kind === "start") {
+      let storage;
+      try { storage = inspectRunStorageTransition({ root: projectRoot }); }
+      catch (error) {
+        throw Object.assign(new Error(`Run start storage lineage cannot authorize execution: ${error.message}`, { cause: error }),
+          { code: "RUNTIME_INVOCATION_LINEAGE_CONFLICT", causeCode: error.code });
+      }
+      if (storage.runId === runId && storage.status === "committed") return run;
+      fail("Run start Session storage is not verified committed.", "RUNTIME_INVOCATION_RUN_TRANSITION_PENDING");
+    }
     if (run.sessionTransition.kind === "finish") {
       fail("The Run has a prepared finish transition; recover that exact result before new execution.", "RUNTIME_INVOCATION_RUN_TRANSITION_PENDING");
     }

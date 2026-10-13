@@ -189,10 +189,11 @@ async function integrationChildMain(root, inputFile, boundary = null) {
 function consumerChildMain(root, expectedFile, runtime) {
   const expected = JSON.parse(fs.readFileSync(expectedFile, "utf8"));
   const restored = restoreSessionFromArtifacts({ root });
-  assert.deepEqual(restored.projection.consumerInstruction, {
-    mode: "fresh-logical-head-from-verified-artifacts",
-    ...expected,
-  });
+  assert.equal(restored.projection.consumerInstruction.mode, "fresh-logical-head-from-verified-artifacts");
+  assert.equal(restored.projection.consumerInstruction.purpose, expected.purpose);
+  assert.deepEqual(restored.projection.consumerInstruction.historicalCheckpointContext, { currentPosition: expected.currentPosition, nextExpectedResult: expected.nextExpectedResult });
+  assert.equal(restored.projection.consumerInstruction.nextExpectedResult, undefined);
+  assert.equal(restored.projection.currentExecution.status, "verified");
   assert.equal(expected.nextExpectedResult, expectedNextMove, "The verifier consumer received an unrecognized next move.");
   const inspected = inspectProject(root);
   assert.equal(inspected.status, "ready", "The next read-only HEAD move did not recover a ready Project.");
@@ -261,7 +262,7 @@ async function parentMain() {
     const evidenceAfter = await consumeChild(missingEvidence, "opencode", "another evidence-only inbox reply");
     assert.equal(evidenceBefore.integrationEvidenceStatus, "verified", "Pre-deletion restore did not verify P3 result evidence.");
     assert.equal(evidenceAfter.integrationEvidenceStatus, "missing-evidence", "Post-deletion restore did not disclose missing P3 evidence.");
-    assert.equal(evidenceAfter.consumerInstruction.nextExpectedResult, missingEvidence.input.nextExpectedResult, "Missing P3 evidence changed next direction.");
+    assert.equal(evidenceAfter.consumerInstruction.historicalCheckpointContext.nextExpectedResult, missingEvidence.input.nextExpectedResult, "Missing P3 evidence changed historical direction.");
 
     const concurrent = fixture("concurrent-identical");
     const [concurrentA, concurrentB] = await Promise.all([
@@ -292,7 +293,7 @@ async function parentMain() {
         processAIntegration: processA.status,
         processBRestore: true,
         identicalProjectionAcrossCodexOpenCode: true,
-        identicalNextExpectedResult: codexConsumer.consumerInstruction.nextExpectedResult,
+        identicalNextExpectedResult: codexConsumer.consumerInstruction.historicalCheckpointContext.nextExpectedResult,
       },
       crashRecovery: {
         beforeCheckpointConverged: true,

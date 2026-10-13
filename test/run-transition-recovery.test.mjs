@@ -78,7 +78,10 @@ function failAt(kind, boundary, after, operation) {
     }
     return link(source, target);
   };
-  try { assert.throws(operation, { code: "EIO" }); }
+  try {
+    if (boundary === "session" && after) assert.equal(operation().canonicalCommit, "committed", "an exact saved target is acknowledged even when post-publication cleanup fails");
+    else assert.throws(operation, { code: "EIO" });
+  }
   finally { fs.renameSync = rename; fs.linkSync = link; }
   assert.equal(injected, true);
 }
@@ -114,7 +117,9 @@ for (const kind of ["finish", "review"]) {
         assert.equal(result.status, kind === "finish" ? "run_awaiting_review" : "run_reviewed");
         assert.equal(result.run.runId, run.runId);
         const committed = snapshot(root);
-        assert.deepEqual(operation(input), result, "completed retry must converge exactly");
+        const { projectionUpdate: ignoredProjection, ...replayed } = operation(input);
+        const { projectionUpdate: firstProjection, ...first } = result;
+        assert.deepEqual(replayed, first, "completed retry must converge to exact canonical facts without derived publication");
         assert.deepEqual(snapshot(root), committed, "completed retry creates no artifacts or writes");
         assert.equal(fs.readFileSync(path.join(root, ".head/context/product-model.json"), "utf8"), canonBefore);
         if (kind === "finish") {

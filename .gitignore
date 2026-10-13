@@ -40,6 +40,9 @@ test/*
 !test/compaction-lifecycle.test.mjs
 !test/change-set-recovery.test.mjs
 !test/run-transition-recovery.test.mjs
+!test/run-start-request-recovery.test.mjs
+!test/recovery-session-world-ux.test.mjs
+!test/world-domain-freshness.test.mjs
 !test/runtime-result-application.test.mjs
 !test/runtime-current-lineage.test.mjs
 !test/runtime-session-result-contract.test.mjs

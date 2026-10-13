@@ -287,11 +287,15 @@ function applyRuntimeRunResultLocked({ root, authorizationId }) {
       application: existingApplication,
       resultPacket,
       freshHeadReview: null,
+      canonicalCommit: "committed",
+      executionReplayAllowed: false,
+      projectionUpdate: { status: "not-requested", ordinaryWorkBlocked: false },
     };
   }
 
   verifyApplicationRun(record, inspected);
-  const resultPacket = finishRun({ root: projectRoot, ...fields }).resultPacket;
+  const finished = finishRun({ root: projectRoot, ...fields });
+  const resultPacket = finished.resultPacket;
   const freshHead = getPendingReviewContext({ root: projectRoot });
   verifyCanonicalRunResultPacket(resultPacket, fields, authorization);
   if (freshHead.pendingReview.runId !== authorization.scope.runId
@@ -334,5 +338,8 @@ function applyRuntimeRunResultLocked({ root, authorizationId }) {
     application,
     resultPacket,
     freshHeadReview: freshHead.review,
+    canonicalCommit: finished.canonicalCommit,
+    executionReplayAllowed: false,
+    projectionUpdate: finished.projectionUpdate,
   };
 }

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { commandEntry, isManagedMutation, requireOperationSurface, requireSurface } from "./lib/managed-maintenance-surface.mjs";
 import { inspectProject, inspectRuntimeAdapters } from "./lib/head-core.mjs";
-import { withSessionRoute, createHeadSession, listHeadSessions, readProjectDirection, updateProjectDirection } from "./lib/session-routing.mjs";
+import { withSessionRoute, withSessionCallContext, sessionCallRequiresBinding, sessionSelectionUnresolved, createHeadSession, listHeadSessions, readProjectDirection, updateProjectDirection } from "./lib/session-routing.mjs";
 import { startBoundedWorkerJob, readBoundedWorkerJob, cancelBoundedWorkerJob, reconcileBoundedWorkerJob, readBoundedWorkerPatch } from "./lib/bounded-worker-job.mjs";
 import { operateWorkerIntegration, inspectWorkerIntegration } from "./lib/worker-integration-workflow.mjs";
 import { prepareLocalBoundedWorker, startLocalBoundedWorker } from "./lib/local-worker-host.mjs";
@@ -327,14 +327,20 @@ function requireRuntimeSurface(command, surface, root, authorization) {
   requireOperationSurface(command, surface, { workerBound });
 }
 
-export function runCommand(argv = process.argv.slice(2), { observationRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
+export function runCommand(argv = process.argv.slice(2), { observationRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, sessionContext = null, signal, onProcess } = {}) {
   const entry = commandEntry(argv);
   const parsed = parse(entry.argv);
   const index = argv.indexOf("--session");
-  if (index >= 0) {
+  if (index >= 0 || sessionContext) {
     if (argv.lastIndexOf("--session") !== index) throw new Error("Only one logical Session route may be selected.");
-    const routed = [...argv]; routed.splice(index, 2);
-    return withSessionRoute(parsed.root, parsed.options.session, () => runRoutedCommand(routed, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess }));
+    const routed = [...argv]; if (index >= 0) routed.splice(index, 2);
+    const operation = () => runRoutedCommand(routed, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess });
+    if (index < 0 && !sessionCallRequiresBinding(parsed.command, "cli")) return operation();
+    try { return withSessionCallContext({ root: parsed.root, sessionId: index >= 0 ? parsed.options.session : undefined, context: sessionContext }, operation); }
+    catch (error) {
+      if (error.code !== "HEAD_SESSION_SELECTION_LOST") throw error;
+      return { ...sessionSelectionUnresolved(parsed.root), currentProjectDirection: readProjectDirection({ root: parsed.root }), executionReplayAllowed: false };
+    }
   }
   return runRoutedCommand(argv, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess });
 }
@@ -742,7 +748,7 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "lineage-plan") return createWholePlanSnapshot({ ...inputJson(options, "Whole plan"), root, persist: true });
   if (command === "lineage-next-plan") return createNextWholePlanSnapshot({ ...inputJson(options, "Next whole plan"), root, persist: true });
   if (command === "lineage-contract") return createExecutionContract({ ...inputJson(options, "Execution Contract"), root, persist: true });
-  if (command === "run-start") return startRun({ root, executionContractId: options.contract });
+  if (command === "run-start") return startRun({ root, executionContractId: options.contract, startRequestId: options["start-request"] });
   if (command === "run-finish") return finishRun({ ...inputJson(options, "Result Packet"), root });
   if (command === "run-review-context") return getPendingReviewContext({ root });
   if (command === "run-review") return reviewRun({ ...inputJson(options, "ReviewDecision"), root });

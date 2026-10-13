@@ -502,26 +502,33 @@ export async function queryProjectGraph(options = {}) {
   }
   let world = null, adapter = { status: "not-used", fallbackUsed: false }, queryAdapter = null;
   try {
-    const { readWorldModelForDiscovery } = await import("./world-model.mjs");
-    world = readWorldModelForDiscovery({ root, worldModelId: options.worldModelId || "", storeAdapter: options.storeAdapter || null });
+    const { inspectWorldDomainFreshness, buildWorldTraversalEligibility } = await import("./world-model.mjs");
+    world = inspectWorldDomainFreshness({ root, worldModelId: options.worldModelId || "", storeAdapter: options.storeAdapter || null });
     const graph = world.snapshot.temporalProvenanceGraph;
     if (!graph) fail("TEMPORAL_PROVENANCE_NOT_BUILT");
+    const proposedEligibility = world.historical ? null : buildWorldTraversalEligibility(world.snapshot, world.freshness.domains);
+    const eligibility = proposedEligibility && (proposedEligibility.nodeIds.length !== graph.nodes.length
+      || proposedEligibility.edgeIds.length !== graph.edges.length) ? proposedEligibility : null;
+    const eligibleNodes = new Set(eligibility?.nodeIds || graph.nodes.map(node => node.nodeId));
+    const eligibleEdges = new Set(eligibility?.edgeIds || graph.edges.map(edge => edge.edgeId));
     for (const node of graph.nodes) {
       const product = node.authorityClass === "canon-projected" || node.kind.startsWith("Product");
       nodes.push({ ...node, views: product ? ["product", "work"] : ["work", "product"], sourceAuthority: node.authorityClass,
         origin: { layer: "world", worldModelId: world.snapshot.worldModelId, graphSnapshotId: graph.graphSnapshotId },
         sourceReference: { artifactId: node.nodeId, worldModelId: world.snapshot.worldModelId, path: node.path || null, digest: node.digest || null },
-        integrity: "verified", freshness: world.historical ? "historical" : "snapshot-evidence", snapshotState: world.historical ? "historical" : "pointer-snapshot",
+        integrity: "verified", freshness: world.historical ? "historical" : eligibleNodes.has(node.nodeId) ? "snapshot-evidence" : "domain-not-current",
+        snapshotState: world.historical ? "historical" : "pointer-snapshot", currentTraversalEligible: eligibleNodes.has(node.nodeId),
         revisionId: node.kind.endsWith("Revision") ? node.nodeId : node.productModelId || graph.sourceSnapshotId,
         reviewState: node.kind.includes("ReviewDecision") ? `historical-${node.disposition || "review"}`
           : node.kind.includes("Candidate") ? "candidate" : node.authorityClass === "canon-projected" ? "canon-projected" : "observed-evidence", ...authority });
       if (node.kind === "FileRevision" && node.path && node.digest) sources.push({ path: node.path, digest: node.digest, nodeId: node.nodeId });
     }
-    edges.push(...graph.edges.map((edge) => ({ ...edge, ...authority, provenance: { graphSnapshotId: graph.graphSnapshotId, worldModelId: world.snapshot.worldModelId } })));
+    edges.push(...graph.edges.filter(edge => eligibleEdges.has(edge.edgeId)).map((edge) => ({ ...edge, ...authority,
+      provenance: { graphSnapshotId: graph.graphSnapshotId, worldModelId: world.snapshot.worldModelId } })));
     queryAdapter = async () => {
       const { queryGraphProjection } = await import("./graph-projection-adapter.mjs");
       const adapterKey = options.graphProjectionAdapter ? adapterIds.get(options.graphProjectionAdapter) || (() => { const key = ++adapterSequence; adapterIds.set(options.graphProjectionAdapter, key); return key; })() : "configured";
-      const key = projectGraphDigest({ projectId, root, graph: graph.graphSnapshotHash, adapterKey, query: normalized });
+      const key = projectGraphDigest({ projectId, root, graph: graph.graphSnapshotHash, eligibility, adapterKey, query: normalized });
       if (adapterFailures.has(key)) return clone(adapterFailures.get(key));
       try {
       const temporalAnchors = normalized.anchorIds.filter((anchor) => graph.nodes.some((node) => node.nodeId === anchor));
@@ -539,14 +546,16 @@ export async function queryProjectGraph(options = {}) {
         query: { query: temporalAnchors.length ? null : normalized.query || null, anchorIds: temporalAnchors.length ? temporalAnchors : null,
           expectedGraphSnapshotId: temporalAnchors.length ? graph.graphSnapshotId : null, freshness: ["current", "historical", "stale"],
           authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic", "runtime-observed"], includeUnreviewedCandidates: normalized.includeCandidates,
-          depth: Math.min(normalized.depth, 3), maxNodes: normalized.maxNodes, maxEdges: normalized.maxEdges } });
+          depth: Math.min(normalized.depth, 3), maxNodes: normalized.maxNodes, maxEdges: normalized.maxEdges, eligibility } });
         return { status: "verified", ...projected.diagnostics, scope: "temporal-query-verification", verifiedDepth: Math.min(normalized.depth, 3), acceleratesCombinedTraversal: false };
       } catch (error) {
         return boundedCache(adapterFailures, key, { status: "unavailable", fallbackUsed: true, fallbackReasonCode: reason(error), executionMode: "verified-embedded-fallback",
           scope: "temporal-query-verification", acceleratesCombinedTraversal: false });
       }
     };
-    layers.push({ layer: "world", status: "verified", worldModelId: world.snapshot.worldModelId, historical: world.historical });
+    layers.push({ layer: "world", status: "verified", worldModelId: world.snapshot.worldModelId, historical: world.historical,
+      domains: world.freshness.domains, domainExcludedNodeCount: graph.nodes.length - eligibleNodes.size,
+      domainExcludedEdgeCount: graph.edges.length - eligibleEdges.size });
   } catch (error) {
     if (reason(error) !== "WORLD_MODEL_NOT_BUILT") unavailable.push({ layer: "world", reasonCode: reason(error) });
     layers.push({ layer: "world", status: reason(error) === "WORLD_MODEL_NOT_BUILT" ? "absent" : "excluded", reasonCode: reason(error) });
@@ -617,7 +626,8 @@ export async function queryProjectGraph(options = {}) {
         ...navigationState(node), sourceReference: node.sourceReference, contentCoverage: node.directionContentCoverage })),
       semantics: "navigation-evidence; relationship does not prove cause, approval, current effect authority or semantic sufficiency" },
     integrity: { verifiedLayers: layers.filter((layer) => layer.status === "verified").map((layer) => layer.layer), excluded: unavailable },
-    freshness: { scope: "referenced-source-bytes-and-retained-revisions", wholeWorldCurrentRequired: false, historicalEvidenceReadable: true },
+    freshness: { scope: "referenced-source-bytes-and-retained-revisions", wholeWorldCurrentRequired: false, historicalEvidenceReadable: true,
+      ...(world ? { domains: world.freshness.domains } : {}) },
     coverage: { state: "partial", inventoryBoundReached: !inventory.complete, layers: layers.map(({ reused, ...layer }) => layer), verifiedNodeCount: allNodes.length, matchedNodeCount: traversed.nodes.length,
       emptyResultProvesAbsence: false, semanticSufficiency: "HEAD-owned" },
     sourceFallback: { available: true, needed: !traversed.nodes.length || traversed.truncated || unavailable.length > 0 || !inventory.complete || partialDirection || partialContent,
