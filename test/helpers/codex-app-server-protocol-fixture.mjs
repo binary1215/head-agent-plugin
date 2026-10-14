@@ -1,6 +1,7 @@
 // Model-free local NDJSON subprocess; only installed protocol fields go on wire.
 import readline from "node:readline";
 const scenario = process.argv[2] || "normal";
+if (scenario === "hold-after-eof-ignore-term") process.on("SIGTERM", () => {});
 const lines = readline.createInterface({ input: process.stdin });
 const timers = new Set();
 let initialized = false;
@@ -145,7 +146,7 @@ lines.on("line", line => {
 });
 lines.on("close", () => {
   for (const timer of timers) clearTimeout(timer);
-  if (scenario === "hold-after-eof") {
+  if (scenario === "hold-after-eof" || scenario === "hold-after-eof-ignore-term") {
     write({ method: "fixture/eof-observed", params: {} });
     setInterval(() => {}, 1000);
   }

@@ -7,15 +7,23 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createCodexAppServerTransport, createCodexAppServerProtocolFixtureTransport } from "../scripts/lib/runtime-codex-app-server-transport.mjs";
 import { resolveVerifiedProcessSupervisor, verifyRuntimeProcessSupervisorHandle } from "../scripts/lib/runtime-process-supervisor.mjs";
+import { finishCodexAppServerFixture } from "./helpers/codex-app-server-fixture-cleanup.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const hash = value => crypto.createHash("sha256").update(value).digest("hex");
 const realTimeout = setTimeout, realClearTimeout = clearTimeout;
-function controlCleanupClock(t, owner) {
+function controlCleanupClock(t) {
   // Queue safety is not a benchmark of the OS scheduling a provider within
   // 66ms. Keep the exact grace policy; explicitly drive its clock separately.
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const watchdog = realTimeout(() => { t.mock.timers.reset(); owner.terminate(true); }, 5000);
-  return () => { realClearTimeout(watchdog); t.mock.timers.reset(); };
+  // A genuinely stuck fixture still drives the original three bounded phases
+  // and fails. Read-only probes need no leaked raw owner/kill capability.
+  let escalation;
+  const advance = remaining => {
+    t.mock.timers.tick(10000);
+    if (remaining) escalation = realTimeout(() => advance(remaining - 1), 100);
+  };
+  const watchdog = realTimeout(() => advance(2), 5000);
+  return () => { realClearTimeout(watchdog); realClearTimeout(escalation); t.mock.timers.reset(); };
 }
 function fixture(t, scenario = "normal", options = {}) {
   const dir = fs.mkdtempSync(path.join(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "codex-rpc-"));
@@ -32,21 +40,25 @@ function fixture(t, scenario = "normal", options = {}) {
   const ownershipBinding = { authorizationHash: config.authorizationHash, policyDigest: config.policyDigest, inputDigest: config.inputDigest,
     executionRootDigest: hash(dir), consumptionId: "synthetic-consumption" };
   let handle = null;
+  let externalOwner = null;
   const start = (signal = controller.signal) => { handle = transport.startFixture({ ownershipBinding, deadlineAt, signal }); return handle; };
   if (options.start !== false) start();
   t.after(async () => {
-    await transport.close().catch(() => {});
-    if (!handle) { assert.equal(transport.inspect().started, false); fs.rmSync(dir, { recursive: true, force: true }); return; }
-    assert.equal(transport.inspect().closed, true);
-    const closed = journal.find(event => event.event === "process-closed");
-    assert.equal(closed?.supervision.treeCleanupVerified, true);
-    for (const pid of [handle.child.pid, closed?.providerPid].filter(Boolean)) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
-    fs.rmSync(dir, { recursive: true, force: true });
+    const restoreClock = controlCleanupClock(t);
+    try { await finishCodexAppServerFixture(externalOwner ? { ...externalOwner, dir }
+      : { transport, owner: handle, journal, dir, allowUncleanClose: true }); }
+    finally { restoreClock(); }
   });
   let sequence = 0;
   const request = (method = "thread/read", params = { threadId: "source", includeTurns: true }, extra = {}) => transport.request({
     requestId: `request-${sequence++}`, method, params, signal: controller.signal, deadlineAt, ...extra });
-  return { transport, request, journal, controller, handle, config, ownershipBinding, deadlineAt, start };
+  // Configuration-only fixtures can lend their directory to a probe. Its exact
+  // owner, not the never-started configuration transport, then owns teardown.
+  const trackOwned = (transport, owner, journal, cleanup = {}) => {
+    assert.equal(handle, null); assert.equal(externalOwner, null);
+    externalOwner = { transport, owner, journal, ...cleanup };
+  };
+  return { transport, request, journal, controller, handle, config, ownershipBinding, deadlineAt, start, trackOwned };
 }
 
 // Observe the real native stdin boundary and all provider stdout, including
@@ -237,7 +249,9 @@ for (const action of ["end-input", "abort", "deadline", "async-guard"]) {
       deadline: "PROCESS_SUPERVISOR_INPUT_DEADLINE", "async-guard": "PROCESS_SUPERVISOR_SYNCHRONOUS_INPUT_GUARD_REQUIRED" }[action];
     await assert.rejects(delivery, { code });
     assert.equal(delivery.writeAttempted, false);
-    await f.transport.close();
+    const restoreClock = controlCleanupClock(t);
+    try { await f.transport.close(); }
+    finally { restoreClock(); }
     assert.equal(wire.writes.filter(frame => frame.method === "thread/fork").length, 0); assert.equal(wire.branched(), false);
     assert.equal(f.journal.find(event => event.event === "process-closed").forced, false);
   });
@@ -412,9 +426,12 @@ test("same mutation with another ID is rejected even after an acknowledged fork"
 
 test("cancellation quiesces a pending request before close resolves", async t => {
   const f = fixture(t, "hang");
-  const pending = f.request(); const timer = setTimeout(() => f.controller.abort(), 100);
-  await assert.rejects(pending, { code: "CODEX_RPC_CANCELLED" }); clearTimeout(timer);
-  await f.transport.close(); assert.equal(f.transport.inspect().closed, true);
+  const pending = f.request(); const timer = realTimeout(() => f.controller.abort(), 100);
+  const restoreClock = controlCleanupClock(t);
+  try {
+    await assert.rejects(pending, { code: "CODEX_RPC_CANCELLED" });
+    await f.transport.close(); assert.equal(f.transport.inspect().closed, true);
+  } finally { realClearTimeout(timer); restoreClock(); }
 });
 
 test("EOF-resistant subprocess is owned, forcibly cleaned and never reported clean", async t => {
@@ -459,6 +476,8 @@ test("read-only observation uses the same engine without worker authority or mut
   const probe = createCodexAppServerProtocolFixtureTransport({ ...f.config, controlFile: path.join(f.config.executionRoot, "probe.jsonl"),
     readOnlyProbe: true, recordOperationalEvidence: event => { journal.push(event); if (event.event.startsWith("process-")) t.diagnostic(JSON.stringify(event)); } });
   const handle = probe.startReadOnly({ deadlineAt: f.deadlineAt, signal: f.controller.signal });
+  f.trackOwned(probe, handle, journal);
+  let priorError;
   try {
     assert.equal(Object.isFrozen(handle), true);
     assert.deepEqual(Object.keys(handle).sort(), ["parentPid", "pid", "started"]);
@@ -471,10 +490,16 @@ test("read-only observation uses the same engine without worker authority or mut
     assert.equal(probe.inspect().modelCallAttempted, false);
     assert.equal(journal.some(event => Object.hasOwn(event, "authorizationHash")), false);
     assert.equal(journal.every(event => event.diagnosticId.startsWith("codex-readonly-")), true);
-  } finally {
-    await probe.close(); assert.equal(probe.inspect().closed, true);
-    const closed = journal.find(event => event.event === "process-closed");
-    for (const pid of [handle.pid, closed.providerPid]) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  } catch (cause) { priorError = cause; }
+  finally {
+    const restoreClock = controlCleanupClock(t);
+    try {
+      await finishCodexAppServerFixture({ transport: probe, owner: handle, journal, priorError,
+        verify: () => {
+          assert.equal(probe.inspect().closed, true);
+          assert.equal(journal.find(event => event.event === "process-closed")?.supervision.treeCleanupVerified, true);
+        } });
+    } finally { restoreClock(); }
   }
 });
 
@@ -484,6 +509,8 @@ test("read-only request snapshots survive caller mutation during initialize", as
   const probe = createCodexAppServerProtocolFixtureTransport({ ...f.config, controlFile: path.join(f.config.executionRoot, "immutable.jsonl"),
     readOnlyProbe: true, recordOperationalEvidence: event => { journal.push(event); if (event.event.startsWith("process-")) t.diagnostic(JSON.stringify(event)); } });
   const identity = probe.startReadOnly({ deadlineAt: f.deadlineAt });
+  f.trackOwned(probe, identity, journal);
+  let priorError;
   try {
     const params = { refreshToken: false };
     const call = { requestId: "readonly-snapshot", method: "account/read", params, deadlineAt: f.deadlineAt };
@@ -496,10 +523,16 @@ test("read-only request snapshots survive caller mutation during initialize", as
     assert.deepEqual(journal.filter(event => event.event === "request-sent").map(event => event.method), ["initialize", "account/read"]);
     const sent = journal.find(event => event.method === "account/read" && event.event === "request-sent");
     assert.deepEqual(sent.params, { refreshToken: false }); assert.equal(sent.requestId, "readonly-snapshot");
-  } finally {
-    await probe.close(); assert.equal(probe.inspect().closed, true);
-    const closed = journal.find(event => event.event === "process-closed");
-    for (const pid of [identity.pid, closed.providerPid]) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  } catch (cause) { priorError = cause; }
+  finally {
+    const restoreClock = controlCleanupClock(t);
+    try {
+      await finishCodexAppServerFixture({ transport: probe, owner: identity, journal, priorError,
+        verify: () => {
+          assert.equal(probe.inspect().closed, true);
+          assert.equal(journal.find(event => event.event === "process-closed")?.supervision.treeCleanupVerified, true);
+        } });
+    } finally { restoreClock(); }
   }
 });
 
@@ -525,6 +558,115 @@ test("late cancellation after clean closure cannot rewrite the observed outcome"
   assert.equal(f.transport.inspect().failureCode, null);
   assert.equal(await f.transport.close(), closed);
   assert.equal(f.journal.find(event => event.event === "process-closed").forced, false);
+});
+
+test("failed cleanup assertion preserves its error and still removes the exact stopped fixture", async t => {
+  const f = fixture(t); await f.request();
+  const original = new Error("injected cleanup assertion failure");
+  const restoreClock = controlCleanupClock(t);
+  try {
+    await assert.rejects(finishCodexAppServerFixture({ transport: f.transport, owner: f.handle, journal: f.journal,
+      dir: f.config.executionRoot, verify: () => { throw original; } }), cause => cause === original);
+  } finally { restoreClock(); }
+  assert.equal(fs.existsSync(f.config.executionRoot), false);
+  assert.equal(f.transport.inspect().closed, true);
+  const closed = f.journal.find(event => event.event === "process-closed");
+  assert.equal(closed.supervision.treeCleanupVerified, true);
+  for (const pid of [f.handle.child.pid, closed.providerPid]) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+});
+
+test("configuration-only fixture retains evidence for its borrowed live owner", async t => {
+  const hooks = [];
+  const f = fixture({ after: hook => hooks.push(hook), mock: t.mock, diagnostic: value => t.diagnostic(value) }, "normal", { start: false });
+  t.after(() => fs.rmSync(f.config.executionRoot, { recursive: true, force: true }));
+  let closeCalls = 0;
+  const transport = { close: async () => { closeCalls++; }, inspect: () => ({ closed: true, started: true }) };
+  // A known live PID is an observation-only negative control, never a signal
+  // target. The directory cannot be removed by the unused config transport.
+  f.trackOwned(transport, { state: { providerPid: process.pid } }, [], { verify: () => {} });
+  await assert.rejects(hooks[0](), /owned fixture PID .* must be absent/);
+  assert.equal(closeCalls, 1);
+  assert.equal(fs.existsSync(f.config.executionRoot), true);
+});
+
+test("early teardown failure still stops the exact live owner and preserves the original assertion", async t => {
+  const f = fixture(t, "normal", { start: false });
+  const journal = [];
+  const transport = createCodexAppServerProtocolFixtureTransport({ ...f.config, recordOperationalEvidence: event => {
+    journal.push(event); if (event.event.startsWith("process-")) t.diagnostic(JSON.stringify(event)); } });
+  const owner = transport.startFixture({ ownershipBinding: f.ownershipBinding, deadlineAt: f.deadlineAt });
+  f.trackOwned(transport, owner, journal, { allowUncleanClose: true, verify: () => assert.equal(transport.inspect().closed, true) });
+  await transport.request({ requestId: "read", method: "thread/read", params: { threadId: "source", includeTurns: true } });
+  const original = new Error("injected early teardown failure");
+  const brokenClose = { ...transport, close: async () => { throw original; } };
+  await assert.rejects(finishCodexAppServerFixture({ transport: brokenClose, owner, journal,
+    dir: f.config.executionRoot, verify: () => { throw original; } }), cause => cause === original);
+  assert.equal(fs.existsSync(f.config.executionRoot), false);
+  assert.equal(transport.inspect().closed, true);
+  // Protective teardown cannot retroactively supply missing transport proof.
+  if (process.platform === "win32") assert.equal(journal.find(event => event.event === "process-closed").supervision.treeCleanupVerified, false);
+  for (const pid of [owner.child.pid, owner.state.providerPid]) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+});
+
+test("missing native cleanup evidence remains uncertain and cannot settle cancellation", async t => {
+  const f = fixture(t, "normal", { start: false });
+  const journal = [];
+  const transport = createCodexAppServerProtocolFixtureTransport({ ...f.config,
+    controlFile: path.join(f.config.executionRoot, "invalid-control.jsonl"),
+    recordOperationalEvidence: event => { journal.push(event); if (event.event.startsWith("process-")) t.diagnostic(JSON.stringify(event)); } });
+  const owner = transport.startFixture({ ownershipBinding: f.ownershipBinding, deadlineAt: f.deadlineAt });
+  f.trackOwned(transport, owner, journal, { allowUncleanClose: true, verify: () =>
+    assert.equal(journal.find(event => event.event === "process-closed")?.supervision.treeCleanupVerified, false) });
+  let priorError;
+  try {
+    await transport.request({ requestId: "read", method: "thread/read", params: { threadId: "source", includeTurns: true } });
+    // Leave enough invalid trailing bytes to survive subsequent native writes.
+    // Replacing an open control file is not supported by Windows sharing rules.
+    fs.appendFileSync(path.join(f.config.executionRoot, "invalid-control.jsonl"), "{invalid-control}\n".repeat(128));
+    await assert.rejects(transport.close(), { code: "CODEX_RPC_CLEANUP_UNCERTAIN" });
+    const closed = journal.find(event => event.event === "process-closed");
+    assert.equal(closed.supervision.controlInvalid, true);
+    assert.equal(closed.supervision.treeCleanupVerified, false);
+    let committed = false;
+    await assert.rejects(transport.cleanup({ reason: "CODEX_NATIVE_FORK_CANCELLED", commit: () => { committed = true; } }),
+      { code: "CODEX_RPC_CLEANUP_UNCERTAIN" });
+    assert.equal(committed, false);
+  } catch (cause) { priorError = cause; }
+  finally {
+    await finishCodexAppServerFixture({ transport, owner, journal, priorError, allowUncleanClose: true,
+      verify: () => assert.equal(journal.find(event => event.event === "process-closed")?.supervision.treeCleanupVerified, false) });
+  }
+});
+
+test("hard escalation retains unclean classification and verifies the exact owned tree", async t => {
+  const f = fixture(t, "hold-after-eof-ignore-term", { start: false });
+  const journal = [];
+  const transport = createCodexAppServerProtocolFixtureTransport({ ...f.config, recordOperationalEvidence: event => {
+    journal.push(event); if (event.event.startsWith("process-")) t.diagnostic(JSON.stringify(event)); } });
+  const owner = transport.startFixture({ ownershipBinding: f.ownershipBinding, deadlineAt: f.deadlineAt });
+  f.trackOwned(transport, owner, journal, { allowUncleanClose: true, verify: () =>
+    assert.equal(journal.find(event => event.event === "process-closed")?.supervision.treeCleanupVerified, process.platform === "win32") });
+  await transport.request({ requestId: "read", method: "thread/read", params: { threadId: "source", includeTurns: true } });
+  const kill = owner.child.kill;
+  // Deterministically resist soft termination at the test-owned signal boundary.
+  // SIGKILL and the real native kernel/tree cleanup remain unchanged.
+  owner.child.kill = function (signal) { return signal === "SIGTERM" ? true : kill.call(this, signal); };
+  let priorError;
+  try {
+    await assert.rejects(transport.close(), { code: process.platform === "win32" ? "CODEX_RPC_UNCLEAN_EXIT" : "CODEX_RPC_CLEANUP_UNCERTAIN" });
+    const closed = journal.find(event => event.event === "process-closed");
+    assert.equal(closed.forced, true);
+    assert.notEqual(closed.cleanupTiming.softStopAtMs, null);
+    assert.notEqual(closed.cleanupTiming.hardStopAtMs, null);
+    assert.equal(closed.exactExitObserved, true);
+    // Windows has the kernel Job close boundary; POSIX cannot synthesize the
+    // journal of a SIGKILLed owner even if the exact group was actually killed.
+    assert.equal(closed.supervision.treeCleanupVerified, process.platform === "win32");
+  } catch (cause) { priorError = cause; }
+  finally {
+    await finishCodexAppServerFixture({ transport, owner, journal, priorError, allowUncleanClose: true, verify: () =>
+      assert.equal(journal.find(event => event.event === "process-closed")?.supervision.treeCleanupVerified, process.platform === "win32") });
+  }
 });
 
 test("unexpected nonzero closure cannot be reclassified by a caller cancellation reason", async t => {
