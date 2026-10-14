@@ -68,7 +68,26 @@ export function formatHelp(value) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
+function formatUnavailableSession(value, { doctor = false } = {}) {
+  const lines = ["HEAD Session selection is unavailable; independent work can continue.",
+    "Selected Session, Run and recovery: unavailable (not inspected)."];
+  if (value.project) lines.push(`Project identity: ${compactText(value.project.projectId, 160)} (verified; readiness not assessed)`);
+  const direction = value.currentProjectDirection;
+  if (direction) {
+    lines.push(`Current common goal: ${compactText(direction.input.goal, 400)}`);
+    for (const [key, label] of [["constraints", "Constraint"], ["decisions", "Common decision"], ["cancelledActions", "Cancelled action"]]) {
+      for (const item of direction.input[key]) lines.push(`${label}: ${compactText(item, 300)}`);
+    }
+  } else lines.push("Current common direction: not recorded (not an approved empty direction).");
+  if (doctor) lines.push("Loaded/configured package: not assessed", "Host restart: not assessed", "Managed projection drift: not assessed");
+  lines.push("", value.nextHeadAction,
+    "User action: none for independent work. Session-dependent work alone may need selection clarification.",
+    "This read restored no Session, granted no authorization and changed no project state. Technical details: --json");
+  return `${lines.join("\n")}\n`;
+}
+
 export function formatProjectStatus(value, { doctor = false } = {}) {
+  if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value, { doctor });
   const core = value.readiness?.core;
   const product = value.readiness?.product;
   const context = value.readiness?.context;
@@ -127,6 +146,7 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
 }
 
 export function formatProjectBootstrap(value) {
+  if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value);
   const core = value.readiness?.core;
   const product = value.readiness?.product;
   const recovery = value.readiness?.recovery;
@@ -153,6 +173,7 @@ export function formatProjectBootstrap(value) {
 }
 
 export function formatSessionRestore(value) {
+  if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value);
   const checkpoint = value?.checkpoint || {};
   return `${[
     "HEAD recovered the current direction from verified project artifacts.",
@@ -169,6 +190,7 @@ export function formatSessionRestore(value) {
 
 export function formatConversationRecovery(value) {
   const entry = value?.conversationEntry || value;
+  if (entry?.status === "session_selection_unresolved") return formatUnavailableSession(entry);
   const restored = entry?.restore?.checkpoint || entry?.restore?.projection?.checkpoint || {};
   const lines = [];
   if (value?.status === "compaction_lifecycle_prepared") {
@@ -588,6 +610,7 @@ export function formatCliError(error) {
 }
 
 export function formatCliResult(command, value) {
+  if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value, { doctor: command === "doctor" });
   if (command === "worker-prepare") return formatWorkerPreparation(value);
   if (["worker-integration-status", "worker-integrate", "worker-wave-status", "worker-wave-wait"].includes(command)) return formatWorkerGuidance(value);
   if (command === "source-context") return formatSourceContext(value);

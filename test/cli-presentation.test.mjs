@@ -18,6 +18,22 @@ import {
   formatSessionRestore,
 } from "../scripts/lib/cli-presentation.mjs";
 
+test("unresolved Session cards preserve current cancellation without claiming recovery or diagnostics", () => {
+  const value = { status: "session_selection_unresolved", sessionId: null,
+    currentProjectDirection: { input: { goal: "Inspect local source", constraints: ["Do not publish"], decisions: [], cancelledActions: ["deploy"] } },
+    nextHeadAction: "Continue independent work; only dependent work needs a verified selected Session." };
+  for (const command of ["status", "doctor", "conversation-enter", "session-restore", "init", "resume", "run-start", "compact-status"]) {
+    const text = formatCliResult(command, value);
+    assert.match(text, /independent work can continue/u);
+    assert.match(text, /Constraint: Do not publish/u);
+    assert.match(text, /Cancelled action: deploy/u);
+    assert.doesNotMatch(text, /HEAD is ready|recovered the current direction|unverified checkpoint|Open reviews: 0|drift: 0|restart: not required/u);
+  }
+  assert.equal(formatMcpToolContent("head_run_start", value), JSON.stringify(value), "unformatted MCP tools retain their JSON contract");
+  assert.match(formatSessionRestore(value), /unavailable \(not inspected\)/u);
+  assert.match(formatProjectBootstrap(value), /independent work can continue/u);
+});
+
 const authority = {
   advisoryOnly: true,
   writesRecoveryDirection: false,

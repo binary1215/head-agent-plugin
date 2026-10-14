@@ -48,6 +48,19 @@ MCP `_meta.headSessionBinding`은 후속 binding 보존이 불가능함을 표�
 계속 unresolved입니다. CLI 정보·확인된 Project 독립 조회는 MCP와 같은 독립 경계를 쓰며,
 선택 Session을 표시하는 조회(Product 운영 status 포함)는 binding이 필요합니다.
 
+선택이 유실되거나 Host 연결을 확인할 수 없을 때 기존 진입·상태 조회(CLI
+`conversation-enter`, `status`, `doctor`)는 Project-only 부분 정보를 제공합니다.
+검증된 identity와 최신 공통 방향·제약·취소를 읽되 `availability`로 Session/Run/복구는
+unavailable, 조사하지 않은 진단은 not assessed로 구분합니다. 준비 완료·drift 0·복구
+성공을 추정하지 않습니다. 이 분기는 기본 Session을 대신 읽거나 Session 열거,
+World/DB 진단, 상태 쓰기를 하지 않습니다. 방향 부재는 `null`이며 손상·다른 Project의
+원본은 오류로 남습니다. CLI는 `session-restore`를 포함해 성공 formatter 전에 unresolved를
+처리합니다. init/resume·restore·Run·compaction의 기존 Session/효과 경계는 유지합니다.
+HEAD는 독립 작업을 계속하고 의존 작업에만 기존 검증된 explicit/Host 선택을 사용합니다.
+새 selector·사용자 ID 양식·복구 호출 체인·승인 단계는 없습니다. MCP 미해결 응답은
+기존 JSON text와 structuredContent를 유지하고 정상 응답의 도구별 표현도 바꾸지 않습니다.
+fixture 검증은 실제 모델의 질문 감소나 설치 Host의 지속 연결을 실측한 증거가 아닙니다.
+
 현재 packaged Codex/Claude/OpenCode stdio에는 지속 caller context 연결이 없습니다.
 명시/default 동작은 유지됩니다. 주입 context 시험은 local Host 증거이지 세 제품
 모두 compaction 후 자동 선택 복원을 지원한다는 증거는 아닙니다.

@@ -2197,6 +2197,18 @@ function localWorkerInput(args, start = false) {
   return Object.fromEntries(Object.entries(args).filter(([key]) => key !== "project_root").map(([key, value]) => [fields[key], value]));
 }
 
+async function unresolvedSessionResponse(id, name, root, reasonCode) {
+  try {
+    const routing = await import("./lib/session-routing.mjs");
+    const value = routing.sessionSelectionUnresolved(root, {
+      includeProjectFacts: ["head_project_status", "head_conversation_enter"].includes(name), reasonCode,
+    });
+    // Keep the existing exceptional JSON-text + structuredContent contract.
+    // Normal dispatch still uses each tool's own human/JSON presentation.
+    return success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+  } catch (error) { return failure(id, error.message); }
+}
+
 export async function dispatch(request, options = {}) {
   const outer = request.params?.arguments;
   const routed = request.params?.name === "head_tools_read" || request.params?.name === "head_tools_call";
@@ -2216,10 +2228,7 @@ export async function dispatch(request, options = {}) {
         // Existing route validation below still rejects invalid/foreign IDs.
         bindingFailure = error.code || "HEAD_SESSION_CONTEXT_UNAVAILABLE";
       } else {
-        const routing = await import("./lib/session-routing.mjs");
-        const value = { ...routing.sessionSelectionUnresolved(args.project_root), reasonCode: error.code || "HEAD_SESSION_CONTEXT_UNAVAILABLE",
-          currentProjectDirection: routing.readProjectDirection({ root: args.project_root }), executionReplayAllowed: false };
-        return success(request.id ?? null, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+        return unresolvedSessionResponse(request.id ?? null, requestedName, args.project_root, error.code || "HEAD_SESSION_CONTEXT_UNAVAILABLE");
       }
     }
   }
@@ -2239,9 +2248,7 @@ export async function dispatch(request, options = {}) {
       return response;
     } catch (error) {
       if (error.code === "HEAD_SESSION_SELECTION_LOST") {
-        const routing = await import("./lib/session-routing.mjs");
-        const value = { ...routing.sessionSelectionUnresolved(args.project_root), currentProjectDirection: routing.readProjectDirection({ root: args.project_root }), executionReplayAllowed: false };
-        return success(request.id ?? null, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
+        return unresolvedSessionResponse(request.id ?? null, requestedName, args.project_root, error.code);
       }
       return failure(request.id ?? null, error.message);
     }

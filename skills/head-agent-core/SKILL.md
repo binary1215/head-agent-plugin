@@ -50,6 +50,12 @@ Entry includes recovery, common direction, status, Attention, version and
 presentation. Reuse it without another status call unless the basis changes or
 diagnosis needs one. No checkpoint means ordinary work continues. Recovery
 attention pauses only dependent work and assigns investigation to HEAD.
+If Session selection is lost/unavailable, entry and status still expose verified
+Project identity and current common direction, while Session/Run/recovery facts
+remain unavailable. Continue independent work; use already verified explicit/Host
+selection only for dependent work. Do not force a recovery tool, repeated question,
+Session listing or user ID form. Missing direction is not approved empty direction;
+damaged originals remain errors. Partial entry does not claim recovery or readiness.
 After compaction/provider replacement, restore the selected Session automatically
 and apply current common constraints. Never invent direction from a transcript.
 

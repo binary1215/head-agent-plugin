@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { atomicCreateArtifact } from "./artifact-storage.mjs";
 import { noteProjectGraphChange } from "./discovery-index.mjs";
+import { readProjectDirection } from "./project-direction.mjs";
 export { readProjectDirection, updateProjectDirection } from "./project-direction.mjs";
 
 // Routing is request-local Host selection, never a persisted global selector.
@@ -103,16 +104,36 @@ export function withSessionCallContext({ root, sessionId, context = null }, oper
   return withSessionRoute(root, binding.sessionId, operation);
 }
 
-export function sessionSelectionUnresolved(root) {
-  const project = read(safeSessionPath(root, ".head", "project.json"));
-  if (project.projectRoot !== canonicalRoot(root)) fail("Project root identity differs.", "PROJECT_IDENTITY_MISMATCH");
-  return { status: "session_selection_unresolved", reasonCode: "HEAD_SESSION_SELECTION_LOST",
+export function sessionSelectionUnresolved(root, { includeProjectFacts = false, reasonCode = "HEAD_SESSION_SELECTION_LOST" } = {}) {
+  // Do not inspect a default Session and redact it. These are the only original
+  // records needed for the unavailable-selection response, including mixed reads.
+  const projectFile = safeSessionPath(root, ".head", "project.json");
+  if (!fs.existsSync(projectFile)) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  const project = read(projectFile);
+  if (project.schemaVersion !== 1 || project.projectRoot !== canonicalRoot(root)
+    || typeof project.projectId !== "string" || !project.projectId) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
+  const currentProjectDirection = readProjectDirection({ root });
+  if (currentProjectDirection && currentProjectDirection.projectId !== project.projectId) fail("Project identity changed while reading its common direction.", "PROJECT_IDENTITY_MISMATCH");
+  const unresolved = { status: "session_selection_unresolved", reasonCode,
     projectId: project.projectId, sessionId: null, sessionSelection: { status: "lost" },
     ordinaryWorkBlocked: false, recoveryDependentWorkBlocked: true,
     headActionRequired: true, userDecisionRequired: false,
+    headActionScope: "selected-session-dependent-work-only",
     affectedOperations: ["selected-session-read", "selected-session-mutation"],
-    nextHeadAction: "Restore a verified caller binding or explicit logical Session only for dependent work; continue independent Project/source work.",
+    nextHeadAction: "Continue independent Project/source work. Only for dependent work, use an already verified explicit logical Session or Host binding; ask only if a material selection remains ambiguous.",
+    currentProjectDirection, executionReplayAllowed: false,
     persisted: false, recoveryAuthority: false };
+  if (!includeProjectFacts) return unresolved;
+  return {
+    ...unresolved,
+    project: { projectId: project.projectId, projectRoot: project.projectRoot },
+    availability: { project: "identity_verified", currentProjectDirection: currentProjectDirection ? "available" : "not_recorded",
+      session: "unavailable", run: "unavailable", recovery: "unavailable",
+      managedProjectionDrift: "not_assessed", runtime: "not_assessed", product: "not_assessed" },
+    nextAction: { id: "continue_independent_work", summary: unresolved.nextHeadAction },
+    presentation: { mode: "exception", summary: "Independent work can continue. Selected Session, Run and recovery facts are unavailable; this is not a checkpoint failure or a recovery success.",
+      headActionScope: unresolved.headActionScope, userActionRequired: false },
+  };
 }
 
 export function sessionStatePath(root) {

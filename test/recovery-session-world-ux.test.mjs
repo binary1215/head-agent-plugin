@@ -14,6 +14,7 @@ import { createHeadSession, createSessionCallContext, withSessionCallContext, wi
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
+import { formatCliResult, formatProjectStatus, formatSessionRestore, formatConversationRecovery } from "../scripts/lib/cli-presentation.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const direction = { purpose: "Preserve the task", currentPosition: "Before bounded work", nextExpectedResult: "Historical step, not a new execution authorization" };
@@ -233,4 +234,146 @@ test("a demonstrably default-owned historical active Run is not another Session'
   const started = withSessionRoute(root, second.sessionId, () => startRun({ root, executionContractId: contract(root).executionContractId, startRequestId: "independent-session" }));
   assert.equal(started.run.sessionId, second.sessionId);
   assert.deepEqual(fs.readFileSync(path.join(root, ".head/sessions/current.json")), defaultBytes);
+});
+
+test("partial availability: mixed reads expose only Project facts without fallback reads or writes", async (t) => {
+  const root = fixture(t), selected = createHeadSession({ root, purpose: "Not a fallback" });
+  const common = updateProjectDirection({ root, input: { goal: "Inspect synthetic code", constraints: ["Keep local"], cancelledActions: ["deploy"] } }).direction;
+  const context = createSessionCallContext(); context.select(root, selected.sessionId); context.lose(root);
+  // Even a damaged default cannot be consulted to fill an unselected response.
+  fs.writeFileSync(path.join(root, ".head/sessions/current.json"), "{damaged-default");
+  const before = bytes(root), binding = context.read(root), reads = [], writes = [];
+  const original = Object.fromEntries(["readFileSync", "readdirSync", "writeFileSync", "appendFileSync", "mkdirSync", "renameSync", "unlinkSync"].map(key => [key, fs[key]]));
+  const values = [];
+  try {
+    for (const key of ["readFileSync", "readdirSync"]) fs[key] = function(file, ...args) {
+      const relative = path.relative(root, String(file)).replaceAll("\\", "/"); reads.push(relative);
+      if (relative.startsWith(".head/")) assert(relative === ".head/project.json" || relative.startsWith(".head/project-direction/"), `unexpected partial read: ${relative}`);
+      return original[key].call(this, file, ...args);
+    };
+    for (const key of ["writeFileSync", "appendFileSync", "mkdirSync", "renameSync", "unlinkSync"]) fs[key] = function(...args) { writes.push(key); throw new Error(`partial read attempted ${key}`); };
+    for (const options of [{ sessionContext: context }, { resolveSessionContext() { throw Object.assign(new Error("Host unavailable"), { code: "HOST_UNAVAILABLE" }); } }]) {
+      for (const name of ["head_project_status", "head_conversation_enter"]) for (const route of [null, "head_tools_read", "head_tools_call"]) {
+        const response = await dispatch({ jsonrpc: "2.0", id: "partial", method: "tools/call", params: route
+          ? { name: route, arguments: { name, arguments: { project_root: root } } }
+          : { name, arguments: { project_root: root } } }, options);
+        assert.equal(response.error, undefined);
+        const value = response.result.structuredContent; values.push(value);
+        assert.equal(value.status, "session_selection_unresolved");
+        assert.equal(value.project.projectRoot, root); assert.equal(value.project.projectId, common.projectId);
+        assert.deepEqual(value.currentProjectDirection, common);
+        assert.equal(value.availability.project, "identity_verified");
+        for (const field of ["session", "run", "recovery"]) assert.equal(value.availability[field], "unavailable");
+        assert.equal(value.availability.managedProjectionDrift, "not_assessed");
+        assert.equal(value.sessionId, null); assert.equal(value.state, undefined); assert.equal(value.restore, undefined);
+        assert.equal(value.ordinaryWorkBlocked, false); assert.equal(value.userDecisionRequired, false);
+        assert.equal(value.executionReplayAllowed, false); assert.equal(value.persisted, false);
+        assert.equal(value.nextAction.id, "continue_independent_work"); assert.equal(value.presentation.mode, "exception");
+        assert.equal(value.headActionScope, "selected-session-dependent-work-only");
+        assert.deepEqual(value.affectedOperations, ["selected-session-read", "selected-session-mutation"]);
+        assert.equal(response.result.content[0].text, JSON.stringify(value), "unresolved MCP retains its JSON text transport");
+      }
+    }
+    for (const command of ["status", "doctor", "conversation-enter"]) {
+      const value = runCommand([command, root], { sessionContext: context });
+      assert.deepEqual(value.project, values[0].project); assert.deepEqual(value.currentProjectDirection, common);
+    }
+  } finally { Object.assign(fs, original); }
+  assert.deepEqual(writes, []); assert(reads.length > 0);
+  console.log(JSON.stringify({ partialReads: [...new Set(reads)], writes, damagedDefaultNotRead: true }));
+  assert.deepEqual(bytes(root), before); assert.deepEqual(context.read(root), binding);
+  assert.equal((await call(root, "head_observation_sources", {}, { sessionContext: context })).result.structuredContent.status, "available");
+  assert.equal((await call(root, "head_run_start", {}, { sessionContext: context })).result.structuredContent.status, "session_selection_unresolved");
+  assert.deepEqual(bytes(root), before);
+});
+
+test("partial availability: unresolved CLI consumers never invent recovery, checkpoint or diagnostics", (t) => {
+  const root = fixture(t), context = createSessionCallContext(); context.lose(root);
+  for (const command of ["status", "doctor", "conversation-enter", "session-restore", "init", "resume"]) {
+    const value = runCommand([command, root], { sessionContext: context });
+    assert.equal(value.status, "session_selection_unresolved");
+    const text = formatCliResult(command, value);
+    assert.match(text, /independent work.*(?:available|continue)/iu);
+    assert.match(text, /selected Session/iu);
+    assert.doesNotMatch(text, /recovered the current direction|unverified checkpoint|No recovery checkpoint|drift: 0|restart: not required|HEAD is ready/iu);
+    if (command === "doctor") { assert.match(text, /drift: not assessed/iu); assert.match(text, /restart: not assessed/iu); }
+    assert.equal(JSON.parse(JSON.stringify(value)).status, value.status);
+    console.log(JSON.stringify({ command, status: value.status, text }));
+  }
+  const unresolved = runCommand(["status", root], { sessionContext: context });
+  for (const formatter of [formatProjectStatus, formatSessionRestore, formatConversationRecovery]) {
+    assert.doesNotMatch(formatter(unresolved), /recovered the current direction|unverified checkpoint|No recovery checkpoint/iu);
+  }
+});
+
+test("partial availability: missing direction is distinct from corrupt direction or Project identity", async (t) => {
+  const root = fixture(t), context = createSessionCallContext(); context.lose(root);
+  const missing = (await call(root, "head_project_status", {}, { sessionContext: context })).result.structuredContent;
+  assert.equal(missing.currentProjectDirection, null); assert.equal(missing.availability.currentProjectDirection, "not_recorded");
+  const common = updateProjectDirection({ root, input: { goal: "Current cancellation", cancelledActions: ["deploy"] } }).direction;
+  const directionFile = path.join(root, ".head/project-direction/current.json"), directionBytes = fs.readFileSync(directionFile);
+  fs.writeFileSync(directionFile, "{");
+  try {
+    for (const options of [{ sessionContext: context }, { resolveSessionContext() { throw new Error("offline"); } }]) {
+      assert((await call(root, "head_conversation_enter", {}, options)).error, "corruption must not become absent direction");
+    }
+    assert.throws(() => runCommand(["status", root], { sessionContext: context }), { code: "INVALID_PROJECT_DIRECTION" });
+  } finally { fs.writeFileSync(directionFile, directionBytes); }
+  assert.equal((await call(root, "head_project_status", {}, { sessionContext: context })).result.structuredContent.currentProjectDirection.directionId, common.directionId);
+  const otherRoot = fixture(t), otherDirection = updateProjectDirection({ root: otherRoot, input: { goal: "Foreign direction" } }).direction;
+  const revisionFile = path.join(root, ".head/project-direction/revisions", `${common.directionId}.json`), revisionBytes = fs.readFileSync(revisionFile);
+  fs.writeFileSync(revisionFile, JSON.stringify(otherDirection));
+  try { assert((await call(root, "head_project_status", {}, { sessionContext: context })).error); }
+  finally { fs.writeFileSync(revisionFile, revisionBytes); }
+  const projectFile = path.join(root, ".head/project.json"), projectBytes = fs.readFileSync(projectFile), project = JSON.parse(projectBytes);
+  try {
+    for (const change of [{ projectRoot: "wrong-root" }, { schemaVersion: 99 }, { projectId: null }]) {
+      fs.writeFileSync(projectFile, JSON.stringify({ ...project, ...change }));
+      assert((await call(root, "head_project_status", {}, { sessionContext: context })).error);
+    }
+  } finally { fs.writeFileSync(projectFile, projectBytes); }
+  const empty = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-partial-uninitialized-")));
+  t.after(() => fs.rmSync(empty, { recursive: true, force: true }));
+  const emptyContext = createSessionCallContext(); emptyContext.lose(empty);
+  assert.throws(() => runCommand(["status", empty], { sessionContext: emptyContext }), { code: "NOT_INITIALIZED" });
+});
+
+test("partial availability: healthy default/bound/explicit output and no-checkpoint meaning stay unchanged", async (t) => {
+  const root = fixture(t), context = createSessionCallContext();
+  for (const name of ["head_project_status", "head_conversation_enter"]) {
+    const ordinary = await call(root, name);
+    assert.deepEqual((await call(root, name, {}, { sessionContext: context })).result, ordinary.result);
+    assert.deepEqual((await call(root, name, { session_id: "" })).result, ordinary.result);
+  }
+  const selected = createHeadSession({ root, purpose: "Verified selection" });
+  const reference = await call(root, "head_conversation_enter", { session_id: selected.sessionId });
+  const unavailable = { resolveSessionContext() { throw new Error("optional persistence unavailable"); } };
+  const explicit = await call(root, "head_conversation_enter", { session_id: selected.sessionId }, unavailable);
+  assert.deepEqual(explicit.result.structuredContent, reference.result.structuredContent);
+  assert.deepEqual(explicit.result.content, reference.result.content);
+  assert.equal(explicit.result._meta.headSessionBinding.retainedForSubsequentCalls, false);
+  assert.equal(reference.result.structuredContent.recoveryState, "no-current-checkpoint");
+});
+
+test("partial availability: a changed Project identity cannot mix another valid direction into its facts", async (t) => {
+  const root = fixture(t), foreignRoot = fixture(t), context = createSessionCallContext(); context.lose(root);
+  const foreign = updateProjectDirection({ root: foreignRoot, input: { goal: "Other Project direction" } }).direction;
+  const directory = path.join(root, ".head/project-direction"); fs.mkdirSync(path.join(directory, "revisions"), { recursive: true });
+  fs.writeFileSync(path.join(directory, "current.json"), JSON.stringify({ directionId: foreign.directionId }));
+  fs.writeFileSync(path.join(directory, "revisions", `${foreign.directionId}.json`), JSON.stringify(foreign));
+  const projectFile = path.join(root, ".head/project.json"), project = JSON.parse(fs.readFileSync(projectFile));
+  const originalRead = fs.readFileSync; let projectReads = 0;
+  fs.readFileSync = function(file, ...args) {
+    if (path.resolve(String(file)) === projectFile && ++projectReads > 1) return JSON.stringify({ ...project, projectId: foreign.projectId });
+    return originalRead.call(this, file, ...args);
+  };
+  try {
+    for (const name of ["head_project_status", "head_conversation_enter"]) for (const options of [
+      { sessionContext: context }, { resolveSessionContext() { throw new Error("Host unavailable"); } },
+    ]) {
+      projectReads = 0;
+      assert((await call(root, name, {}, options)).error, "Project/direction owner mismatch must fail the affected read");
+    }
+  }
+  finally { fs.readFileSync = originalRead; }
 });

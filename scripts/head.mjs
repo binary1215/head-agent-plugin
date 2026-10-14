@@ -339,7 +339,7 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
     try { return withSessionCallContext({ root: parsed.root, sessionId: index >= 0 ? parsed.options.session : undefined, context: sessionContext }, operation); }
     catch (error) {
       if (error.code !== "HEAD_SESSION_SELECTION_LOST") throw error;
-      return { ...sessionSelectionUnresolved(parsed.root), currentProjectDirection: readProjectDirection({ root: parsed.root }), executionReplayAllowed: false };
+      return sessionSelectionUnresolved(parsed.root, { includeProjectFacts: ["status", "doctor", "conversation-enter"].includes(parsed.command) });
     }
   }
   return runRoutedCommand(argv, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess });

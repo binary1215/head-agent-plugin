@@ -49,6 +49,22 @@ verified binding, dependent calls remain unresolved. CLI information and audited
 Project-only evidence calls share MCP's independence boundary. Views that expose
 the selected Session (including Product operating status) still require binding.
 
+When selection is lost/unavailable, existing conversation-entry/status reads
+(CLI `conversation-enter`, `status`, `doctor`) return a partial Project-only view:
+verified identity and current common direction, constraints and cancellations.
+`availability` marks Session/Run/recovery unavailable and uninspected diagnostics
+not assessed, rather than claiming readiness, zero drift or recovery success.
+This branch never reads a fallback/default Session, enumerates Sessions, runs
+World/DB diagnostics or writes state. Absent direction remains `null`; corrupt or
+foreign originals remain errors. CLI unresolved rendering precedes success-only
+formatters, including `session-restore`. Init/resume, restore, Run and compaction
+keep their existing selected-Session/effect boundaries. HEAD continues independent
+work and reuses verified explicit/Host selection only when dependent work needs it;
+no new selector, user ID form, recovery chain or approval step is required.
+MCP exceptional responses retain JSON text plus structuredContent; normal responses
+retain their existing per-tool presentation. Fixture proof is not a measurement
+of fewer model questions or installed Host persistence.
+
 Packaged Codex/Claude/OpenCode stdio configurations do not currently supply
 trusted persistent caller context. Their explicit/default behavior remains;
 injected-context fixtures are local Host evidence, not proof of automatic
