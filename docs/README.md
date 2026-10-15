@@ -40,6 +40,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 - [Non-blocking Conformance reconciliation](conformance-reconciliation.md)
 - [Compaction recovery](compaction-recovery.md)
 - [Session restore and reviewed-result integration](session-recovery.md)
+- [Session work context and Host continuity](session-work-context.md)
 - [Ordinary Host delegation and optional attachment](role-coordination.md)
 - [Provider-neutral bounded worker launch waves](bounded-worker-wave.md)
 - [Worker context and HEAD integration](worker-context-integration.md)

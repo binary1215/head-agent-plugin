@@ -1,4 +1,7 @@
 import { inspectProject } from "./head-core.mjs";
+import fs from "node:fs";
+import { sessionStatePath, safeSessionPath } from "./session-routing.mjs";
+import { readProjectDirection } from "./project-direction.mjs";
 import {
   abortCompaction,
   continueCompaction,
@@ -10,6 +13,7 @@ import {
 } from "./compaction-recovery.mjs";
 import { inspectProjectExperience, recoveryReadiness } from "./project-bootstrap.mjs";
 import { actionability } from "./experience-projection.mjs";
+import { readSessionWorkContext } from "./session-work-context.mjs";
 
 export const COMPACTION_LIFECYCLE_VERSION = "0.1.0";
 const EVENT_KINDS = new Set(["conversation-entry", "provider-replaced", "before-compaction", "after-compaction"]);
@@ -146,8 +150,37 @@ function conversationProjection(root, recovery) {
 
 export function enterConversationRecovery({ root = "." } = {}) {
   const inspected = inspectProject(root);
+  const entryDirection = inspected.status === "ready" ? readProjectDirection({ root }) : null;
   const recovery = recoveryReadiness(inspected, { includeRestore: true });
   const composed = conversationProjection(root, recovery);
+  // Optional P3 work is never a prerequisite for P2 restore or ordinary work.
+  // Its absence/corruption cannot manufacture a purpose, next action or approval.
+  if (inspected.status === "ready") {
+    try {
+      composed.workContext = readSessionWorkContext({ root, expectedSessionId: inspected.state.sessionId,
+        expectedCheckpointId: inspected.state.latestCheckpoint || null });
+    } catch (error) {
+      composed.workContext = { kind: "SessionWorkContextProjection", authorityPlane: "P4",
+        status: "work_context_unavailable", reasonCode: error.code || "SESSION_WORK_EVIDENCE_READ_ERROR",
+        records: [], persisted: false, recoveryAuthority: false, instructionAuthority: false,
+        ordinaryWorkBlocked: false, executionReplayAllowed: false };
+    }
+  }
+  const finish = (result) => {
+    if (inspected.status !== "ready") return result;
+    const afterProject = JSON.parse(fs.readFileSync(safeSessionPath(root, ".head", "project.json"), "utf8"));
+    const afterState = JSON.parse(fs.readFileSync(sessionStatePath(root), "utf8"));
+    const afterDirection = readProjectDirection({ root });
+    if (JSON.stringify(afterProject) === JSON.stringify(inspected.project)
+      && JSON.stringify(afterState) === JSON.stringify(inspected.state)
+      && (afterDirection?.directionId || null) === (entryDirection?.directionId || null)) return result;
+    // A sequential composition is not an atomic snapshot. Never publish old
+    // next-action context together with a later cancellation as a stable entry.
+    return { ...recoveryAttention({ code: "CONVERSATION_ENTRY_BASIS_CHANGED" }), persisted: false,
+      currentProjectDirection: afterDirection, sessionId: null, workContext: { status: "work_context_basis_changed", records: [], persisted: false },
+      nextHeadAction: "Reread this bounded entry before dependent work. Continue independent work; do not replay effects or ask for routine approval.",
+      presentation: { mode: "exception", summary: "Selected context changed during entry; only dependent context needs another read.", userActionRequired: false } };
+  };
   if (inspected.status !== "ready") {
     return {
       status: "conversation_recovery_unavailable",
@@ -162,7 +195,7 @@ export function enterConversationRecovery({ root = "." } = {}) {
     };
   }
   if (!inspected.state.latestCheckpoint) {
-    return {
+    return finish({
       status: "conversation_ready",
       recoveryState: "no-current-checkpoint",
       recoveryDependentWorkBlocked: false,
@@ -172,11 +205,11 @@ export function enterConversationRecovery({ root = "." } = {}) {
       authorityChanged: false,
       persisted: false,
       ...composed,
-    };
+    });
   }
   if (recovery.restorable) {
     const restored = recovery.restore;
-    return {
+    return finish({
       status: "conversation_direction_restored",
       recoveryState: "verified-current-checkpoint",
       restore: restored,
@@ -187,13 +220,13 @@ export function enterConversationRecovery({ root = "." } = {}) {
       authorityChanged: false,
       persisted: false,
       ...composed,
-    };
+    });
   }
-  return {
+  return finish({
     ...recoveryAttention({ code: recovery.reasonCode }, { persisted: false }),
     userDecisionRequired: false,
     ...composed,
-  };
+  });
 }
 
 function currentEpochForEvent(root, event) {

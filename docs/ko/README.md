@@ -39,6 +39,7 @@
 - [비차단 Conformance 재정](conformance-reconciliation.md)
 - [대화 압축 복구](compaction-recovery.md)
 - [Session 복원과 검토 결과 통합](session-recovery.md)
+- [Session 작업 맥락과 Host 연속성](session-work-context.md)
 - [일반 Host 위임과 선택적 연결](role-coordination.md)
 - [공급자 중립 bounded worker launch wave](bounded-worker-wave.md)
 - [Worker 컨텍스트와 HEAD 통합](worker-context-integration.md)

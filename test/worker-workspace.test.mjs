@@ -66,6 +66,29 @@ test("workspace preflight rejects changed, missing, extra, aliased and linked so
   assert.throws(check, { code: "WORKER_WORKSPACE_CONFLICT" });
 });
 
+test("wide root inode identities never collapse through Number before same-byte replacement checks", t => {
+  const f = fixture(t), originalStat = fs.statSync;
+  const beforeInode = 2n ** 60n, afterInode = beforeInode + 1n;
+  assert.equal(Number(beforeInode), Number(afterInode), "The deterministic fault must exercise precision loss.");
+  let replaced = false;
+  fs.statSync = (file, options) => {
+    const stat = originalStat(file, options);
+    if (file !== f.workspaceRoot) return stat;
+    const inode = replaced ? afterInode : beforeInode;
+    return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { ino: options?.bigint ? inode : Number(inode) });
+  };
+  try {
+    const binding = prepareWorkerWorkspace({ projectRoot: f.root, workspaceRoot: f.workspaceRoot, sourceBasis: f.sourceBasis, maxBytes: 4096 });
+    verifyWorkerWorkspace({ binding, sourceBasis: f.sourceBasis });
+    const retained = path.join(f.container, "retained-root");
+    fs.renameSync(f.workspaceRoot, retained);
+    fs.cpSync(retained, f.workspaceRoot, { recursive: true, errorOnExist: true, force: false });
+    replaced = true;
+    assert.throws(() => verifyWorkerWorkspace({ binding, sourceBasis: f.sourceBasis }), { code: "WORKER_WORKSPACE_CONFLICT" });
+    assert.equal(binding.rootInode, String(beforeInode));
+  } finally { fs.statSync = originalStat; }
+});
+
 test("workspace creation never reuses canonical root or traverses an injected junction", t => {
   const f = fixture(t);
   assert.throws(() => prepareWorkerWorkspace({ projectRoot: f.root, workspaceRoot: path.join(f.root, "child"), sourceBasis: f.sourceBasis, maxBytes: 4096 }), { code: "WORKER_WORKSPACE_CONFLICT" });

@@ -30,7 +30,7 @@ const cliProjectCalls = new Map(Object.entries({
 }));
 const selectedSessionCalls = new Set(["head_project_initialize_or_resume", "head_project_status", "head_conversation_enter", "head_session_restore", "head_session_continue",
   "head_pending_review", "head_runtime_adapters", "head_runtime_state", "head_world_model", "head_context_prepare", "head_context_preview", "head_compaction_lifecycle_step",
-  "head_continuity_snapshot", "head_product_operating_status"]);
+  "head_continuity_snapshot", "head_product_operating_status", "head_session_work_record", "head_session_work_read"]);
 export function sessionCallRequiresBinding(name, surface = "mcp") {
   if (surface === "cli") {
     if (independentCliInfo.has(name)) return false;

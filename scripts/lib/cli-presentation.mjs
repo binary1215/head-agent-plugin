@@ -223,7 +223,7 @@ export function formatConversationRecovery(value) {
   }
   if (["quiet", "notice"].includes(value?.presentation?.mode) && !value?.conversationEntry && ["conversation_ready", "conversation_direction_restored"].includes(value?.status)) {
     const suffix = value.presentation.mode === "notice" ? `; ${value.attention?.items?.length || 0} optional item(s) remain available when relevant` : "";
-    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified direction — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n`;
+    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified direction — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n${formatSessionWorkContext(entry.workContext)}`;
   }
   for (const attention of entry?.attention?.items || []) {
     if (attention.actionability === "immediate") lines.push(`${attention.owner} follow-up: ${compactText(attention.summary, 300)}`);
@@ -246,7 +246,25 @@ export function formatConversationRecovery(value) {
     lines.push("Provider HEAD must author the current bounded recovery direction internally; the user is not asked to fill a schema.");
   }
   lines.push("", "No provider summary, provider session identity, review result, or Product Canon was promoted by this projection.", "Technical details: use the structured result or --json");
-  return `${lines.join("\n")}\n`;
+  return `${lines.join("\n")}\n${formatSessionWorkContext(entry.workContext)}`;
+}
+
+export function formatSessionWorkContext(value) {
+  if (!value || value.status === "work_context_not_recorded") return "";
+  const records = (value.records || []).map(({ evidenceId, recordedAt, content, references }) => ({ evidenceId, recordedAt, content, references }));
+  return `Selected Session work evidence (P3, not current direction or permission):\n${JSON.stringify({
+    status: value.status, sessionId: value.sessionId, sessionPurpose: value.sessionPurpose,
+    records, unavailable: value.unavailable, omissions: value.omissions, coverage: value.coverage,
+    reasonCode: value.reasonCode, expansion: value.expansion, nextAfterEvidenceId: value.nextAfterEvidenceId,
+    currentP2Precedence: true, executionReplayAllowed: false,
+  })}\n`;
+}
+
+function formatSessionWorkRecord(value) {
+  if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value);
+  return `Selected Session work evidence: ${value?.status === "session_work_evidence_reused" ? "already retained; no write" : "retained"}.
+Evidence: ${value?.evidence?.evidenceId || "unknown"}
+No checkpoint, approval or effect was created or replayed.\n`;
 }
 
 export function formatOnboardingGuide(value) {
@@ -546,6 +564,7 @@ export function formatCheckpointSync(value) {
   lines.push(`Writes: ledger ${value?.writes?.checkpointLedger ?? 0}, Session pointer ${value?.writes?.sessionPointer ?? 0}`);
   lines.push("User action: none. Ordinary independent work remains available.");
   if (value?.retryGuidance) lines.push(`Next: ${value.retryGuidance}`);
+  if (value?.workEvidence) lines.push(`Optional work evidence: ${value.workEvidence.status}${value.workEvidence.reasonCode ? " (" + value.workEvidence.reasonCode + ")" : ""}. P2 outcome above is separate; do not replay completed effects.`);
   lines.push("", "Technical details: rerun with --json");
   return `${lines.join("\n")}\n`;
 }
@@ -595,6 +614,8 @@ export function formatMcpToolContent(name, value) {
   if (name === "head_checkpoint_basis") return formatCheckpointBasis(value);
   if (name === "head_checkpoint_diagnose") return formatCheckpointDiagnosis(value);
   if (name === "head_checkpoint_sync") return formatCheckpointSync(value);
+  if (name === "head_session_work_record") return formatSessionWorkRecord(value);
+  if (name === "head_session_work_read") return value?.status === "session_selection_unresolved" ? formatUnavailableSession(value) : formatSessionWorkContext(value) || "No selected Session work evidence is recorded. Ordinary work continues.\n";
   return JSON.stringify(value);
 }
 
@@ -631,6 +652,8 @@ export function formatCliResult(command, value) {
   if (command === "checkpoint-basis") return formatCheckpointBasis(value);
   if (command === "checkpoint-diagnose") return formatCheckpointDiagnosis(value);
   if (command === "checkpoint-sync") return formatCheckpointSync(value);
+  if (command === "session-work-record") return formatSessionWorkRecord(value);
+  if (command === "session-work-read") return formatSessionWorkContext(value) || "No selected Session work evidence is recorded. Ordinary work continues.\n";
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 

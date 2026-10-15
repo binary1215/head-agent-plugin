@@ -60,6 +60,11 @@ if (providedRoot) {
     const pluginManifestFile = path.join(snapshotRoot, "plugins", built.pluginName, ".codex-plugin", "plugin.json");
     const pluginManifestBytes = fs.readFileSync(pluginManifestFile, "utf8");
     assert.equal(JSON.parse(pluginManifestBytes).license, "MIT");
+    assert.equal(JSON.parse(pluginManifestBytes).hooks, "./hooks/codex.json");
+    const startupHooks = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "hooks", "codex.json"), "utf8"));
+    assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart"]);
+    assert.match(startupHooks.hooks.SessionStart[0].hooks[0].command, /session-host-hook\.mjs/);
+    assert.ok(runtimeManifest.files.some((file) => file.path === "scripts/lib/session-host-adapter.mjs"));
 
     const legacySnapshotRoot = path.join(temporaryRoot, "legacy-interface-snapshot");
     fs.cpSync(snapshotRoot, legacySnapshotRoot, { recursive: true, errorOnExist: true });

@@ -174,6 +174,7 @@ function claudePluginDocument(sourcePlugin) {
     keywords: Array.isArray(sourcePlugin.keywords) ? sourcePlugin.keywords : [],
     skills: "./skills/",
     mcpServers: "./.mcp.json",
+    hooks: "./hooks/claude.json",
   };
 }
 
@@ -312,14 +313,16 @@ export function verifyClaudeMarketplaceSnapshot({
     fail("HEAD_CLAUDE_MARKETPLACE_PATH_ESCAPE", "Marketplace plugin path escapes the snapshot root.");
   }
   const plugin = readJson(path.join(pluginRoot, ".claude-plugin", "plugin.json"), "HEAD_CLAUDE_MARKETPLACE_PLUGIN_INVALID");
-  assertExactKeys(plugin, ["name", "version", "description", "author", "license", "keywords", "skills", "mcpServers"], "Claude plugin manifest", "HEAD_CLAUDE_MARKETPLACE_PLUGIN_INVALID");
+  assertExactKeys(plugin, ["name", "version", "description", "author", "license", "keywords", "skills", "mcpServers", ...(Object.hasOwn(plugin, "hooks") ? ["hooks"] : [])], "Claude plugin manifest", "HEAD_CLAUDE_MARKETPLACE_PLUGIN_INVALID");
   assertExactKeys(plugin.author, ["name"], "Claude plugin author", "HEAD_CLAUDE_MARKETPLACE_PLUGIN_INVALID");
   if (plugin.name !== entry.name || plugin.version !== entry.version || plugin.description !== entry.description
-    || plugin.author.name !== entry.author.name || plugin.skills !== "./skills/" || plugin.mcpServers !== "./.mcp.json") {
+    || plugin.author.name !== entry.author.name || plugin.skills !== "./skills/" || plugin.mcpServers !== "./.mcp.json"
+    || Object.hasOwn(plugin, "hooks") && plugin.hooks !== "./hooks/claude.json") {
     fail("HEAD_CLAUDE_MARKETPLACE_PLUGIN_MISMATCH", "Marketplace entry and Claude plugin manifest do not match.");
   }
   const pkg = readJson(path.join(pluginRoot, "package.json"), "HEAD_CLAUDE_MARKETPLACE_PLUGIN_INVALID");
   const codexPlugin = readJson(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "HEAD_CLAUDE_MARKETPLACE_PLUGIN_INVALID");
+  if (codexPlugin.hooks && plugin.hooks !== "./hooks/claude.json") fail("HEAD_CLAUDE_MARKETPLACE_PLUGIN_MISMATCH", "Current source hooks require the exact Claude hook projection.");
   if (pkg.version !== plugin.version || codexPlugin.name !== plugin.name || codexPlugin.version !== plugin.version) {
     fail("HEAD_CLAUDE_MARKETPLACE_PLUGIN_MISMATCH", "Claude projection does not match the provider-neutral source metadata.");
   }

@@ -75,6 +75,15 @@ automatically while the provider's compaction action remains Host-owned. See
 [Compaction recovery](docs/compaction-recovery.md) and
 [Session recovery](docs/session-recovery.md).
 
+Run-free investigations can also retain selected reasons, alternatives and
+uncertainty without creating a checkpoint. The same logical Session's entry
+reads that evidence; ordinary short work needs no save call or approval.
+Bundled startup Hooks are read-only lookups, not automatic native-to-MCP binding:
+stock Codex/Claude still need a verified logical route or a trusted Host adapter.
+No transcript copying or provider-memory disabling is required. See
+[Session work context and Host support](docs/session-work-context.md) for exact
+supported paths, omissions and installation/model verification limits.
+
 ### Give each task bounded, reviewable context
 
 More context is not always better. The user can state the task in ordinary

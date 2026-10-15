@@ -49,6 +49,7 @@ import { inspectConformanceQueue, prepareConformanceAssessment, proposeConforman
 import { formatCliError, formatCliResult } from "./lib/cli-presentation.mjs";
 import { abortCompaction, continueCompaction, createRecoveryCheckpoint, inspectCompaction, inspectRecoveryCheckpointBasis, prepareCompaction, syncRecoveryCheckpoint, verifyCompaction } from "./lib/compaction-recovery.mjs";
 import { enterConversationRecovery, processCompactionLifecycle } from "./lib/compaction-lifecycle.mjs";
+import { recordSessionWorkEvidence, readSessionWorkContext } from "./lib/session-work-context.mjs";
 import { integrateReviewedRunCheckpoint, readRunResultIntegration, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "./lib/recovery-checkpoint-diagnosis.mjs";
 import { continueSessionFromArtifacts } from "./lib/runtime-session-continuation.mjs";
@@ -231,6 +232,8 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       "head checkpoint-basis <project>",
       "head checkpoint-diagnose <project>",
       "head checkpoint-sync <project> --input <head-direction.json>",
+      "head session-work-record <project> --input <selected-work-evidence.json>",
+      "head session-work-read <project> [--input <read-bounds.json>]",
       "head session-restore <project> [--checkpoint <session-run-checkpoint-id>]",
       "head session-continue <project> --runtime <claude|codex|opencode> [--checkpoint <session-run-checkpoint-id>] [--binding-env <environment-name>]",
       "head compact-prepare <project> --input <recovery.json>",
@@ -726,6 +729,8 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "checkpoint-basis") return inspectRecoveryCheckpointBasis({ root });
   if (command === "checkpoint-diagnose") return inspectRecoveryCheckpointDiagnosis({ root });
   if (command === "checkpoint-sync") return syncRecoveryCheckpoint({ ...inputJson(options, "Recovery checkpoint sync"), root });
+  if (command === "session-work-record") return recordSessionWorkEvidence({ root, input: inputJson(options, "Selected Session work evidence") });
+  if (command === "session-work-read") return readSessionWorkContext({ ...(options.input ? inputJson(options, "Session work read") : {}), root });
   if (command === "session-restore") return restoreSessionFromArtifacts({ root, checkpointId: options.checkpoint || null });
   if (command === "session-continue") {
     return continueSessionFromArtifacts({

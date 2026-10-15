@@ -1,6 +1,6 @@
 {
   "name": "head-agent-core",
-  "version": "0.3.0-beta.23",
+  "version": "0.3.0-beta.24",
   "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
@@ -16,6 +16,7 @@
   ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/codex.json",
   "interface": {
     "displayName": "HEAD Agent Core",
     "shortDescription": "HEAD-owned coordination and continuity",

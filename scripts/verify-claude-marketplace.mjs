@@ -40,6 +40,11 @@ if (providedRoot) {
     assert.equal(runtimeManifest.files.some((file) => file.path === "legacy" || file.path.startsWith("legacy/")), false);
     assert.equal(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "LICENSE"), "utf8").startsWith("MIT License\n"), true);
     assert.equal(JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".claude-plugin", "plugin.json"), "utf8")).license, "MIT");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".claude-plugin", "plugin.json"), "utf8")).hooks, "./hooks/claude.json");
+    const startupHooks = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "hooks", "claude.json"), "utf8"));
+    assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart"]);
+    assert.match(startupHooks.hooks.SessionStart[0].hooks[0].command, /session-host-hook\.mjs/);
+    assert.ok(runtimeManifest.files.some((file) => file.path === "scripts/lib/session-host-adapter.mjs"));
 
     const unexpectedDirectory = path.join(snapshotRoot, "plugins", built.pluginName, "unexpected-empty-directory");
     fs.mkdirSync(unexpectedDirectory);

@@ -73,6 +73,14 @@ task에는 수행하지 않습니다. 사용자는 이 protocol을 직접 조작
 내용은 [대화 압축 복구](docs/ko/compaction-recovery.md)와
 [세션 복구](docs/ko/session-recovery.md)를 참고하세요.
 
+Run 없는 조사도 checkpoint 없이 필요한 판단 이유·대안·불확실성을 보존하고,
+같은 논리 Session의 진입에서 다시 읽을 수 있습니다. 짧은 일반 작업에는 저장
+호출이나 승인이 필요하지 않습니다. 동봉된 시작 Hook는 읽기 전용 조회이지
+native-to-MCP 자동 바인딩이 아닙니다. stock Codex·Claude에는 검증된 논리 route나
+신뢰된 Host 어댑터가 필요합니다. 대화 복제나 provider memory 비활성화는 요구하지
+않습니다. 지원 경로·생략·설치본 및 모델 검증의 한계는
+[Session 작업 맥락과 Host 지원](docs/ko/session-work-context.md)에 정리했습니다.
+
 ### 범위가 명확하고 검토 가능한 컨텍스트를 전달합니다
 
 컨텍스트는 많다고 항상 좋은 것이 아닙니다. 사용자는 task를 자연어로 말하면 됩니다.

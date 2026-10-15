@@ -10,6 +10,7 @@ import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.m
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { operationPointerHash, sessionStateHash, inspectRunStorageTransition } from "./run-lineage.mjs";
+import { normalizeSessionWorkEvidence, recordSessionWorkEvidence } from "./session-work-context.mjs";
 
 export const COMPACTION_RECOVERY_VERSION = "0.3.0";
 export const RECOVERY_CHECKPOINT_SYNC_VERSION = "0.1.0";
@@ -618,40 +619,57 @@ function checkpointSyncOutcome(outcome, { expectedBasisId, basis, resultingBasis
 
 export function syncRecoveryCheckpoint(options = {}) {
   const allowed = new Set([
-    "root", "expectedRecoveryBasisId", "purpose", "approvedDecisions", "currentPosition", "nextExpectedResult", "openReviewIds",
+    "root", "expectedRecoveryBasisId", "purpose", "approvedDecisions", "currentPosition", "nextExpectedResult", "openReviewIds", "workEvidence",
   ]);
   const unexpected = Object.keys(options).filter((key) => !allowed.has(key));
   if (unexpected.length) fail(`Recovery checkpoint sync contains unsupported fields: ${unexpected.sort().join(", ")}`, "INVALID_RECOVERY_CHECKPOINT_SYNC_INPUT");
   const expectedBasisId = requiredText(options.expectedRecoveryBasisId, "Expected recovery basis id");
   if (!/^recovery-basis-[a-f0-9]{24}$/.test(expectedBasisId)) fail("Expected recovery basis id is invalid.", "INVALID_RECOVERY_CHECKPOINT_BASIS_ID");
+  if (options.workEvidence !== undefined) normalizeSessionWorkEvidence(options.workEvidence);
   return withProjectMutation({ root: options.root, scope: "session-recovery" }, () => {
     const inspected = readyProject(options.root, "recovery checkpoint direction is synchronized");
     const direction = normalizeCheckpointDirection(inspected, options);
+    // P3 retention and P2 publication are separate outcomes, even in one call.
+    // Evidence never fills a direction field, and storage trouble cannot turn
+    // a valid direction update into a new ordinary-work gate.
+    let workEvidence;
+    if (options.workEvidence !== undefined) {
+      try {
+        const retained = recordSessionWorkEvidence({ root: options.root, input: options.workEvidence });
+        workEvidence = { status: retained.status, evidenceId: retained.evidence.evidenceId, file: retained.file, writes: retained.writes,
+          authorityPlane: "P3", recoveryAuthority: false, executionReplayAllowed: false };
+      } catch (error) {
+        workEvidence = { status: "work_evidence_retention_unconfirmed", reasonCode: error.code || "SESSION_WORK_EVIDENCE_STORAGE_ERROR",
+          authorityPlane: "P3", recoveryAuthority: false, executionReplayAllowed: false,
+          nextHeadAction: "Inspect or retry only this selected evidence save; do not repeat completed effects." };
+      }
+    }
+    const finish = (outcome) => workEvidence === undefined ? outcome : { ...outcome, workEvidence };
     const basis = recoveryCheckpointBasisFromInspection(inspected);
     if (basis.runTransition.status === "incomplete") {
-      return checkpointSyncOutcome("deferred", {
+      return finish(checkpointSyncOutcome("deferred", {
         expectedBasisId, basis, reasonCode: "RUN_TRANSITION_INCOMPLETE",
-      });
+      }));
     }
     if (basis.runTransition.status === "conflict") {
-      return checkpointSyncOutcome("conflict", {
+      return finish(checkpointSyncOutcome("conflict", {
         expectedBasisId, basis, reasonCode: "RUN_TRANSITION_SESSION_DRIFT",
-      });
+      }));
     }
     const currentCheckpoint = currentCheckpointForSync(inspected);
     const exactReuse = checkpointMatchesSyncRequest(currentCheckpoint, inspected, direction);
     if (exactReuse) {
-      return checkpointSyncOutcome("reused", { expectedBasisId, basis, checkpoint: currentCheckpoint });
+      return finish(checkpointSyncOutcome("reused", { expectedBasisId, basis, checkpoint: currentCheckpoint }));
     }
     if (basis.compaction.status === "open") {
-      return checkpointSyncOutcome("deferred", {
+      return finish(checkpointSyncOutcome("deferred", {
         expectedBasisId, basis, reasonCode: "COMPACTION_EPOCH_OPEN",
-      });
+      }));
     }
     if (expectedBasisId !== basis.basisId) {
-      return checkpointSyncOutcome("conflict", {
+      return finish(checkpointSyncOutcome("conflict", {
         expectedBasisId, basis, reasonCode: "RECOVERY_CHECKPOINT_SYNC_STALE_BASIS",
-      });
+      }));
     }
     const deterministicCreatedAt = typeof inspected.state.updatedAt === "string" && Number.isFinite(Date.parse(inspected.state.updatedAt))
       ? inspected.state.updatedAt : inspected.project.createdAt;
@@ -665,13 +683,13 @@ export function syncRecoveryCheckpoint(options = {}) {
     const checkpoint = { ...payload, checkpointId: `checkpoint-${checkpointDigest.slice(0, 24)}`, checkpointDigest };
     const persisted = persistRecoveryCheckpoint(inspected, checkpoint);
     const resultingInspection = readyProject(inspected.project.projectRoot, "recovery checkpoint synchronization result is read");
-    return checkpointSyncOutcome("created", {
+    return finish(checkpointSyncOutcome("created", {
       expectedBasisId,
       basis,
       resultingBasis: recoveryCheckpointBasisFromInspection(resultingInspection),
       checkpoint,
       persisted,
-    });
+    }));
   });
 }
 

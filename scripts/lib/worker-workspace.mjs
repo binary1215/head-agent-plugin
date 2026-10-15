@@ -83,7 +83,9 @@ function verifyBinding(binding) {
     || !Array.isArray(binding.sourcePaths)) fail("Invalid selected workspace binding.");
   safePaths(binding.sourcePaths);
   const root = canonicalDirectory(binding.executionRoot);
-  const stat = fs.statSync(root);
+  // Native file IDs can exceed Number's exact integer range (notably NTFS).
+  // Preserve the existing exact-root check without rounding distinct roots.
+  const stat = fs.statSync(root, { bigint: true });
   if (root !== binding.executionRoot || hash(root) !== binding.executionRootDigest
     || String(stat.dev) !== binding.rootDevice || String(stat.ino) !== binding.rootInode
     || inside(binding.canonicalRoot, root) || inside(root, binding.canonicalRoot)) fail("Selected workspace root changed or overlaps Canon.");
@@ -149,7 +151,7 @@ export function prepareWorkerWorkspace({ projectRoot, workspaceRoot, sourceBasis
     try { fs.writeFileSync(fd, Buffer.from(source.contentBase64, "base64")); fs.fsyncSync(fd); }
     finally { fs.closeSync(fd); }
   }
-  const stat = fs.statSync(executionRoot);
+  const stat = fs.statSync(executionRoot, { bigint: true });
   const payload = { kind: "WorkerWorkspaceBinding", protocolVersion: "0.2.0", canonicalRoot,
     executionRoot, executionRootDigest: hash(executionRoot), rootDevice: String(stat.dev), rootInode: String(stat.ino),
     sourceBasisDigest: basisDigest(sourceBasis), sourcePaths, maxBytes,

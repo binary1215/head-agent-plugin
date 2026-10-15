@@ -160,6 +160,31 @@ transcript copies for every read/turn. Selected context includes sources, omissi
 and uncertainty without compulsory budget tiers or inclusion proof. Persist a
 Capsule only when durable handoff/recovery needs it, not for ordinary exploration.
 
+Reuse existing checkpoint/result/review/source originals before adding work
+evidence. When useful checkpoint sync already occurs, include only otherwise
+unrepresented selected context in optional `work_evidence` in that same request.
+For a meaningful Run-free investigation or handoff with no useful checkpoint,
+one optional `head_session_work_record` retains sparse P3 reasons, alternatives,
+observed work, pending issues and unknowns. Supply the fields internally; do not
+ask the user to save, approve saving, author JSON or create a Run/Capsule. Keep
+Session-local purpose/constraints/cancellation in explicit P2 direction, never
+inferred from that evidence or promoted into shared ProjectDirection.
+
+Entry already returns bounded `workContext`. Inspect included reasons and
+uncertainty quietly, disclose missing/changed references, and use
+`head_session_work_read` only for useful exact expansion. Historical suggestions
+and claimed completion are not current instructions, approval or effect proof.
+Repair a missing save only; never repeat completed or unknown external work.
+An abrupt exit before preservation is not lossless transcript recovery.
+
+Bundled SessionStart Hooks only read bindings previously registered by a trusted
+Host. Stock native IDs are not automatically MCP metadata; keep verified logical
+`session_id` per dependent call, or use an actually injected caller-scoped Host
+resolver. Do not guess another Session from names/time/sole candidate, register
+Codex parent IDs from ambiguous child tool Hooks, or use allow/deny/retry as
+normal routing. A missing binding does not block independent Project work.
+See [work context and Host capability limits](../../docs/session-work-context.md).
+
 ## Progressive references and tools
 
 Load only what the current outcome needs:

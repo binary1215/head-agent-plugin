@@ -14,6 +14,7 @@ const INCLUDE_ENTRIES = [
   "README.ko.md",
   "assets",
   "docs",
+  "hooks",
   "native",
   "package.json",
   "scripts",

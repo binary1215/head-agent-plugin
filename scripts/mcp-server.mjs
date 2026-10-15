@@ -12,6 +12,22 @@ import fs from "node:fs";
 const protocolVersion = "2024-11-05";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageVersion = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8")).version;
+const workEvidenceText = { type: "string", minLength: 1 };
+const workEvidenceList = { type: "array", items: workEvidenceText };
+const sessionWorkEvidenceSchema = {
+  type: "object",
+  description: "Sparse provider HEAD-authored P3 evidence. Reuse exact originals; select only otherwise unrepresented judgment/reasons/alternatives, observations, pending work and uncertainty. Never a user form, transcript, approval or P2 direction.",
+  properties: {
+    summary: workEvidenceText,
+    judgments: { type: "array", items: { type: "object", properties: { assessment: workEvidenceText, reason: workEvidenceText, alternatives: workEvidenceList }, required: ["assessment", "reason"], additionalProperties: false } },
+    observedWork: workEvidenceList, pending: workEvidenceList, unknowns: workEvidenceList, suggestedFollowUp: workEvidenceList,
+    occurrenceKey: { ...workEvidenceText, description: "Optional HEAD-owned distinction for a genuinely separate occurrence; identical input retry reuses its original." },
+    references: { type: "array", items: { type: "object", properties: {
+      path: workEvidenceText, digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, kind: { type: "string", enum: ["source", "artifact"] },
+    }, required: ["path", "digest", "kind"], additionalProperties: false } },
+  },
+  additionalProperties: false,
+};
 const workerIntegrationIdSchema = { type: "string", pattern: "^worker-integration-[a-f0-9]{24}--[a-f0-9]{24}$" };
 const workerIntegrationVerificationIdSchema = { type: "string", pattern: "^worker-integration-verification-[a-f0-9]{24}$" };
 const workerIntegrationActionFields = {
@@ -954,11 +970,31 @@ const allTools = [
         current_position: { type: "string", minLength: 1 },
         next_expected_result: { type: "string", minLength: 1 },
         open_review_ids: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+        work_evidence: sessionWorkEvidenceSchema,
       },
       required: ["project_root", "expected_recovery_basis_id", "purpose", "approved_decisions", "current_position", "next_expected_result"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_session_work_record",
+    description: "Optionally preserve meaningful Run-free work as one create-only P3 Evidence original in the exact selected Session, without a Run, checkpoint, Capsule, user form or save approval. HEAD supplies sparse otherwise-unrepresented context; exact retry does not re-execute work. When checkpoint sync is already useful, use its optional work_evidence instead.",
+    inputSchema: { type: "object", properties: { project_root: workEvidenceText, evidence: sessionWorkEvidenceSchema },
+      required: ["project_root", "evidence"], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "head_session_work_read",
+    description: "Read bounded selected Session work Evidence originals or exact IDs. Entry already includes a bounded selection; this optional expansion does not write, repair, infer sufficient context or supply recovery direction. Missing/changed sources and omissions remain explicit.",
+    inputSchema: { type: "object", properties: {
+      project_root: workEvidenceText,
+      evidence_ids: { type: "array", maxItems: 512, items: { type: "string", pattern: "^work-evidence-[a-f0-9]{24}$" } },
+      after_evidence_id: { type: "string", pattern: "^work-evidence-[a-f0-9]{24}$" },
+      max_records: { type: "integer", minimum: 1, maximum: 512 }, max_characters: { type: "integer", minimum: 2, maximum: 524288,
+        description: "Actual JSON.stringify(records).length budget after reference enrichment. Separate bounded metadata envelope excluded; omissions/expansion disclosed." },
+    }, required: ["project_root"], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_session_restore",
@@ -2499,7 +2535,14 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                       currentPosition: args.current_position,
                       nextExpectedResult: args.next_expected_result,
                       openReviewIds: args.open_review_ids || [],
+                      ...(args.work_evidence !== undefined ? { workEvidence: args.work_evidence } : {}),
                     })
+                : name === "head_session_work_record"
+                  ? (await import("./lib/session-work-context.mjs")).recordSessionWorkEvidence({ root: args.project_root, input: args.evidence })
+                : name === "head_session_work_read"
+                  ? (await import("./lib/session-work-context.mjs")).readSessionWorkContext({ root: args.project_root,
+                      evidenceIds: args.evidence_ids ?? null, afterEvidenceId: args.after_evidence_id ?? null,
+                      maxRecords: args.max_records ?? 8, maxCharacters: args.max_characters ?? 32768 })
                 : name === "head_session_restore"
                   ? (await import("./lib/session-recovery.mjs")).restoreSessionFromArtifacts({ root: args.project_root, checkpointId: args.checkpoint_id || null })
                   : name === "head_session_continue"
