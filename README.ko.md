@@ -75,9 +75,13 @@ task에는 수행하지 않습니다. 사용자는 이 protocol을 직접 조작
 
 Run 없는 조사도 checkpoint 없이 필요한 판단 이유·대안·불확실성을 보존하고,
 같은 논리 Session의 진입에서 다시 읽을 수 있습니다. 짧은 일반 작업에는 저장
-호출이나 승인이 필요하지 않습니다. 동봉된 시작 Hook는 읽기 전용 조회이지
-native-to-MCP 자동 바인딩이 아닙니다. stock Codex·Claude에는 검증된 논리 route나
-신뢰된 Host 어댑터가 필요합니다. 대화 복제나 provider memory 비활성화는 요구하지
+호출이나 승인이 필요하지 않습니다. 동봉된 시작 Hook는 계속 읽기 전용입니다.
+지원되는 Codex MCP transport는 기존 초기화·재개에서 선택한 Session을 별도 bind
+호출 없이 유지합니다. Claude Code는 동봉된 tool Hook로 부모·자식의 요청을 같은
+MCP 서버에 연결하고 후속 호출·재개에서도 선택한 논리 Session을 유지합니다.
+native metadata가 확인되지 않은 Host에는 명시 route나 신뢰된 어댑터를 사용하며,
+실제 GUI·모델 지속성은 별도로 검증합니다.
+대화 복제나 provider memory 비활성화는 요구하지
 않습니다. 지원 경로·생략·설치본 및 모델 검증의 한계는
 [Session 작업 맥락과 Host 지원](docs/ko/session-work-context.md)에 정리했습니다.
 

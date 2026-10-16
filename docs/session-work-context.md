@@ -102,8 +102,8 @@ direction is explicitly marked for original expansion, not silently cut.
 | --- | --- | --- |
 | Core CLI/MCP | Exact logical Session record → same Session entry; optional typed expansion | No native caller identity inferred |
 | Trusted embedding Host | Public select/register → restart lookup → request-local resolver → same Session | Host must actually acquire distinct per-request callers |
-| Stock Codex | Bundled read-only SessionStart lookup/context and existing explicit logical arguments | No automatic registration or native-ID-to-MCP propagation |
-| Stock Claude Code | Separate read-only SessionStart command; documented child identity stays separate | No automatic registration/resolver injection claimed |
+| Codex native MCP transport | Actual request `params._meta.threadId` → existing init/resume selection → P5 link → request-local resolver; read-only SessionStart lookup | Installed engine `0.162.0-alpha.17.2` transport observed; GUI model, fork/child and actual restart/compaction require separate verification |
+| Stock Claude Code | Same-instance PreToolUse correlation → existing init/resume selection → P5 link → subsequent direct/router resolution; read-only SessionStart/resume | Installed CLI `2.1.289` with synthetic local protocol tested root/child separation and fresh-process resume; real model/account and actual compaction are separate |
 | OpenCode | Core and trusted Host seam | No native Hook integration claimed |
 
 Codex tool Hooks expose the parent's session ID for child agents and cannot
@@ -112,6 +112,66 @@ also requires an allow decision, so it is not used for routing. No broad Hook
 denial, deny/retry normal workflow, permission bypass or global MCP selector is
 introduced. Correct explicit requests and independent Project work remain
 available after optional binding loss.
+
+### Which operations retain a selection?
+
+Only the existing successful `head_project_initialize_or_resume` selection is
+retained. Initial setup keeps the verified default; explicit resume can share or
+separate existing Sessions. Repeating an unchanged choice writes nothing. There
+is no extra select/bind tool, user ID form, save ritual or permission decision.
+Creating a Session alone, an explicit read, writing evidence/checkpoints for a
+different Session, and worker integration do not silently select it for the chat.
+
+Pure bootstrap validation and identity checks precede optional P5 preparation.
+The executing request keeps its already verified route while its selection is
+pending. Short CAS sections do not lock the whole operation. Settlement cannot
+overwrite a newer intent. A proven pre-effect failure may restore the verified
+prior choice; generic error, cancellation or timeout does not prove no effect.
+Unknown outcomes and restart without a live ownership ticket retain pending
+uncertainty. Host persistence failure never changes the original Core outcome or
+replays its effect. Bindings and caller metadata remain P5, not P2 direction.
+
+One MCP process may receive multiple callers: every request uses its own outer
+transport metadata, not a last-caller selector or arguments named `_meta`.
+Embedding Host resolvers retain precedence. A never-bound caller keeps existing
+default semantics without read-side writes. Known lost/pending/corrupt linkage,
+including a missing binding in an existing namespace, never substitutes default.
+Complete deletion of that namespace cannot prove its unwritten/deleted history.
+Legacy transport without caller metadata does not claim automatic continuity;
+once native metadata is observed, its loss affects only dependent calls. Valid
+explicit requests and independent Project work remain usable.
+
+### Claude request correlation, without another permission gate
+
+Bundled PreToolUse Hooks target only this plugin's Session-dependent tools and
+generic routers, on their exact local or plugin-scoped MCP server. The Hook
+sends the real `session_id`, distinct child `agent_id`, `tool_use_id`, outer tool
+name and original outer arguments to that same server. The actual ordinary MCP
+call supplies outer `claudecode/toolUseId`; the in-memory registry verifies its
+exact argument digest before unwrapping a router and resolves that caller only.
+Normal model calls, router calls to the helper, nested fake metadata and
+unexpanded templates cannot prepare this linkage on the observed stock transport.
+This is a verified stock-transport seam, not arbitrary-client authentication.
+
+The helper returns `{}` and never supplies `permissionDecision`, `updatedInput`,
+logical Session, approval or P2 direction. Native permission remains Host-owned.
+Direct independent tools add zero RPCs; a generic router adds one internal Hook
+RPC even for an independent inner operation, where preparation immediately does
+nothing (no registry, Session/P5 read, graph scan or original write). No new user
+question, binding form, Run, Capsule, save receipt or daemon is required.
+
+Pending correlations expire after ten minutes and are capped at 1,024 entries;
+active entries cannot be evicted. Exact pending retry converges without extending
+its lifetime; conflicting/active reuse cannot replace another caller. Claim release
+is in `finally`, and transport close clears the cache. Denied calls may leave a
+pending memory entry until sweep/close, not a durable per-call artifact. The
+bounded spent cache is not durable replay protection or an execution lease.
+Cold Claude metadata without a matching Hook fails only dependent automatic
+routing, never guesses default. Valid explicit routes and independent work remain
+usable; a new Project may initialize without claiming native linkage. Missing
+Hook activation, expiry and optional storage loss are diagnostic gaps, not a
+reason to repeat completed effects. Resume needs the same native chat, project
+and operational binding storage; cross-machine continuity is not implied.
 
 Official contracts: [Codex Hooks](https://learn.chatgpt.com/docs/hooks) and
 [Claude Code Hooks](https://code.claude.com/docs/en/hooks).

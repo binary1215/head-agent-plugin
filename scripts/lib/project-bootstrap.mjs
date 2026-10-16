@@ -488,7 +488,7 @@ function bootstrapResponse({ root, profile, before, installation, onboardingActi
   };
 }
 
-export async function initializeOrResumeProject({ root = ".", pluginRoot, runtimes = null, profile: requestedProfile = "core", onboarding = null } = {}) {
+export async function initializeOrResumeProject({ root = ".", pluginRoot, runtimes = null, profile: requestedProfile = "core", onboarding = null, onValidatedSessionSelection = null } = {}) {
   const profile = validateProfile(requestedProfile);
   const onboardingInput = validateOnboardingInput(onboarding);
   if (profile === "core" && Object.keys(onboardingInput).length) {
@@ -512,7 +512,7 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
       project: before.project,
       integrations: before.project.integrations,
     };
-    installation = convergeProjectInstallation({ root, pluginRoot, runtimes });
+    installation = convergeProjectInstallation({ root, pluginRoot, runtimes, onValidatedSessionSelection });
   }
 
   if (profile === "product") await recoverOnboardingPromotion({ root });

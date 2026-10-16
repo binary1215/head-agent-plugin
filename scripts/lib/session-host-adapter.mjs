@@ -27,6 +27,8 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
   if (!["codex", "claude", "opencode"].includes(runtime) || !required(nativeSessionId) || agentId !== null && !required(agentId)) fail("A verified runtime/caller identity is required.");
   const callerDigest = sha(encode([runtime, nativeSessionId, agentId]));
   const locallyUnconfirmed = new Set();
+  const selectionTickets = new WeakMap();
+  const pendingTickets = new Map();
   function location(owner, create = false) {
     const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot: owner.root, environment, platform, homeDirectory, create });
     const parts = ["session-bindings", sha(encode([owner.projectId, owner.root, callerDigest]))];
@@ -48,7 +50,10 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
   }
   function readOwner(owner) {
     const file = location(owner);
-    if (!fs.existsSync(file)) return { status: "absent", revision: 0, authorityPlane: "P5", retained: false };
+    if (!fs.existsSync(file)) {
+      if (fs.existsSync(path.dirname(file))) fail("Previously created Host binding is missing.", "SESSION_HOST_BINDING_MISSING");
+      return { status: "absent", revision: 0, authorityPlane: "P5", retained: false };
+    }
     const record = JSON.parse(fs.readFileSync(file, "utf8"));
     const { bindingDigest, ...payload } = record;
     const fields = ["kind", "version", "authorityPlane", "projectId", "callerDigest", "status", "sessionId", "revision",
@@ -72,6 +77,125 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
     atomicWriteArtifact(file, encode(record) + "\n");
     return record;
   };
+  const payloadOf = (record) => { const { bindingDigest, ...payload } = record; return payload; };
+  const ticketKey = (owner, record) => encode([owner.root, record.bindingDigest]);
+  function selectionOutcome(state, status, extra = {}) {
+    return { status, projectId: state.owner.projectId, sessionId: state.selected.sessionId,
+      retained: status === "host_selection_retained", persisted: status === "host_selection_retained" ? true : "unconfirmed",
+      currentExplicitRequestsAllowed: true, ordinaryWorkBlocked: false, executionReplayAllowed: false,
+      recoveryAuthority: false, ...extra };
+  }
+  // Split the existing P5 pending/commit publication around an already validated
+  // selection operation. The opaque ticket is local ownership, not permission.
+  function prepareSelection({ root = ".", sessionId, expectedRevision, expectedBindingDigest } = {}) {
+    const owner = project(root);
+    const context = createSessionCallContext();
+    const selected = context.select(owner.root, sessionId);
+    const state = { owner, selected, context, before: null, pending: null, previousTicket: null, outcome: null, preparationError: null };
+    const ticket = Object.freeze({}); selectionTickets.set(ticket, state);
+    try {
+      withProjectMutation({ root: owner.root, scope: "host-session-binding" }, () => {
+        if (project(owner.root).projectId !== owner.projectId) fail("Project changed before Host selection.", "PROJECT_IDENTITY_MISMATCH");
+        const before = readOwner(owner); state.before = before;
+        if (before.status === "absent") state.previousDefault = createSessionCallContext().select(owner.root, "");
+        if (expectedRevision != null && before.revision !== expectedRevision) fail("Host selection changed.", "SESSION_HOST_BINDING_CONFLICT");
+        if (expectedBindingDigest !== undefined && (before.bindingDigest || null) !== expectedBindingDigest) fail("Host selection basis changed.", "SESSION_HOST_BINDING_CONFLICT");
+        if (["bound", "default"].includes(before.status) && before.sessionId === selected.sessionId) return;
+        state.previousTicket = pendingTickets.get(ticketKey(owner, before)) || null;
+        const payload = { kind: "HostSessionBinding", version: SESSION_HOST_ADAPTER_VERSION, authorityPlane: "P5",
+          projectId: owner.projectId, callerDigest, status: "pending", sessionId: selected.sessionId,
+          revision: before.revision + 1, previousDigest: before.bindingDigest || null,
+          recoveryAuthority: false, instructionAuthority: false };
+        state.pending = write(owner, payload);
+        pendingTickets.set(ticketKey(owner, state.pending), state);
+      });
+    } catch (error) { state.preparationError = error.code || "HOST_BINDING_STORAGE_ERROR"; }
+    return { ticket, context, sessionId: selected.sessionId, prepared: !state.preparationError,
+      ...(state.preparationError ? { reasonCode: state.preparationError } : {}) };
+  }
+  function settleSelection({ ticket, outcome } = {}) {
+    const state = selectionTickets.get(ticket);
+    if (!state || !["succeeded", "not-started", "uncertain"].includes(outcome)) fail("Expected an owned selection ticket and proven outcome.");
+    if (state.outcome) {
+      if (state.outcome !== outcome) fail("Selection settlement retry differs.", "SESSION_HOST_SETTLEMENT_CONFLICT");
+      return state.result;
+    }
+    state.outcome = outcome;
+    const { owner, selected } = state;
+    try {
+      state.result = withProjectMutation({ root: owner.root, scope: "host-session-binding" }, () => {
+        if (project(owner.root).projectId !== owner.projectId) fail("Project changed before Host settlement.", "PROJECT_IDENTITY_MISMATCH");
+        const current = readOwner(owner);
+        if (state.preparationError) {
+          if (state.preparationError === "SESSION_HOST_BINDING_CONFLICT") return selectionOutcome(state, "host_selection_superseded", { reasonCode: "NEWER_SELECTION_INTENT" });
+          // An unchanged failed preparation with no effect does not lose a good
+          // route. Success/unknown without durable intent cannot claim linkage.
+          if (outcome !== "not-started" && current.bindingDigest === state.before?.bindingDigest) locallyUnconfirmed.add(owner.root);
+          return selectionOutcome(state, "host_selection_not_retained", { reasonCode: state.preparationError });
+        }
+        if (!state.pending) {
+          if (current.bindingDigest !== state.before?.bindingDigest) return selectionOutcome(state, "host_selection_superseded", { reasonCode: "NEWER_SELECTION_INTENT" });
+          locallyUnconfirmed.delete(owner.root);
+          return selectionOutcome(state, "host_selection_retained", { binding: current });
+        }
+        if (current.bindingDigest !== state.pending.bindingDigest) {
+          return selectionOutcome(state, "host_selection_superseded", { reasonCode: "NEWER_SELECTION_INTENT" });
+        }
+        if (outcome === "uncertain") return selectionOutcome(state, "host_selection_not_retained", { reasonCode: "SELECTION_OUTCOME_UNCERTAIN" });
+        if (outcome === "succeeded") {
+          const binding = write(owner, { ...payloadOf(current), status: selected.status });
+          locallyUnconfirmed.delete(owner.root);
+          return selectionOutcome(state, "host_selection_retained", { binding });
+        }
+        // Only a trusted, proven pre-effect failure can restore its exact prior
+        // choice. A concurrent pending predecessor needs live owned evidence.
+        let previous = state.before;
+        let previousDefault = state.previousDefault;
+        let predecessor = state.previousTicket;
+        if (previous.status === "pending") {
+          if (!predecessor || predecessor.outcome === "uncertain" || predecessor.preparationError) {
+            return selectionOutcome(state, "host_selection_not_retained", { reasonCode: "PRIOR_SELECTION_UNCERTAIN" });
+          }
+          if (predecessor.outcome === "succeeded") previous = { ...previous, status: predecessor.selected.status };
+          else if (predecessor.outcome === "not-started") {
+            // Walk only owned proven failures, not historical guesses. A live
+            // predecessor can then settle against the restored monotonic CAS.
+            while (previous.status === "pending" && predecessor?.outcome === "not-started") {
+              previousDefault = predecessor.previousDefault || previousDefault;
+              previous = predecessor.before;
+              predecessor = predecessor.previousTicket;
+            }
+            if (previous.status === "pending" && (!predecessor || predecessor.outcome === "uncertain")) {
+              return selectionOutcome(state, "host_selection_not_retained", { reasonCode: "PRIOR_SELECTION_UNCERTAIN" });
+            }
+            if (previous.status === "pending" && predecessor.outcome === "succeeded") previous = { ...previous, status: predecessor.selected.status };
+          }
+        }
+        if (previous.status === "absent") {
+          // Before this attempt, absent meant the verified existing default.
+          // Preserve that exact prior route, not a new inferred selection.
+          const prior = previousDefault || state.previousTicket?.previousDefault;
+          if (!prior) return selectionOutcome(state, "host_selection_not_retained", { reasonCode: "PRIOR_SELECTION_UNCERTAIN" });
+          createSessionCallContext().select(owner.root, prior.sessionId);
+          previous = { ...payloadOf(current), status: prior.status, sessionId: prior.sessionId };
+        }
+        const binding = write(owner, { ...payloadOf(previous), revision: current.revision + 1, previousDigest: current.bindingDigest });
+        if (binding.status === "pending" && predecessor && !predecessor.outcome) {
+          pendingTickets.delete(ticketKey(owner, predecessor.pending));
+          predecessor.pending = binding;
+          pendingTickets.set(ticketKey(owner, binding), predecessor);
+        }
+        return selectionOutcome(state, "host_selection_cancelled", { binding, persisted: true, reasonCode: "PROVEN_PRE_EFFECT_FAILURE" });
+      });
+    } catch (error) {
+      // Do not turn a successful Core effect into failure or replay it.
+      locallyUnconfirmed.add(owner.root);
+      state.result = selectionOutcome(state, "host_selection_not_retained", { reasonCode: error.code || "HOST_BINDING_STORAGE_ERROR" });
+    } finally {
+      if (state.pending) pendingTickets.delete(ticketKey(owner, state.pending));
+    }
+    return state.result;
+  }
   function selection({ root = ".", sessionId = undefined, expectedRevision, lost = false } = {}) {
     const owner = project(root);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !lost && sessionId === undefined) fail("Explicit selection needs its observed binding revision.");
@@ -112,10 +236,12 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
         nextHeadAction: "Keep the current explicit request result. Repair only optional Host linkage; do not repeat completed effects. Across restart, only the last durably confirmed state or pending loss can be known." };
     }
   }
-  function contextFor(projectRoot) {
+  function contextFor(projectRoot, { allowAbsentDefault = false, onBindingRead = null } = {}) {
     const owner = project(projectRoot), context = createSessionCallContext();
-    if (locallyUnconfirmed.has(owner.root)) { context.lose(owner.root); return context; }
     const binding = readOwner(owner);
+    if (onBindingRead) onBindingRead(binding);
+    if (locallyUnconfirmed.has(owner.root)) { context.lose(owner.root); return context; }
+    if (binding.status === "absent" && allowAbsentDefault) return context;
     if (["bound", "default"].includes(binding.status)) context.select(owner.root, binding.sessionId);
     else context.lose(owner.root);
     return context;
@@ -125,13 +251,15 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
       nativeIdentitySource: "trusted-embedding-host-per-request-caller", providerIdentityInCanon: false,
       recoveryAuthority: false, instructionAuthority: false, stockMcpNativeIdentityAssumed: false }),
     read({ root = "." } = {}) { return readOwner(project(root)); },
+    prepareSelection,
+    settleSelection,
     select: (options) => selection(options),
     lose: (options) => selection({ ...options, lost: true }),
-    resolveSessionContext(request) {
+    resolveSessionContext(request, options = {}) {
       const outer = request?.params?.arguments;
       const args = ["head_tools_read", "head_tools_call"].includes(request?.params?.name) ? outer?.arguments : outer;
       if (!args?.project_root) fail("Expected an exact Project-scoped MCP request.");
-      return contextFor(args.project_root);
+      return contextFor(args.project_root, options);
     },
     enter({ root = "." } = {}) {
       try {

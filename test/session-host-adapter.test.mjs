@@ -101,7 +101,7 @@ test("declared sharing/default/loss and compare-and-swap are caller scoped, not 
   assert.equal(lost.status, "session_selection_unresolved");
   assert.equal(lost.project.projectId, inspectProject(root).project.projectId);
   assert.equal(lost.ordinaryWorkBlocked, false);
-  assert.equal((await call(root, "head_project_direction_read", {}, host("first"))).result.structuredContent, null);
+  assert.equal((await call(root, "head_project_direction_read", {}, host("first"))).result.content[0].text, "null");
   first.select({ root, sessionId: "", expectedRevision: 3 });
   assert.equal(first.enter({ root }).workContext.sessionId, inspectProject(root).state.sessionId);
 });
@@ -191,6 +191,7 @@ test("real hidden Node command consumes official-style startup stdin and exits; 
   assert.equal(result.code, 0, result.stderr);
   const output = JSON.parse(result.stdout);
   assert.equal(JSON.parse(output.hookSpecificOutput.additionalContext).logicalSessionId, a.sessionId);
+  assert.match(JSON.parse(output.hookSpecificOutput.additionalContext).hostCapability, /no extra bind\/save or repeated Session ID is required/);
   assert.equal(output.continue, undefined);
   assert.equal(output.hookSpecificOutput.permissionDecision, undefined);
   assert.deepEqual(files(root).concat(files(operational)), before);

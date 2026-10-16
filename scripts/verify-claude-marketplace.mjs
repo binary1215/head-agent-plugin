@@ -42,8 +42,12 @@ if (providedRoot) {
     assert.equal(JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".claude-plugin", "plugin.json"), "utf8")).license, "MIT");
     assert.equal(JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".claude-plugin", "plugin.json"), "utf8")).hooks, "./hooks/claude.json");
     const startupHooks = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "hooks", "claude.json"), "utf8"));
-    assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart"]);
+    assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart", "PreToolUse"]);
     assert.match(startupHooks.hooks.SessionStart[0].hooks[0].command, /session-host-hook\.mjs/);
+    assert.deepEqual(startupHooks.hooks.PreToolUse.map(group => group.hooks[0].server), ["head_core", "plugin:head-agent-core:head_core"]);
+    assert.ok(startupHooks.hooks.PreToolUse.every(group => group.hooks[0].tool === "head_session_host_request_prepare"));
+    assert.equal(/permissionDecision|updatedInput/.test(JSON.stringify(startupHooks)), false);
+    assert.ok(runtimeManifest.files.some(file => file.path === "scripts/lib/session-host-request.mjs"));
     assert.ok(runtimeManifest.files.some((file) => file.path === "scripts/lib/session-host-adapter.mjs"));
 
     const unexpectedDirectory = path.join(snapshotRoot, "plugins", built.pluginName, "unexpected-empty-directory");

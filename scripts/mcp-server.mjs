@@ -7,6 +7,8 @@ import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
 import { DEFAULT_CONTEXT_BUDGET } from "./lib/context-budget.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { sessionCallRequiresBinding } from "./lib/session-routing.mjs";
+import { createNativeSessionHostBridge } from "./lib/session-native-host.mjs";
+import { SESSION_HOST_REQUEST_HELPER } from "./lib/session-host-request.mjs";
 import fs from "node:fs";
 
 const protocolVersion = "2024-11-05";
@@ -1905,7 +1907,20 @@ for (const tool of allTools) {
 }
 
 // Stateless discovery, not a registration store or permission/activation system.
+allTools.push({
+  name: SESSION_HOST_REQUEST_HELPER,
+  description: "Internal native Host Hook ingress for one transient request correlation. No logical Session selection, original write, permission or recovery authority. Ordinary model calls cannot mint native claims; users never fill this input.",
+  inputSchema: { type: "object", properties: {
+    native_session_id: { type: "string", minLength: 1, maxLength: 512 },
+    native_agent_id: { type: ["string", "null"], maxLength: 512 },
+    tool_use_id: { type: "string", minLength: 1, maxLength: 512 },
+    outer_tool_name: { type: "string", minLength: 1, maxLength: 512 },
+    original_arguments: { type: "string", minLength: 2 },
+  }, required: ["native_session_id", "tool_use_id", "outer_tool_name", "original_arguments"], additionalProperties: false },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+});
 const defaultToolNames = new Set([
+  SESSION_HOST_REQUEST_HELPER,
   "head_core_contract", "head_project_initialize_or_resume", "head_conversation_enter", "head_project_graph",
   "head_project_status", "head_checkpoint_diagnose", "head_checkpoint_basis",
   "head_checkpoint_sync", "head_session_restore", "head_pending_review",
@@ -2246,6 +2261,13 @@ async function unresolvedSessionResponse(id, name, root, reasonCode) {
 }
 
 export async function dispatch(request, options = {}) {
+  if (options.nativeSessionBridge && !options.sessionContext && !options.resolveSessionContext) {
+    return options.nativeSessionBridge.dispatch(request, (original, routing) => dispatchSessionRequest(original, { ...options, ...routing }));
+  }
+  return dispatchSessionRequest(request, options);
+}
+
+async function dispatchSessionRequest(request, options = {}) {
   const outer = request.params?.arguments;
   const routed = request.params?.name === "head_tools_read" || request.params?.name === "head_tools_call";
   const args = routed ? outer?.arguments : outer;
@@ -2292,7 +2314,7 @@ export async function dispatch(request, options = {}) {
   return dispatchRouted(request, options);
 }
 
-async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
+async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null } = {}) {
   requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
@@ -2361,6 +2383,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
           runtimes: args.runtimes || null,
           profile: args.profile || "core",
           onboarding: onboardingInputFromMcp(args),
+          onValidatedSessionSelection,
         })
       : name === "head_onboarding_semantic_refresh"
         ? (await import("./lib/onboarding.mjs")).proposeOnboardingSemanticRefresh({ root: args.project_root, semanticProposal: args.semantic_proposal, recoveryBasis: args.recovery_basis || null })
@@ -2744,7 +2767,10 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                           : name === "head_continuity_snapshot"
                             ? (await import("./lib/product-operating-loop.mjs")).buildHeadContinuitySnapshot({ root: args.project_root, fresh: args.fresh ?? false })
                           : (() => { throw new Error(`Unknown tool: ${name}`); })());
-    const response = success(id, { content: [{ type: "text", text: formatMcpToolContent(name, value) }], structuredContent: value });
+    // MCP structuredContent is an optional object, never null/array/scalar.
+    // Keep absent originals as their original text value, not fabricated state.
+    const response = success(id, { content: [{ type: "text", text: formatMcpToolContent(name, value) }],
+      ...(value !== null && typeof value === "object" && !Array.isArray(value) ? { structuredContent: value } : {}) });
     if (name === "head_world_model" && Buffer.byteLength(JSON.stringify(response), "utf8") > WORLD_MODEL_STATUS_MCP_MAX_BYTES) {
       throw new Error(`head_world_model response exceeds ${WORLD_MODEL_STATUS_MCP_MAX_BYTES} bytes.`);
     }
@@ -2754,7 +2780,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
   }
 }
 
-export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, sessionContext = null, resolveSessionContext = null } = {}) {
+export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, sessionContext = null, resolveSessionContext = null, nativeSessionBridge = createNativeSessionHostBridge() } = {}) {
   requireSurface(surface);
   const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   const sourceRequests = new Map();
@@ -2765,7 +2791,7 @@ export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = nul
     if (closing && !sourceRequests.size) { process.removeListener("SIGINT", shutdown); process.removeListener("SIGTERM", shutdown); }
   };
   process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown);
-  input.once("close", () => { closing = true; abortSources(); cleanupSignals(); });
+  input.once("close", () => { closing = true; abortSources(); nativeSessionBridge?.dispose?.(); cleanupSignals(); });
   input.on("line", async (line) => {
     if (!line.trim()) return;
     let response;
@@ -2779,7 +2805,7 @@ export function serveMcp({ surface = "ordinary", coordinationWorkspaceHost = nul
         if (sourceRequests.has(sourceRequestId)) throw new Error("Duplicate active source request id.");
         controller = new AbortController(); sourceRequests.set(sourceRequestId, controller); ownsSourceRequest = true;
       }
-      response = await dispatch(request, { surface, coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, sessionContext, resolveSessionContext,
+      response = await dispatch(request, { surface, coordinationWorkspaceHost, observationRegistry, conformanceTriggerRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, sessionContext, resolveSessionContext, nativeSessionBridge,
         signal: controller?.signal, onProcess: (event) => process.stderr.write(`${JSON.stringify({ sourceProcess: event })}\n`) });
     }
     catch (error) { response = failure(null, `Parse error: ${error.message}`); }

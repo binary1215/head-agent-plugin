@@ -7,6 +7,25 @@
         "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime claude",
         "timeout": 10
       }]
+    }],
+    "PreToolUse": [{
+      "matcher": "^mcp__head_core__(head_tools_(call|read)|head_project_initialize_or_resume|head_project_status|head_conversation_enter|head_session_(restore|continue|work_record|work_read)|head_pending_review|head_runtime_(adapters|state)|head_world_model|head_context_(prepare|preview)|head_compaction_lifecycle_step|head_continuity_snapshot|head_product_operating_status|head_(checkpoint_.*|run_.*|runtime_invocation_.*|bounded_worker_.*|worker_integration.*|compact_.*))$",
+      "hooks": [{
+        "type": "mcp_tool", "server": "head_core", "tool": "head_session_host_request_prepare", "timeout": 5,
+        "input": {
+          "native_session_id": "${session_id}", "native_agent_id": "${agent_id}",
+          "tool_use_id": "${tool_use_id}", "outer_tool_name": "${tool_name}", "original_arguments": "${tool_input}"
+        }
+      }]
+    }, {
+      "matcher": "^mcp__plugin_head-agent-core_head_core__(head_tools_(call|read)|head_project_initialize_or_resume|head_project_status|head_conversation_enter|head_session_(restore|continue|work_record|work_read)|head_pending_review|head_runtime_(adapters|state)|head_world_model|head_context_(prepare|preview)|head_compaction_lifecycle_step|head_continuity_snapshot|head_product_operating_status|head_(checkpoint_.*|run_.*|runtime_invocation_.*|bounded_worker_.*|worker_integration.*|compact_.*))$",
+      "hooks": [{
+        "type": "mcp_tool", "server": "plugin:head-agent-core:head_core", "tool": "head_session_host_request_prepare", "timeout": 5,
+        "input": {
+          "native_session_id": "${session_id}", "native_agent_id": "${agent_id}",
+          "tool_use_id": "${tool_use_id}", "outer_tool_name": "${tool_name}", "original_arguments": "${tool_input}"
+        }
+      }]
     }]
   }
 }

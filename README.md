@@ -78,8 +78,12 @@ automatically while the provider's compaction action remains Host-owned. See
 Run-free investigations can also retain selected reasons, alternatives and
 uncertainty without creating a checkpoint. The same logical Session's entry
 reads that evidence; ordinary short work needs no save call or approval.
-Bundled startup Hooks are read-only lookups, not automatic native-to-MCP binding:
-stock Codex/Claude still need a verified logical route or a trusted Host adapter.
+Bundled startup Hooks remain read-only. Supported Codex MCP transport retains
+the Session selected by normal initialization/resume without another bind call.
+Claude Code's bundled tool Hook correlates each native root/child request with
+that same server; subsequent calls and resume reuse its selected logical Session.
+Hosts without verified native metadata use an explicit route or trusted adapter;
+actual GUI/model continuity is separately verified.
 No transcript copying or provider-memory disabling is required. See
 [Session work context and Host support](docs/session-work-context.md) for exact
 supported paths, omissions and installation/model verification limits.

@@ -177,12 +177,20 @@ and claimed completion are not current instructions, approval or effect proof.
 Repair a missing save only; never repeat completed or unknown external work.
 An abrupt exit before preservation is not lossless transcript recovery.
 
-Bundled SessionStart Hooks only read bindings previously registered by a trusted
-Host. Stock native IDs are not automatically MCP metadata; keep verified logical
-`session_id` per dependent call, or use an actually injected caller-scoped Host
-resolver. Do not guess another Session from names/time/sole candidate, register
-Codex parent IDs from ambiguous child tool Hooks, or use allow/deny/retry as
-normal routing. A missing binding does not block independent Project work.
+Bundled SessionStart Hooks only read previously retained Host bindings. Supported
+Codex MCP transports supply an actual request-local `threadId`; the existing
+initialize/resume flow retains its selected Session automatically. One-off reads,
+result recording, checkpoint sync and create-only do not change that selection.
+Claude Code's bundled PreToolUse Hook supplies request-local root/child correlation
+to the same MCP server. It neither allows a tool nor rewrites its arguments. The
+internal `head_session_host_request_prepare` helper is Host-only; never call it
+from the model, invent native IDs, or ask the user to prepare a binding. Startup
+and resume read the retained linkage without saving another record.
+On Hosts without verified native transport, preserve a verified explicit logical
+`session_id` for dependent calls or an actually injected caller-scoped resolver.
+Do not add bind/save tools or questions, guess from names/time/sole candidates,
+register Codex parent IDs from ambiguous child Hooks, or use allow/deny/retry for
+routing. Missing linkage does not block independent Project work.
 See [work context and Host capability limits](../../docs/session-work-context.md).
 
 ## Progressive references and tools

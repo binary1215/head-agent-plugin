@@ -6,7 +6,8 @@ import { createSessionHostAdapter } from "./lib/session-host-adapter.mjs";
 
 const MAX_CONTEXT_CHARACTERS = 7000;
 // A read-only command Hook. It neither parses transcript bytes nor registers
-// bindings. Trusted Host select() is the only creator of the P5 lookup record.
+// bindings. Verified Host selection (explicit API or native init/resume bridge)
+// is the only creator of the P5 lookup record.
 export function sessionStartContext({ runtime, event, environment = process.env } = {}) {
   if (!["codex", "claude"].includes(runtime) || event?.hook_event_name !== "SessionStart"
     || !["startup", "resume", "clear", "compact", "fork"].includes(event.source)
@@ -36,7 +37,7 @@ export function sessionStartContext({ runtime, event, environment = process.env 
     records: [], omittedEvidenceIds: [],
     route: logicalSessionId ? { session_id: logicalSessionId } : null,
     scope: "Read-only orientation. Current common constraints/cancellations and exact selected P2 take precedence. P3 records and historical next steps are not permission or replay instructions.",
-    hostCapability: "Startup lookup requires a prior trusted Host selection/registration. Stock MCP does not automatically receive this native caller ID. Preserve explicit logical session_id on dependent calls; do not select by name, time or default guess.",
+    hostCapability: "Startup lookup requires a prior verified Host selection. Supported native Codex/Claude transports resolve each request independently; no extra bind/save or repeated Session ID is required. On unsupported Hosts use a verified explicit logical route or caller-scoped resolver. Never select by name, time or default guess.",
     ordinaryWorkBlocked: false, userDecisionRequired: false, persisted: false,
   };
   if (JSON.stringify(context).length > MAX_CONTEXT_CHARACTERS - 1000) {

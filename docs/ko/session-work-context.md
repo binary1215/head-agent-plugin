@@ -92,8 +92,8 @@ resolver에 전달합니다. native ID는 조회용 hash가 되며 canonical Ses
 | --- | --- | --- |
 | Core CLI/MCP | 정확한 논리 Session 기록 → 같은 Session 진입, 선택적 typed 확대 | native caller identity를 추론하지 않음 |
 | 신뢰된 embedding Host | public 선택·등록 → 재시작 조회 → 요청별 resolver → 같은 Session | 실제 요청별 caller를 구분해 얻는 것은 Host의 책임 |
-| stock Codex | 읽기 전용 SessionStart 조회·맥락과 기존 명시 논리 인자 | 자동 등록이나 native-ID-to-MCP 전달은 없음 |
-| stock Claude Code | 별도 읽기 전용 SessionStart command, 문서화된 child identity 분리 | 자동 등록·resolver 주입을 주장하지 않음 |
+| Codex native MCP transport | 실제 요청의 `params._meta.threadId` → 기존 초기화·재개 선택 → P5 연결 → 요청별 resolver; 읽기 전용 SessionStart 조회 | 설치 엔진 `0.162.0-alpha.17.2` transport 확인; GUI 모델·fork/child·실제 재시작/압축은 별도 검증 필요 |
+| stock Claude Code | 같은 서버의 PreToolUse 연결 → 기존 초기화·재개 선택 → P5 연결 → 후속 direct/router 요청 해석; 읽기 전용 SessionStart·재개 | 설치 CLI `2.1.289`와 합성 로컬 프로토콜로 부모·자식 분리 및 새 프로세스 재개 확인; 실제 모델·계정·압축은 별도 검증 |
 | OpenCode | Core와 신뢰된 Host 연결 지점 | native Hook 통합은 주장하지 않음 |
 
 Codex tool Hook는 child에도 부모 session ID를 제공하므로 그 필드만으로 caller 선택을
@@ -101,6 +101,60 @@ Codex tool Hook는 child에도 부모 session ID를 제공하므로 그 필드�
 사용하지 않습니다. 일괄 Hook 거절, 정상 경로의 거절·재시도, 승인 우회나 전역 MCP
 selector를 넣지 않습니다. 선택적 연결 유실 후에도 정확한 명시 요청과 독립 Project
 작업은 가능합니다.
+
+### 어떤 작업이 선택을 유지하나?
+
+기존 `head_project_initialize_or_resume`의 성공한 선택만 보존합니다. 첫 초기화는
+검증된 default를 유지하며 명시 재개로 기존 Session을 공유·분리할 수 있습니다.
+동일 선택 반복에는 쓰기가 없습니다. 별도 select/bind 도구, 사용자 ID 입력,
+save 절차나 승인 결정을 추가하지 않습니다. Session 생성만 하거나 일회성으로
+읽기·다른 Session에 증거/checkpoint 기록·worker 통합을 해도 채팅 선택은 바뀌지 않습니다.
+
+기존 bootstrap 입력·identity 검증 뒤 선택적 P5 준비를 합니다. 실행 요청은 자신의
+pending 상태에도 이미 검증한 route를 유지합니다. 짧은 CAS 구간이 전체 실행을
+잠그지 않으며 앞선 완료가 새 intent를 덮어쓰지 않습니다. 검증된 pre-effect 실패만
+이전 선택으로 정산할 수 있고 일반 오류·취소·timeout으로 효과 부재를 추정하지 않습니다.
+unknown이나 재시작 후 live ticket 부재에서는 pending 불확실성이 남습니다. Host 저장
+실패는 원래 Core 결과를 바꾸거나 효과를 재실행하지 않습니다. caller와 연결은 P5이지
+P2 방향이 아닙니다.
+
+같은 MCP process의 여러 caller도 각각 outer transport metadata로 라우팅합니다.
+last-caller selector나 도구 인자의 `_meta`는 쓰지 않으며 embedding Host resolver가
+우선합니다. 처음 연결하는 caller는 기존 default 의미를 유지하되 읽기에서 저장하지
+않습니다. known lost/pending/corrupt 및 기존 namespace의 binding 유실은 default로
+바꾸지 않습니다. namespace까지 완전히 삭제되면 그 과거 이력을 증명할 수 없습니다.
+native metadata가 없는 legacy 경로는 자동 지속성을 주장하지 않습니다. native 전달을
+관측한 뒤 그 값이 유실되면 관련 dependent 호출만 미확인이며 valid explicit 요청과
+독립 Project 작업은 계속 가능합니다.
+
+### 추가 승인 게이트 없는 Claude 요청 연결
+
+동봉된 PreToolUse Hook는 이 플러그인의 Session 의존 도구와 범용 router만 대상으로
+local 또는 plugin-scoped의 정확히 같은 MCP 서버를 호출합니다. 실제 `session_id`,
+자식의 별도 `agent_id`, `tool_use_id`, outer 도구명과 원래 outer 인자를 전달합니다.
+실제 일반 MCP 요청의 outer `claudecode/toolUseId`로 메모리 registry를 조회하고
+인자의 정확한 digest를 검증한 뒤 router를 펼쳐 해당 caller만 해석합니다.
+관측된 stock transport에서 모델 직접 호출·helper router 호출·중첩된 가짜 metadata·
+치환되지 않은 template은 연결을 만들 수 없습니다. 이는 확인된 stock transport
+연결 지점이지 임의 client를 인증하는 보안 수단은 아닙니다.
+
+helper는 `{}`만 반환하며 `permissionDecision`, `updatedInput`, 논리 Session,
+승인 또는 P2 방향을 전달하지 않습니다. 도구 권한은 기존 Host가 관리합니다.
+독립 direct 도구의 추가 RPC는 0회입니다. 범용 router는 독립 inner 작업에도 내부
+Hook RPC 1회를 추가하지만 곧바로 no-op입니다(registry·Session/P5 읽기·graph scan·
+원본 쓰기 없음). 사용자 질문·binding 양식·Run·Capsule·저장 receipt·daemon은 없습니다.
+
+대기 연결은 10분 후 만료되고 최대 1,024개이며 실행 중인 연결은 밀어내지 않습니다.
+정확한 대기 재시도는 수명을 연장하지 않고 수렴하며 충돌·실행 중 재사용은 다른
+caller를 대체하지 못합니다. claim은 `finally`에서 해제하고 transport 종료 시 cache를
+비웁니다. 거절된 호출은 sweep·종료까지 메모리에 남을 수 있지만 호출별 영구 artifact는
+아닙니다. bounded spent cache는 영구 replay 방지나 실행 lease가 아닙니다.
+처음 온 Claude 요청도 일치하는 Hook가 없으면 의존 자동 route만 미확인으로 두고
+default를 추정하지 않습니다. 정확한 명시 route와 독립 작업은 계속 가능합니다.
+새 Project 초기화는 native 연결 성공을 주장하지 않고도 가능합니다. Hook 미활성화·
+만료·선택적 저장 실패는 진단 공백이지 완료된 효과를 다시 실행할 이유가 아닙니다.
+재개에는 같은 native chat·Project·operational binding 저장소가 필요하며 다른 PC로의
+지속 연결을 의미하지 않습니다.
 
 공식 계약: [Codex Hooks](https://learn.chatgpt.com/docs/hooks)와
 [Claude Code Hooks](https://code.claude.com/docs/en/hooks).

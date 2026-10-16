@@ -24,8 +24,22 @@ function snapshot(root) {
   });
 }
 
+test("an absent common direction remains null text, not invalid MCP structuredContent or approved empty state", async t => {
+  const root=fixture(t),before=snapshot(root);
+  for(const [name,args]of [["head_project_direction_read",{project_root:root}],
+    ["head_tools_read",{name:"head_project_direction_read",arguments:{project_root:root}}]]){
+    const response=await call(name,args);
+    assert.equal(response.error,undefined);
+    assert.equal(response.result.isError,undefined);
+    assert.equal(Object.hasOwn(response.result,"structuredContent"),false);
+    assert.equal(response.result.content[0].text,"null");
+  }
+  assert.deepEqual(snapshot(root),before);
+});
+
 test("small default catalog discovers every ordinary contract without registering, unlocking or initializing", async () => {
-  assert.equal(tools.length, 17);
+  assert.equal(tools.length, 18);
+  assert(tools.some(tool => tool.name === "head_session_host_request_prepare"));
   assert(tools.some(tool => tool.name === "head_project_graph"));
   assert(Buffer.byteLength(JSON.stringify(tools)) < 112030 / 2);
   for (const name of ["head_operating_lane_recommend", "head_product_note", "head_context_prepare", "head_world_model"]) {

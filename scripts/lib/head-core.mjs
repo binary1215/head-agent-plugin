@@ -316,7 +316,7 @@ export function initializeProject({ root = ".", pluginRoot, runtimes } = {}) {
   }
 }
 
-export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes = null } = {}) {
+export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes = null, onValidatedSessionSelection = null } = {}) {
   const canonicalPluginRoot = fs.realpathSync(path.resolve(pluginRoot));
   const packageVersion = packageVersionAt(canonicalPluginRoot);
   const inspected = inspectProject(root);
@@ -333,6 +333,10 @@ export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes =
   const projectRoot = inspected.project.projectRoot;
   const manifestFile = path.join(projectRoot, ".head", "generated", "manifest.json");
   const manifest = readJson(manifestFile, "Managed manifest");
+  // Synchronous optional Host observation AFTER readiness/runtime/identity/input
+  // preflight. No existing pure refusal can leave a P5 pending selection.
+  if (onValidatedSessionSelection) onValidatedSessionSelection({ root: projectRoot,
+    projectId: inspected.project.projectId, sessionId: inspected.state.sessionId });
   if (manifest.pluginRoot === canonicalPluginRoot && manifest.packageVersion === packageVersion) {
     return {
       status: "current",
