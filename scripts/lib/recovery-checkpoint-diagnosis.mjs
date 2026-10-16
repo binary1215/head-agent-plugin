@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./head-core.mjs";
 import { inspectRecoveryCheckpointBasis } from "./compaction-recovery.mjs";
 import { sessionStateHash } from "./run-lineage.mjs";
 import { restoreSessionFromArtifacts } from "./session-recovery.mjs";
@@ -59,6 +59,7 @@ function observedProject(root) {
           : "missing";
     return {
       status: inspected.status,
+      recoveryReadable: isProjectRecoveryReadable(inspected),
       projectId: inspected.project?.projectId || null,
       sessionId: inspected.state?.sessionId || null,
       latestCheckpointId: inspected.state?.latestCheckpoint || null,
@@ -70,6 +71,7 @@ function observedProject(root) {
   } catch (error) {
     return {
       status: "inspection-failed",
+      recoveryReadable: false,
       projectId: null,
       sessionId: null,
       latestCheckpointId: null,
@@ -90,7 +92,8 @@ function attempt(operation) {
 }
 
 function sameProjectObservation(first, second) {
-  return first.status === second.status
+  return first.recoveryReadable === second.recoveryReadable
+    && (first.recoveryReadable || first.status === second.status)
     && first.projectId === second.projectId
     && first.sessionId === second.sessionId
     && first.latestCheckpointId === second.latestCheckpointId
@@ -113,7 +116,7 @@ function sameBasis(first, second) {
 function projectMatchesBasis(project, basisResult) {
   const basis = basisResult?.basis;
   return Boolean(basis)
-    && project.status === "ready"
+    && project.recoveryReadable
     && project.projectId === basis.projectId
     && project.sessionId === basis.sessionId
     && project.latestCheckpointId === basis.latestCheckpointId
@@ -138,6 +141,18 @@ function restoreMatchesBasis(restoreResult, firstBasis, secondBasis) {
   return tuples.every((tuple) => JSON.stringify(tuple) === JSON.stringify(restored))
     && projection?.checkpoint?.checkpointId === checkpoint?.checkpointId
     && projection?.checkpoint?.checkpointDigest === checkpoint?.checkpointDigest;
+}
+
+function restoreMatchesProjectObservation(restoreResult, project) {
+  const { projection, checkpoint } = restoreResult || {};
+  return Boolean(project.latestCheckpointId && checkpoint?.checkpointDigest)
+    && checkpoint?.projectId === project.projectId
+    && checkpoint?.sessionId === project.sessionId
+    && projection?.projectId === checkpoint.projectId
+    && projection?.sessionId === checkpoint.sessionId
+    && checkpoint.checkpointId === project.latestCheckpointId
+    && projection?.checkpoint?.checkpointId === checkpoint.checkpointId
+    && projection?.checkpoint?.checkpointDigest === checkpoint.checkpointDigest;
 }
 
 function optionalResultEvidence(projection) {
@@ -197,6 +212,7 @@ function semanticFreshnessBoundary() {
 }
 
 function observationConsistency({ state, firstBasis, secondBasis, restoreTupleMatched = null, retryRequired }) {
+  const successfulBasisReads = Number(Boolean(firstBasis)) + Number(Boolean(secondBasis));
   return {
     state,
     firstBasisId: firstBasis?.basis?.basisId || null,
@@ -206,7 +222,9 @@ function observationConsistency({ state, firstBasis, secondBasis, restoreTupleMa
     retryRequired,
     atomicFilesystemSnapshot: false,
     abaChangesDetectable: false,
-    scope: "two sequential verified basis reads and one artifact-restore tuple",
+    scope: successfulBasisReads === 2
+      ? "two sequential verified basis reads and one artifact-restore tuple"
+      : `${successfulBasisReads} successful recovery basis reads; bounded Project/Session observations and any attempted artifact restore`,
   };
 }
 
@@ -399,9 +417,51 @@ function changedObservationProjection({ project, firstBasis, secondBasis, restor
   });
 }
 
+function directionUnavailableProjection({ project, restoreAttempt, includeRestore }) {
+  if (project.latestCheckpointId && !restoreAttempt?.ok) {
+    return failureProjection({ project, error: restoreAttempt?.error
+      || Object.assign(new Error("Checkpoint restore was not observed."), { code: "SESSION_RESTORE_VERIFICATION_FAILED" }) });
+  }
+  const restored = restoreAttempt?.value;
+  if (restored && !restoreMatchesProjectObservation(restored, project)) {
+    return changedObservationProjection({ project, firstBasis: null, secondBasis: null, restoreTupleMatched: false });
+  }
+  if (restored && restored.projection.currentProjectDirectionAvailability?.status !== "unavailable") {
+    return changedObservationProjection({ project, firstBasis: null, secondBasis: null });
+  }
+  const checkpoint = currentCheckpoint(project);
+  if (restored) checkpoint.checkpointDigest = restored.checkpoint.checkpointDigest;
+  const evidence = restored ? optionalResultEvidence(restored.projection)
+    : { status: "not-applicable", missingResultPacketIds: [], requiredForCheckpointRestore: false };
+  const executionStatus = restored?.projection.currentExecution?.status || "verified";
+  const executionBlocked = new Set(["incomplete", "conflict"]).has(executionStatus);
+  const projection = baseProjection({
+    project, checkpoint,
+    diagnosis: { state: restored ? "verified-checkpoint" : "no-current-checkpoint",
+      reasonCode: "PROJECT_DIRECTION_UNAVAILABLE", failureClass: null,
+      summary: "Retained Session artifacts remain readable, but current common direction is unavailable. This is not an empty direction or an execution authorization." },
+    artifactRecovery: { status: restored ? "verified" : "not-applicable",
+      reasonCode: restored ? null : "NO_CURRENT_CHECKPOINT",
+      ...(restored ? { sessionRestoreId: restored.projection.sessionRestoreId, currentExecutionStatus: executionStatus } : {}),
+      optionalResultEvidence: evidence },
+    checkpointUpdate: unavailableCheckpointUpdate("PROJECT_DIRECTION_UNAVAILABLE"),
+    consistency: observationConsistency({ state: "stable-selected-artifacts-current-direction-unavailable",
+      firstBasis: null, secondBasis: null, restoreTupleMatched: restored ? true : null, retryRequired: false }),
+    nextHeadAction: { id: "continue-independent-work-current-direction-unavailable",
+      summary: "Use verified Session context for independent work. Only dependent effects or new direction publication need current common authority; do not guess a revision or replay historical work." },
+    headActionRequired: executionBlocked, recoveryDependentWorkBlocked: executionBlocked,
+    reviewDependentWorkBlocked: evidence.status === "missing-evidence",
+  });
+  projection.currentProjectDirectionAvailability = {
+    status: "unavailable", reasonCode: "PROJECT_DIRECTION_UNAVAILABLE", dependentEffectsBlocked: true,
+  };
+  if (includeRestore && restored) projection.restore = restored;
+  return projection;
+}
+
 export function inspectRecoveryCheckpointDiagnosis({ root = ".", includeRestore = false } = {}) {
   const projectBefore = observedProject(root);
-  if (projectBefore.status !== "ready") {
+  if (!projectBefore.recoveryReadable) {
     const error = Object.assign(new Error("Project is not ready for recovery checkpoint diagnosis."), {
       code: projectBefore.errorCode || (projectBefore.status === "not_initialized" ? "NOT_INITIALIZED" : "PROJECT_NOT_READY"),
     });
@@ -409,7 +469,9 @@ export function inspectRecoveryCheckpointDiagnosis({ root = ".", includeRestore 
   }
 
   const firstAttempt = attempt(() => inspectRecoveryCheckpointBasis({ root }));
-  const restoreAttempt = firstAttempt.ok && firstAttempt.value.basis.latestCheckpointId
+  const checkpointForRestore = firstAttempt.ok ? firstAttempt.value.basis.latestCheckpointId
+    : firstAttempt.error?.code === "PROJECT_DIRECTION_UNAVAILABLE" ? projectBefore.latestCheckpointId : null;
+  const restoreAttempt = checkpointForRestore
     ? attempt(() => restoreSessionFromArtifacts({ root }))
     : null;
   const secondAttempt = attempt(() => inspectRecoveryCheckpointBasis({ root }));
@@ -436,6 +498,10 @@ export function inspectRecoveryCheckpointDiagnosis({ root = ".", includeRestore 
       || (!firstAttempt.ok && !secondAttempt.ok && firstAttempt.error?.code !== secondAttempt.error?.code);
     if (projectChanged || attemptsDisagree) {
       return changedObservationProjection({ project: projectAfter, firstBasis: firstAttempt.value, secondBasis: secondAttempt.value });
+    }
+    if (firstAttempt.error?.code === "PROJECT_DIRECTION_UNAVAILABLE"
+      && secondAttempt.error?.code === "PROJECT_DIRECTION_UNAVAILABLE") {
+      return directionUnavailableProjection({ project: projectAfter, restoreAttempt, includeRestore });
     }
     return failureProjection({ project: projectAfter, error, projectChanged });
   }

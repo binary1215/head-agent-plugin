@@ -5,6 +5,7 @@ import { atomicWriteArtifact } from "./artifact-storage.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { resolveRuntimeOperationalStateRoot } from "./runtime-execution-lease.mjs";
 import { createSessionCallContext, safeSessionPath, withSessionCallContext, sessionSelectionUnresolved } from "./session-routing.mjs";
+import { defaultSessionStatePath } from "./session-paths.mjs";
 import { enterConversationRecovery } from "./compaction-lifecycle.mjs";
 
 export const SESSION_HOST_ADAPTER_VERSION = "0.1.0";
@@ -97,7 +98,14 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
       withProjectMutation({ root: owner.root, scope: "host-session-binding" }, () => {
         if (project(owner.root).projectId !== owner.projectId) fail("Project changed before Host selection.", "PROJECT_IDENTITY_MISMATCH");
         const before = readOwner(owner); state.before = before;
-        if (before.status === "absent") state.previousDefault = createSessionCallContext().select(owner.root, "");
+        if (before.status === "absent") {
+          try { state.previousDefault = createSessionCallContext().select(owner.root, ""); }
+          catch (error) {
+            // Only the unrelated absent/malformed default may be unavailable.
+            // Without that predecessor, settlement must not guess a rollback.
+            if (error.headSessionRecordPath !== defaultSessionStatePath(owner.root)) throw error;
+          }
+        }
         if (expectedRevision != null && before.revision !== expectedRevision) fail("Host selection changed.", "SESSION_HOST_BINDING_CONFLICT");
         if (expectedBindingDigest !== undefined && (before.bindingDigest || null) !== expectedBindingDigest) fail("Host selection basis changed.", "SESSION_HOST_BINDING_CONFLICT");
         if (["bound", "default"].includes(before.status) && before.sessionId === selected.sessionId) return;

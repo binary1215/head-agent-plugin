@@ -4,11 +4,11 @@ import path from "node:path";
 import {
   PRODUCT_POLICY_CANDIDATE_DIRECTORY,
   PRODUCT_POLICY_REVIEW_DIRECTORY,
-  readProductPolicyCandidate,
-  readProductPolicyReviewDecision,
+  readProductPolicyCandidateRecord as readProductPolicyCandidate,
+  readProductPolicyReviewDecisionRecord as readProductPolicyReviewDecision,
   verifyProductPolicyCandidate,
   verifyProductPolicyReviewDecision,
-} from "./product-policy.mjs";
+} from "./product-policy-records.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
 export const PRODUCT_POLICY_GRAPH_PROJECTION_VERSION = "0.1.0";

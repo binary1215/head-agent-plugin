@@ -1,10 +1,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { readProjectDirection } from "./project-direction.mjs";
+import { readProjectDirectionView, sameProjectDirectionView } from "./project-direction-view.mjs";
 import { assertRunSession } from "./session-routing.mjs";
 import { inspectRunStorageTransition } from "./run-lineage.mjs";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { COMPACTION_RECOVERY_VERSION, createRecoveryCheckpoint, readRecoveryCheckpoint } from "./compaction-recovery.mjs";
@@ -43,9 +43,9 @@ function stringList(value, label) {
   return [...new Set(value.map((item) => item.trim()))].sort();
 }
 
-function readyProject(root, action) {
+function readyProject(root, action, { readOnly = false } = {}) {
   const inspected = inspectProject(root);
-  if (inspected.status !== "ready") fail(`Project must be ready before ${action}; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
+  if (readOnly ? !isProjectRecoveryReadable(inspected) : inspected.status !== "ready") fail(`Project must be ready before ${action}; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   if (typeof inspected.state?.sessionId !== "string" || !inspected.state.sessionId) {
     fail("Session canon is missing its canonical identity.", "INVALID_SESSION_CANON");
   }
@@ -234,7 +234,7 @@ function projectionIdentity(payload) {
 }
 
 export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } = {}) {
-  const inspected = readyProject(root, "artifact-only Session restore");
+  const inspected = readyProject(root, "artifact-only Session restore", { readOnly: true });
   const selectedCheckpointId = checkpointId == null ? inspected.state.latestCheckpoint : requiredText(checkpointId, "Recovery checkpoint id");
   if (!selectedCheckpointId) fail("Session restore requires a current canonical recovery checkpoint.", "SESSION_RESTORE_CHECKPOINT_REQUIRED");
   if (inspected.state.latestCheckpoint !== selectedCheckpointId) {
@@ -272,11 +272,13 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
   const integrationEvidence = reviewedRunIntegration?.resultPacketId
     ? optionalResultEvidence(inspected.project.projectRoot, reviewedRunIntegration.resultPacketId)
     : { status: "not-applicable", resultPacketId: null, artifactHash: null };
-  const currentProjectDirection = readProjectDirection({ root: inspected.project.projectRoot });
+  const directionView = readProjectDirectionView({ root: inspected.project.projectRoot });
+  const { currentProjectDirection } = directionView;
   const after = inspectProject(inspected.project.projectRoot);
-  const directionAfter = readProjectDirection({ root: inspected.project.projectRoot });
-  if (canonicalJson(after.state) !== canonicalJson(inspected.state)
-    || (directionAfter?.directionId || null) !== (currentProjectDirection?.directionId || null)
+  const directionAfter = readProjectDirectionView({ root: inspected.project.projectRoot });
+  if (!isProjectRecoveryReadable(after) || canonicalJson(after.project) !== canonicalJson(inspected.project)
+    || canonicalJson(after.state) !== canonicalJson(inspected.state)
+    || !sameProjectDirectionView(directionAfter, directionView)
     || (currentRunId ? digest(fs.readFileSync(runFile(inspected.project.projectRoot, currentRunId))) : null) !== currentRunBasis) {
     fail("Session or common direction changed during restore; reread only this observation.", "SESSION_RESTORE_OBSERVATION_CHANGED");
   }
@@ -286,7 +288,7 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
     protocol: { name: "head-agent-core-artifact-session-restore", version: SESSION_RECOVERY_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
-    currentProjectDirection,
+    ...directionView,
     authorityBoundary: artifactAuthorityBoundary("SessionRestoreProjection"),
     checkpoint: {
       checkpointId: checkpoint.checkpointId,
@@ -315,6 +317,9 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
       historicalApprovalGrantsCurrentEffect: false,
       ...(currentProjectDirection ? { currentProjectDirection,
         commonDirectionPrecedence: "current-common-constraints-and-cancellations-apply-before-historical-session-intent" } : {}),
+      ...(directionView.currentProjectDirectionAvailability ? {
+        currentProjectDirectionAvailability: directionView.currentProjectDirectionAvailability,
+      } : {}),
     },
     providerBoundary: {
       providerSessionIdentityRequired: false,
@@ -441,7 +446,7 @@ function pendingHistoricalIntegration(root, reviewDecisionId) {
     status: "legacy_integration_pending", file, request,
     historicalInput: request.input,
     originalRole: "historical-P3-reference-evidence-not-restored-P2-direction",
-    currentProjectDirection: readProjectDirection({ root }),
+    ...readProjectDirectionView({ root }),
     nextAction: "HEAD may inspect the verified historical P3 input and current common direction, then independently derive current direction and manually transfer only still-applicable work. The request is not restored P2 direction and is never automatically adopted or completed.",
     recoveryAuthority: false, instructionAuthority: false, promotionAuthority: false,
     persisted: false, ordinaryWorkBlocked: false, userDecisionRequired: false, headActionRequired: true,

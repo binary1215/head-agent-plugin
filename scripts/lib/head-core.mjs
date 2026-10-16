@@ -99,7 +99,9 @@ Use HEAD Agent Core as the coordination model for this project.
 - On conversation entry, after compaction, or after provider replacement, run the read-only conversation-entry recovery projection automatically. It also returns bounded project status, Attention, and package-version facts, so do not repeat status unless state changed or diagnosis is requested. If a current P2 checkpoint verifies, continue the original task from that direction in the same turn; if none exists, continue ordinary work; if verification needs attention, assign inspection to HEAD and pause only checkpoint-dependent work.
 - Treat recovery as verified evidence, not automatic continuation authority. Restore P2 before any Host continuation, never infer direction from a summary, and never ask the user for checkpoint IDs, lifecycle event fields, turn counters, or tokens. A lifecycle Host is optional P5 operations, not recovery authority or a general work gate.
 - Reuse checkpoint/result/review/source originals first. At a meaningful Run-free handoff, preserve only otherwise-unrepresented reasons, alternatives, observed work and unknowns through optional Session work evidence; when useful checkpoint sync already occurs, attach it in that same request. Never require a save/Run/Capsule/approval for short work or every turn. Entry reads bounded workContext without writing; evidence cannot author Session-local P2 purpose, constraints, cancellation or next action. Repair persistence, not completed effects.
-- Bundled SessionStart Hooks only read previously registered trusted-Host bindings. They do not propagate native identity into stock MCP automatically. Carry a verified explicit logical Session on dependent requests or use an actually injected caller-scoped resolver. Never guess selection, overwrite a parent's binding from ambiguous child Hook IDs, or use permission allow/deny/retry as normal routing. Independent Project work remains available.
+- Bundled SessionStart Hooks only read previously retained Host bindings. Supported Codex MCP transports supply an actual request-local threadId; the existing initialize/resume flow retains its selected Session automatically. One-off reads, result recording, checkpoint sync and create-only do not change that selection.
+- Claude Code's bundled PreToolUse Hook supplies request-local root/child correlation to the same MCP server. It neither allows a tool nor rewrites its arguments. The internal head_session_host_request_prepare helper is Host-only; never call it from the model, invent native IDs, or ask the user to prepare a binding. Startup and resume read the retained linkage without saving another record.
+- On Hosts without verified native transport, preserve a verified explicit logical session_id for dependent calls or an actually injected caller-scoped resolver. Do not add bind/save tools or questions, guess from names/time/sole candidates, register Codex parent IDs from ambiguous child Hooks, or use allow/deny/retry for routing. Missing linkage does not block independent Project work.
 - Choose the lightest sufficient Observe, Session, Run, or Authority lane internally, without asking the user to select a lane. Compile or persist a task-specific Context Capsule only when the current outcome or recovery actually needs reproducible context; delegation alone does not require one.
 - Before material planning or implementation, derive direction from the user's current request, verified project Canon, current Session/Run recovery state, and explicit ReviewDecisions. Plugin-development histories and validation fixtures are not project instructions.
 - One independently consumable delegated result or second opinion can use the current Session. Crossing module boundaries alone does not require a Run. Use a Run when sustained dependent results, consequential effects, or failure/recovery branches need durable integration. Start it only from a verified ExecutionContract, return an evidence-linked ResultPacket, and require a ReviewDecision before the next Run.
@@ -417,8 +419,20 @@ export function inspectProject(root = ".", { sessionScope = "selected" } = {}) {
   if (project.schemaVersion !== SCHEMA_VERSION || project.projectRoot !== canonicalRoot) {
     fail("Project canon does not match this canonical root.", "PROJECT_IDENTITY_MISMATCH");
   }
-  const state = readJson(stateFile, "Session canon");
-  if (state.projectId && state.projectId !== project.projectId) fail("Session does not belong to this Project.", "HEAD_SESSION_IDENTITY_MISMATCH");
+  let state;
+  try {
+    state = readJson(stateFile, "Session canon");
+    if (!state || state.schemaVersion !== SCHEMA_VERSION || !/^session-[a-fA-F0-9-]{36}$/.test(state.sessionId || "")) {
+      fail("Session canon has an invalid canonical identity.", "INVALID_SESSION_CANON");
+    }
+    if (state.projectId && state.projectId !== project.projectId) fail("Session does not belong to this Project.", "HEAD_SESSION_IDENTITY_MISMATCH");
+  } catch (error) {
+    // Operational error provenance, never persisted or used to grant authority.
+    // Optional Product diagnostics can isolate their actual default dependency
+    // without catching a selected Session, Project or manifest failure.
+    error.headSessionRecordPath = stateFile;
+    throw error;
+  }
   const manifest = readJson(manifestFile, "Managed manifest");
   const drift = [];
   for (const item of manifest.managed || []) {
@@ -436,6 +450,21 @@ export function inspectProject(root = ".", { sessionScope = "selected" } = {}) {
       packageVersion: manifest.packageVersion || null,
     },
   };
+}
+
+// The managed manifest also binds immutable originals. Only these known
+// generated projections may drift without invalidating artifact-only recovery.
+// Keep inspectProject.status and all existing mutation preflights unchanged.
+const RECOVERY_INDEPENDENT_PROJECTIONS = new Set([
+  "AGENTS.md", "CLAUDE.md", ".mcp.json", "opencode.json",
+  ".head/generated/head-instructions.md", ".head/generated/claude.mcp.json", ".head/generated/opencode.json",
+  ".head/roles/head.md", ".head/roles/developer.md", ".head/roles/coder.md", ".head/roles/reviewer.md",
+]);
+export function isProjectRecoveryReadable(inspected) {
+  if (!["ready", "drifted"].includes(inspected.status)
+    || inspected.state?.schemaVersion !== SCHEMA_VERSION
+    || !/^session-[a-fA-F0-9-]{36}$/.test(inspected.state?.sessionId || "")) return false;
+  return inspected.status === "ready" || inspected.drift.every(item => RECOVERY_INDEPENDENT_PROJECTIONS.has(item.path));
 }
 
 export async function inspectRuntimeAdapters(root = ".") {

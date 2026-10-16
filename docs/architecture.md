@@ -33,6 +33,15 @@ The plugin is organized as thin provider distributions around a provider-neutral
 
 Claude Code, Codex, and OpenCode are projections of the same `.head/` authority. They do not own separate project truth.
 
+Small lower-level boundaries keep record consumers out of effect orchestration:
+`session-paths` supplies path confinement to routing and common direction;
+`product-policy-records` supplies immutable Policy verification/readers to graph
+projection; `runtime-invocation-storage` owns exclusive artifact publication;
+and `worker-patch-proposal-contract` supplies proposal verification without
+runtime launch. Existing public modules reexport their prior contracts. These
+cuts preserve record identities and authority; other World/refresh/operating-loop
+dependencies remain and no runtime-speed improvement is claimed.
+
 The source tree remains the directly runnable Core. CI creates independent,
 content-verified `codex-marketplace` and `claude-marketplace` branches from the
 same allowlisted distribution and overlays one five-platform, version- and

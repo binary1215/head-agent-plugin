@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { safeSessionPath } from "./session-routing.mjs";
+import { safeSessionPath } from "./session-paths.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { atomicCreateArtifact, atomicWriteArtifact } from "./artifact-storage.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
@@ -26,11 +26,49 @@ function verify(record, project) {
   return record;
 }
 
+function directionFileStat(file) {
+  try {
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink()) fail("Session path traverses a symlink.", "SESSION_PATH_ESCAPE");
+    return stat;
+  } catch (error) { if (error.code === "ENOENT") return null; throw error; }
+}
+
+function hasUnlinkedDirectionTrace(root) {
+  // Empty directories are not saved direction. Only recognizable originals or
+  // our exact atomic publication stages establish an interrupted/lost linkage.
+  // Never select a revision by its name, age, contents, or candidate count.
+  const uuid = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
+  const pointerStage = new RegExp(`^\\.current\\.json\\.${uuid}\\.tmp$`);
+  const revisionStage = new RegExp(`^\\.direction-[a-f0-9]{24}\\.json\\.${uuid}\\.tmp$`);
+  const traceIn = (directory, matches) => {
+    const stat = directionFileStat(directory);
+    if (!stat) return false;
+    if (!stat.isDirectory()) fail("Project direction store is not a directory.", "INVALID_PROJECT_DIRECTION");
+    let found = false;
+    for (const name of fs.readdirSync(directory)) {
+      if (!matches(name)) continue;
+      const trace = directionFileStat(safeSessionPath(root, path.relative(fs.realpathSync(path.resolve(root)), path.join(directory, name))));
+      if (trace && !trace.isFile()) fail("Project direction trace is not a file.", "INVALID_PROJECT_DIRECTION");
+      if (trace) found = true;
+    }
+    return found;
+  };
+  const directory = safeSessionPath(root, ".head", "project-direction");
+  const pointerTrace = traceIn(directory, (name) => pointerStage.test(name));
+  const revisionTrace = traceIn(safeSessionPath(root, ".head", "project-direction", "revisions"),
+    (name) => /^direction-.*\.json$/.test(name) || revisionStage.test(name));
+  return pointerTrace || revisionTrace;
+}
+
 export function readProjectDirection({ root = "." } = {}) {
   const project = read(safeSessionPath(root, ".head", "project.json"));
   if (project.projectRoot !== fs.realpathSync(path.resolve(root))) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
   const file = safeSessionPath(root, ".head", "project-direction", "current.json");
-  if (!fs.existsSync(file)) return null;
+  if (!directionFileStat(file)) {
+    if (hasUnlinkedDirectionTrace(root)) fail("Current Project direction linkage is unavailable; retained originals or publication stages are not an approved empty direction.", "PROJECT_DIRECTION_UNAVAILABLE");
+    return null;
+  }
   const pointer = read(file);
   if (!/^direction-[a-f0-9]{24}$/.test(pointer.directionId || "")) fail("Project direction pointer is invalid.", "INVALID_PROJECT_DIRECTION");
   return verify(read(safeSessionPath(root, ".head", "project-direction", "revisions", `${pointer.directionId}.json`)), project);

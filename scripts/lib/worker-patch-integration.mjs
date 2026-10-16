@@ -114,8 +114,9 @@ function verifyStoredReferences(root, intent) {
   return records;
 }
 
-// Historical P3 reading does not require live Host paths, current sources, a
-// current Session, or a provider connection. No status read writes a checkpoint.
+// Historical P3 reading needs no live Host paths, current sources, same Session
+// or provider connection. Existing readers still verify the selected Session
+// record; this is not a damaged/missing-Session bypass. No read writes a checkpoint.
 export function readWorkerPatchIntegration({ root = ".", integrationId } = {}) {
   const intent = verifyWorkerPatchIntegrationIntent(JSON.parse(readIntegrationBytes(integrationFile(root, integrationId))));
   if (intent.integrationId !== integrationId) fail("Worker integration filename differs.");

@@ -1,7 +1,7 @@
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject, isProjectRecoveryReadable } from "./head-core.mjs";
 import fs from "node:fs";
 import { sessionStatePath, safeSessionPath } from "./session-routing.mjs";
-import { readProjectDirection } from "./project-direction.mjs";
+import { readProjectDirectionView, sameProjectDirectionView } from "./project-direction-view.mjs";
 import {
   abortCompaction,
   continueCompaction,
@@ -150,12 +150,13 @@ function conversationProjection(root, recovery) {
 
 export function enterConversationRecovery({ root = "." } = {}) {
   const inspected = inspectProject(root);
-  const entryDirection = inspected.status === "ready" ? readProjectDirection({ root }) : null;
+  const readable = isProjectRecoveryReadable(inspected);
+  const entryDirection = readable ? readProjectDirectionView({ root }) : null;
   const recovery = recoveryReadiness(inspected, { includeRestore: true });
   const composed = conversationProjection(root, recovery);
   // Optional P3 work is never a prerequisite for P2 restore or ordinary work.
   // Its absence/corruption cannot manufacture a purpose, next action or approval.
-  if (inspected.status === "ready") {
+  if (readable) {
     try {
       composed.workContext = readSessionWorkContext({ root, expectedSessionId: inspected.state.sessionId,
         expectedCheckpointId: inspected.state.latestCheckpoint || null });
@@ -167,21 +168,21 @@ export function enterConversationRecovery({ root = "." } = {}) {
     }
   }
   const finish = (result) => {
-    if (inspected.status !== "ready") return result;
+    if (!readable) return result;
     const afterProject = JSON.parse(fs.readFileSync(safeSessionPath(root, ".head", "project.json"), "utf8"));
     const afterState = JSON.parse(fs.readFileSync(sessionStatePath(root), "utf8"));
-    const afterDirection = readProjectDirection({ root });
+    const afterDirection = readProjectDirectionView({ root });
     if (JSON.stringify(afterProject) === JSON.stringify(inspected.project)
       && JSON.stringify(afterState) === JSON.stringify(inspected.state)
-      && (afterDirection?.directionId || null) === (entryDirection?.directionId || null)) return result;
+      && sameProjectDirectionView(afterDirection, entryDirection)) return result;
     // A sequential composition is not an atomic snapshot. Never publish old
     // next-action context together with a later cancellation as a stable entry.
     return { ...recoveryAttention({ code: "CONVERSATION_ENTRY_BASIS_CHANGED" }), persisted: false,
-      currentProjectDirection: afterDirection, sessionId: null, workContext: { status: "work_context_basis_changed", records: [], persisted: false },
+      ...afterDirection, sessionId: null, workContext: { status: "work_context_basis_changed", records: [], persisted: false },
       nextHeadAction: "Reread this bounded entry before dependent work. Continue independent work; do not replay effects or ask for routine approval.",
       presentation: { mode: "exception", summary: "Selected context changed during entry; only dependent context needs another read.", userActionRequired: false } };
   };
-  if (inspected.status !== "ready") {
+  if (!readable) {
     return {
       status: "conversation_recovery_unavailable",
       reasonCode: inspected.status === "not_initialized" ? "NOT_INITIALIZED" : "PROJECT_NOT_READY",

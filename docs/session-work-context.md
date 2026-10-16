@@ -42,6 +42,40 @@ second direction store, history document, global memory database or daemon.
 - `head_session_work_read` expands exact originals, omitted records or the next
   inspection page. This is useful expansion, not a compulsory tool chain.
 
+Known generated instruction, role and provider-configuration differences remain
+visible without blocking intact selected-Session recovery or work-context reads.
+Edited or missing projections are never repaired by entry. Their update/mutation
+protections remain separate from original identity, digest and lineage checks;
+managed original drift, an unclassified managed path, or an unreadable manifest
+is not accepted as projection-only drift. No checkpoint is needed for useful
+ordinary work context.
+
+An exact healthy by-id Session remains readable when an unrelated default Session
+is missing or damaged. Optional Product facts depending on that default are
+unavailable, not a prerequisite to continue. Actual default requests, a damaged
+selected Session, known duplicate identities or wrong Project ownership still
+fail without substituting another Session. Reads do not repair or switch pointers.
+
+### When common direction linkage is unavailable
+
+A missing direction pointer is not an empty direction if an original revision or
+recognized interrupted-publication stage remains. Entry labels that common layer
+unavailable while retaining independently verified checkpoint and work evidence.
+HEAD continues independent work without a save, repair or approval ritual. Current
+direction-dependent effects and checkpoint CAS remain strict; historical decisions
+and next steps cannot replace the missing current constraints or cancellations.
+The existing continuation check runs before consuming its one-shot token.
+
+Empty directories with no recognizable original/stage retain the unused-store
+behavior. Neither names, timestamps nor a sole revision select current direction.
+Reads write no pointer. Complete removal of all traces cannot be distinguished
+from a never-used store without additional evidence. Original integrity/path errors
+remain errors, not availability exceptions. Sequential observations are not atomic.
+
+The embedded CLI's `metric-status` uses the same Project-only classification as
+its MCP peer even after caller selection loss. Existing readiness checks still
+apply; the route neither chooses default nor repairs the Host binding.
+
 Short work creates no additional record. Identical selected input reuses its
 original bytes; a genuinely separate repeated observation can carry a HEAD-owned
 occurrence distinction. Deduplication does not prove that an effect happened.

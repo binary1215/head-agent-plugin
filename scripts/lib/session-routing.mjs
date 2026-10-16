@@ -5,13 +5,16 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { atomicCreateArtifact } from "./artifact-storage.mjs";
 import { noteProjectGraphChange } from "./discovery-index.mjs";
-import { readProjectDirection } from "./project-direction.mjs";
+import { safeSessionPath, defaultSessionStatePath } from "./session-paths.mjs";
+export { safeSessionPath, defaultSessionStatePath } from "./session-paths.mjs";
+import { readProjectDirectionView } from "./project-direction-view.mjs";
 export { readProjectDirection, updateProjectDirection } from "./project-direction.mjs";
 
 // Routing is request-local Host selection, never a persisted global selector.
 const routes = new AsyncLocalStorage();
 const callContexts = new WeakSet();
-const fail = (message, code) => { throw Object.assign(new Error(message), { code }); };
+const fail = (message, code, recordPath = null) => { throw Object.assign(new Error(message), { code,
+  ...(recordPath ? { headSessionRecordPath: recordPath } : {}) }); };
 const canonicalRoot = (root) => fs.realpathSync(path.resolve(root || "."));
 const validId = (id) => typeof id === "string" && /^session-[a-fA-F0-9-]{36}$/.test(id);
 
@@ -27,6 +30,7 @@ const cliProjectCalls = new Map(Object.entries({
   "observation-sources": "head_observation_sources", "observation-read": "head_observation_read", "observation-query": "head_observation_query",
   "source-context": "head_source_context", "source-observation-read": "head_source_observation_read",
   "context-read": "head_context_capsule", "lineage-read": "head_lineage_artifact",
+  "metric-status": "head_metric_status",
 }));
 const selectedSessionCalls = new Set(["head_project_initialize_or_resume", "head_project_status", "head_conversation_enter", "head_session_restore", "head_session_continue",
   "head_pending_review", "head_runtime_adapters", "head_runtime_state", "head_world_model", "head_context_prepare", "head_context_preview", "head_compaction_lifecycle_step",
@@ -41,25 +45,10 @@ export function sessionCallRequiresBinding(name, surface = "mcp") {
     || selectedSessionCalls.has(name);
 }
 
-export function safeSessionPath(root, ...parts) {
-  const base = canonicalRoot(root);
-  const file = path.resolve(base, ...parts);
-  const relative = path.relative(base, file);
-  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("Session path escapes Project root.", "SESSION_PATH_ESCAPE");
-  let current = base;
-  for (const part of relative.split(path.sep).filter(Boolean)) {
-    current = path.join(current, part);
-    if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink()) fail("Session path traverses a symlink.", "SESSION_PATH_ESCAPE");
-  }
-  return file;
-}
-
 function read(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch (error) { fail(`Session record cannot be read: ${error.message}`, "INVALID_SESSION_CANON"); }
+  catch (error) { fail(`Session record cannot be read: ${error.message}`, "INVALID_SESSION_CANON", file); }
 }
-
-export function defaultSessionStatePath(root) { return safeSessionPath(root, ".head", "sessions", "current.json"); }
 
 export function assertRunSession(root, run, state) {
   // Historical Runs predate the explicit owner field; their original default
@@ -80,10 +69,14 @@ export function createSessionCallContext() {
     select(root, sessionId, expectedRevision = null) {
       const base = canonicalRoot(root), before = this.read(base);
       if (expectedRevision != null && before.revision !== expectedRevision) fail("Host Session binding changed.", "HEAD_SESSION_BINDING_CONFLICT");
-      const defaultId = read(defaultSessionStatePath(base)).sessionId;
-      const selected = sessionId == null || sessionId === "" ? defaultId : sessionId;
-      withSessionRoute(base, selected, () => {});
-      const value = Object.freeze({ status: selected === defaultId ? "default" : "bound", sessionId: selected, revision: before.revision + 1 });
+      let selected = sessionId;
+      if (sessionId == null || sessionId === "") {
+        const file = defaultSessionStatePath(base), state = read(file);
+        if (!state || !validId(state.sessionId)) fail("Default Session has an invalid canonical identity.", "INVALID_SESSION_CANON", file);
+        selected = state.sessionId;
+      }
+      const resolved = resolveSessionRoute(base, selected);
+      const value = Object.freeze({ status: resolved.stateFile === defaultSessionStatePath(base) ? "default" : "bound", sessionId: selected, revision: before.revision + 1 });
       bindings.set(base, value);
       return value;
     },
@@ -112,7 +105,8 @@ export function sessionSelectionUnresolved(root, { includeProjectFacts = false, 
   const project = read(projectFile);
   if (project.schemaVersion !== 1 || project.projectRoot !== canonicalRoot(root)
     || typeof project.projectId !== "string" || !project.projectId) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
-  const currentProjectDirection = readProjectDirection({ root });
+  const directionView = readProjectDirectionView({ root });
+  const { currentProjectDirection } = directionView;
   if (currentProjectDirection && currentProjectDirection.projectId !== project.projectId) fail("Project identity changed while reading its common direction.", "PROJECT_IDENTITY_MISMATCH");
   const unresolved = { status: "session_selection_unresolved", reasonCode,
     projectId: project.projectId, sessionId: null, sessionSelection: { status: "lost" },
@@ -121,13 +115,13 @@ export function sessionSelectionUnresolved(root, { includeProjectFacts = false, 
     headActionScope: "selected-session-dependent-work-only",
     affectedOperations: ["selected-session-read", "selected-session-mutation"],
     nextHeadAction: "Continue independent Project/source work. Only for dependent work, use an already verified explicit logical Session or Host binding; ask only if a material selection remains ambiguous.",
-    currentProjectDirection, executionReplayAllowed: false,
+    ...directionView, executionReplayAllowed: false,
     persisted: false, recoveryAuthority: false };
   if (!includeProjectFacts) return unresolved;
   return {
     ...unresolved,
     project: { projectId: project.projectId, projectRoot: project.projectRoot },
-    availability: { project: "identity_verified", currentProjectDirection: currentProjectDirection ? "available" : "not_recorded",
+    availability: { project: "identity_verified", currentProjectDirection: directionView.currentProjectDirectionAvailability?.status || (currentProjectDirection ? "available" : "not_recorded"),
       session: "unavailable", run: "unavailable", recovery: "unavailable",
       managedProjectionDrift: "not_assessed", runtime: "not_assessed", product: "not_assessed" },
     nextAction: { id: "continue_independent_work", summary: unresolved.nextHeadAction },
@@ -157,19 +151,34 @@ export function sessionDataPath(root, ...parts) {
     : safeSessionPath(root, ".head", "sessions", "by-id", selectedId(root), ...parts);
 }
 
+function resolveSessionRoute(base, sessionId) {
+  if (!validId(sessionId)) fail("Expected a logical HEAD Session id.", "INVALID_HEAD_SESSION_ID");
+  const project = read(safeSessionPath(base, ".head", "project.json"));
+  if (project.schemaVersion !== 1 || project.projectRoot !== base || !project.projectId) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
+  const defaultFile = defaultSessionStatePath(base);
+  const namedFile = safeSessionPath(base, ".head", "sessions", "by-id", sessionId, "current.json");
+  const named = fs.existsSync(namedFile);
+  let defaultState = null;
+  if (named) {
+    // A healthy default can establish an actual collision, but its unrelated
+    // absence or malformed bytes cannot invalidate this exact named original.
+    try { if (fs.existsSync(defaultFile)) defaultState = read(defaultFile); }
+    catch (error) { if (error.code !== "INVALID_SESSION_CANON") throw error; }
+    if (defaultState?.sessionId === sessionId) fail("Default and named Session identities collide.", "HEAD_SESSION_IDENTITY_MISMATCH", defaultFile);
+  } else defaultState = read(defaultFile);
+  const file = named ? namedFile : defaultState?.sessionId === sessionId ? defaultFile : namedFile;
+  if (!fs.existsSync(file)) fail("Logical HEAD Session does not exist.", "HEAD_SESSION_NOT_FOUND");
+  const state = read(file);
+  if (!state || state.sessionId !== sessionId || (named ? state.projectId !== project.projectId : state.projectId && state.projectId !== project.projectId)) fail("Session identity does not match this Project.", "HEAD_SESSION_IDENTITY_MISMATCH", file);
+  return { sessionId, stateFile: file, projectId: project.projectId };
+}
+
 export function withSessionRoute(root, sessionId, operation) {
   const base = canonicalRoot(root);
   if (sessionId == null || sessionId === "") return operation();
-  if (!validId(sessionId)) fail("Expected a logical HEAD Session id.", "INVALID_HEAD_SESSION_ID");
-  const defaultState = read(defaultSessionStatePath(base));
-  const file = defaultState.sessionId === sessionId ? defaultSessionStatePath(base)
-    : safeSessionPath(base, ".head", "sessions", "by-id", sessionId, "current.json");
-  if (!fs.existsSync(file)) fail("Logical HEAD Session does not exist.", "HEAD_SESSION_NOT_FOUND");
-  const state = read(file);
-  const project = read(safeSessionPath(base, ".head", "project.json"));
-  if (state.sessionId !== sessionId || state.projectId && state.projectId !== project.projectId) fail("Session identity does not match this Project.", "HEAD_SESSION_IDENTITY_MISMATCH");
+  const route = resolveSessionRoute(base, sessionId);
   const active = new Map(routes.getStore() || []);
-  active.set(base, { sessionId, stateFile: file, projectId: project.projectId });
+  active.set(base, route);
   return routes.run(active, operation);
 }
 

@@ -215,8 +215,9 @@ function readApplication(root, intent) {
   return { application, verification, resultPacket };
 }
 
-// No current source, provider, Session pointer or role-projection readiness gate
-// for immutable historical receipt reads. This cannot finish another Run.
+// Immutable historical receipts need no current source/provider, same Session
+// pointer or role-projection readiness. Selected Session record integrity checks
+// still apply through existing readers. This cannot finish another Run.
 export function readWorkerIntegrationResult({ root = ".", integrationId, verificationId } = {}) {
   const { intent } = readWorkerPatchIntegration({ root, integrationId });
   const existing = readApplication(root, intent);

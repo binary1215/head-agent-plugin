@@ -37,8 +37,15 @@ export function buildAttentionProjection(experience) {
     id: "managed-projection-drift",
     owner: "HEAD",
     severity: "integrity",
+    actionability: core.projectionDriftOnly ? "when-managed-mutation-is-in-scope" : "immediate",
     summary: "Inspect managed projection drift before a mutating HEAD operation.",
     blockedOperations: ["head-managed-mutation"],
+  }));
+  if (experience?.currentProjectDirectionAvailability?.status === "unavailable") items.push(item({
+    id: "current-project-direction-unavailable", owner: "HEAD", severity: "integrity",
+    actionability: "when-current-direction-dependent-work-is-in-scope",
+    summary: "Current common direction is unavailable. Retained Session context remains readable; assess only dependent effects or direction publication without guessing a revision.",
+    blockedOperations: ["current-project-direction-dependent-effects", "checkpoint-direction-publication"],
   }));
   if (recovery.headActionRequired) items.push(item({
     id: "recovery-verification",

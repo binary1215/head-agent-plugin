@@ -75,6 +75,21 @@ World Model은 아티팩트를 `ProductSignal`, `ProductHypothesis`, `ProductIni
 
 이 그래프는 `derived-evidence-only`입니다. 로컬 JSON이면 충분합니다. GraphDB는 선택적 구체화이며 오케스트레이션, 도구 라우팅, 컨텍스트 선택, ReviewDecision 또는 제품 의미를 소유할 수 없습니다.
 
+### 저장된 원본과 미완료 파생 갱신
+
+primary 원본이나 검토가 검증·저장된 뒤 World/Product Graph 갱신이 실패해도 정확한
+ID를 숨기거나 저장 자체의 실패로 바꾸지 않습니다. 기존 응답의 primary 상태와
+identity는 유지합니다. 이 예외에만 `productGraph.status: "deferred"`, 제한된
+`reasonCode`, `ordinaryWorkBlocked: false`를 반환하고 정상 graph의 세 identity
+필드는 그대로입니다. Initiative 검토의 text에도 저장된 결정과 파생 갱신 미완료를
+함께 표시합니다.
+
+deferred는 파생 갱신이 완료되지 않았다는 뜻이지 재시도 예약이나 파생 쓰기 0의
+보장이 아닙니다. queue·강제 refresh·효과 자동 재실행·추가 사용자 절차는 없습니다.
+입력·참조·권한·digest 오류, 불확실한 primary 발행과 부분 primary 저장 실패는
+계속 실패하며 손상 원본은 보존합니다. 정확한 재시도는 검증된 원본을 재사용하고
+결정을 중복 생성하거나 실행 권한을 늘리지 않습니다.
+
 ## HEAD 연속성 경계
 
 `HEADContinuitySnapshot`은 요청 시 빌드되며 프로젝트 저장소에 절대 기록되지 않습니다. 현재 Project, Session, Run, WholePlan, ExecutionContract, ResultPacket, ReviewDecision, checkpoint, Product Model, World Model 및 product-operating 식별자가 존재할 경우 그에 대한 정확한 참조를 포함합니다.
@@ -108,7 +123,7 @@ head product-operating-status <project> [--fresh]
 head head-continuity <project> [--fresh]
 ```
 
-record/review/observe 명령은 동일한 작업에서 로컬 World Model과 Product Graph를 다시 빌드합니다. 원격 GraphDB를 활성화하지는 않습니다.
+record/review/observe 명령은 primary 저장 뒤 같은 작업에서 로컬 World Model과 Product Graph 재구축을 시도합니다. 파생 갱신 미완료는 저장 성공과 별도로 표시하며 원격 GraphDB를 활성화하지는 않습니다.
 
 ## MCP
 

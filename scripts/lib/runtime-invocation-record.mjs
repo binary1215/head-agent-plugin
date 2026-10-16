@@ -1,3 +1,4 @@
+import { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-storage.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -45,17 +46,7 @@ export function runtimeInvocationRecordDirectory(projectRoot, authorizationId) {
   return path.join(projectRoot, ".head", "runtime", "invocations", authorizationId);
 }
 
-export function writeRuntimeInvocationArtifactExclusive(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
-  try {
-    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
-    fs.linkSync(temporary, file);
-    fs.unlinkSync(temporary);
-  } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-  }
-}
+export { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-storage.mjs";
 
 function verifyRecordLineage({ authorization, receipt, draft, events }) {
   const verifiedAuthorization = verifyRuntimeInvocationAuthorization(authorization);

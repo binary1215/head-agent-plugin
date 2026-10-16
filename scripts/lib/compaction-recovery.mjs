@@ -4,7 +4,7 @@ import path from "node:path";
 import { sessionStatePath, sessionDataPath, assertRunSession, safeSessionPath } from "./session-routing.mjs";
 import { readProjectDirection } from "./project-direction.mjs";
 import { atomicWriteArtifact } from "./artifact-storage.mjs";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./head-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
@@ -58,9 +58,10 @@ function turnId(value, label) {
   return value;
 }
 
-function readyProject(root, action) {
+function readyProject(root, action, { readOnly = false } = {}) {
   const inspected = inspectProject(root);
   if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (readOnly && isProjectRecoveryReadable(inspected)) return inspected;
   if (inspected.status === "drifted") fail(`Managed file drift must be resolved before ${action}.`, "MANAGED_DRIFT");
   if (inspected.status !== "ready") fail(`Project must be ready before ${action}; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   return inspected;
@@ -369,12 +370,13 @@ function recoveryCheckpointBasisFromInspection(inspected) {
 }
 
 export function inspectRecoveryCheckpointBasis({ root = "." } = {}) {
-  const inspected = readyProject(root, "recovery checkpoint freshness is inspected");
+  const inspected = readyProject(root, "recovery checkpoint freshness is inspected", { readOnly: true });
   const basis = recoveryCheckpointBasisFromInspection(inspected);
   return {
     status: "recovery_checkpoint_basis_inspected",
     basis,
-    syncAvailability: basis.runTransition.status === "incomplete" ? "deferred-run-transition"
+    syncAvailability: inspected.status !== "ready" ? "unavailable-managed-projection-drift"
+      : basis.runTransition.status === "incomplete" ? "deferred-run-transition"
       : basis.runTransition.status === "conflict" ? "conflict-run-transition"
         : basis.compaction.status === "open" ? "deferred-compaction" : "ready",
     persisted: false,
@@ -695,7 +697,7 @@ export function syncRecoveryCheckpoint(options = {}) {
 
 export function readRecoveryCheckpoint({ root = ".", checkpointId, historical = false } = {}) {
   const inspected = historical ? { project: readJson(safeSessionPath(root, ".head", "project.json"), "Project canon") }
-    : readyProject(root, "a recovery checkpoint is read");
+    : readyProject(root, "a recovery checkpoint is read", { readOnly: true });
   if (inspected.project.projectRoot !== fs.realpathSync(path.resolve(root))) fail("Project root identity differs.", "PROJECT_IDENTITY_MISMATCH");
   const file = checkpointFile(inspected.project.projectRoot, checkpointId);
   if (!fs.existsSync(file)) fail(`Recovery checkpoint not found: ${checkpointId}`, "RECOVERY_CHECKPOINT_NOT_FOUND");
@@ -1016,6 +1018,9 @@ function continueCompactionLocked({ root = ".", epochId, continuationToken, curr
     fail("The continuation no longer matches the current Project, Session, epoch, and checkpoint.", "COMPACTION_CHECKPOINT_STALE");
   }
   assertCurrentStateMatchesCheckpoint(readyProject(inspected.project.projectRoot, "continuation is consumed"), checkpoint);
+  // Existing current-direction verification precedes the one-shot P5 write;
+  // unavailable common authority must not be reported only after consumption.
+  const currentProjectDirection = readProjectDirection({ root: inspected.project.projectRoot });
   const consumption = {
     schemaVersion: SCHEMA_VERSION,
     kind: "CompactionContinuationConsumption",
@@ -1037,7 +1042,7 @@ function continueCompactionLocked({ root = ".", epochId, continuationToken, curr
     status: "compaction_continuation_consumed",
     epoch,
     checkpoint,
-    currentProjectDirection: readProjectDirection({ root: inspected.project.projectRoot }),
+    currentProjectDirection,
     continuationInstruction: `Continue from checkpoint ${checkpoint.checkpointId} subject to the current common Project direction, constraints and cancelled actions; its historical nextExpectedResult grants no current effect authorization. Preserve the checkpoint's recorded purpose and approved decisions.`,
     providerSubmission: "adapter-or-user-owned",
   };

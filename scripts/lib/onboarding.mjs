@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { defaultSessionStatePath, sessionStatePath } from "./session-routing.mjs";
 import {
   buildOnboardingState,
   buildSessionRecord,
@@ -113,8 +114,8 @@ function readJson(file, label, code = "INVALID_ONBOARDING_ARTIFACT") {
   catch (error) { fail(`${label} is invalid JSON: ${error.message}`, code); }
 }
 
-function readyProject(root, action = "onboarding") {
-  const inspected = inspectProject(root, { sessionScope: "default" });
+function readyProject(root, action = "onboarding", sessionScope = "default") {
+  const inspected = inspectProject(root, { sessionScope });
   if (inspected.status !== "ready") {
     fail(`Project must be ready for ${action}; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   }
@@ -1742,14 +1743,18 @@ function verifyCurrentOnboardingReviewLineage({ projectRoot, state, candidateSet
 // A diagnostic boundary, never a replacement for strict promotion validation.
 // Core/P2 validation deliberately remains outside the optional capability catch.
 export function inspectOptionalOnboarding({ root = "." } = {}) {
-  readyProject(root, "optional Product inspection");
+  readyProject(root, "optional Product inspection", "selected");
   try { return inspectOnboarding({ root }); }
   catch (error) {
+    const unrelatedDefaultFailure = error.headSessionRecordPath === defaultSessionStatePath(root)
+      && sessionStatePath(root) !== defaultSessionStatePath(root);
     if (!/^(?:INVALID_)?(?:ONBOARDING|WORLD_MODEL|GRAPH_|TEMPORAL_|PRODUCT_MODEL|PRODUCT_CANON|DOCUMENT_|ARCADEDB|HISTORICAL_|STORAGE_SELECTION|SESSION_RECORD)/.test(error.code || "")
-      && !new Set(["ENOENT", "EACCES", "EPERM", "EISDIR"]).has(error.code)) throw error;
+      && !new Set(["ENOENT", "EACCES", "EPERM", "EISDIR"]).has(error.code)
+      && !unrelatedDefaultFailure) throw error;
     return {
       status: "integrity_attention",
       reasonCode: error.code,
+      ...(unrelatedDefaultFailure ? { unavailableDependency: "default-session" } : {}),
       ordinaryWorkBlocked: false,
       userReviewRequired: false,
       nextAction: "inspect_product_governance",

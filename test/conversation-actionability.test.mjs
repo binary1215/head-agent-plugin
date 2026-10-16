@@ -131,10 +131,15 @@ test("orphan current contract remains fail-closed only for recovery-dependent wo
 test("managed projection drift with no checkpoint never invents a checkpoint-dependent gate", async (t) => {
   const root = fixture(t);
   fs.appendFileSync(path.join(root, "AGENTS.md"), "\nlocal project change\n");
-  const entry = await verifySurfaces(root, { headActionRequired: true, recoveryHeadAction: true });
-  assert.equal(entry.status, "conversation_recovery_unavailable");
+  const entry = await verifySurfaces(root, { headActionRequired: false, presentation: "notice" });
+  assert.equal(entry.status, "conversation_ready");
+  assert.equal(entry.projectStatus.nextAction.id, "work_directly");
+  assert.equal(entry.projectStatus.readiness.recovery.state, "no-current-checkpoint");
   assert.deepEqual(entry.blockedOperations, ["head-managed-mutation"]);
-  assert.equal(entry.attention.items.find((item) => item.id === "recovery-verification").blockedOperations.includes("checkpoint-dependent-work"), false);
+  assert.equal(entry.attention.items.find((item) => item.id === "managed-projection-drift").actionability, "when-managed-mutation-is-in-scope");
+  assert.equal(entry.attention.items.some((item) => item.id === "recovery-verification"), false);
+  assert.match(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), /local project change/u);
+  assert.throws(() => checkpoint(root), { code: "MANAGED_DRIFT" });
 });
 
 test("optional Product review stays conditional, not an immediate user or HEAD gate", async (t) => {

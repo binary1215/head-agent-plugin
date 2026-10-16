@@ -79,6 +79,23 @@ The World Model projects the artifacts as `ProductSignal`, `ProductHypothesis`, 
 
 This graph is `derived-evidence-only`. Local JSON is sufficient. GraphDB is an optional materialization and cannot own orchestration, tool routing, context selection, ReviewDecision, or product meaning.
 
+### Saved records and deferred projections
+
+Once a primary record or review has been verified and saved, failure to update
+the derived World/Product Graph does not hide its exact ID or turn that committed
+record into a failed save. The existing response retains its primary status and
+identity. Only this exceptional result has `productGraph.status: "deferred"`, a
+bounded `reasonCode`, and `ordinaryWorkBlocked: false`; a healthy graph retains
+the same three identity fields. Initiative review text also discloses the saved
+decision and deferred graph update.
+
+Deferred means the derived update did not complete, not that a retry is scheduled
+or that no derived bytes were written. No queue, forced refresh, automatic effect
+replay or extra user step is added. Invalid input/references, permissions, digests,
+uncertain primary publication and partially failed primary transactions still
+fail. Damaged originals are preserved. Exact retry reuses the verified record;
+it does not create another decision or widen execution authority.
+
 ## HEAD continuity boundary
 
 `HEADContinuitySnapshot` is built on demand and is never written to project storage. It contains exact references to current Project, Session, Run, WholePlan, ExecutionContract, ResultPacket, ReviewDecision, checkpoint, Product Model, World Model, and product-operating identities when present.
@@ -113,7 +130,7 @@ head product-operating-status <project> [--fresh]
 head head-continuity <project> [--fresh]
 ```
 
-The record/review/observe commands rebuild the local World Model and Product Graph in the same operation. They do not activate a remote GraphDB.
+The record/review/observe commands attempt to rebuild the local World Model and Product Graph after primary storage in the same operation. A deferred projection is reported separately from the saved record. They do not activate a remote GraphDB.
 
 ## MCP
 

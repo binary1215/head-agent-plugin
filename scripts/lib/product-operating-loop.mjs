@@ -471,12 +471,23 @@ async function projectProductOperatingGraph(inspected) {
   return { projectionInputId: projection.projectionInputId, worldModelId: built.snapshot.worldModelId, graphSnapshotId: built.snapshot.temporalProvenanceGraph.graphSnapshotId };
 }
 
+// Call only after every primary publication has returned successfully. A failed
+// derived update neither erases that record nor schedules/replays any effect.
+async function projectCommittedProductOperatingGraph(inspected) {
+  try { return await projectProductOperatingGraph(inspected); }
+  catch (error) {
+    const reasonCode = typeof error?.code === "string" && /^[A-Z][A-Z0-9_:-]{0,127}$/.test(error.code)
+      ? error.code : "PRODUCT_OPERATING_PROJECTION_FAILED";
+    return { status: "deferred", reasonCode, ordinaryWorkBlocked: false };
+  }
+}
+
 async function recordProductSignalUnlocked({ root = ".", statement, observedAt = new Date().toISOString(), evidenceIds = [], source = "" } = {}) {
   const inspected = readyProject(root, "a ProductSignal is recorded");
   const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductSignal", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, statement: requiredText(statement, "ProductSignal statement"), observedAt: new Date(observedAt).toISOString(), source: optionalText(source, "ProductSignal source"), evidenceIds: sortedIds(evidenceIds, "ProductSignal evidenceIds"), epistemicClass: "observed-fact", authority: "non-authoritative-observation", instructionAuthority: false, promotionAuthority: false };
   const signal = verifyProductSignal(artifact(payload, "product-signal", "signalId", "signalHash"), inspected.project.projectId);
   const persisted = persistImmutable(inspected.project.projectRoot, PRODUCT_SIGNAL_DIRECTORY, signal.signalId, signal);
-  return { ...persisted, signal, productGraph: await projectProductOperatingGraph(inspected) };
+  return { ...persisted, signal, productGraph: await projectCommittedProductOperatingGraph(inspected) };
 }
 
 async function recordProductHypothesisUnlocked({ root = ".", statement, signalIds = [], observationIds = [], rationale = "" } = {}) {
@@ -496,7 +507,7 @@ async function recordProductHypothesisUnlocked({ root = ".", statement, signalId
   const payload = { schemaVersion: SCHEMA_VERSION, kind: "ProductHypothesis", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_HYPOTHESIS_VERSION }, projectId: inspected.project.projectId, statement: requiredText(statement, "ProductHypothesis statement"), rationale: optionalText(rationale, "ProductHypothesis rationale"), signalIds: ids, observationIds: exactObservationIds, referenceSemantics: "neutral", epistemicClass: "hypothesis", authority: "non-authoritative-hypothesis", instructionAuthority: false, promotionAuthority: false };
   const hypothesis = verifyProductHypothesis(artifact(payload, "product-hypothesis", "hypothesisId", "hypothesisHash"), inspected.project.projectId);
   const persisted = persistImmutable(inspected.project.projectRoot, PRODUCT_HYPOTHESIS_DIRECTORY, hypothesis.hypothesisId, hypothesis);
-  return { ...persisted, hypothesis, productGraph: await projectProductOperatingGraph(inspected) };
+  return { ...persisted, hypothesis, productGraph: await projectCommittedProductOperatingGraph(inspected) };
 }
 
 function resolveFeature(projectRoot, projectId, featureResolution, initiativeCandidateSeed) {
@@ -613,7 +624,7 @@ async function proposeProductInitiativeUnlocked({ root = ".", title, description
   const prepared = prepareImmutableWrites(inspected.project.projectRoot, writes);
   for (const item of prepared.slice(0, -1)) persistPreparedImmutable(inspected.project.projectRoot, item);
   const persisted = persistPreparedImmutable(inspected.project.projectRoot, prepared.at(-1));
-  return { ...persisted, initiativeCandidate, featureCandidate, productGraph: await projectProductOperatingGraph(inspected) };
+  return { ...persisted, initiativeCandidate, featureCandidate, productGraph: await projectCommittedProductOperatingGraph(inspected) };
 }
 
 async function reviewProductInitiativeUnlocked({ root = ".", initiativeCandidateId, disposition, rationale, featureResolution = null } = {}) {
@@ -631,7 +642,7 @@ async function reviewProductInitiativeUnlocked({ root = ".", initiativeCandidate
     if (disposition === "accept" && !persistedResolution) fail("Stored Product Initiative review has no exact Feature selection; preserve the unresolved original.", "PRODUCT_INITIATIVE_REVIEW_RECOVERY_UNAVAILABLE");
     const persistedFeatureCandidate = existingReview.featureCandidate || current.featureCandidates.find((item) => item.featureCandidateId === persistedResolution?.featureCandidateId) || null;
     const selected = replayFeatureSelection(inspected.project.projectRoot, inspected.project.projectId, candidate, disposition, featureResolution, persistedResolution, persistedFeatureCandidate);
-    return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", persistenceStatus: "existing", reviewDecision: existingReview, reviewedInitiative: existingReviewed, featureCandidate: selected.featureCandidate, productCanonMutated: false, productGraph: await projectProductOperatingGraph(inspected) };
+    return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", persistenceStatus: "existing", reviewDecision: existingReview, reviewedInitiative: existingReviewed, featureCandidate: selected.featureCandidate, productCanonMutated: false, productGraph: await projectCommittedProductOperatingGraph(inspected) };
   }
   const selected = selectedFeatureForReview(inspected.project.projectRoot, inspected.project.projectId, candidate, disposition, featureResolution);
   const payload = { schemaVersion: SCHEMA_VERSION, kind: "ReviewDecision", protocol: { name: "head-agent-core-product-initiative-review", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, decisionScope: "product-initiative", initiativeCandidateId, initiativeCandidateHash: candidate.initiativeCandidateHash, disposition, rationale: normalizedRationale, featureResolution: selected.resolution, featureCandidate: selected.featureCandidate, authority: "explicit-user-product-initiative-review", instructionAuthority: true, promotionAuthority: disposition === "accept" };
@@ -643,7 +654,7 @@ async function reviewProductInitiativeUnlocked({ root = ".", initiativeCandidate
   ];
   const prepared = prepareImmutableWrites(inspected.project.projectRoot, writes);
   for (const item of prepared) persistPreparedImmutable(inspected.project.projectRoot, item);
-  return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", persistenceStatus: "recorded", reviewDecision, reviewedInitiative, featureCandidate: selected.featureCandidate, productCanonMutated: false, productGraph: await projectProductOperatingGraph(inspected) };
+  return { status: disposition === "accept" ? "initiative_accepted" : "initiative_rejected", persistenceStatus: "recorded", reviewDecision, reviewedInitiative, featureCandidate: selected.featureCandidate, productCanonMutated: false, productGraph: await projectCommittedProductOperatingGraph(inspected) };
 }
 
 async function observeProductOutcomeUnlocked({ root = ".", changeSetId, statement, epistemicClass = "observed-fact", evidenceIds = [], initiativeId = "" } = {}) {
@@ -657,7 +668,7 @@ async function observeProductOutcomeUnlocked({ root = ".", changeSetId, statemen
   const payload = { schemaVersion: SCHEMA_VERSION, kind: "OutcomeObservation", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: inspected.project.projectId, initiativeId: initiativeId || null, changeSetId: changeSet.changeSetId, resultPacketId: result.resultPacketId, executionReviewDecisionId: review.reviewDecisionId, statement: requiredText(statement, "OutcomeObservation statement"), evidenceIds: sortedIds(evidenceIds, "OutcomeObservation evidenceIds"), epistemicClass, authority: "non-authoritative-outcome-evidence", instructionAuthority: false, promotionAuthority: false };
   const outcomeObservation = verifyOutcomeObservation(artifact(payload, "outcome-observation", "outcomeObservationId", "outcomeObservationHash"), inspected.project.projectId);
   const persisted = persistImmutable(inspected.project.projectRoot, OUTCOME_OBSERVATION_DIRECTORY, outcomeObservation.outcomeObservationId, outcomeObservation);
-  return { ...persisted, outcomeObservation, featureStatusMutated: false, successJudgmentRecorded: false, productGraph: await projectProductOperatingGraph(inspected) };
+  return { ...persisted, outcomeObservation, featureStatusMutated: false, successJudgmentRecorded: false, productGraph: await projectCommittedProductOperatingGraph(inspected) };
 }
 
 async function serializedProductMutation(options, action, operation) {

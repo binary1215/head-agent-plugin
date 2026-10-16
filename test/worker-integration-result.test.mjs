@@ -162,7 +162,7 @@ test("existing receipt is historical across later Run, Session, source and manag
   accept(f.root);
   startRun({ root: f.root, executionContractId: f.contract.executionContractId });
   const state = JSON.parse(fs.readFileSync(f.sessionFile));
-  fs.writeFileSync(f.sessionFile, JSON.stringify({ ...state, sessionId: "session-replacement-fixture" }));
+  fs.writeFileSync(f.sessionFile, JSON.stringify({ ...state, sessionId: "session-00000000-0000-4000-8000-000000000001" }));
   fs.appendFileSync(path.join(f.root, "a.txt"), "source drift");
   fs.appendFileSync(path.join(f.root, "AGENTS.md"), "\nSynthetic managed projection drift\n");
   const before = files(f.root);

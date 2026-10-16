@@ -9,11 +9,11 @@ import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { inspectRunStorageTransition } from "./run-lineage.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
-import { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-record.mjs";
+import { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-storage.mjs";
 import { captureWorkerSourceBasis, verifyWorkerSourceBasis, requireCurrentWorkerSourceBasis } from "./worker-source-basis.mjs";
 import { verifyWorkerExecutionBoundary } from "./worker-workspace.mjs";
 import { captureWorkerWriteBasis, requireCurrentWorkerWriteBasis } from "./worker-patch-basis.mjs";
-import { isWorkerPatchProposalMode, verifyWorkerPatchProposalExecutionBoundary, verifyWorkerPatchProposal } from "./worker-patch-proposal.mjs";
+import { isWorkerPatchProposalMode, verifyWorkerPatchProposalExecutionBoundary, verifyWorkerPatchProposal } from "./worker-patch-proposal-contract.mjs";
 import { workerMemberFile, readWorkerMemberChain, requireCurrentWorkerMember } from "./worker-member-registry.mjs";
 import {
   verifyRuntimeProjectBinding,

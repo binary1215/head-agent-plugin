@@ -873,12 +873,13 @@ test("detects managed file drift and blocks canonical mutation", (t) => {
   assert.equal(experience.readiness.product.state, "inspection_blocked");
   assert.equal(experience.readiness.product.governanceActivated, null);
   assert.equal(experience.readiness.context.state, "blocked");
-  assert.equal(experience.nextAction.id, "review_managed_projection_drift");
+  assert.equal(experience.nextAction.id, "work_directly");
+  assert.equal(experience.readiness.core.projectionDriftOnly, true);
   assert.equal(experience.attention.userDecisionRequired, false);
-  assert.equal(experience.attention.headActionRequired, true);
+  assert.equal(experience.attention.headActionRequired, false);
   assert.equal(experience.attention.ordinaryWorkBlocked, false);
   assert.equal(experience.attention.blockedOperations.includes("head-managed-mutation"), true);
-  assert.equal(experience.nextAction.entrypoint.note.includes("explicit repair"), true);
+  assert.equal(experience.attention.items.find((item) => item.id === "managed-projection-drift").actionability, "when-managed-mutation-is-in-scope");
   assert.equal(experience.capabilities.find((item) => item.id === "direct-work").availability, "available");
   assert.equal(experience.capabilities.filter((item) => item.id !== "direct-work").every((item) => item.availability === "blocked-until-core-ready"), true);
   assert.throws(() => createRecoveryCheckpoint({

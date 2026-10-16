@@ -78,7 +78,9 @@ function formatUnavailableSession(value, { doctor = false } = {}) {
     for (const [key, label] of [["constraints", "Constraint"], ["decisions", "Common decision"], ["cancelledActions", "Cancelled action"]]) {
       for (const item of direction.input[key]) lines.push(`${label}: ${compactText(item, 300)}`);
     }
-  } else lines.push("Current common direction: not recorded (not an approved empty direction).");
+  } else lines.push(value.currentProjectDirectionAvailability?.status === "unavailable"
+    ? "Current common direction: unavailable, not empty; only direction-dependent effects need HEAD follow-up."
+    : "Current common direction: not recorded (not an approved empty direction).");
   if (doctor) lines.push("Loaded/configured package: not assessed", "Host restart: not assessed", "Managed projection drift: not assessed");
   lines.push("", value.nextHeadAction,
     "User action: none for independent work. Session-dependent work alone may need selection clarification.",
@@ -96,6 +98,9 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
     ? "Product candidates need review; ordinary work remains available"
     : "none for ordinary work";
   const integrityAttention = core?.state === "drifted" || recovery?.headActionRequired;
+  if (!doctor && !integrityAttention && value.currentProjectDirectionAvailability?.status === "unavailable") {
+    return "HEAD Session context remains available; current common direction is unavailable. Continue independent work; only direction-dependent effects or publication need HEAD follow-up.\n";
+  }
   const next = value.nextAction?.id === "work_directly"
     ? "Continue the user's original task."
     : compactText(value.nextAction?.summary || "Continue with the task.");
@@ -176,7 +181,9 @@ export function formatSessionRestore(value) {
   if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value);
   const checkpoint = value?.checkpoint || {};
   return `${[
-    "HEAD recovered the current direction from verified project artifacts.",
+    (value?.currentProjectDirectionAvailability || value?.projection?.currentProjectDirectionAvailability)?.status === "unavailable"
+      ? "HEAD verified the retained Session checkpoint; current common direction remains unavailable, not empty."
+      : "HEAD recovered the current direction from verified project artifacts.",
     "",
     `Purpose: ${compactText(checkpoint.purpose || "not recorded", 240)}`,
     `Current position: ${compactText(checkpoint.currentPosition || "not recorded", 240)}`,
@@ -191,6 +198,9 @@ export function formatSessionRestore(value) {
 export function formatConversationRecovery(value) {
   const entry = value?.conversationEntry || value;
   if (entry?.status === "session_selection_unresolved") return formatUnavailableSession(entry);
+  if (entry?.projectStatus?.currentProjectDirectionAvailability?.status === "unavailable") {
+    return `Current common direction is unavailable, not empty. Independent work continues; only direction-dependent effects or publication need HEAD follow-up.${entry.recoveryDependentWorkBlocked ? " Checkpoint-dependent work also retains its existing recovery checks." : ""}\n${formatSessionWorkContext(entry.workContext)}`;
+  }
   const restored = entry?.restore?.checkpoint || entry?.restore?.projection?.checkpoint || {};
   const lines = [];
   if (value?.status === "compaction_lifecycle_prepared") {
@@ -457,12 +467,18 @@ export function formatReviewOutcome(value) {
   const disposition = value?.reviewDecision?.disposition || value?.disposition?.disposition || "recorded";
   const headMaintenance = value?.disposition?.authority === "head-maintenance-evidence-not-user-decision-or-execution-authority";
   const authorityChanged = value?.authorityEffect === "explicit-product-canon-transition";
+  const graphDeferred = value?.productGraph?.status === "deferred";
+  const graphReason = /^[A-Z][A-Z0-9_:-]{0,127}$/.test(value?.productGraph?.reasonCode || "")
+    ? value.productGraph.reasonCode : "PRODUCT_OPERATING_PROJECTION_FAILED";
+  const savedDecisionId = /^[a-z-]+-[a-f0-9]{24}$/.test(value?.reviewDecision?.reviewDecisionId || "")
+    ? value.reviewDecision.reviewDecisionId : "decision";
   return `${[
     headMaintenance ? "HEAD evidence maintenance was recorded; no user decision was claimed or requested." : "The explicit user decision was recorded.",
     "",
     `Disposition: ${disposition}`,
     `Product Canon changed: ${authorityChanged ? "yes, through the scoped ReviewDecision" : "no"}`,
     "Verification: the Core accepted the exact current target and structured decision.",
+    ...(graphDeferred ? [`Saved ${savedDecisionId}; derived graph update deferred (${graphReason}).`] : []),
     headMaintenance ? "The finding remains evidence, not resolved or approved; ordinary work can continue." : "Remaining uncertainty: semantic correctness remains subject to the user's decision and cited evidence.",
     "",
     "Technical IDs remain in the structured result.",

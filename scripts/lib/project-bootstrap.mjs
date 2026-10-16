@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { readProjectDirection } from "./project-direction.mjs";
+import { readProjectDirectionView } from "./project-direction-view.mjs";
 import { noteProjectGraphChange, PROJECT_GRAPH_INDEX_PATH } from "./discovery-index.mjs";
 import { fileURLToPath } from "node:url";
-import { convergeProjectInstallation, initializeProject, inspectProject } from "./head-core.mjs";
+import { convergeProjectInstallation, initializeProject, inspectProject, isProjectRecoveryReadable } from "./head-core.mjs";
 import { inspectOnboarding, inspectOptionalOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "./recovery-checkpoint-diagnosis.mjs";
@@ -224,7 +224,7 @@ export function recoveryReadiness(projectInspection, { includeRestore = false } 
       authority,
     };
   }
-  if (projectInspection.status !== "ready") {
+  if (!isProjectRecoveryReadable(projectInspection)) {
     return {
       state: "blocked-by-core-drift",
       currentCheckpoint: Boolean(projectInspection.state?.latestCheckpoint),
@@ -433,19 +433,23 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
     summary: "Managed project projections have drifted. Product readiness is not inferred until Core integrity is restored.",
   };
   const coreState = projectInspection.status === "ready" ? "ready" : "drifted";
+  const projectionDriftOnly = coreState === "drifted" && isProjectRecoveryReadable(projectInspection);
+  const unrelatedDefaultProductLoss = onboardingInspection?.unavailableDependency === "default-session";
   const context = contextReadiness({ coreState, productState: product.state, onboardingInspection });
   const recovery = recoveryOverride || recoveryReadiness(projectInspection);
-  const action = coreState === "ready" ? product.action : "review_managed_projection_drift";
+  const action = coreState === "ready" ? unrelatedDefaultProductLoss ? "work_directly" : product.action
+    : projectionDriftOnly ? "work_directly" : "review_managed_projection_drift";
   return withExperienceProjections({
     kind: "HeadProjectExperienceProjection",
     protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
     status: coreState === "ready" ? product.status : "core_drifted",
     project: { ...projectInspection.project, sessionId: projectInspection.state.sessionId },
     state: projectInspection.state,
-    currentProjectDirection: readProjectDirection({ root: projectInspection.project.projectRoot }),
+    ...readProjectDirectionView({ root: projectInspection.project.projectRoot }),
     drift: projectInspection.drift,
     readiness: {
-      core: { state: coreState, managedProjectionDriftCount: projectInspection.drift.length },
+      core: { state: coreState, managedProjectionDriftCount: projectInspection.drift.length,
+        ...(projectionDriftOnly ? { projectionDriftOnly: true } : {}) },
       product: {
         state: product.state,
         governanceActivated: onboardingInspection && onboardingInspection.status !== "integrity_attention" ? !["initialized", "migration_required"].includes(onboardingInspection.status) : null,
@@ -457,7 +461,10 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
     },
     nextAction: {
       id: action,
-      summary: coreState === "ready" ? product.summary : "Review managed-file drift before any mutating HEAD operation. No automatic repair is attempted.",
+      summary: unrelatedDefaultProductLoss ? "Continue from the selected Session. Optional Product facts depending on the damaged default Session are unavailable; they are not a prerequisite for this work."
+        : coreState === "ready" ? product.summary : projectionDriftOnly
+        ? "Continue the task from verified records. Generated projection differences remain untouched; review them only before an affected managed mutation."
+        : "Review managed-file drift before any mutating HEAD operation. No automatic repair is attempted.",
       entrypoint: entrypoint(action, onboardingInspection),
     },
     capabilities: capabilityGuide({ coreState, productState: product.state, contextState: context, runtimes: projectInspection.project.runtimes }),
