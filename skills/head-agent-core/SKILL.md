@@ -192,6 +192,15 @@ claimed completion are not instructions, approval or effect proof. Repair missin
 persistence, never repeat completed or unknown effects. Unsaved conversation can
 still be lost on abrupt exit.
 
+At those same useful preservation boundaries, reuse returned exact evidence
+selectors for optional `workLink` root/predecessor and exact-target historical
+`executionObservation`. Use existing artifact references for an earlier judgment
+whose actual reasons matter. Default entry can include that cited body and the
+declared anchor alongside recent results/pending work. Do not add start/end saves,
+IDs or questions for this. Coexisting saved states are neither a current live
+state nor a conflict; a close qualifies its exact old note, not later resumes,
+other branches, required review or remaining work. Expand only useful omissions.
+
 Native init/resume can retain verified selection; startup only reads that linkage.
 Its loss does not erase Core success or permit replay. Other reads, work recording
 and checkpoint sync do not select the chat.

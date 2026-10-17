@@ -16,6 +16,10 @@ const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const packageVersion = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8")).version;
 const workEvidenceText = { type: "string", minLength: 1 };
 const workEvidenceList = { type: "array", items: workEvidenceText };
+const exactWorkEvidenceSchema = { type: "object", properties: {
+  evidenceId: { type: "string", pattern: "^work-evidence-[a-f0-9]{24}$" },
+  evidenceDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+}, required: ["evidenceId", "evidenceDigest"], additionalProperties: false };
 const sessionWorkEvidenceSchema = {
   type: "object",
   description: "Sparse provider HEAD-authored P3 evidence. Reuse exact originals; select only otherwise unrepresented judgment/reasons/alternatives, observations, pending work and uncertainty. Never a user form, transcript, approval or P2 direction.",
@@ -24,6 +28,10 @@ const sessionWorkEvidenceSchema = {
     judgments: { type: "array", items: { type: "object", properties: { assessment: workEvidenceText, reason: workEvidenceText, alternatives: workEvidenceList }, required: ["assessment", "reason"], additionalProperties: false } },
     observedWork: workEvidenceList, pending: workEvidenceList, unknowns: workEvidenceList, suggestedFollowUp: workEvidenceList,
     occurrenceKey: { ...workEvidenceText, description: "Optional HEAD-owned distinction for a genuinely separate occurrence; identical input retry reuses its original." },
+    workLink: { type: "object", description: "Optional exact same-Session saved context anchor and predecessor; not execution identity or authority.",
+      properties: { root: exactWorkEvidenceSchema, predecessor: exactWorkEvidenceSchema }, required: ["root", "predecessor"], additionalProperties: false },
+    executionObservation: { type: "object", description: "Saved historical observation, never current live state or completion/approval proof. An optional exact target qualifies that note only.",
+      properties: { state: { type: "string", enum: ["running", "paused", "ended", "unknown"] }, target: exactWorkEvidenceSchema }, required: ["state"], additionalProperties: false },
     references: { type: "array", items: { type: "object", properties: {
       path: workEvidenceText, digest: { type: "string", pattern: "^[a-f0-9]{64}$" }, kind: { type: "string", enum: ["source", "artifact"] },
     }, required: ["path", "digest", "kind"], additionalProperties: false } },

@@ -197,9 +197,20 @@ export function formatSessionRestore(value) {
 
 export function formatConversationRecovery(value) {
   const entry = value?.conversationEntry || value;
+  const execution = entry?.restore?.projection?.currentExecution;
+  const pointer = execution?.sessionPointer;
+  const currentExecution = execution && (execution.status !== "verified" || pointer?.activeRunId || pointer?.pendingReview || pointer?.requiredPlanAction) ? {
+    status: execution.status,
+    sessionPointer: { activeRunId: pointer?.activeRunId ?? null,
+      pendingReview: pointer?.pendingReview ? { runId: pointer.pendingReview.runId, wholePlanId: pointer.pendingReview.wholePlanId, resultPacketId: pointer.pendingReview.resultPacketId } : null,
+      lastReviewDecisionId: pointer?.lastReviewDecisionId ?? null,
+      requiredPlanAction: pointer?.requiredPlanAction ? { kind: pointer.requiredPlanAction.kind, disposition: pointer.requiredPlanAction.disposition,
+        wholePlanId: pointer.requiredPlanAction.wholePlanId, reviewDecisionId: pointer.requiredPlanAction.reviewDecisionId } : null },
+  } : null;
+  const executionText = currentExecution ? `Canonical execution observation (${currentExecution.status}):\n${JSON.stringify(currentExecution)}\n` : "";
   if (entry?.status === "session_selection_unresolved") return formatUnavailableSession(entry);
   if (entry?.projectStatus?.currentProjectDirectionAvailability?.status === "unavailable") {
-    return `Current common direction is unavailable, not empty. Independent work continues; only direction-dependent effects or publication need HEAD follow-up.${entry.recoveryDependentWorkBlocked ? " Checkpoint-dependent work also retains its existing recovery checks." : ""}\n${formatSessionWorkContext(entry.workContext)}`;
+    return `Current common direction is unavailable, not empty. Independent work continues; only direction-dependent effects or publication need HEAD follow-up.${entry.recoveryDependentWorkBlocked ? " Checkpoint-dependent work also retains its existing recovery checks." : ""}\n${executionText}${formatSessionWorkContext(entry.workContext)}`;
   }
   const restored = entry?.restore?.checkpoint || entry?.restore?.projection?.checkpoint || {};
   const lines = [];
@@ -233,7 +244,7 @@ export function formatConversationRecovery(value) {
   }
   if (["quiet", "notice"].includes(value?.presentation?.mode) && !value?.conversationEntry && ["conversation_ready", "conversation_direction_restored"].includes(value?.status)) {
     const suffix = value.presentation.mode === "notice" ? `; ${value.attention?.items?.length || 0} optional item(s) remain available when relevant` : "";
-    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified direction — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n${formatSessionWorkContext(entry.workContext)}`;
+    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified direction — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n${executionText}${formatSessionWorkContext(entry.workContext)}`;
   }
   for (const attention of entry?.attention?.items || []) {
     if (attention.actionability === "immediate") lines.push(`${attention.owner} follow-up: ${compactText(attention.summary, 300)}`);
@@ -256,15 +267,17 @@ export function formatConversationRecovery(value) {
     lines.push("Provider HEAD must author the current bounded recovery direction internally; the user is not asked to fill a schema.");
   }
   lines.push("", "No provider summary, provider session identity, review result, or Product Canon was promoted by this projection.", "Technical details: use the structured result or --json");
-  return `${lines.join("\n")}\n${formatSessionWorkContext(entry.workContext)}`;
+  return `${lines.join("\n")}\n${executionText}${formatSessionWorkContext(entry.workContext)}`;
 }
 
 export function formatSessionWorkContext(value) {
   if (!value || value.status === "work_context_not_recorded") return "";
-  const records = (value.records || []).map(({ evidenceId, recordedAt, content, references }) => ({ evidenceId, recordedAt, content, references }));
+  const records = (value.records || []).map(({ evidenceId, evidenceDigest, recordedAt, content, references, selectionRole, savedActivity }) => ({ evidenceId, recordedAt, content, references,
+    ...(selectionRole ? { evidenceDigest, selectionRole, ...(savedActivity ? { savedActivity } : {}) } : {}) }));
   return `Selected Session work evidence (P3, not current direction or permission):\n${JSON.stringify({
     status: value.status, sessionId: value.sessionId, sessionPurpose: value.sessionPurpose,
     records, unavailable: value.unavailable, omissions: value.omissions, coverage: value.coverage,
+    ...(value.organization ? { organization: value.organization } : {}),
     reasonCode: value.reasonCode, expansion: value.expansion, nextAfterEvidenceId: value.nextAfterEvidenceId,
     currentP2Precedence: true, executionReplayAllowed: false,
   })}\n`;

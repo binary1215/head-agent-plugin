@@ -79,6 +79,53 @@ Project-only 분류를 사용합니다. 기존 readiness 검사는 유지하며 
 
 ## 범위, 원본과 불확실성
 
+### 연결된 맥락과 저장된 활동 관측
+
+기존 두 선택적 근거 입력은 `workLink: {root, predecessor}`와
+`executionObservation: {state, target?}`을 받습니다. 각 selector는 같은 Project와
+선택 논리 Session에 실제 보존된 원본의 `{evidenceId, evidenceDigest}`입니다.
+상태는 `running`, `paused`, `ended`, `unknown`입니다. HEAD가 기존의 의미 있는
+보존 경계에서 필요한 경우에만 내부적으로 공급합니다. 별도 시작·종료·저장 호출,
+사용자 ID 양식이나 승인은 필요하지 않습니다. 관측 자체는 의미 있는 근거일 수
+있지만 연결만으로는 작업 내용을 보존한 것이 아닙니다.
+
+root는 명시한 최초 보존 anchor이지 실제 작업 시작의 증거가 아닙니다. predecessor는
+그 정확한 root이거나 동일 root를 선언한 기존 원본이어야 합니다. 이미 연결된 원본도
+새 anchor가 될 수 있으며 이전 provenance를 지우거나 두 맥락을 합치지 않습니다.
+새 쓰기에서 endpoint를 검증하되 동일 재시도는 endpoint·소스가 이후 소실돼도 자기
+원본이 정상이라면 먼저 재사용합니다. 새 필드가 없으면 기존 정상화 바이트·ID·프로토콜이
+그대로입니다. migration이나 별도 활동 registry는 없습니다.
+
+이것은 저장된 메모에 관한 관측이지 실행 attempt identity가 아닙니다. 동일 exact
+target의 여러 상태는 역사로 공존하며 시각·predecessor로 현재 승자나 실행 충돌을
+정하지 않습니다. E1의 `ended`가 이후 E3·sibling·메모에 언급한 모든 실행·남은 일·필수
+리뷰를 닫지 않습니다. 실패·취소는 성공이 아닙니다. target 없는 관측은 다른 메모를
+정돈하지 않습니다. 현재 live 상태·미저장 재개·native Session 종료는 미관측입니다.
+삭제·숨김·자동 정산·실행 재시도는 하지 않습니다.
+
+연결된 기본 조회의 `selectionRole`은 최근·명시 인용·선언 root 본문을 구분합니다.
+`savedActivity`는 incoming 역사 상태 집합과 제한된 exact qualifier selector·개수,
+관계 가용성을 보존합니다. 자기 관측은 원본 `content`에 그대로 남습니다. 별도
+`organization` 안내가 역사이지 live가 아님을 한 번 설명합니다. 누락·변경 관계는
+해당 뷰만 제한하고, 선택 재읽기에서 실제 확인한 실패는 같은 응답의 의존 overlay에도
+부분 상태로 반영합니다. 순차 읽기로 이후 모든 변경을 검출하지는 못합니다. exact-ID나
+page 조회는 숨은 조상이나 qualifier를 추가 검색하지 않으며 미검사를 부재·종료로
+단정하지 않습니다.
+
+기본값은 최근 seed, 같은 Session 작업 원본의 한 단계 명시 artifact 인용과 선언된
+root를 recent → cited → root 순으로 섞습니다. 최소 절반의 슬롯을 최근/fallback
+선택에 남기고 원본 본문은 중복하지 않습니다. 한 슬롯이면 최근만, 두 슬롯이면 root보다
+인용 본문을 먼저 시도합니다. 의미 eligibility 게이트가 아니라 제한된 표시 배분입니다.
+큰 anchor가 맞지 않아도 최근 결과·남은 일은 계속 후보입니다. reference의 `digest`는
+파일 바이트 해시로 원본 `evidenceDigest`와 다릅니다. 인용은 실제 판단 이유 본문이지
+새 요약이나 경로를 복구 내용으로 제시하는 것이 아닙니다.
+
+추가 관련 fresh-load 시도는 실패·oversized를 포함해 `maxRecords` 이하입니다.
+중복 읽기 방지용 proof metadata를 유지하고 선택하지 않은 큰 본문은 버립니다.
+선택/관련 본문만 제한적으로 유지하며 전체 역사를 상주시키지 않습니다. 관련 확대
+보류 수와 고유 원본 예산 생략 수는 별개라 합산하지 않습니다. 기존 필드만 있는
+저장소는 최신 우선 fallback을 유지하고 명시 page/cursor도 바꾸지 않습니다.
+
 작업 원본은 선택된 Session의 `work-evidence/` 디렉터리에 있습니다. 필수 index나
 cache는 없습니다. 기본 진입/조회는 선택 Session에서 발견한 원본을 모두 검증하고
 기록 시각 내림차순, 동시각이면 evidence ID 순으로 고려합니다. 기본 출력은 최대
@@ -95,8 +142,13 @@ cache는 없습니다. 기본 진입/조회는 선택 Session에서 발견한 �
 
 전역 최신 선택에는 발견 원본당 한 번의 검증, O(N) 이름/정렬 메타데이터와
 O(N log N) 정렬 비용이 듭니다. 필요한 후보만 재조회하며 출력이 찼거나 본문만으로
-예산을 넘으면 참조를 읽지 않습니다. 전체 본문을 쌓지 않고 원본 하나와 제한된
-출력을 유지하지만, 참조 하나를 확인할 때 최대16MiB를 임시로 읽을 수 있습니다.
+예산을 넘으면 참조를 읽지 않습니다. 연결 조회는 O(N+E)의 작은 관계 metadata와
+제한된 선택/관련 본문만 유지합니다. 관계 계산은 O(N+E)이며 기존 원본 scan·정렬
+비용을 없애지 않습니다. 일반 참조 하나는 최대16MiB를 임시로 읽을 수 있습니다.
+incoming 개수·상태 집합은 요청 내 집계를 재사용하며 qualifier 실패 때 전체 역사를
+다시 걷지 않습니다. 제한된 qualifier 목록 구성과 기록 배열 직렬화에는 표시 데이터에
+비례한 비용이 계속 듭니다. 관련 fresh-load 상한이 일반 참조 읽기 상한은 아닙니다.
+캐시 밖 참조는 서로 다른 선택 기록에서 다시 검사할 수 있습니다.
 후보 재조회는 최악에 원본 N회 읽기를 추가합니다. 열거 뒤 추가된 원본은 빠질 수
 있는 순차 관찰이지 반환 순간의 원자적 최신 보장은 아닙니다. 필수 index·잠금·쓰기·
 서비스는 추가하지 않습니다.
@@ -156,6 +208,14 @@ coverage·생략·확대 안내까지 포함한 최종 JSON은 7,000문자 이�
 줄여도 매우 긴 경로가 들어가지 않는
 마지막 경우에만 렌더링한 경로를 생략하고 원래 Hook cwd를 출처로 표시합니다.
 선택 변경·binding 쓰기·필수 checkpoint·저장·승인·추가 사용자 절차는 없습니다.
+
+정돈된 역사에서는 안내와 첫 기록을 함께, 본문과 savedActivity overlay도 함께
+예산 검사합니다. 선택적 organization 상세를 빼더라도 과거 running을 현재 live처럼
+보여주지 않습니다. 기존 restore가 `currentExecution`을 제공할 때만 작은 별도 축으로
+정확한 status와 canonical active·pending-review·required-plan 사실을 보존합니다.
+incomplete/conflict는 그대로이며 raw pointer가 검증된 실행을 뜻하지 않습니다.
+checkpoint가 없다고 새 실행 scan을 만들지 않습니다. 이 축과 과거 기록은 기존
+7,000자 최종 JSON 안에서 현재 공통/P2 방향·목적보다 우선하지 않습니다.
 
 | 경로 | 구현된 지원 | 중요한 한계 |
 | --- | --- | --- |

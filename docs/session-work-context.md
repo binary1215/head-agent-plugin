@@ -85,6 +85,59 @@ Abrupt exit before a supported preservation boundary can still lose unsaved work
 
 ## Bounds, originals and uncertainty
 
+### Linked context and saved activity observations
+
+The same two optional evidence inputs accept `workLink: {root, predecessor}`
+and `executionObservation: {state, target?}`. Each selector is exactly
+`{evidenceId, evidenceDigest}` from a saved original in the same Project and
+selected logical Session. States are `running`, `paused`, `ended` and `unknown`.
+HEAD supplies these internally, only when useful at the existing preservation
+boundary. No separate start/end/save call, user ID form or approval is required.
+An observation alone may be meaningful; a link alone is not selected work content.
+
+The root is a declared first-retained anchor, not proof of the actual beginning
+of the work. The predecessor must be that exact root or an existing original
+declaring it. A previously linked original can serve as a new anchor without
+erasing its earlier provenance or merging the contexts. New writes validate the
+exact endpoints; identical retry first reuses its intact original, even after an
+endpoint or source disappears. An absent extension leaves legacy normalized
+bytes, identity and protocol unchanged. No migration or activity registry exists.
+
+These are observations of saved notes, not execution-attempt identities. Several
+states about one exact target coexist as history; time and predecessor select no
+current winner or execution conflict. An `ended` observation about E1 cannot close
+a later E3, sibling, all executions mentioned in E1, pending issue or required
+review. Failure/cancellation is not success. Unscoped observations do not qualify
+another note. Current live state, unsaved restarts and native Session termination
+remain unobserved. Nothing is deleted, hidden, reconciled or replayed.
+
+For linked default reads, `selectionRole` distinguishes recent, explicitly cited
+and declared-root bodies. `savedActivity` preserves incoming historical state
+sets, bounded exact qualifier selectors/counts and relation availability. Its
+own observation remains in original `content`. The separate `organization`
+notice explains historical—not live—scope once. Missing/changed relations affect
+only that view; a failure actually detected on selected reread also qualifies
+dependent overlays in the same response. Sequential reads do not detect every
+later change. Exact-ID/page reads add no hidden ancestors or qualifier search;
+uninspected endpoints/qualifiers are not declared absent or terminal.
+
+The default uses recent seeds, one-hop explicit same-Session work-artifact
+citations and their declared roots. It interleaves recent → cited → root, keeps
+at least half the available slots for recent/fallback selection and deduplicates
+original bodies. With one slot only recent work is returned; with two, the cited
+body precedes the optional root. This is a bounded display allocation, not a
+semantic eligibility test. If a large anchor cannot fit, recent results and
+pending work remain eligible. Reference `digest` hashes file bytes and is not
+the original's `evidenceDigest`. Citation content is the actual saved judgment,
+not a generated summary or a path presented as recovered reasons.
+
+Extra related fresh-load attempts are bounded by `maxRecords`, including failed
+or oversized attempts. Proof metadata is retained for deduplication; unselected
+oversized bodies are discarded. Selected/related bodies have bounded retention,
+not full-history retention. Deferred related expansion and unique budget-omitted
+original counts are separate and are not added together. Legacy-only stores keep
+their existing newest-first selection. Explicit page/cursor behavior is unchanged.
+
 Work originals live in the selected Session's `work-evidence/` directory.
 There is no indispensable index or cache. Default entry/read verifies the matching
 originals discovered in the selected Session and considers them newest-recorded
@@ -104,8 +157,15 @@ omission samples do not expose every omitted ID.
 Global recent selection costs one verification of each discovered original,
 O(N) filename/order metadata and O(N log N) sorting. Only needed candidates are
 reread; reference checks stop after the output is full and skip bodies already
-known not to fit. Body retention is one bounded original plus bounded output,
-not all original bodies; each reference may still temporarily read up to 16MiB.
+known not to fit. Linked reads also retain compact relation metadata O(N+E) and
+bounded selected/related bodies, not all original bodies. Relation processing is
+O(N+E); it does not remove the original scan/sort costs. Each generic reference
+may still temporarily read up to 16MiB.
+Incoming counts/state sets use request-local aggregates; failed qualifier removal
+does not walk its full history again. Bounded qualifier-list materialization and
+record-array serialization still cost work proportional to the displayed data.
+The related fresh-load cap is not a cap on generic reference reads: references
+outside that cache can be checked again for different selected records.
 Candidate rereads can add up to N original reads. This is a sequential view of
 the discovered set, not atomic latest-at-return: records added after enumeration
 may be absent. No mandatory index, lock, write or service is added.
@@ -175,6 +235,15 @@ not require a follow-up read. Only if optional reductions cannot fit an
 unusually long root is its rendered path omitted with the original Hook cwd
 identified as its source. None of this changes selection, writes a binding or
 requires a checkpoint, save, approval or extra routine user step.
+
+For organized history, startup fits the historical-scope notice and first record
+together, and always fits each body with its saved-activity overlay. Optional
+organization detail cannot leave an old running body presented as live state.
+Where existing restore supplies `currentExecution`, a separate small axis keeps
+its exact status and canonical active/pending-review/required-plan facts. Incomplete
+or conflict stays so; a raw pointer is not verified execution. No checkpoint means
+no new execution scan. This axis and all history yield to protected common/P2
+direction and purpose within the same 7,000-character final JSON ceiling.
 
 | Path | Implemented support | Important limit |
 | --- | --- | --- |

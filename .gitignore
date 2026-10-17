@@ -2,6 +2,8 @@ node_modules/
 .agent-work/
 /dist/
 test/*
+!test/session-work-context-linkage.test.mjs
+!test/session-work-context-consumers.test.mjs
 !test/agreement-workflow-guidance.test.mjs
 !test/context-usefulness-surfaces.test.mjs
 !test/session-work-recent-selection.test.mjs
@@ -82,6 +84,7 @@ test/*
 !test/worker-integration-surface.test.mjs
 !test/helpers/
 test/helpers/*
+!test/helpers/session-work-linkage-fixture.mjs
 !test/helpers/worker-integration-fixture.mjs
 !test/helpers/invocation-publication-diagnostics.mjs
 !test/helpers/mcp-loading-probe.mjs

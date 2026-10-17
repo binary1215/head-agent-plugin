@@ -36,7 +36,7 @@ function startupProjection(entry, root) {
     expansion: "",
   };
   const normalScope = context.scope, normalHostCapability = context.hostCapability;
-  let compactExpansion = false;
+  let compactExpansion = false, executionDetailsOmitted = false;
   const serialize = () => {
     const rootSource = context.projectRootOmitted ? "the original SessionStart.cwd" : "projectRoot";
     const omittedWork = context.omittedEvidenceCount || work?.omissions?.byBudget || work?.omissions?.uninspected || work?.unavailable?.length;
@@ -85,10 +85,40 @@ function startupProjection(entry, root) {
   }
   // Each optional addition is checked with its final counts and conditional
   // expansion. It can never evict a protected original that already fitted.
+  const execution = entry.restore?.projection?.currentExecution, pointer = execution?.sessionPointer;
+  if (execution && (execution.status !== "verified" || pointer?.activeRunId || pointer?.pendingReview || pointer?.requiredPlanAction)) {
+    context.currentExecution = { status: execution.status,
+      sessionPointer: { activeRunId: pointer?.activeRunId ?? null,
+        pendingReview: pointer?.pendingReview ? { runId: pointer.pendingReview.runId, wholePlanId: pointer.pendingReview.wholePlanId, resultPacketId: pointer.pendingReview.resultPacketId } : null,
+        lastReviewDecisionId: pointer?.lastReviewDecisionId ?? null,
+        requiredPlanAction: pointer?.requiredPlanAction ? { kind: pointer.requiredPlanAction.kind, disposition: pointer.requiredPlanAction.disposition,
+          wholePlanId: pointer.requiredPlanAction.wholePlanId, reviewDecisionId: pointer.requiredPlanAction.reviewDecisionId } : null } };
+    if (exceedsBound()) {
+      context.currentExecution = { status: execution.status, contentIncluded: false, source: "restore.projection.currentExecution" };
+      if (exceedsBound()) {
+        delete context.currentExecution;
+        executionDetailsOmitted = true;
+        context.scope = "Read-only. Execution details omitted; expand entry. Current common/selected P2 apply; history/P3 grant no effects.";
+      }
+    }
+  }
   for (const record of work?.records || []) {
-    context.records.push({ evidenceId: record.evidenceId, content: record.content, references: record.references });
+    const hadNotice = Object.hasOwn(context, "savedObservationScope");
+    if (record.selectionRole && !hadNotice) context.savedObservationScope = "Saved historical observations coexist; no current live state, success or authority is inferred.";
+    context.records.push({ evidenceId: record.evidenceId, content: record.content, references: record.references,
+      ...(record.selectionRole ? { evidenceDigest: record.evidenceDigest, selectionRole: record.selectionRole,
+        ...(record.savedActivity ? { savedActivity: record.savedActivity } : {}) } : {}) });
     context.omittedEvidenceCount -= 1;
-    if (exceedsBound()) { context.records.pop(); context.omittedEvidenceCount += 1; }
+    if (exceedsBound()) {
+      context.records.pop(); context.omittedEvidenceCount += 1;
+      if (!hadNotice) delete context.savedObservationScope;
+    }
+  }
+  if (context.savedObservationScope && work?.organization) {
+    context.workOrganization = { roots: work.organization.roots, branchingPredecessors: work.organization.branchingPredecessors,
+      unavailableRelations: work.organization.unavailableRelations, uninspectedRelations: work.organization.uninspectedRelations,
+      relatedExpansionDeferred: work.organization.relatedExpansionDeferred };
+    if (exceedsBound()) delete context.workOrganization;
   }
   if (work) {
     const minimumCoverage = context.workCoverage;
@@ -101,8 +131,10 @@ function startupProjection(entry, root) {
       if (exceedsBound()) context.workCoverage = minimumCoverage;
     }
   }
-  context.scope = normalScope;
-  if (exceedsBound()) context.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. Check current authority for effects.";
+  context.scope = executionDetailsOmitted ? "Execution details omitted; expand entry. " + normalScope : normalScope;
+  if (exceedsBound()) context.scope = executionDetailsOmitted
+    ? "Read-only. Execution details omitted; expand entry. Current common/selected P2 apply; history/P3 grant no effects."
+    : "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. Check current authority for effects.";
   context.hostCapability = normalHostCapability;
   if (exceedsBound()) context.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
   if (compactExpansion) {
