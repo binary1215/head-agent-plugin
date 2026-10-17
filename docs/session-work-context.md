@@ -39,8 +39,8 @@ second direction store, history document, global memory database or daemon.
 - `head_conversation_enter` reads selected Session originals and existing P2
   direction, together with current common constraints/cancellations. It writes
   nothing. Missing or damaged optional evidence affects only that layer.
-- `head_session_work_read` expands exact originals, omitted records or the next
-  inspection page. This is useful expansion, not a compulsory tool chain.
+- `head_session_work_read` expands known exact originals or an explicitly anchored
+  ID inspection page. Use it when needed, not as a compulsory tool chain.
 
 Known generated instruction, role and provider-configuration differences remain
 visible without blocking intact selected-Session recovery or work-context reads.
@@ -86,10 +86,29 @@ Abrupt exit before a supported preservation boundary can still lose unsaved work
 ## Bounds, originals and uncertainty
 
 Work originals live in the selected Session's `work-evidence/` directory.
-There is no indispensable index or cache. Entry reads a bounded page, ordered by
-recording time within that page, without choosing semantic relevance or sufficiency.
-The initial selection is at most eight records; further originals are reachable.
-There is no automatic pruning, silent deletion or mandatory full-history scan.
+There is no indispensable index or cache. Default entry/read verifies the matching
+originals discovered in the selected Session and considers them newest-recorded
+first, with evidence ID breaking equal-time ties. It returns at most eight records
+by default, without judging semantic relevance, sufficiency or current authority.
+There is no automatic pruning or silent deletion.
+
+Default coverage counts all discovered originals inspected and returns
+`nextAfterEvidenceId: null`: no uninspected page remains in that discovery set,
+not all bodies were delivered. Default first-to-next ID enumeration is no longer
+provided. Known `evidenceIds` still expand exact originals; an explicit non-null
+`afterEvidenceId` keeps the earlier lexical ID inspection-page behavior (up to
+512), including its continuation cursor and within-page time ordering. This is
+not a global time-order cursor or a complete ID-discovery interface. Bounded
+omission samples do not expose every omitted ID.
+
+Global recent selection costs one verification of each discovered original,
+O(N) filename/order metadata and O(N log N) sorting. Only needed candidates are
+reread; reference checks stop after the output is full and skip bodies already
+known not to fit. Body retention is one bounded original plus bounded output,
+not all original bodies; each reference may still temporarily read up to 16MiB.
+Candidate rereads can add up to N original reads. This is a sequential view of
+the discovered set, not atomic latest-at-return: records added after enumeration
+may be absent. No mandatory index, lock, write or service is added.
 
 The `max_characters` bound is the actual `JSON.stringify(records).length`
 after reference enrichment, including its array delimiters. A separate bounded
@@ -97,6 +116,14 @@ metadata envelope carries coverage, omissions, original IDs and expansion advice
 It is not included in that record-array budget. The default is 32,768 characters;
 this is a serialization bound, not a token estimate or semantic verdict.
 Large records are disclosed as omitted and remain available by exact read.
+
+Default unavailable details are sampled up to 32 entries. `coverage.unavailable`
+is the total and `omissions.unavailableDetailCount` is that total minus the
+displayed sample; `coverage.valid` includes both returned and budget-omitted
+valid records. Unique inspected originals are counted once even if reread.
+An original changed or lost on reread becomes unavailable, not a mixed old-order/
+new-body result. Explicit page and exact-ID reads retain their bounded detail
+range. Body and diagnostic omissions are separate; no empty sample proves absence.
 
 References preserve exact path, byte digest and source/artifact kind. Matching
 bytes are not semantic freshness; another Session's artifact is evidence, never
@@ -137,9 +164,14 @@ checkpoint, separately from historical checkpoint purpose and decisions. It also
 retains an explicitly reported current-direction availability diagnosis; an
 unavailable direction is not the same as a never-recorded null direction. The
 final JSON context, including coverage, omissions and expansion advice, stays
-within 7,000 characters. Oversized purpose is explicitly omitted rather than
-shortened into a different purpose; existing entry/work reads expand originals
-using the same exact Session route. Only if optional reductions cannot fit an
+within 7,000 characters. Exact current common direction, Session purpose and the
+latest selected checkpoint's purpose/decisions/position/next-result fields take
+priority over optional prose, coverage detail, ID samples and P3 history. The
+checkpoint's recorded approvals/next steps still grant no current effect authority.
+Only current content that cannot fit its minimal truthful envelope is explicitly
+omitted whole, never shortened into different direction. Existing entry/work reads
+expand needed originals using the same exact Session route; normal startup does
+not require a follow-up read. Only if optional reductions cannot fit an
 unusually long root is its rendered path omitted with the original Hook cwd
 identified as its source. None of this changes selection, writes a binding or
 requires a checkpoint, save, approval or extra routine user step.

@@ -61,9 +61,14 @@ HEAD는 독립 작업을 계속하고 의존 작업에만 기존 검증된 expli
 기존 JSON text와 structuredContent를 유지하고 정상 응답의 도구별 표현도 바꾸지 않습니다.
 fixture 검증은 실제 모델의 질문 감소나 설치 Host의 지속 연결을 실측한 증거가 아닙니다.
 
-현재 packaged Codex/Claude/OpenCode stdio에는 지속 caller context 연결이 없습니다.
-명시/default 동작은 유지됩니다. 주입 context 시험은 local Host 증거이지 세 제품
-모두 compaction 후 자동 선택 복원을 지원한다는 증거는 아닙니다.
+지원되는 Codex native MCP 요청은 실제 caller metadata를 제공하며 Claude Code의
+번들 same-instance Hook은 root/child 요청을 구분합니다. 기존 init/resume 흐름이 검증한
+선택을 P5에 보존하면 읽기 전용 SessionStart가 그 연결을 조회합니다. 선택적 연결 보존의
+실패가 원래 Core 결과를 없애거나 재실행을 허가하지 않습니다. legacy transport의
+명시/default 동작은 유지됩니다. OpenCode는 trusted Host 연결 지점만 제공하며 native
+Hook 통합을 주장하지 않습니다. 이 구현과 합성 protocol 시험은 설치 GUI·실제 모델/
+계정·실제 compaction 성공의 증거가 아닙니다.
+[Host 지원 범위와 한계](session-work-context.md#식별자-추정-없는-host-지원)를 참고하세요.
 
 ## World 도메인
 

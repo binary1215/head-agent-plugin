@@ -27,50 +27,54 @@ function startupProjection(entry, root) {
     sessionRecovery: checkpoint ? { checkpointId: checkpoint.checkpointId, purpose: checkpoint.purpose,
       approvedDecisions: checkpoint.approvedDecisions, historicalPosition: checkpoint.currentPosition,
       historicalNextExpectedResult: checkpoint.nextExpectedResult, historicalApprovalGrantsCurrentEffect: false } : null,
-    records: [], omittedEvidenceIds: [], omittedEvidenceCount: 0,
-    workCoverage: work ? { status: work.status, coverage: work.coverage,
-      omissions: work.omissions, nextAfterEvidenceId: work.nextAfterEvidenceId } : null,
+    records: [], omittedEvidenceIds: [], omittedEvidenceCount: work?.records?.length || 0,
+    workCoverage: work ? { omitted: true } : null,
     route: logicalSessionId ? { session_id: logicalSessionId } : null,
-    scope: "Read-only orientation. Current common constraints/cancellations and exact selected P2 take precedence. P3 records and historical next steps are not permission or replay instructions.",
-    hostCapability: "Startup lookup requires a prior verified Host selection. Supported native Codex/Claude transports resolve each request independently; no extra bind/save or repeated Session ID is required. On unsupported Hosts use a verified explicit logical route or caller-scoped resolver. Never select by name, time or default guess.",
+    scope: "Read-only, non-atomic orientation. Current common and selected Session P2 apply; historical approval/next steps and P3 grant no effects. Recheck current authority before an effect.",
+    hostCapability: "Use only verified Host/explicit routing; never guess. No extra bind/save or repeated Session ID is required.",
     ordinaryWorkBlocked: false, userDecisionRequired: false, persisted: false,
-    expansion: "Use head_conversation_enter with project_root:projectRoot and the exact route above for original workContext.sessionPurpose, common direction and checkpoint context. Use head_session_work_read with that same root/route for omitted exact Evidence IDs. Startup is not an atomic snapshot; reread before a current effect. No save/approval/Run is required for ordinary work.",
+    expansion: "",
   };
-  const exceedsBound = () => JSON.stringify(context).length > MAX_CONTEXT_CHARACTERS;
-  if (exceedsBound() && (common || checkpoint)) {
-    context.currentProjectDirection = common ? { directionId: common.directionId, contentIncluded: false } : null;
-    context.sessionRecovery = checkpoint ? { checkpointId: checkpoint.checkpointId, contentIncluded: false,
-      historicalApprovalGrantsCurrentEffect: false } : null;
-    context.requiredSourceExpansion = "Direction exceeds startup output bound. Read the exact original entry before dependent action; no constraint or cancellation is assumed absent.";
-  }
-  if (exceedsBound()) {
-    context.workCoverage = work ? { status: work.status, omitted: true, reason: "startup-output-bound",
-      sourceOriginals: work.coverage?.originals, sourceInspected: work.coverage?.inspected, sourceIncluded: work.coverage?.included,
-      nextAfterEvidenceId: work.nextAfterEvidenceId } : null;
-  }
-  if (exceedsBound() && context.sessionPurpose !== null) {
-    context.sessionPurpose = null;
-    context.sessionPurposeCoverage = { contentIncluded: false, reason: "startup-output-bound", source: "workContext.sessionPurpose" };
-  }
-  for (const record of work?.records || []) {
-    const selected = { evidenceId: record.evidenceId, content: record.content, references: record.references };
-    context.records.push(selected);
-    if (exceedsBound()) {
-      context.records.pop();
-      context.omittedEvidenceCount += 1;
-      if (context.omittedEvidenceIds.length < 16) context.omittedEvidenceIds.push(record.evidenceId);
+  const normalScope = context.scope, normalHostCapability = context.hostCapability;
+  let compactExpansion = false;
+  const serialize = () => {
+    const rootSource = context.projectRootOmitted ? "the original SessionStart.cwd" : "projectRoot";
+    const omittedWork = context.omittedEvidenceCount || work?.omissions?.byBudget || work?.omissions?.uninspected || work?.unavailable?.length;
+    if (compactExpansion) {
+      const route = "(project_root:" + rootSource + ", ...route)";
+      context.expansion = (context.requiredSourceExpansion ? "When needed: head_conversation_enter" + route : "")
+        + (omittedWork ? (context.requiredSourceExpansion ? "; " : "") + "Omitted work: head_session_work_read" + route : "");
+    } else {
+      context.expansion = "When needed, head_conversation_enter with project_root:" + rootSource
+        + " and the exact route above reads selected originals (workContext.sessionPurpose, common direction, checkpoint).";
+      if (omittedWork) context.expansion += " For omitted work, use head_session_work_read with the same root/route.";
     }
-  }
-  // Omission IDs/counts can themselves use the last available characters.
-  // Check the final envelope after all metadata and expansion text are present.
-  while (exceedsBound() && context.records.length) {
-    const omitted = context.records.pop();
-    context.omittedEvidenceCount += 1;
-    if (context.omittedEvidenceIds.length < 16) context.omittedEvidenceIds.push(omitted.evidenceId);
-  }
+    return JSON.stringify(context);
+  };
+  const exceedsBound = () => serialize().length > MAX_CONTEXT_CHARACTERS;
   if (exceedsBound()) {
-    context.omittedEvidenceIds = [];
-    context.workCoverage = { omitted: true, reason: "startup-output-bound", expansionRequired: true };
+    context.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. Check current authority for effects.";
+    context.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
+    compactExpansion = true;
+  }
+  // All four latest selected checkpoint fields can carry local direction. Keep
+  // them with current common direction/purpose before optional work or metadata.
+  // Only a true protected-content overflow reaches whole-block omission. Size
+  // and the stable tie order below are serialization rules, not semantic ranks.
+  const protectedBlocks = ["sessionRecovery", "sessionPurpose", "currentProjectDirection"]
+    .filter((key) => context[key] !== null)
+    .map((key, order) => ({ key, order, size: JSON.stringify(context[key]).length }))
+    .sort((a, b) => b.size - a.size || a.order - b.order);
+  for (const { key } of protectedBlocks) {
+    if (!exceedsBound()) break;
+    if (key === "currentProjectDirection") context[key] = { directionId: common.directionId, contentIncluded: false };
+    else if (key === "sessionRecovery") context[key] = { checkpointId: checkpoint.checkpointId, contentIncluded: false,
+      historicalApprovalGrantsCurrentEffect: false };
+    else {
+      context.sessionPurpose = null;
+      context.sessionPurposeCoverage = { contentIncluded: false, reason: "startup-output-bound", source: "workContext.sessionPurpose" };
+    }
+    context.requiredSourceExpansion = "Current content omitted; no constraint or cancellation is assumed absent. Expand only for dependent work.";
   }
   // Only a path larger than the remaining minimal envelope reaches this branch.
   // The operational root is unchanged; never render a sliced path as exact.
@@ -78,9 +82,40 @@ function startupProjection(entry, root) {
     delete context.projectRoot;
     context.projectRootOmitted = true;
     context.projectRootSource = "SessionStart.cwd";
-    context.expansion = "Use head_conversation_enter with the original SessionStart.cwd as project_root and the exact route above for original workContext.sessionPurpose, common direction and checkpoint context; head_session_work_read uses that same root/route for omitted evidence. Startup is not an atomic snapshot; reread before a current effect. No save/approval/Run is required for ordinary work.";
   }
-  return JSON.stringify(context);
+  // Each optional addition is checked with its final counts and conditional
+  // expansion. It can never evict a protected original that already fitted.
+  for (const record of work?.records || []) {
+    context.records.push({ evidenceId: record.evidenceId, content: record.content, references: record.references });
+    context.omittedEvidenceCount -= 1;
+    if (exceedsBound()) { context.records.pop(); context.omittedEvidenceCount += 1; }
+  }
+  if (work) {
+    const minimumCoverage = context.workCoverage;
+    context.workCoverage = { status: work.status, coverage: work.coverage,
+      omissions: work.omissions, nextAfterEvidenceId: work.nextAfterEvidenceId };
+    if (exceedsBound()) {
+      context.workCoverage = { status: work.status, omitted: true, reason: "startup-output-bound",
+        sourceOriginals: work.coverage?.originals, sourceInspected: work.coverage?.inspected, sourceIncluded: work.coverage?.included,
+        nextAfterEvidenceId: work.nextAfterEvidenceId };
+      if (exceedsBound()) context.workCoverage = minimumCoverage;
+    }
+  }
+  context.scope = normalScope;
+  if (exceedsBound()) context.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. Check current authority for effects.";
+  context.hostCapability = normalHostCapability;
+  if (exceedsBound()) context.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
+  if (compactExpansion) {
+    compactExpansion = false;
+    if (exceedsBound()) compactExpansion = true;
+  }
+  const includedIds = new Set(context.records.map((record) => record.evidenceId));
+  for (const record of work?.records || []) {
+    if (includedIds.has(record.evidenceId) || context.omittedEvidenceIds.length >= 16) continue;
+    context.omittedEvidenceIds.push(record.evidenceId);
+    if (exceedsBound()) context.omittedEvidenceIds.pop();
+  }
+  return serialize();
 }
 // A read-only command Hook. It neither parses transcript bytes nor registers
 // bindings. Verified Host selection (explicit API or native init/resume bridge)

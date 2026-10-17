@@ -2,6 +2,9 @@ node_modules/
 .agent-work/
 /dist/
 test/*
+!test/context-usefulness-surfaces.test.mjs
+!test/session-work-recent-selection.test.mjs
+!test/startup-current-priority.test.mjs
 !test/observation-query-consolidation.test.mjs
 !test/legacy-integration-read.test.mjs
 !test/authority-plane-contract.test.mjs

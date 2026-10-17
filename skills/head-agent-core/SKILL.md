@@ -46,23 +46,18 @@ sibling onboarding Skill for an actual Product/World governance outcome.
 Do not initialize an unrelated repository merely because a coding request
 matched this Skill.
 
-Entry includes recovery, common direction, status, Attention, version and
-presentation. Reuse it without another status call unless the basis changes or
-diagnosis needs one. No checkpoint means ordinary work continues. Recovery
-attention pauses only dependent work and assigns investigation to HEAD.
-If Session selection is lost/unavailable, entry and status still expose verified
-Project identity and current common direction, while Session/Run/recovery facts
-remain unavailable. Continue independent work; use already verified explicit/Host
-selection only for dependent work. Do not force a recovery tool, repeated question,
-Session listing or user ID form. Missing direction is not approved empty direction;
-damaged originals remain errors. Partial entry does not claim recovery or readiness.
-After compaction/provider replacement, restore the selected Session automatically
-and apply current common constraints. Never invent direction from a transcript.
+Entry includes current direction, useful work context, recovery, status and
+Attention. Reuse it quietly unless its basis changes or diagnosis needs more.
+No checkpoint means ordinary work continues. After compaction/provider replacement,
+read the selected Session automatically with current common constraints; never
+invent direction from a transcript. Missing direction is not approved emptiness.
+Selection loss pauses only dependent work; use verified explicit/Host selection
+there and continue independent work. Partial entry is not recovery success.
+Do not add a recovery chain, repeated question, Session list or user ID form.
 
 Use optional `session_id` on typed calls or `--session` on CLI for request-local
 routing. `head_session_list` and `head_session_create` support independent
 progress when needed; these are logical identities, not provider session IDs.
-The legacy `.head/sessions/current.json` remains the default record.
 Read shared goal/constraints/decisions/cancelled actions through
 `head_project_direction_read`; publish current user direction through
 `head_project_direction_update` with its exact basis. Reconcile competing
@@ -154,44 +149,30 @@ exceptions by affected operation, actor and next action. Bind natural-language
 protected decisions to the unique unchanged target. IDs, token tiers, digests
 and schemas are diagnostic detail, not user prerequisites.
 
-Preserve important changes, judgments, results and uncertainty when continuity
-needs them. Do not create checkpoints, receipts, candidates, structured notes or
-transcript copies for every read/turn. Selected context includes sources, omissions
-and uncertainty without compulsory budget tiers or inclusion proof. Persist a
-Capsule only when durable handoff/recovery needs it, not for ordinary exploration.
+Reuse existing checkpoint/result/review/source originals. Preserve only useful,
+otherwise-unrepresented reasons, alternatives, observations and uncertainty at a
+meaningful handoff: optional `work_evidence` with an already useful checkpoint
+sync, or `head_session_work_record` for Run-free work. No per-turn record,
+transcript copy, save approval, user JSON, compulsory budget tier or Run/Capsule.
+Session-local purpose/constraints/cancellation stay in explicit P2 direction;
+P3 evidence cannot supply them or change shared ProjectDirection.
 
-Reuse existing checkpoint/result/review/source originals before adding work
-evidence. When useful checkpoint sync already occurs, include only otherwise
-unrepresented selected context in optional `work_evidence` in that same request.
-For a meaningful Run-free investigation or handoff with no useful checkpoint,
-one optional `head_session_work_record` retains sparse P3 reasons, alternatives,
-observed work, pending issues and unknowns. Supply the fields internally; do not
-ask the user to save, approve saving, author JSON or create a Run/Capsule. Keep
-Session-local purpose/constraints/cancellation in explicit P2 direction, never
-inferred from that evidence or promoted into shared ProjectDirection.
+Entry already supplies bounded `workContext`. Default selection considers recent
+verified work across the discovered originals; time order is not semantic
+importance or authority. Expand with `head_session_work_read` only when useful.
+Preserve uncertainty and disclose missing sources; historical suggestions and
+claimed completion are not instructions, approval or effect proof. Repair missing
+persistence, never repeat completed or unknown effects. Unsaved conversation can
+still be lost on abrupt exit.
 
-Entry already returns bounded `workContext`. Inspect included reasons and
-uncertainty quietly, disclose missing/changed references, and use
-`head_session_work_read` only for useful exact expansion. Historical suggestions
-and claimed completion are not current instructions, approval or effect proof.
-Repair a missing save only; never repeat completed or unknown external work.
-An abrupt exit before preservation is not lossless transcript recovery.
-
-Bundled SessionStart Hooks only read previously retained Host bindings. Supported
-Codex MCP transports supply an actual request-local `threadId`; the existing
-initialize/resume flow retains its selected Session automatically. One-off reads,
-result recording, checkpoint sync and create-only do not change that selection.
-Claude Code's bundled PreToolUse Hook supplies request-local root/child correlation
-to the same MCP server. It neither allows a tool nor rewrites its arguments. The
-internal `head_session_host_request_prepare` helper is Host-only; never call it
-from the model, invent native IDs, or ask the user to prepare a binding. Startup
-and resume read the retained linkage without saving another record.
-On Hosts without verified native transport, preserve a verified explicit logical
-`session_id` for dependent calls or an actually injected caller-scoped resolver.
-Do not add bind/save tools or questions, guess from names/time/sole candidates,
-register Codex parent IDs from ambiguous child Hooks, or use allow/deny/retry for
-routing. Missing linkage does not block independent Project work.
-See [work context and Host capability limits](../../docs/session-work-context.md).
+Native init/resume can retain verified selection; startup only reads that linkage.
+Its loss does not erase Core success or permit replay. Other reads, work recording
+and checkpoint sync do not select the chat.
+Use a verified explicit route on unsupported Hosts, without bind/save questions
+or identity guesses. Host-only helpers are not model tools or permission bypasses.
+For relevant routing, bounds or recovery details see
+[work context and Host limits](../../docs/session-work-context.md); this is not a
+required extra read before ordinary work.
 
 ## Progressive references and tools
 

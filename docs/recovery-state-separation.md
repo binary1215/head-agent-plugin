@@ -65,10 +65,16 @@ MCP exceptional responses retain JSON text plus structuredContent; normal respon
 retain their existing per-tool presentation. Fixture proof is not a measurement
 of fewer model questions or installed Host persistence.
 
-Packaged Codex/Claude/OpenCode stdio configurations do not currently supply
-trusted persistent caller context. Their explicit/default behavior remains;
-injected-context fixtures are local Host evidence, not proof of automatic
-selection restoration after compaction on all three products.
+Supported Codex native MCP requests supply actual caller metadata, and Claude
+Code's bundled same-instance Hook correlates root/child requests. The existing
+init/resume flow can retain verified selection in P5; read-only SessionStart
+lookup uses that linkage when retention succeeds. Optional linkage failure does
+not erase the original Core result or permit replay. Legacy transports keep
+explicit/default behavior.
+OpenCode exposes the trusted Host seam but has no native Hook integration claim.
+These implemented paths and synthetic protocol tests are not proof of installed
+GUI, real model/account or actual compaction success. See
+[Host support and limits](session-work-context.md#host-support-without-identity-guesses).
 
 ## World domains
 

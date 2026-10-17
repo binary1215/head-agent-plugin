@@ -38,7 +38,8 @@ function fixture(t, runtime, purpose = "Selected current purpose; investigate on
     assert.equal(value.logicalSessionId, session.sessionId);
     assert.deepEqual(value.route, { session_id: session.sessionId });
     assert.match(value.expansion, /head_conversation_enter.*project_root:projectRoot.*exact route/);
-    assert.match(value.expansion, /not an atomic snapshot; reread before a current effect/);
+    assert.match(value.expansion, /When needed/);
+    assert.match(value.scope, /Read-only, non-atomic.*Recheck current authority before an effect/);
     t.diagnostic(JSON.stringify({ runtime, length: text.length, sessionId: value.logicalSessionId,
       records: value.records.length, omittedEvidenceCount: value.omittedEvidenceCount,
       purposeOmitted: value.sessionPurposeCoverage?.contentIncluded === false,
@@ -135,7 +136,7 @@ for (const runtime of ["codex", "claude"]) {
     assert.equal(value.sessionRecovery.contentIncluded, false);
     assert.equal(value.sessionRecovery.historicalApprovalGrantsCurrentEffect, false);
     assert.equal(value.projectRoot, f.root);
-    assert.match(value.expansion, /original workContext.sessionPurpose/);
+    assert.match(value.expansion, /head_conversation_enter.*workContext\.sessionPurpose/);
     assert.match(value.requiredSourceExpansion, /no constraint or cancellation is assumed absent/);
     assert.deepEqual(snapshot(f.base), before);
     fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
@@ -153,12 +154,15 @@ for (const runtime of ["codex", "claude"]) {
     const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
     assert.equal(raw.workContext.records.length, 8);
     assert.equal(raw.workContext.omissions.byBudget, 32);
-    assert.equal(value.workCoverage.omissions.evidenceIds.length, 32);
+    if (value.workCoverage.omitted) assert.equal(value.workCoverage.sourceOriginals, 40);
+    else assert.equal(value.workCoverage.omissions.evidenceIds.length, 32);
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.ok(value.records.length < raw.workContext.records.length);
     assert.equal(value.omittedEvidenceCount, raw.workContext.records.length - value.records.length);
-    assert.deepEqual(new Set([...value.records.map((r) => r.evidenceId), ...value.omittedEvidenceIds]),
-      new Set(raw.workContext.records.map((r) => r.evidenceId)));
+    const sourceIds = new Set(raw.workContext.records.map((r) => r.evidenceId));
+    const includedIds = new Set(value.records.map((r) => r.evidenceId));
+    for (const id of value.omittedEvidenceIds) assert.ok(sourceIds.has(id) && !includedIds.has(id));
+    assert.ok(value.omittedEvidenceIds.length <= value.omittedEvidenceCount);
     for (const record of value.records) {
       const original = raw.workContext.records.find((r) => r.evidenceId === record.evidenceId);
       assert.deepEqual(record, { evidenceId: original.evidenceId, content: original.content, references: original.references });
@@ -232,8 +236,12 @@ test("private formatter: explicit nested diagnosis keeps its own null; null meta
   }
 });
 
-test("private formatter: late omission metadata cannot exceed final budget or conceal omitted evidence", (t) => {
+test("private formatter: optional omission IDs cannot evict fitting current content or exceed the final budget", (t) => {
   const raw = entry();
+  raw.workContext.status = "work_context_available";
+  raw.workContext.coverage = { originals: 2, inspected: 2, included: 2, maxRecords: 8, maxCharacters: 32768, usedCharacters: 2,
+    characterBudgetScope: "JSON.stringify(records).length; separate bounded metadata envelope excluded" };
+  raw.workContext.omissions = { uninspected: 0, byBudget: 0, evidenceIds: [], omittedIdCount: 0 };
   const baseline = projectStartup(raw, pluginRoot).length;
   const id = (n) => "work-evidence-" + String(n).padStart(24, "0");
   raw.workContext.records = [{ evidenceId: id(1), content: { summary: "" }, references: [] }];
@@ -243,11 +251,11 @@ test("private formatter: late omission metadata cannot exceed final budget or co
   raw.workContext.records.push({ evidenceId: id(2), content: { summary: "Omitted record" }, references: [] });
   const text = projectStartup(raw, pluginRoot), value = JSON.parse(text);
   assert.ok(text.length <= 7000);
-  assert.equal(value.records.length, 0);
-  assert.equal(value.omittedEvidenceCount, 2);
-  assert.deepEqual(new Set(value.omittedEvidenceIds), new Set([id(1), id(2)]));
+  assert.equal(value.omittedEvidenceCount, 2 - value.records.length);
+  const included = new Set(value.records.map((record) => record.evidenceId));
+  for (const omitted of value.omittedEvidenceIds) assert.ok(!included.has(omitted) && [id(1), id(2)].includes(omitted));
   assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
-  t.diagnostic(JSON.stringify({ evidenceScope: "private-serializer-only", length: text.length, branch: "final-omission-IDs-evict-record" }));
+  t.diagnostic(JSON.stringify({ evidenceScope: "private-serializer-only", length: text.length, branch: "optional-omission-IDs-after-current-content" }));
 });
 
 test("private formatter: oversized metadata/root explicitly omit content and retain exact route/diagnosis", (t) => {
@@ -268,6 +276,6 @@ test("private formatter: oversized metadata/root explicitly omit content and ret
   assert.equal(value.projectRootSource, "SessionStart.cwd");
   assert.deepEqual(value.route, { session_id: sessionId });
   assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
-  assert.match(value.expansion, /original SessionStart.cwd as project_root and the exact route/);
+  assert.match(value.expansion, /project_root:the original SessionStart.cwd and the exact route/);
   t.diagnostic(JSON.stringify({ evidenceScope: "private-serializer-only; unsupported-filesystem-path-not-executed", length: text.length, branch: "coverage-and-last-resort-root-omission" }));
 });

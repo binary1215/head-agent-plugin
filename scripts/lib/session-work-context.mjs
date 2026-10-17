@@ -150,8 +150,9 @@ export function recordSessionWorkEvidence({ root = ".", input } = {}) {
   });
 }
 
-// No secondary ledger or index is required for recovery. Bounded originals
-// from this exact Session suffice, with explicit omission/expansion information.
+// No secondary ledger or index is required for recovery. Default selection
+// verifies discovered originals sequentially, retaining only ordering metadata
+// and bounded output bodies. Names/metadata remain O(N), not constant memory.
 export function readSessionWorkContext({ root = ".", evidenceIds = null, maxRecords = 8, maxCharacters = 32768,
   afterEvidenceId = null, expectedSessionId = null, expectedCheckpointId = undefined } = {}) {
   if (!Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > DEFAULT_SCAN
@@ -170,38 +171,77 @@ export function readSessionWorkContext({ root = ".", evidenceIds = null, maxReco
   }
   const directoryPath = directory(owner.root);
   const names = fs.existsSync(directoryPath) ? fs.readdirSync(directoryPath).filter((name) => /^work-evidence-[a-f0-9]{24}\.json$/.test(name)).sort() : [];
+  const globalRecent = evidenceIds === null && afterEvidenceId === null;
   const remainingNames = afterEvidenceId === null ? names : names.filter((name) => name > afterEvidenceId + ".json");
-  const ids = evidenceIds === null ? remainingNames.slice(0, DEFAULT_SCAN).map((name) => name.slice(0, -5)) : [...new Set(evidenceIds)];
+  const ids = evidenceIds === null ? (globalRecent ? remainingNames : remainingNames.slice(0, DEFAULT_SCAN)).map((name) => name.slice(0, -5)) : [...new Set(evidenceIds)];
   const originals = [], unavailable = [];
+  let unavailableCount = 0;
+  const markUnavailable = (id, error) => {
+    unavailableCount += 1;
+    if (unavailable.length < (globalRecent ? 32 : DEFAULT_SCAN)) {
+      unavailable.push({ evidenceId: id, reasonCode: error.code || "INVALID_SESSION_WORK_EVIDENCE" });
+    }
+  };
   for (const id of ids) {
-    try { originals.push(readOriginal(owner, id)); }
-    catch (error) { unavailable.push({ evidenceId: id, reasonCode: error.code || "INVALID_SESSION_WORK_EVIDENCE" }); }
+    try {
+      const original = readOriginal(owner, id);
+      originals.push(globalRecent ? { evidenceId: id, recordedAt: original.recordedAt, evidenceDigest: original.evidenceDigest } : original);
+    } catch (error) { markUnavailable(id, error); }
   }
   originals.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt) || a.evidenceId.localeCompare(b.evidenceId));
   const records = [];
-  let used = 2, omittedByBudget = 0;
+  let used = 2, omittedByBudget = 0, valid = originals.length;
   const omittedEvidenceIds = [];
-  for (const original of originals) {
+  const omit = (id) => {
+    omittedByBudget += 1;
+    if (omittedEvidenceIds.length < 32) omittedEvidenceIds.push(id);
+  };
+  for (const candidate of originals) {
+    if (records.length >= maxRecords) {
+      omit(candidate.evidenceId);
+      continue;
+    }
+    let original = candidate;
+    if (globalRecent) {
+      try {
+        original = readOriginal(owner, candidate.evidenceId);
+        if (original.recordedAt !== candidate.recordedAt || original.evidenceDigest !== candidate.evidenceDigest) {
+          fail("Work evidence changed during selection.", "SESSION_WORK_OBSERVATION_CHANGED");
+        }
+      } catch (error) {
+        valid -= 1;
+        markUnavailable(candidate.evidenceId, error);
+        continue;
+      }
+    }
+    // Even an empty enrichment array cannot fit: do not read its references.
+    // An oversized recent record must not hide an older, smaller fitting one.
+    if (JSON.stringify([...records, { ...original, references: [] }]).length > maxCharacters) {
+      omit(original.evidenceId);
+      continue;
+    }
     const selected = { ...original, references: original.content.references.map((ref) => reference(owner, ref)) };
     // Budget the actual enriched record array sent to consumers, not the smaller
     // on-disk originals. The separately disclosed metadata envelope is excluded.
     const nextSize = JSON.stringify([...records, selected]).length;
-    if (records.length >= maxRecords || nextSize > maxCharacters) {
-      omittedByBudget += 1;
-      if (omittedEvidenceIds.length < 32) omittedEvidenceIds.push(original.evidenceId);
+    if (nextSize > maxCharacters) {
+      omit(original.evidenceId);
       continue;
     }
     used = nextSize;
     records.push(selected);
   }
   if (identity(owner.root).basis !== owner.basis) return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
-  return { ...shell, status: unavailable.length || evidenceIds === null && remainingNames.length > ids.length || omittedByBudget ? "work_context_partial" : records.length ? "work_context_available" : "work_context_not_recorded",
+  return { ...shell, status: unavailableCount || evidenceIds === null && remainingNames.length > ids.length || omittedByBudget ? "work_context_partial" : records.length ? "work_context_available" : "work_context_not_recorded",
     records, unavailable,
-    coverage: { originals: names.length, inspected: ids.length, included: records.length, maxRecords, maxCharacters, usedCharacters: used,
+    coverage: { originals: names.length, inspected: ids.length, valid, unavailable: unavailableCount, included: records.length, maxRecords, maxCharacters, usedCharacters: used,
       characterBudgetScope: "JSON.stringify(records).length; separate bounded metadata envelope excluded",
-      selection: "newest-recorded-first-within-inspected-original-page; no semantic relevance or sufficient-context judgment" },
+      selection: globalRecent
+        ? "newest-recorded-first-among-all-discovered-verified-originals; sequential observation, not an atomic latest-at-return snapshot or semantic sufficiency judgment"
+        : "newest-recorded-first-within-inspected-original-page; no semantic relevance or sufficient-context judgment" },
     omissions: { uninspected: evidenceIds === null ? Math.max(0, remainingNames.length - ids.length) : null, byBudget: omittedByBudget,
-      evidenceIds: omittedEvidenceIds, omittedIdCount: omittedByBudget - omittedEvidenceIds.length },
+      evidenceIds: omittedEvidenceIds, omittedIdCount: omittedByBudget - omittedEvidenceIds.length,
+      unavailableDetailCount: unavailableCount - unavailable.length },
     nextAfterEvidenceId: evidenceIds === null && remainingNames.length > ids.length ? ids.at(-1) : null,
     expansion: "Read exact evidenceIds with larger useful bounds or read the named original. A digest/path is not recovered contents. No evidence is deleted or silently considered irrelevant." };
 }

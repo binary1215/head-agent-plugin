@@ -177,13 +177,22 @@ for (const kind of ["project bytes","unknown managed path","manifest JSON","sele
   });
 }
 
-test("generated native guidance matches all three shipped Skill paragraphs", t => {
+test("generated and Skill guidance preserve native boundaries without repeated implementation paragraphs", t => {
   const f=fixture(t),skill=fs.readFileSync(path.join(pluginRoot,"skills/head-agent-core/SKILL.md"),"utf8");
-  const text=skill.slice(skill.indexOf("Bundled SessionStart Hooks only read"),skill.indexOf("See [work context and Host capability limits]"));
-  const paragraphs=text.trim().split(/(?=Claude Code's bundled PreToolUse|On Hosts without verified native transport)/).map(value=>value.replace(/`/g,"").replace(/\s+/g," ").trim());
-  assert.equal(paragraphs.length,3);
   const generated=fs.readFileSync(path.join(f.root,"AGENTS.md"),"utf8").replace(/`/g,"").replace(/\s+/g," ");
-  for(const paragraph of paragraphs)assert.ok(generated.includes(paragraph),paragraph);
+  for(const guidance of[generated,skill.replace(/\s+/g," ")]){
+    assert.match(guidance,/verified (?:Host selection|explicit route)/i);
+    assert.match(guidance,/startup (?:lookup is read-only|only reads)/i);
+    assert.match(guidance,/bind\/save(?:\/ID)? (?:rituals|questions)/i);
+    assert.match(guidance,/(?:never guess|identity guesses)/i);
+    assert.match(guidance,/work.context (?:reference|and Host limits)/i);
+  }
+  const detail=fs.readFileSync(path.join(pluginRoot,"docs/session-work-context.md"),"utf8");
+  assert.match(detail,/params\._meta\.threadId/);
+  assert.match(detail,/same-instance|Same-instance/);
+  assert.match(detail,/No native Hook integration claimed/);
+  assert.match(detail,/Normal model calls,[\s\S]*?cannot prepare this linkage/);
+  assert.match(detail,/The helper returns `\{\}` and never supplies `permissionDecision`/);
   assert.equal(generated.includes("They do not propagate native identity into stock MCP automatically."),false);
 });
 

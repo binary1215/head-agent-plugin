@@ -988,11 +988,11 @@ const allTools = [
   },
   {
     name: "head_session_work_read",
-    description: "Read bounded selected Session work Evidence originals or exact IDs. Entry already includes a bounded selection; this optional expansion does not write, repair, infer sufficient context or supply recovery direction. Missing/changed sources and omissions remain explicit.",
+    description: "Read selected Session work Evidence with bounded output. Default reads inspect discovered originals and select recent work; exact IDs or an explicit after_evidence_id use bounded exact/ID-page expansion. Entry already includes work context: expand only when useful. No write, repair, sufficiency judgment or recovery direction; omissions remain explicit.",
     inputSchema: { type: "object", properties: {
       project_root: workEvidenceText,
       evidence_ids: { type: "array", maxItems: 512, items: { type: "string", pattern: "^work-evidence-[a-f0-9]{24}$" } },
-      after_evidence_id: { type: "string", pattern: "^work-evidence-[a-f0-9]{24}$" },
+      after_evidence_id: { type: "string", pattern: "^work-evidence-[a-f0-9]{24}$", description: "Explicit lexical ID-page anchor, not a time-order cursor. Default global selection returns no continuation cursor." },
       max_records: { type: "integer", minimum: 1, maximum: 512 }, max_characters: { type: "integer", minimum: 2, maximum: 524288,
         description: "Actual JSON.stringify(records).length budget after reference enrichment. Separate bounded metadata envelope excluded; omissions/expansion disclosed." },
     }, required: ["project_root"], additionalProperties: false },
