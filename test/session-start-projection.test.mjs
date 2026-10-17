@@ -1,0 +1,273 @@
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
+import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
+import { sessionStartContext } from "../scripts/session-host-hook.mjs";
+import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
+import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
+import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
+
+const pluginRoot = path.resolve(import.meta.dirname, "..");
+const unavailable = { status: "unavailable", reasonCode: "PROJECT_DIRECTION_UNAVAILABLE", dependentEffectsBlocked: true };
+const sha = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
+function fixture(t, runtime, purpose = "Selected current purpose; investigate only") {
+  const tmp = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  fs.mkdirSync(tmp, { recursive: true });
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(tmp, "startup-projection-")));
+  const root = path.join(base, "project"), operational = path.join(base, "host");
+  fs.mkdirSync(root);
+  initializeProject({ root, pluginRoot, runtimes: [runtime] });
+  const session = createHeadSession({ root, purpose });
+  const environment = { HEAD_AGENT_OPERATIONAL_STATE_ROOT: operational };
+  const nativeSessionId = "synthetic-startup-caller";
+  const host = createSessionHostAdapter({ runtime, nativeSessionId, environment });
+  assert.equal(host.select({ root, sessionId: session.sessionId, expectedRevision: 0 }).retained, true);
+  const event = { hook_event_name: "SessionStart", source: "startup", cwd: root, session_id: nativeSessionId };
+  const read = () => {
+    const text = sessionStartContext({ runtime, event, environment }).hookSpecificOutput.additionalContext;
+    assert.ok(text.length <= 7000, `Final JSON length ${text.length}`);
+    const value = JSON.parse(text);
+    assert.equal(value.ordinaryWorkBlocked, false);
+    assert.equal(value.userDecisionRequired, false);
+    assert.equal(value.persisted, false);
+    assert.equal(value.logicalSessionId, session.sessionId);
+    assert.deepEqual(value.route, { session_id: session.sessionId });
+    assert.match(value.expansion, /head_conversation_enter.*project_root:projectRoot.*exact route/);
+    assert.match(value.expansion, /not an atomic snapshot; reread before a current effect/);
+    t.diagnostic(JSON.stringify({ runtime, length: text.length, sessionId: value.logicalSessionId,
+      records: value.records.length, omittedEvidenceCount: value.omittedEvidenceCount,
+      purposeOmitted: value.sessionPurposeCoverage?.contentIncluded === false,
+      directionOmitted: value.currentProjectDirection?.contentIncluded === false,
+      coverageOmitted: value.workCoverage?.omitted === true }));
+    return value;
+  };
+  t.after(() => { if (process.env.HEAD_AGENT_KEEP_TEST_TMP !== "1") fs.rmSync(base, { recursive: true, force: true }); });
+  t.diagnostic(JSON.stringify({ fixture: base, runtime, evidenceScope: "synthetic-public-adapter-and-hook; actualHost-unverified" }));
+  return { base, root, operational, environment, event, host, session, read,
+    selected: (fn) => withSessionRoute(root, session.sessionId, fn) };
+}
+function snapshot(directory) {
+  const files = {};
+  function walk(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, item.name);
+      if (item.isDirectory()) walk(file);
+      else { const stat = fs.statSync(file); files[path.relative(directory, file)] = {
+        digest: sha(fs.readFileSync(file)), size: stat.size, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs, mode: stat.mode };
+      }
+    }
+  }
+  walk(directory);
+  return files;
+}
+const checkpoint = (f, purpose = "Historical checkpoint purpose", fields = {}) => f.selected(() => syncRecoveryCheckpoint({
+  root: f.root, expectedRecoveryBasisId: inspectRecoveryCheckpointBasis({ root: f.root }).basis.basisId,
+  purpose, approvedDecisions: ["Historical local investigation approval"], currentPosition: "Prior investigation",
+  nextExpectedResult: "Historical suggestion; no effect permission", ...fields,
+}));
+const evidence = (f, summary) => f.selected(() => recordSessionWorkEvidence({ root: f.root, input: { summary } }));
+
+for (const runtime of ["codex", "claude"]) {
+  test(`${runtime}: selected purpose survives no checkpoint with empty and saved work; reads write nothing`, (t) => {
+    const f = fixture(t, runtime), before = snapshot(f.base), raw = f.host.enter({ root: f.root });
+    const empty = f.read();
+    assert.equal(raw.workContext.records.length, 0);
+    assert.equal(empty.sessionPurpose, raw.workContext.sessionPurpose);
+    assert.equal(empty.sessionRecovery, null);
+    assert.deepEqual(snapshot(f.base), before);
+    const retained = evidence(f, "Reason retained without changing current Session purpose");
+    const savedBefore = snapshot(f.base), savedRaw = f.host.enter({ root: f.root }), saved = f.read();
+    assert.equal(saved.sessionPurpose, savedRaw.workContext.sessionPurpose);
+    assert.equal(saved.records[0].evidenceId, retained.evidence.evidenceId);
+    assert.equal(saved.sessionRecovery, null);
+    assert.deepEqual(snapshot(f.base), savedBefore);
+  });
+
+  test(`${runtime}: never-recorded, intact and lost direction remain distinct without repair`, (t) => {
+    const f = fixture(t, runtime);
+    checkpoint(f);
+    const absentBefore = snapshot(f.base), absent = f.read();
+    assert.equal(absent.currentProjectDirection, null);
+    assert.equal(Object.hasOwn(absent, "currentProjectDirectionAvailability"), false);
+    assert.deepEqual(snapshot(f.base), absentBefore);
+    const direction = updateProjectDirection({ root: f.root, input: { goal: "Inspect only", cancelledActions: ["deploy"] } }).direction;
+    const intactBefore = snapshot(f.base), intact = f.read();
+    assert.deepEqual(intact.currentProjectDirection, direction);
+    assert.deepEqual(snapshot(f.base), intactBefore);
+    fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    const lostBefore = snapshot(f.base), raw = f.host.enter({ root: f.root }), lost = f.read();
+    assert.deepEqual(raw.projectStatus.currentProjectDirectionAvailability, unavailable);
+    assert.deepEqual(lost.currentProjectDirectionAvailability, unavailable);
+    assert.equal(lost.currentProjectDirection, null);
+    assert.notDeepEqual(lost, absent);
+    assert.equal(lost.sessionPurpose, raw.workContext.sessionPurpose);
+    assert.deepEqual(snapshot(f.base), lostBefore);
+  });
+
+  test(`${runtime}: current selected purpose and historical checkpoint/other Session stay separate`, (t) => {
+    const f = fixture(t, runtime), otherPurpose = "OTHER SESSION PURPOSE MUST NOT APPEAR";
+    createHeadSession({ root: f.root, purpose: otherPurpose });
+    checkpoint(f);
+    const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
+    assert.notEqual(raw.workContext.sessionPurpose, raw.restore.checkpoint.purpose);
+    assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
+    assert.equal(value.sessionRecovery.purpose, raw.restore.checkpoint.purpose);
+    assert.equal(value.sessionRecovery.historicalApprovalGrantsCurrentEffect, false);
+    assert.equal(JSON.stringify(value).includes(otherPurpose), false);
+    assert.deepEqual(snapshot(f.base), before);
+  });
+
+  test(`${runtime}: supported huge current purpose and common/history are honestly omitted`, (t) => {
+    const purpose = "Exact current selected purpose " + "목적\\\"".repeat(6000);
+    const f = fixture(t, runtime, purpose);
+    checkpoint(f, "Historical purpose " + "h".repeat(10000));
+    const direction = updateProjectDirection({ root: f.root, input: { goal: "Large valid goal", constraints: ["c".repeat(12000)], cancelledActions: ["deploy"] } }).direction;
+    let before = snapshot(f.base), value = f.read();
+    assert.equal(value.sessionPurpose, null);
+    assert.deepEqual(value.sessionPurposeCoverage, { contentIncluded: false, reason: "startup-output-bound", source: "workContext.sessionPurpose" });
+    assert.deepEqual(value.currentProjectDirection, { directionId: direction.directionId, contentIncluded: false });
+    assert.equal(value.sessionRecovery.contentIncluded, false);
+    assert.equal(value.sessionRecovery.historicalApprovalGrantsCurrentEffect, false);
+    assert.equal(value.projectRoot, f.root);
+    assert.match(value.expansion, /original workContext.sessionPurpose/);
+    assert.match(value.requiredSourceExpansion, /no constraint or cancellation is assumed absent/);
+    assert.deepEqual(snapshot(f.base), before);
+    fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    before = snapshot(f.base); value = f.read();
+    assert.equal(value.sessionPurposeCoverage.contentIncluded, false);
+    assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
+    assert.deepEqual(snapshot(f.base), before);
+  });
+
+  test(`${runtime}: final bound includes P3 coverage, omitted IDs and expansion; fitting purpose stays exact`, (t) => {
+    const f = fixture(t, runtime);
+    for (let i = 0; i < 40; i += 1) evidence(f, `${i}: ` + "reviewable evidence ".repeat(100));
+    updateProjectDirection({ root: f.root, input: { goal: "Preserve unavailable diagnosis under evidence budget" } });
+    fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
+    assert.equal(raw.workContext.records.length, 8);
+    assert.equal(raw.workContext.omissions.byBudget, 32);
+    assert.equal(value.workCoverage.omissions.evidenceIds.length, 32);
+    assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
+    assert.ok(value.records.length < raw.workContext.records.length);
+    assert.equal(value.omittedEvidenceCount, raw.workContext.records.length - value.records.length);
+    assert.deepEqual(new Set([...value.records.map((r) => r.evidenceId), ...value.omittedEvidenceIds]),
+      new Set(raw.workContext.records.map((r) => r.evidenceId)));
+    for (const record of value.records) {
+      const original = raw.workContext.records.find((r) => r.evidenceId === record.evidenceId);
+      assert.deepEqual(record, { evidenceId: original.evidenceId, content: original.content, references: original.references });
+    }
+    assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
+    assert.equal(value.projectRoot, f.root);
+    assert.deepEqual(snapshot(f.base), before);
+  });
+
+  test(`${runtime}: compact optional coverage before omitting a current purpose that fits`, (t) => {
+    const purpose = "Fitting current purpose " + "p".repeat(4200), f = fixture(t, runtime, purpose);
+    for (let i = 0; i < 40; i += 1) evidence(f, `${i}: ` + "bounded P3 history ".repeat(100));
+    updateProjectDirection({ root: f.root, input: { goal: "Known direction loss with a fitting current purpose" } });
+    fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
+    assert.equal(raw.workContext.omissions.evidenceIds.length, 32);
+    assert.equal(value.workCoverage.omitted, true);
+    assert.equal(value.workCoverage.sourceOriginals, 40);
+    assert.equal(value.workCoverage.sourceIncluded, 8);
+    assert.equal(value.sessionPurpose, purpose);
+    assert.equal(Object.hasOwn(value, "sessionPurposeCoverage"), false);
+    assert.equal(value.projectRoot, f.root);
+    assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
+    assert.deepEqual(snapshot(f.base), before);
+  });
+
+  test(`${runtime}: malformed/unbound events do not guess or register a Session`, (t) => {
+    const f = fixture(t, runtime), before = snapshot(f.base);
+    for (const event of [{ ...f.event, hook_event_name: "PostToolUse" }, { ...f.event, source: "unsupported" }, { ...f.event, session_id: null }]) {
+      assert.deepEqual(sessionStartContext({ runtime, event, environment: f.environment }), {});
+    }
+    if (runtime === "codex") assert.deepEqual(sessionStartContext({ runtime, event: { ...f.event, agent_id: "ambiguous" }, environment: f.environment }), {});
+    const unbound = JSON.parse(sessionStartContext({ runtime, event: { ...f.event, session_id: "unbound-synthetic-caller" }, environment: f.environment }).hookSpecificOutput.additionalContext);
+    assert.equal(unbound.status, "session_selection_unresolved");
+    assert.equal(unbound.logicalSessionId, null);
+    assert.equal(unbound.route, null);
+    assert.equal(unbound.sessionPurpose, null);
+    assert.equal(unbound.ordinaryWorkBlocked, false);
+    assert.deepEqual(snapshot(f.base), before);
+  });
+}
+
+// Private formatter coverage only: no adapter, filesystem path or actual Host
+// capability is claimed by these extracted-function cases. No production export.
+const hookSource = fs.readFileSync(path.join(pluginRoot, "scripts", "session-host-hook.mjs"), "utf8");
+const formatterSource = hookSource.slice(hookSource.indexOf("const MAX_CONTEXT_CHARACTERS"), hookSource.indexOf("// A read-only command Hook"));
+const projectStartup = new Function("path", formatterSource + "\nreturn startupProjection;")(path);
+const sessionId = "session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+const entry = () => ({ status: "synthetic-formatter-only", workContext: { sessionId, sessionPurpose: "Exact selected purpose", records: [] } });
+
+test("private formatter: explicit nested diagnosis keeps its own null; null metadata is not diagnosis", () => {
+  const raw = entry();
+  raw.restore = { projection: { currentProjectDirection: { directionId: "other-view" }, currentProjectDirectionAvailability: null } };
+  raw.projectStatus = { currentProjectDirection: null, currentProjectDirectionAvailability: unavailable };
+  raw.currentProjectDirection = { directionId: "root-other-view" };
+  let value = JSON.parse(projectStartup(raw, pluginRoot));
+  assert.equal(value.currentProjectDirection, null);
+  assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
+  raw.restore.projection.currentProjectDirectionAvailability = unavailable;
+  raw.restore.projection.currentProjectDirection = null;
+  raw.projectStatus.currentProjectDirection = { directionId: "status-other-view" };
+  value = JSON.parse(projectStartup(raw, pluginRoot));
+  assert.equal(value.currentProjectDirection, null);
+  assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
+  for (const metadata of [null, undefined]) {
+    raw.restore.projection.currentProjectDirectionAvailability = metadata;
+    delete raw.projectStatus.currentProjectDirectionAvailability;
+    value = JSON.parse(projectStartup(raw, pluginRoot));
+    assert.equal(value.currentProjectDirection, null);
+    assert.equal(Object.hasOwn(value, "currentProjectDirectionAvailability"), false);
+  }
+});
+
+test("private formatter: late omission metadata cannot exceed final budget or conceal omitted evidence", (t) => {
+  const raw = entry();
+  const baseline = projectStartup(raw, pluginRoot).length;
+  const id = (n) => "work-evidence-" + String(n).padStart(24, "0");
+  raw.workContext.records = [{ evidenceId: id(1), content: { summary: "" }, references: [] }];
+  const overhead = projectStartup(raw, pluginRoot).length - baseline;
+  raw.workContext.records[0].content.summary = "x".repeat(7000 - baseline - overhead);
+  assert.equal(projectStartup(raw, pluginRoot).length, 7000);
+  raw.workContext.records.push({ evidenceId: id(2), content: { summary: "Omitted record" }, references: [] });
+  const text = projectStartup(raw, pluginRoot), value = JSON.parse(text);
+  assert.ok(text.length <= 7000);
+  assert.equal(value.records.length, 0);
+  assert.equal(value.omittedEvidenceCount, 2);
+  assert.deepEqual(new Set(value.omittedEvidenceIds), new Set([id(1), id(2)]));
+  assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
+  t.diagnostic(JSON.stringify({ evidenceScope: "private-serializer-only", length: text.length, branch: "final-omission-IDs-evict-record" }));
+});
+
+test("private formatter: oversized metadata/root explicitly omit content and retain exact route/diagnosis", (t) => {
+  const raw = entry();
+  raw.projectStatus = { currentProjectDirection: null, currentProjectDirectionAvailability: unavailable };
+  raw.workContext.coverage = { serializerOnlyOversizedMetadata: "c".repeat(9000) };
+  let text = projectStartup(raw, pluginRoot), value = JSON.parse(text);
+  assert.ok(text.length <= 7000);
+  assert.equal(value.workCoverage.omitted, true);
+  assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
+  assert.equal(value.projectRoot, pluginRoot);
+  assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
+  raw.workContext.coverage = {};
+  text = projectStartup(raw, path.parse(pluginRoot).root + "r".repeat(9000)); value = JSON.parse(text);
+  assert.ok(text.length <= 7000);
+  assert.equal(Object.hasOwn(value, "projectRoot"), false);
+  assert.equal(value.projectRootOmitted, true);
+  assert.equal(value.projectRootSource, "SessionStart.cwd");
+  assert.deepEqual(value.route, { session_id: sessionId });
+  assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
+  assert.match(value.expansion, /original SessionStart.cwd as project_root and the exact route/);
+  t.diagnostic(JSON.stringify({ evidenceScope: "private-serializer-only; unsupported-filesystem-path-not-executed", length: text.length, branch: "coverage-and-last-resort-root-omission" }));
+});

@@ -119,6 +119,15 @@ resolver에 전달합니다. native ID는 조회용 hash가 되며 canonical Ses
 연결 생성·transcript 해석·메모 저장·방향 추론은 하지 않습니다. 시작 방향이 크면
 조용히 잘라 쓰지 않고 원본을 펼쳐 읽어야 한다고 표시합니다.
 
+시작 맥락은 checkpoint가 없어도 선택된 Session의 현재 `sessionPurpose`를
+전달하며, 과거 checkpoint의 목적·결정과 구분합니다. 이미 명시된 현재 공통 방향의
+가용성 진단도 보존하므로 확인 불가 상태를 미기록 null과 혼동하지 않습니다.
+coverage·생략·확대 안내까지 포함한 최종 JSON은 7,000문자 이내입니다. 큰 목적을
+다른 의미의 부분 문자열로 자르지 않고 생략 사실과 같은 정확한 Session route의
+기존 원본 조회를 안내합니다. 선택적 내용을 줄여도 매우 긴 경로가 들어가지 않는
+마지막 경우에만 렌더링한 경로를 생략하고 원래 Hook cwd를 출처로 표시합니다.
+선택 변경·binding 쓰기·필수 checkpoint·저장·승인·추가 사용자 절차는 없습니다.
+
 | 경로 | 구현된 지원 | 중요한 한계 |
 | --- | --- | --- |
 | Core CLI/MCP | 정확한 논리 Session 기록 → 같은 Session 진입, 선택적 typed 확대 | native caller identity를 추론하지 않음 |

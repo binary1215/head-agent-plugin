@@ -132,6 +132,18 @@ bounded read-only context before MCP needs to be ready. It never creates that
 binding, parses a transcript, saves a note or infers direction. Large startup
 direction is explicitly marked for original expansion, not silently cut.
 
+Startup includes the selected Session's current `sessionPurpose` even without a
+checkpoint, separately from historical checkpoint purpose and decisions. It also
+retains an explicitly reported current-direction availability diagnosis; an
+unavailable direction is not the same as a never-recorded null direction. The
+final JSON context, including coverage, omissions and expansion advice, stays
+within 7,000 characters. Oversized purpose is explicitly omitted rather than
+shortened into a different purpose; existing entry/work reads expand originals
+using the same exact Session route. Only if optional reductions cannot fit an
+unusually long root is its rendered path omitted with the original Hook cwd
+identified as its source. None of this changes selection, writes a binding or
+requires a checkpoint, save, approval or extra routine user step.
+
 | Path | Implemented support | Important limit |
 | --- | --- | --- |
 | Core CLI/MCP | Exact logical Session record → same Session entry; optional typed expansion | No native caller identity inferred |

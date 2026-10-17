@@ -169,6 +169,22 @@ The metric workflow is a thin provider-neutral use of the common contract, not a
 
 ## Context and use
 
+### Committed metric evidence and derived World updates
+
+Metric define, observe and compare retain their exact committed primary IDs even
+if the subsequent World projection fails. A healthy `worldModel` keeps its
+existing `worldModelId` and `graphSnapshotId`. Only a post-commit projection
+failure returns `worldModel: {status: "deferred", reasonCode,
+ordinaryWorkBlocked: false}` alongside the original saved result. The bounded
+code discloses no raw error message, path or stack.
+
+Deferred means the derived update did not complete, not that a retry is queued
+or that it wrote no derived bytes. Completed evidence need not be re-created or
+force-refreshed. Validation, identity/digest, permission, primary publication,
+and incomplete observation/receipt or descriptor/comparison transactions remain
+errors. Exact retry keeps its existing convergence and observed-time reuse;
+neither a retry nor a World view grants Product or recovery authority.
+
 ### Optional Python declaration reads
 
 The user asks for the task once; HEAD chooses how to inspect it without requesting

@@ -163,6 +163,20 @@ Metric workflow는 공통 계약을 얇게 사용하는 provider-neutral 경로�
 
 ## Context와 사용법
 
+### 측정 근거의 저장 완료와 파생 World 갱신
+
+Metric 정의·관측·비교는 원본 저장 뒤 World 투영이 실패해도 정확한 저장 ID를
+반환합니다. 정상 `worldModel`은 기존 `worldModelId`·`graphSnapshotId`를 유지하며,
+후속 투영만 실패한 경우 저장 결과와 함께 `worldModel: {status: "deferred",
+reasonCode, ordinaryWorkBlocked: false}`를 전달합니다. 제한된 사유 코드에 원문 오류
+메시지·경로·stack을 노출하지 않습니다.
+
+deferred는 파생 갱신 미완료이지 예약된 재시도나 파생 쓰기 0회의 뜻이 아닙니다.
+완료한 근거를 다시 작성하거나 강제 refresh할 필요는 없습니다. 입력·identity/digest·
+permission·원본 게시 오류와 observation/receipt 또는 descriptor/comparison의
+부분 저장은 계속 오류입니다. 정확한 재시도의 기존 수렴·관측 시각 재사용은 유지하며,
+재시도나 World view가 Product·복구 권한을 만들지 않습니다.
+
 ### 선택적인 Python 선언 조회
 
 사용자는 작업을 한 번 요청하고, HEAD가 JSON·digest·ID·파서·예산 선택을 사용자에게

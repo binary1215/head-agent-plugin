@@ -165,6 +165,17 @@ async function projectCurrentObservations(root) {
   return { worldModelId: world.snapshot.worldModelId, graphSnapshotId: world.snapshot.temporalProvenanceGraph.graphSnapshotId };
 }
 
+// Call only after the complete primary store operation has returned. A failed
+// derived update neither erases committed evidence nor schedules a retry.
+async function projectCommittedObservations(root) {
+  try { return await projectCurrentObservations(root); }
+  catch (error) {
+    const reasonCode = typeof error?.code === "string" && /^[A-Z][A-Z0-9_:-]{0,127}$/.test(error.code)
+      ? error.code : "MEASUREMENT_PROJECTION_FAILED";
+    return { status: "deferred", reasonCode, ordinaryWorkBlocked: false };
+  }
+}
+
 export async function defineMetric({ root = ".", metricKey, unit, direction, typeVersion = "1" } = {}) {
   const inspected = assertObservationProjectReady(root);
   const descriptor = metricDescriptor({ metricKey, unit, direction, typeVersion });
@@ -178,7 +189,7 @@ export async function defineMetric({ root = ".", metricKey, unit, direction, typ
     status: persisted.status,
     definition: descriptorDefinition(descriptor),
     descriptor,
-    worldModel: await projectCurrentObservations(inspected.project.projectRoot),
+    worldModel: await projectCommittedObservations(inspected.project.projectRoot),
     ordinaryWorkBlocked: false,
   };
 }
@@ -226,7 +237,7 @@ export async function recordMetricObservation({
     adapterDescriptor: { adapterKey: normalizedAdapterKey, adapterVersion: normalizedAdapterVersion, authority: "host-observation-evidence-only", providerNeutral: true },
     sourceScopeDigest: normalizedSourceScopeDigest,
   });
-  return { ...recorded, definition: selected.definition, worldModel: await projectCurrentObservations(inspected.project.projectRoot), ordinaryWorkBlocked: false };
+  return { ...recorded, definition: selected.definition, worldModel: await projectCommittedObservations(inspected.project.projectRoot), ordinaryWorkBlocked: false };
 }
 
 function observedMetric(read) {
@@ -309,7 +320,7 @@ export async function compareMetricObservations({ root = ".", baselineObservatio
       collectionConditions,
     },
     causalityEstablished: false,
-    worldModel: await projectCurrentObservations(inspected.project.projectRoot),
+    worldModel: await projectCommittedObservations(inspected.project.projectRoot),
     ordinaryWorkBlocked: false,
   };
 }
