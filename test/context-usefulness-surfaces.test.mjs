@@ -52,7 +52,7 @@ test('generated instructions lead with the original outcome and preserve only ne
  assert.match(text,/Work directly by default/);assert.match(text,/current request bounds action/);
  assert.match(text,/common constraints\/cancellations.*selected Session's P2/);
  assert.match(text,/Preserve completed contributions and user edits/);
- assert.match(text,/No per-turn save or mandatory sync\/Run\/Capsule\/approval/);
+ assert.match(text,/No per-turn save or mandatory sync\/Run\/Capsule; no duplicate administrative approval ritual/);
  assert.match(text,/Never infer a disposition from keyword matching, silence, or a default/);
  assert.match(text,/do not repeat status unless state changed/);
  assert.match(text,/distinguish mechanical coverage from semantic sufficiency/);

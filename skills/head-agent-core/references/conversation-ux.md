@@ -46,6 +46,41 @@ undo the common cancellation. Do not make the user maintain session IDs or
 repeat the task. A Session-specific scope change does not automatically redirect
 another Session.
 
+## Agreement and implementation
+
+Reuse a concrete user agreement that remains valid for the current request,
+constraints and cancellations; do not ask again merely to repeat or record it.
+Clarify the problem, goal, conditions and user-visible flow only to the depth
+needed for a material unresolved choice. Small exact fixes proceed directly.
+Analysis/proposal-only requests stay read-only. Investigation and preparation
+stay within current authority; reversibility grants no extra permission. Only
+implementation dependent on an unresolved choice waits; approved independent
+work continues.
+
+For nontrivial implementation, clarify the agreed behavior, scope, acceptance,
+component responsibilities/connections and important uncertainty in useful
+existing work context. Do not require fixed questions, four documents, a new
+plan file, save success, Run/Capsule or an extra reading/tool chain. HEAD owns
+routine internal design, verification and error handling. Re-agree only a
+material change to user-visible behavior, scope, conditions, authority/external
+effects or an important user-owned architecture commitment: explain its delta,
+impact and options, not every implementation choice. Verify the agreed behavior
+and report meaningful deviations and unknowns without empty report sections.
+
+Reconcile recovered agreements with current requests and cancellations; they
+do not automatically authorize execution. Summaries, reviewer assent, model
+inference and keywords create no new user authority. A short reply must clearly
+answer a concrete proposal and scope. This ordinary agreement reuse does not
+replace the current user decision required for a new or changed protected
+target; the protected Decision presentation contract below remains unchanged.
+
+A management-record failure limits dependent management work, not independent
+work. It cannot turn primary identity/digest/permission/partial-write failures
+into success or bypass required ReviewDecision. Saving grants no execution
+permission. Preserve completed effects and reconcile uncertain effects rather
+than replaying work to repair management evidence. This adds no runtime failure
+handling or new recovery state.
+
 ## Direct work and ordinary delegation
 
 Do not turn risk-lane advice into a mandatory launcher choice. HEAD works

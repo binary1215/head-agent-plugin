@@ -99,6 +99,28 @@ are not general exploration gates. Before changes, recheck affected current
 sources and effect authority.
 Read [project discovery](references/project-discovery.md) for implementation.
 
+## Agree the work, not the paperwork
+
+Reuse concrete user agreement that remains valid for the current request,
+constraints and cancellations. Agree unresolved material user-visible behavior,
+scope, conditions and important user-owned architecture choices. Re-agree only
+the material delta, impact and options, not routine internal choices. Small exact
+fixes proceed directly; analysis/proposal-only stays read-only. Preparation stays
+within current authority; reversibility grants none. Only choice-dependent
+implementation waits while approved independent work continues.
+
+For nontrivial implementation, clarify purpose, agreed behavior, scope,
+acceptance, component responsibilities/connections and important uncertainty in
+useful existing work context. No fixed questions, new plan file, save-success
+gate or prerequisite reference/tool chain is required. HEAD owns routine internal
+design, verification and error handling. Verify the agreed behavior and report
+meaningful deviations and unknowns without mandatory report sections.
+
+Summaries, reviewer assent and model inference create no user authority. A short
+reply must clearly answer a concrete proposal and scope. Reconcile recovered
+agreements with current requests and cancellations; ordinary agreement reuse
+cannot replace the current user decision for a new or changed protected target.
+
 ## Choose execution and preserve judgment
 
 Work directly for small tasks. Delegate independently reviewable outcomes when
@@ -156,6 +178,11 @@ sync, or `head_session_work_record` for Run-free work. No per-turn record,
 transcript copy, save approval, user JSON, compulsory budget tier or Run/Capsule.
 Session-local purpose/constraints/cancellation stay in explicit P2 direction;
 P3 evidence cannot supply them or change shared ProjectDirection.
+
+A management-record failure limits dependent management work, not independent
+work. Preserve primary identity/digest/permission/partial-write failures and
+required ReviewDecision; saving grants no execution permission. Repair missing
+persistence without replaying completed or uncertain effects.
 
 Entry already supplies bounded `workContext`. Default selection considers recent
 verified work across the discovered originals; time order is not semantic

@@ -2,6 +2,7 @@ node_modules/
 .agent-work/
 /dist/
 test/*
+!test/agreement-workflow-guidance.test.mjs
 !test/context-usefulness-surfaces.test.mjs
 !test/session-work-recent-selection.test.mjs
 !test/startup-current-priority.test.mjs
