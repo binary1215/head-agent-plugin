@@ -223,8 +223,21 @@ Startup includes the selected Session's current `sessionPurpose` even without a
 checkpoint, separately from historical checkpoint purpose and decisions. It also
 retains an explicitly reported current-direction availability diagnosis; an
 unavailable direction is not the same as a never-recorded null direction. The
-final JSON context, including coverage, omissions and expansion advice, stays
-within 7,000 characters. Exact current common direction, Session purpose and the
+final JSON context, including coverage, omissions and expansion advice, has one
+Host-specific delivery budget rather than a second common 7,000-character crop.
+Claude uses at most 10,000 UTF-16 code units, conservatively following its
+[documented per-string ceiling](https://code.claude.com/docs/en/hooks#add-context-for-claude).
+Codex uses at most 32,768 UTF-16 code units for the **complete** output: a finite
+local resource policy reusing the default work-reader size, not an optimal value,
+Host token/window limit, or proof that P2 inputs are bounded. The packaged Codex
+handler uses numeric `additionalContextLimit: 0` alongside that strict emission
+guard, following the [documented full-output option](https://learn.chatgpt.com/docs/hooks#large-hook-output).
+The old approximate 4,096-token setting could spill even a character-bounded
+multilingual result. Installed Host support and actual model receipt remain
+separate verification; characters, UTF-8 bytes and model tokens are not equivalent.
+Current direction/purpose/checkpoint inputs themselves have no text-length cap;
+the existing 32,768-character work read covers only its selected record array.
+Exact current common direction, Session purpose and the
 latest selected checkpoint's purpose/decisions/position/next-result fields take
 priority over optional prose, coverage detail, ID samples and P3 history. The
 checkpoint's recorded approvals/next steps still grant no current effect authority.
@@ -243,7 +256,28 @@ Where existing restore supplies `currentExecution`, a separate small axis keeps
 its exact status and canonical active/pending-review/required-plan facts. Incomplete
 or conflict stays so; a raw pointer is not verified execution. No checkpoint means
 no new execution scan. This axis and all history yield to protected common/P2
-direction and purpose within the same 7,000-character final JSON ceiling.
+direction and purpose within the applicable complete-output ceiling. The minimal
+canonical execution status remains visible if its optional details cannot fit.
+
+Transport removes repeated wrappers, not authored meaning. Startup
+uses compact truthful guidance before admitting any authored block; longer
+optional guidance returns only with spare capacity after original bodies.
+Common direction keeps its `directionId`, `directionHash` and exact `input`; recovery retains its
+checkpoint digest and open review IDs alongside the four original direction
+fields. Work `content`, including reasons, alternatives, references, pending work
+and unknowns, stays unchanged, with its evidence ID/digest and observation overlay.
+`referenceChecks[].referenceIndex` points to the exact matching path/digest/kind
+in that content's references; verification status, actual/null owner and exceptional
+diagnostics remain. An unpaired descriptor is retained whole, not guessed.
+These hashes select verified originals, not the compact projected JSON. Reference
+byte matching does not establish semantic freshness or authority. Unavailable or
+changed-basis work retains status/reason and expansion even with zero records.
+No original, selection, binding, tool chain or user step is added. A genuinely
+oversized source is omitted whole with truthful coverage and dependent-only
+expansion; omitted cancellation never means absent cancellation. No local spill
+file or automatic follow-up read is created. Actual Host spill/preview behavior
+must not be called complete recovery. The guard bounds emitted text, not the
+memory required to read already-valid unbounded P2 inputs.
 
 | Path | Implemented support | Important limit |
 | --- | --- | --- |

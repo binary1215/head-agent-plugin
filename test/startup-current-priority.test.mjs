@@ -12,6 +12,8 @@ import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
 
+const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
+
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const unavailable = { status: "unavailable", reasonCode: "PROJECT_DIRECTION_UNAVAILABLE", dependentEffectsBlocked: true };
 function snapshot(base) {
@@ -55,14 +57,14 @@ function fixture(t, purpose, { records = 40, checkpoint = false } = {}) {
     assert.equal(host.select({ root, sessionId: session.sessionId, expectedRevision: 0 }).retained, true);
     return { runtime, host, read() {
       const text = sessionStartContext({ runtime, environment, event: { hook_event_name: "SessionStart", source: "startup", cwd: root, session_id: nativeSessionId } }).hookSpecificOutput.additionalContext;
-      assert.ok(text.length <= 7000, `Final context ${text.length}`);
+      assert.ok(text.length <= (runtime === "codex" ? 32768 : 10000), `Final context ${text.length}`);
       const value = JSON.parse(text);
       assert.deepEqual(value.route, { session_id: session.sessionId });
       assert.equal(value.projectRoot, root);
       assert.equal(value.logicalSessionId, session.sessionId);
       for (const flag of ["ordinaryWorkBlocked", "userDecisionRequired", "persisted"]) assert.equal(value[flag], false);
-      assert.match(value.scope, /Read-only, non-atomic.*historical approval\/next steps and P3 grant no effects/);
-      assert.match(value.hostCapability, /verified.*never guess.*No extra bind\/save or repeated Session ID is required/);
+      assert.match(value.scope, /Read-only, non-atomic.*history\/P3 grant no effects/);
+      assert.match(value.hostCapability, /Verified.*never guess.*No extra bind\/save\/repeated Session ID/);
       assert.match(value.expansion, /^When needed, head_conversation_enter.*project_root:projectRoot.*exact route/);
       return { text, value };
     } };
@@ -73,7 +75,7 @@ function fixture(t, purpose, { records = 40, checkpoint = false } = {}) {
 }
 function checkpointView(raw) {
   const c = raw.restore?.checkpoint;
-  return c ? { checkpointId: c.checkpointId, purpose: c.purpose, approvedDecisions: c.approvedDecisions,
+  return c ? { checkpointId: c.checkpointId, ...(c.checkpointDigest ? { checkpointDigest: c.checkpointDigest } : {}), ...(c.openReviewIds ? { openReviewIds: c.openReviewIds } : {}), purpose: c.purpose, approvedDecisions: c.approvedDecisions,
     historicalPosition: c.currentPosition, historicalNextExpectedResult: c.nextExpectedResult,
     historicalApprovalGrantsCurrentEffect: false } : null;
 }
@@ -85,7 +87,7 @@ test("public Hook: current common cancellation and 4200-character selected purpo
     const raw = caller.host.enter({ root: f.root }), { text, value } = caller.read();
     assert.equal(raw.workContext.omissions.byBudget, 32);
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
-    assert.deepEqual(value.currentProjectDirection, f.direction);
+    assert.deepEqual(value.currentProjectDirection, directionView(f.direction));
     assert.equal(Object.hasOwn(value, "requiredSourceExpansion"), false);
     assert.equal(Object.hasOwn(value, "sessionPurposeCoverage"), false);
     assert.equal(value.omittedEvidenceCount, raw.workContext.records.length - value.records.length);
@@ -101,7 +103,7 @@ test("public Hook: all four latest selected checkpoint direction fields survive 
   let before = snapshot(f.base);
   for (const caller of f.callers) {
     const raw = caller.host.enter({ root: f.root }), { value, text } = caller.read();
-    assert.deepEqual(value.currentProjectDirection, f.direction);
+    assert.deepEqual(value.currentProjectDirection, directionView(f.direction));
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.deepEqual(value.sessionRecovery, checkpointView(raw));
     assert.equal(Object.hasOwn(value, "requiredSourceExpansion"), false);
@@ -154,10 +156,10 @@ test("private formatter: varying root/purpose/checkpoint lengths preserves every
   let fitted = 0, oversized = 0;
   for (const root of [pluginRoot, path.join(pluginRoot, "different-supported-root-length")]) {
     for (const checkpointLength of [0, 280]) {
-      for (const purposeLength of [0, 3000, 4200, 4700, 5000, 5300, 5600, 5900, 6200, 6800, 9000]) {
+      for (const purposeLength of [0, 5000, 7200, 7700, 8000, 8300, 8600, 8900, 9200, 9800, 12000]) {
         const raw = serializerEntry(purposeLength, checkpointLength), value = JSON.parse(privateFormatter(raw, root));
         const text = JSON.stringify(value);
-        assert.ok(text.length <= 7000);
+        assert.ok(text.length <= 10000);
         assert.deepEqual(value.route, { session_id: id });
         const witness = clone(value);
         witness.currentProjectDirection = raw.currentProjectDirection;
@@ -166,11 +168,11 @@ test("private formatter: varying root/purpose/checkpoint lengths preserves every
         delete witness.sessionPurposeCoverage;
         delete witness.requiredSourceExpansion;
         witness.records = []; witness.omittedEvidenceIds = []; witness.omittedEvidenceCount = 0;
-        witness.workCoverage = { omitted: true };
-        witness.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. Check current authority for effects.";
+        witness.workCoverage = { omitted: true, sourceOriginals: raw.workContext.coverage.originals, sourceInspected: raw.workContext.coverage.inspected, sourceIncluded: raw.workContext.coverage.included };
+        witness.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. IDs/digests select originals; reference freshness not inferred. Check current authority for effects.";
         witness.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
         witness.expansion = "Omitted work: head_session_work_read(project_root:projectRoot, ...route)";
-        if (JSON.stringify(witness).length <= 7000) {
+        if (JSON.stringify(witness).length <= 10000) {
           fitted += 1;
           assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
           assert.deepEqual(value.currentProjectDirection, raw.currentProjectDirection);
@@ -186,28 +188,28 @@ test("private formatter: varying root/purpose/checkpoint lengths preserves every
 
 test("private formatter: even optional compact coverage/prose yield to all protected originals at the exact boundary", (t) => {
   const raw = serializerEntry(0, 280), witness = JSON.parse(privateFormatter(raw, pluginRoot));
-  witness.workCoverage = { omitted: true };
-  witness.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. Check current authority for effects.";
+  witness.workCoverage = { omitted: true, sourceOriginals: raw.workContext.coverage.originals, sourceInspected: raw.workContext.coverage.inspected, sourceIncluded: raw.workContext.coverage.included };
+  witness.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. IDs/digests select originals; reference freshness not inferred. Check current authority for effects.";
   witness.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
   witness.expansion = "Omitted work: head_session_work_read(project_root:projectRoot, ...route)";
-  const capacity = 7000 - JSON.stringify(witness).length;
+  const capacity = 10000 - JSON.stringify(witness).length;
   for (const delta of [-1, 0, 1]) {
     const candidate = serializerEntry(capacity + delta, 280), text = privateFormatter(candidate, pluginRoot), value = JSON.parse(text);
-    assert.ok(text.length <= 7000);
+    assert.ok(text.length <= 10000);
     assert.deepEqual(value.currentProjectDirection, candidate.currentProjectDirection);
     assert.deepEqual(value.sessionRecovery, checkpointView(candidate));
     if (delta <= 0) {
       assert.equal(value.sessionPurpose, candidate.workContext.sessionPurpose);
       assert.equal(Object.hasOwn(value, "requiredSourceExpansion"), false);
-      assert.deepEqual(value.workCoverage, { omitted: true });
-      if (delta === 0) assert.equal(text.length, 7000);
+      assert.deepEqual(value.workCoverage, witness.workCoverage);
+      if (delta === 0) assert.equal(text.length, 10000);
     } else assert.equal(value.sessionPurposeCoverage.contentIncluded, false);
     t.diagnostic(JSON.stringify({ evidenceScope: "private-serializer-only", delta, purposeCharacters: capacity + delta, length: text.length }));
   }
 });
 
 test("private formatter: equal-size protected blocks use the documented serialization tie order", () => {
-  const raw = serializerEntry(0, 4500), recoverySize = JSON.stringify(checkpointView(raw)).length;
+  const raw = serializerEntry(0, 6000), recoverySize = JSON.stringify(checkpointView(raw)).length;
   raw.workContext.sessionPurpose = "p".repeat(recoverySize - 2);
   assert.equal(JSON.stringify(raw.workContext.sessionPurpose).length, recoverySize);
   const value = JSON.parse(privateFormatter(raw, pluginRoot));
@@ -222,7 +224,7 @@ test("private formatter: actual protected overflow omits the largest whole block
   raw.currentProjectDirection = null;
   raw.currentProjectDirectionAvailability = unavailable;
   const text = privateFormatter(raw, pluginRoot), value = JSON.parse(text);
-  assert.ok(text.length <= 7000);
+  assert.ok(text.length <= 10000);
   assert.equal(value.sessionPurpose, null);
   assert.deepEqual(value.sessionPurposeCoverage, { contentIncluded: false, reason: "startup-output-bound", source: "workContext.sessionPurpose" });
   assert.deepEqual(value.sessionRecovery, checkpointView(raw));

@@ -15,6 +15,8 @@ import { startRun, finishRun } from "../scripts/lib/run-lineage.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
 import { fixture, exact, link, representative, snapshot, recordFor, accounting, pluginRoot } from "./helpers/session-work-linkage-fixture.mjs";
 
+const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
+
 // Real local API/serializer fixtures, not native Host/model compliance evidence.
 async function call(f, name, args = {}, routed = false) {
   const arguments_ = { project_root: f.root, session_id: f.session.sessionId, ...args };
@@ -45,7 +47,7 @@ function hostFixture(f, runtime) {
   return { host, read() {
     const output = sessionStartContext({ runtime, environment, event: { hook_event_name: "SessionStart", source: "resume", cwd: f.root, session_id: nativeSessionId } });
     const text = output.hookSpecificOutput.additionalContext;
-    assert.ok(text.length <= 7000);
+    assert.ok(text.length <= (runtime === "codex" ? 32768 : 10000));
     return { text, value: JSON.parse(text) };
   } };
 }
@@ -105,7 +107,7 @@ for (const runtime of ["codex", "claude"]) test(`${runtime} public synthetic Hoo
   const direction = updateProjectDirection({ root: f.root, input: { goal: "CURRENT COMMON GOAL: explain only", constraints: ["No external effects"], cancelledActions: ["deployment"] } }).direction;
   const synced = checkpoint(f), caller = hostFixture(f, runtime), before = snapshot(f.base);
   const entry = caller.host.enter({ root: f.root }), { value, text } = caller.read();
-  assert.deepEqual(value.currentProjectDirection, direction); assert.equal(value.sessionPurpose, entry.workContext.sessionPurpose);
+  assert.deepEqual(value.currentProjectDirection, directionView(direction)); assert.equal(value.sessionPurpose, entry.workContext.sessionPurpose);
   assert.equal(value.sessionRecovery.checkpointId, synced.checkpoint.checkpointId);
   assert.deepEqual(value.sessionRecovery.approvedDecisions, synced.checkpoint.approvedDecisions);
   assert.equal(value.sessionRecovery.historicalNextExpectedResult, synced.checkpoint.nextExpectedResult);
@@ -130,7 +132,7 @@ for (const runtime of ["codex", "claude"]) test(`${runtime} optional organized b
   const direction = updateProjectDirection({ root: f.root, input: { goal: "Current common direction", cancelledActions: ["deployment"] } }).direction;
   const caller = hostFixture(f, runtime), before = snapshot(f.base), entry = caller.host.enter({ root: f.root });
   const { value } = caller.read();
-  assert.equal(value.sessionPurpose, entry.workContext.sessionPurpose); assert.deepEqual(value.currentProjectDirection, direction);
+  assert.equal(value.sessionPurpose, entry.workContext.sessionPurpose); assert.deepEqual(value.currentProjectDirection, directionView(direction));
   for (const record of value.records) {
     const original = entry.workContext.records.find(item => item.evidenceId === record.evidenceId);
     if (original.savedActivity) assert.deepEqual(record.savedActivity, original.savedActivity);
@@ -170,7 +172,7 @@ test("P3 ended never clears canonical pending review, and CLI/Hook expose the se
   assert.deepEqual(snapshot(f.base), before);
 });
 
-test("private startup serializer retains record-overlay tuples at 6999/7000 and omits them whole beyond capacity", t => {
+test("private startup serializer retains record-overlay tuples at 9999/10000 and omits them whole beyond capacity", t => {
   // Serializer-only capacity evidence complements the public Hook fixtures.
   const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
   const formatter = new Function("path", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"), source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path);
@@ -188,18 +190,18 @@ test("private startup serializer retains record-overlay tuples at 6999/7000 and 
   } };
   let boundary = null;
   // Output overhead can change when optional coverage is omitted. Search the
-  // finite 7000-character input domain; no model or filesystem mutation occurs.
-  for (let length = 0; length <= 7000; length += 1) {
+  // finite 10000-character input domain; no model or filesystem mutation occurs.
+  for (let length = 0; length <= 10000; length += 1) {
     entry.workContext.records[0].content.summary = "s".repeat(length);
     const text = formatter(entry, pluginRoot), value = JSON.parse(text);
-    assert.ok(text.length <= 7000);
+    assert.ok(text.length <= 10000);
     if (value.records.length) {
       assert.deepEqual(value.records[0].savedActivity, activity);
       assert.equal(value.savedObservationScope, "Saved historical observations coexist; no current live state, success or authority is inferred.");
-      if (text.length === 6999 || text.length === 7000) boundary = { length, outputLength: text.length };
+      if (text.length === 9999 || text.length === 10000) boundary = { length, outputLength: text.length };
     } else if (boundary) break;
   }
-  assert.ok(boundary, "An included tuple must reach the final 6999/7000 boundary");
+  assert.ok(boundary, "An included tuple must reach the final 9999/10000 boundary");
   entry.workContext.records[0].content.summary = "s".repeat(14000);
   const overflow = JSON.parse(formatter(entry, pluginRoot));
   assert.deepEqual(overflow.records, []); assert.equal(overflow.omittedEvidenceCount, 1);
@@ -252,10 +254,10 @@ test("private Hook execution-detail omission keeps an expansion notice without e
       currentPosition: "Retained P2 position", nextExpectedResult: "Retained P2 next result" }, projection: {} },
     workContext: { sessionId: "session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE", sessionPurpose: "", records: [] } };
   let protectedView;
-  for (let length = 0; length <= 7000; length += 1) {
+  for (let length = 0; length <= 10000; length += 1) {
     entry.workContext.sessionPurpose = "p".repeat(length);
     const text = formatter(entry, pluginRoot), value = JSON.parse(text);
-    if (value.sessionPurpose === entry.workContext.sessionPurpose && text.length >= 6970) { protectedView = value; break; }
+    if (value.sessionPurpose === entry.workContext.sessionPurpose && text.length >= 9970) { protectedView = value; break; }
   }
   assert.ok(protectedView, "A near-capacity intact protected context must be available");
   const activeRunId = "run-1767225600000-abcdef";
@@ -264,7 +266,7 @@ test("private Hook execution-detail omission keeps an expansion notice without e
     lastReviewDecisionId: "review-decision-" + "e".repeat(24), requiredPlanAction: { kind: "replan", disposition: "revise",
       wholePlanId: "whole-plan-" + "c".repeat(24), reviewDecisionId: "review-decision-" + "e".repeat(24) } } };
   const original = structuredClone(entry), text = formatter(entry, pluginRoot), value = JSON.parse(text);
-  assert.ok(text.length <= 7000);
+  assert.ok(text.length <= 10000);
   assert.equal(value.sessionPurpose, protectedView.sessionPurpose);
   assert.deepEqual(value.currentProjectDirection, protectedView.currentProjectDirection);
   assert.deepEqual(value.sessionRecovery, protectedView.sessionRecovery);

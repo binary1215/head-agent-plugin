@@ -167,15 +167,16 @@ test("tampered/foreign binding never reaches default; explicit validated request
 test("large startup direction/evidence is disclosed, bounded and never silently treated as empty", (t) => {
   const { root, host, environment } = fixture(t);
   host("large").select({ root, sessionId: "", expectedRevision: 0 });
-  updateProjectDirection({ root, input: { goal: "Preserve current scope", constraints: ["x".repeat(12000)], cancelledActions: ["deploy"] } });
-  recordSessionWorkEvidence({ root, input: { unknowns: ["u".repeat(10000)] } });
+  updateProjectDirection({ root, input: { goal: "Preserve current scope", constraints: ["x".repeat(40000)], cancelledActions: ["deploy"] } });
+  recordSessionWorkEvidence({ root, input: { unknowns: ["u".repeat(40000)] } });
   const output = sessionStartContext({ runtime: "codex", environment,
     event: { hook_event_name: "SessionStart", source: "compact", session_id: "large", cwd: root } });
-  assert.ok(output.hookSpecificOutput.additionalContext.length <= 7000);
+  assert.ok(output.hookSpecificOutput.additionalContext.length <= 32768);
   const context = JSON.parse(output.hookSpecificOutput.additionalContext);
   assert.equal(context.currentProjectDirection.contentIncluded, false);
   assert.match(context.requiredSourceExpansion, /no constraint or cancellation is assumed absent/i);
-  assert.equal(context.omittedEvidenceIds.length, 1);
+  assert.equal(context.omittedEvidenceIds.length, 0); // The reader, not this Hook, excluded the oversized original.
+  assert.equal(context.workCoverage.omissions.byBudget, 1);
   assert.equal(context.persisted, false);
 });
 
@@ -192,8 +193,8 @@ test("real hidden Node command consumes official-style startup stdin and exits; 
   const output = JSON.parse(result.stdout);
   assert.equal(JSON.parse(output.hookSpecificOutput.additionalContext).logicalSessionId, a.sessionId);
   const capability = JSON.parse(output.hookSpecificOutput.additionalContext).hostCapability;
-  assert.match(capability, /verified Host\/explicit routing/i);
-  assert.match(capability, /no extra bind\/save or repeated Session ID is required/i);
+  assert.match(capability, /verified Host\/explicit route/i);
+  assert.match(capability, /no extra bind\/save\/repeated Session ID/i);
   assert.equal(output.continue, undefined);
   assert.equal(output.hookSpecificOutput.permissionDecision, undefined);
   assert.deepEqual(files(root).concat(files(operational)), before);

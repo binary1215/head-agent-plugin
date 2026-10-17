@@ -121,7 +121,7 @@ test("actual hook command stdin/stdout retains selected no-checkpoint purpose an
   });
   assert.equal(output.status, 0, output.stderr);
   const hook = JSON.parse(output.stdout), text = hook.hookSpecificOutput.additionalContext, context = JSON.parse(text);
-  assert.ok(text.length <= 7000); assert.equal(context.logicalSessionId, selected.sessionId);
+  assert.ok(text.length <= 10000); assert.equal(context.logicalSessionId, selected.sessionId);
   assert.equal(context.sessionPurpose, "Explain this synthetic issue only; no external effects");
   assert.equal(context.currentProjectDirectionAvailability.status, "unavailable");
   assert.equal(context.currentProjectDirectionAvailability.reasonCode, "PROJECT_DIRECTION_UNAVAILABLE");

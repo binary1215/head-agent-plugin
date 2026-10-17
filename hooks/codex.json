@@ -6,7 +6,7 @@
         "type": "command",
         "command": "node \"${PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime codex",
         "timeout": 10,
-        "additionalContextLimit": 4096
+        "additionalContextLimit": 0
       }]
     }]
   }

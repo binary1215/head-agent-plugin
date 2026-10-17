@@ -12,6 +12,8 @@ import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scrip
 import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 
+const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
+
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const unavailable = { status: "unavailable", reasonCode: "PROJECT_DIRECTION_UNAVAILABLE", dependentEffectsBlocked: true };
 const sha = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
@@ -30,16 +32,16 @@ function fixture(t, runtime, purpose = "Selected current purpose; investigate on
   const event = { hook_event_name: "SessionStart", source: "startup", cwd: root, session_id: nativeSessionId };
   const read = () => {
     const text = sessionStartContext({ runtime, event, environment }).hookSpecificOutput.additionalContext;
-    assert.ok(text.length <= 7000, `Final JSON length ${text.length}`);
+    assert.ok(text.length <= (runtime === "codex" ? 32768 : 10000), `Final JSON length ${text.length}`);
     const value = JSON.parse(text);
     assert.equal(value.ordinaryWorkBlocked, false);
     assert.equal(value.userDecisionRequired, false);
     assert.equal(value.persisted, false);
     assert.equal(value.logicalSessionId, session.sessionId);
     assert.deepEqual(value.route, { session_id: session.sessionId });
-    assert.match(value.expansion, /head_conversation_enter.*project_root:projectRoot.*exact route/);
-    assert.match(value.expansion, /When needed/);
-    assert.match(value.scope, /Read-only, non-atomic.*Recheck current authority before an effect/);
+    if (value.expansion.startsWith("Omitted work:")) assert.match(value.expansion, /head_session_work_read.*project_root:projectRoot.*route/);
+    else { assert.match(value.expansion, /head_conversation_enter.*project_root:projectRoot.*exact route/); assert.match(value.expansion, /When needed/); }
+    assert.match(value.scope, /Read-only, non-atomic.*(?:Recheck|Check) current authority (?:before an effect|for effects)/);
     t.diagnostic(JSON.stringify({ runtime, length: text.length, sessionId: value.logicalSessionId,
       records: value.records.length, omittedEvidenceCount: value.omittedEvidenceCount,
       purposeOmitted: value.sessionPurposeCoverage?.contentIncluded === false,
@@ -99,7 +101,7 @@ for (const runtime of ["codex", "claude"]) {
     assert.deepEqual(snapshot(f.base), absentBefore);
     const direction = updateProjectDirection({ root: f.root, input: { goal: "Inspect only", cancelledActions: ["deploy"] } }).direction;
     const intactBefore = snapshot(f.base), intact = f.read();
-    assert.deepEqual(intact.currentProjectDirection, direction);
+    assert.deepEqual(intact.currentProjectDirection, directionView(direction));
     assert.deepEqual(snapshot(f.base), intactBefore);
     fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
     const lostBefore = snapshot(f.base), raw = f.host.enter({ root: f.root }), lost = f.read();
@@ -127,12 +129,12 @@ for (const runtime of ["codex", "claude"]) {
   test(`${runtime}: supported huge current purpose and common/history are honestly omitted`, (t) => {
     const purpose = "Exact current selected purpose " + "목적\\\"".repeat(6000);
     const f = fixture(t, runtime, purpose);
-    checkpoint(f, "Historical purpose " + "h".repeat(10000));
-    const direction = updateProjectDirection({ root: f.root, input: { goal: "Large valid goal", constraints: ["c".repeat(12000)], cancelledActions: ["deploy"] } }).direction;
+    checkpoint(f, "Historical purpose " + "h".repeat(40000));
+    const direction = updateProjectDirection({ root: f.root, input: { goal: "Large valid goal", constraints: ["c".repeat(40000)], cancelledActions: ["deploy"] } }).direction;
     let before = snapshot(f.base), value = f.read();
     assert.equal(value.sessionPurpose, null);
     assert.deepEqual(value.sessionPurposeCoverage, { contentIncluded: false, reason: "startup-output-bound", source: "workContext.sessionPurpose" });
-    assert.deepEqual(value.currentProjectDirection, { directionId: direction.directionId, contentIncluded: false });
+    assert.deepEqual(value.currentProjectDirection, { directionId: direction.directionId, directionHash: direction.directionHash, contentIncluded: false });
     assert.equal(value.sessionRecovery.contentIncluded, false);
     assert.equal(value.sessionRecovery.historicalApprovalGrantsCurrentEffect, false);
     assert.equal(value.projectRoot, f.root);
@@ -157,7 +159,7 @@ for (const runtime of ["codex", "claude"]) {
     if (value.workCoverage.omitted) assert.equal(value.workCoverage.sourceOriginals, 40);
     else assert.equal(value.workCoverage.omissions.evidenceIds.length, 32);
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
-    assert.ok(value.records.length < raw.workContext.records.length);
+    assert.ok(value.records.length <= raw.workContext.records.length);
     assert.equal(value.omittedEvidenceCount, raw.workContext.records.length - value.records.length);
     const sourceIds = new Set(raw.workContext.records.map((r) => r.evidenceId));
     const includedIds = new Set(value.records.map((r) => r.evidenceId));
@@ -165,7 +167,7 @@ for (const runtime of ["codex", "claude"]) {
     assert.ok(value.omittedEvidenceIds.length <= value.omittedEvidenceCount);
     for (const record of value.records) {
       const original = raw.workContext.records.find((r) => r.evidenceId === record.evidenceId);
-      assert.deepEqual(record, { evidenceId: original.evidenceId, content: original.content, references: original.references });
+      assert.equal(record.evidenceId, original.evidenceId); assert.equal(record.evidenceDigest, original.evidenceDigest); assert.deepEqual(record.content, original.content);
     }
     assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
     assert.equal(value.projectRoot, f.root);
@@ -179,9 +181,8 @@ for (const runtime of ["codex", "claude"]) {
     fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
     const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
     assert.equal(raw.workContext.omissions.evidenceIds.length, 32);
-    assert.equal(value.workCoverage.omitted, true);
-    assert.equal(value.workCoverage.sourceOriginals, 40);
-    assert.equal(value.workCoverage.sourceIncluded, 8);
+    if (value.workCoverage.omitted) { assert.equal(value.workCoverage.sourceOriginals, 40); assert.equal(value.workCoverage.sourceIncluded, 8); }
+    else assert.equal(value.workCoverage.coverage.included, 8);
     assert.equal(value.sessionPurpose, purpose);
     assert.equal(Object.hasOwn(value, "sessionPurposeCoverage"), false);
     assert.equal(value.projectRoot, f.root);
@@ -246,11 +247,11 @@ test("private formatter: optional omission IDs cannot evict fitting current cont
   const id = (n) => "work-evidence-" + String(n).padStart(24, "0");
   raw.workContext.records = [{ evidenceId: id(1), content: { summary: "" }, references: [] }];
   const overhead = projectStartup(raw, pluginRoot).length - baseline;
-  raw.workContext.records[0].content.summary = "x".repeat(7000 - baseline - overhead);
-  assert.equal(projectStartup(raw, pluginRoot).length, 7000);
+  raw.workContext.records[0].content.summary = "x".repeat(10000 - baseline - overhead);
+  assert.equal(projectStartup(raw, pluginRoot).length, 10000);
   raw.workContext.records.push({ evidenceId: id(2), content: { summary: "Omitted record" }, references: [] });
   const text = projectStartup(raw, pluginRoot), value = JSON.parse(text);
-  assert.ok(text.length <= 7000);
+  assert.ok(text.length <= 10000);
   assert.equal(value.omittedEvidenceCount, 2 - value.records.length);
   const included = new Set(value.records.map((record) => record.evidenceId));
   for (const omitted of value.omittedEvidenceIds) assert.ok(!included.has(omitted) && [id(1), id(2)].includes(omitted));
@@ -261,16 +262,16 @@ test("private formatter: optional omission IDs cannot evict fitting current cont
 test("private formatter: oversized metadata/root explicitly omit content and retain exact route/diagnosis", (t) => {
   const raw = entry();
   raw.projectStatus = { currentProjectDirection: null, currentProjectDirectionAvailability: unavailable };
-  raw.workContext.coverage = { serializerOnlyOversizedMetadata: "c".repeat(9000) };
+  raw.workContext.coverage = { serializerOnlyOversizedMetadata: "c".repeat(20000) };
   let text = projectStartup(raw, pluginRoot), value = JSON.parse(text);
-  assert.ok(text.length <= 7000);
+  assert.ok(text.length <= 10000);
   assert.equal(value.workCoverage.omitted, true);
   assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
   assert.equal(value.projectRoot, pluginRoot);
   assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
   raw.workContext.coverage = {};
-  text = projectStartup(raw, path.parse(pluginRoot).root + "r".repeat(9000)); value = JSON.parse(text);
-  assert.ok(text.length <= 7000);
+  text = projectStartup(raw, path.parse(pluginRoot).root + "r".repeat(20000)); value = JSON.parse(text);
+  assert.ok(text.length <= 10000);
   assert.equal(Object.hasOwn(value, "projectRoot"), false);
   assert.equal(value.projectRootOmitted, true);
   assert.equal(value.projectRootSource, "SessionStart.cwd");

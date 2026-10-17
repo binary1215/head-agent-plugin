@@ -199,7 +199,17 @@ resolver에 전달합니다. native ID는 조회용 hash가 되며 canonical Ses
 시작 맥락은 checkpoint가 없어도 선택된 Session의 현재 `sessionPurpose`를
 전달하며, 과거 checkpoint의 목적·결정과 구분합니다. 이미 명시된 현재 공통 방향의
 가용성 진단도 보존하므로 확인 불가 상태를 미기록 null과 혼동하지 않습니다.
-coverage·생략·확대 안내까지 포함한 최종 JSON은 7,000문자 이내입니다. 정확한 현재
+coverage·생략·확대 안내까지 포함한 최종 JSON에는 공통 7,000자 재절단 대신 Host별
+전달 예산 하나를 적용합니다. Claude는 [문서상 문자열 전달 상한](https://code.claude.com/docs/en/hooks#add-context-for-claude)을
+보수적으로 적용해 UTF-16 code unit 10,000개 이내로 전달합니다. Codex는 **전체 출력**에
+32,768개 로컬 상한을 적용합니다. 기존 기본 work-reader 크기를 재사용한 유한 자원
+정책이지 최적값·Host 토큰/컨텍스트 한계·P2 입력 상한이라는 뜻은 아닙니다.
+동봉 Codex handler의 숫자형 `additionalContextLimit: 0`은 이 엄격한 전체 출력 상한과
+함께 [문서상 전체 출력 옵션](https://learn.chatgpt.com/docs/hooks#large-hook-output)을 사용합니다.
+기존 약 4,096토큰 설정은 문자 상한 내 다국어 결과도 파일로 넘길 수 있었습니다.
+설치된 Host 지원과 실제 모델 수신은 별도 검증 사항이며 문자·UTF-8 bytes·모델 토큰은
+같지 않습니다. 현재 방향·목적·checkpoint 입력에는 텍스트 길이 상한이 없고, 기존
+32,768자 work-read 예산은 선택된 기록 배열만 제한합니다. 정확한 현재
 공통 방향·Session 목적과 최신 선택 checkpoint의 purpose/decisions/position/next-result는
 선택적 장문·상세 coverage·ID 샘플·P3 이력보다 먼저 보존합니다. checkpoint의 기록된
 승인·다음 단계가 현재 효과 권한이 되지는 않습니다. 현재 내용 자체가 최소의 정직한
@@ -215,7 +225,25 @@ coverage·생략·확대 안내까지 포함한 최종 JSON은 7,000문자 이�
 정확한 status와 canonical active·pending-review·required-plan 사실을 보존합니다.
 incomplete/conflict는 그대로이며 raw pointer가 검증된 실행을 뜻하지 않습니다.
 checkpoint가 없다고 새 실행 scan을 만들지 않습니다. 이 축과 과거 기록은 기존
-7,000자 최종 JSON 안에서 현재 공통/P2 방향·목적보다 우선하지 않습니다.
+Host별 전체 출력 상한 안에서 현재 공통/P2 방향·목적보다 우선하지 않습니다.
+선택적 실행 상세가 들어가지 않아도 최소 canonical 실행 status는 보존합니다.
+
+전달용 중복 wrapper만 줄이며 작성된 의미는 요약하지 않습니다. 각 본문을
+배치하기 전부터 짧고 정직한 안내를 사용하고, 긴 선택적 안내는 원문 배치 후
+남는 공간에서만 복원합니다. 공통 방향의
+`directionId`·`directionHash`·정확한 `input`, checkpoint digest·open review ID와
+네 원래 방향 필드를 보존합니다. 이유·대안·참조·남은 작업·unknown을 포함한 work
+`content`는 evidence ID/digest·관측 overlay와 함께 그대로 전달합니다.
+`referenceChecks[].referenceIndex`는 content 참조의 path/digest/kind가 정확히 일치할
+때만 연결하며, 검증 status·실제/null 소유자·비일반 진단을 유지합니다. 연결되지 않는
+descriptor는 전체를 보존하고 추측하지 않습니다. 해시는 압축 JSON이 아닌 검증된
+원본의 selector입니다. bytes 일치는 의미적 현재성이나 권한을 증명하지 않습니다.
+불가용·basis 변경은 기록이 0개여도 status·reason·확장 경로를 보존합니다.
+원본·선택·binding·필수 도구 체인·사용자 절차는 추가하지 않습니다. 실제 초과한
+원본만 필드 전체를 생략하고 정확한 coverage·관련 작업용 확장을 표시합니다.
+생략된 취소를 취소 없음으로 해석하지 않습니다. 로컬 spill 파일이나 자동 추가 조회는
+생성하지 않으며 실제 Host의 spill/미리보기를 완전 복구라고 부르지 않습니다.
+출력 상한은 이미 유효한 무제한 길이 P2 입력을 읽는 메모리까지 제한하지는 않습니다.
 
 | 경로 | 구현된 지원 | 중요한 한계 |
 | --- | --- | --- |

@@ -2,6 +2,7 @@ node_modules/
 .agent-work/
 /dist/
 test/*
+!test/session-start-delivery.test.mjs
 !test/session-work-context-linkage.test.mjs
 !test/session-work-context-consumers.test.mjs
 !test/agreement-workflow-guidance.test.mjs

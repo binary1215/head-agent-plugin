@@ -14,6 +14,8 @@ import {runCommand} from '../scripts/head.mjs';
 import {dispatch} from '../scripts/mcp-server.mjs';
 import {formatCliResult,formatMcpToolContent} from '../scripts/lib/cli-presentation.mjs';
 
+const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
+
 const pluginRoot=path.resolve(import.meta.dirname,'..');
 function fixture(t){
  const parent=process.env.HEAD_AGENT_TEST_TMP||os.tmpdir();fs.mkdirSync(parent,{recursive:true});
@@ -83,8 +85,8 @@ for(const runtime of['codex','claude'])test(`${runtime} healthy startup is usefu
  const entry=host.enter({root:f.root}),before=snapshot(f.base);
  const output=sessionStartContext({runtime,environment,event:{hook_event_name:'SessionStart',source:'compact',session_id:'synthetic-surface',cwd:f.root}});
  const text=output.hookSpecificOutput.additionalContext,value=JSON.parse(text);
- assert.ok(text.length<=7000);assert.equal(value.sessionPurpose,entry.workContext.sessionPurpose);
- assert.deepEqual(value.currentProjectDirection,entry.projectStatus.currentProjectDirection);
+ assert.ok(text.length<=(runtime==="codex"?32768:10000));assert.equal(value.sessionPurpose,entry.workContext.sessionPurpose);
+ assert.deepEqual(value.currentProjectDirection,directionView(entry.projectStatus.currentProjectDirection));
  assert.deepEqual(value.route,{session_id:f.selected.sessionId});assert.equal(value.requiredSourceExpansion,undefined);
  assert.equal(value.persisted,false);assert.equal(value.ordinaryWorkBlocked,false);assert.equal(value.userDecisionRequired,false);
  assert.equal(value.sessionRecovery,null);assert.deepEqual(snapshot(f.base),before);
@@ -100,7 +102,7 @@ for(const runtime of['codex','claude'])test(`${runtime} lost linkage keeps indep
  assert.equal(entry.status,'session_selection_unresolved');
  const hook=sessionStartContext({runtime,environment,event:{hook_event_name:'SessionStart',source:'resume',session_id:'synthetic-lost-linkage',cwd:f.root}});
  const text=hook.hookSpecificOutput.additionalContext,value=JSON.parse(text);
- assert.ok(text.length<=7000);assert.equal(value.status,'session_selection_unresolved');
+ assert.ok(text.length<=(runtime==="codex"?32768:10000));assert.equal(value.status,'session_selection_unresolved');
  assert.equal(value.logicalSessionId,null);assert.equal(value.sessionPurpose,null);assert.equal(value.route,null);
  assert.ok(JSON.stringify(value.currentProjectDirection).includes('deployment'));
  assert.equal(value.userDecisionRequired,false);assert.equal(value.ordinaryWorkBlocked,false);assert.equal(value.persisted,false);
