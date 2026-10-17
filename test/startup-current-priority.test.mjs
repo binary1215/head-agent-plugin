@@ -85,7 +85,10 @@ test("public Hook: current common cancellation and 4200-character selected purpo
   const before = snapshot(f.base);
   for (const caller of f.callers) {
     const raw = caller.host.enter({ root: f.root }), { text, value } = caller.read();
-    assert.equal(raw.workContext.omissions.byBudget, 32);
+    assert.equal(raw.workContext.omissions.byBudget, 0);
+    assert.equal(raw.workContext.omissions.uninspected, 0);
+    assert.equal(raw.workContext.coverage.valid, 40);
+    assert.equal(raw.workContext.status, "work_context_partial");
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.deepEqual(value.currentProjectDirection, directionView(f.direction));
     assert.equal(Object.hasOwn(value, "requiredSourceExpansion"), false);

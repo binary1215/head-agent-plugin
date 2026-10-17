@@ -126,14 +126,21 @@ review. Failure/cancellation is not success. Unscoped observations do not qualif
 another note. Current live state, unsaved restarts and native Session termination
 remain unobserved. Nothing is deleted, hidden, reconciled or replayed.
 
-For linked default reads, `selectionRole` distinguishes recent, explicitly cited
+For default reads, `selectionRole` distinguishes recent, explicitly cited
 and declared-root bodies. `savedActivity` preserves incoming historical state
 sets, bounded exact qualifier selectors/counts and relation availability. Its
 own observation remains in original `content`. The separate `organization`
-notice explains historical—not live—scope once. Missing/changed relations affect
+notice explains historical—not live—scope once. `organization.scope` labels counts
+of the actually returned source originals, not a whole-history organization census.
+Incoming qualifier counts have the separately verified scan scope. Missing/changed relations affect
 only that view; a failure actually detected on selected reread also qualifies
-dependent overlays in the same response. Sequential reads do not detect every
-later change. Exact-ID/page reads add no hidden ancestors or qualifier search;
+dependent overlays, endpoint diagnoses and typed references in the same response.
+Incoming producers are canonically verified during the single scan S. A non-body
+producer changed after S is not necessarily read again; its unchanged projection
+is a historical observation at S, not proof that its bytes remain intact at return.
+Actual bodies and directly used declared endpoints still receive fresh checks.
+Observed later failures take precedence; unobserved changes and ABA remain outside
+the guarantee. Exact-ID/page reads add no hidden ancestors or qualifier search;
 uninspected endpoints/qualifiers are not declared absent or terminal.
 
 The default uses recent seeds, one-hop explicit same-Session work-artifact
@@ -146,42 +153,78 @@ pending work remain eligible. Reference `digest` hashes file bytes and is not
 the original's `evidenceDigest`. Citation content is the actual saved judgment,
 not a generated summary or a path presented as recovered reasons.
 
-Extra related fresh-load attempts are bounded by `maxRecords`, including failed
-or oversized attempts. Proof metadata is retained for deduplication; unselected
+Extra related body-expansion attempts are bounded by `maxRecords`, including failed
+or oversized attempts. That bound does not cap the initial canonical scan or
+necessary direct endpoint checks. Incoming producers are not all reread before
+each displayed target. Proof metadata is retained for deduplication; unselected
 oversized bodies are discarded. Selected/related bodies have bounded retention,
 not full-history retention. Deferred related expansion and unique budget-omitted
-original counts are separate and are not added together. Legacy-only stores keep
-their existing newest-first selection. Explicit page/cursor behavior is unchanged.
+original counts are separate and are not added together. The recent/related/fallback
+policy also applies without linkage extensions: an unrelated old extension cannot
+switch the slot policy. Plain history fills unused slots newest-first. Explicit
+page/cursor behavior is unchanged.
 
 Work originals live in the selected Session's `work-evidence/` directory.
-There is no indispensable index or cache. Default entry/read verifies the matching
-originals discovered in the selected Session and considers them newest-recorded
-first, with evidence ID breaking equal-time ties. It returns at most eight records
-by default, without judging semantic relevance, sufficiency or current authority.
-There is no automatic pruning or silent deletion.
+There is no indispensable index or cache. Default entry/read fixes the set of matching
+names in the selected Session, then safely reads and canonically verifies each
+original once in scan S. Only compact verified metadata is retained; original
+bytes and full bodies are discarded after the scan. Actual body candidates and
+directly used declared root/predecessor/observation endpoints receive separate
+fresh checks. A single scan does not eliminate those rereads. Candidates are
+considered newest-recorded first, with
+evidence ID breaking equal-time ties. The default returns at most eight records
+without judging semantic relevance, sufficiency or current authority. Corrupt or
+oversized candidates do not prevent later fitting work from being considered.
+There is no automatic pruning, silent deletion or mandatory whole-history audit.
 
-Default coverage counts all discovered originals inspected and returns
-`nextAfterEvidenceId: null`: no uninspected page remains in that discovery set,
-not all bodies were delivered. Default first-to-next ID enumeration is no longer
-provided. Known `evidenceIds` still expand exact originals; an explicit non-null
+Default `coverage.originals` and `coverage.inspected` both count the fixed discovered
+ID set, including conclusive read/JSON/verification failures. Successful scan
+verification is not mere JSON parsing. `omissions.uninspected` is zero for that
+scan, not proof of full body delivery, semantic sufficiency or latest-at-return
+state. A later observed failure reclassifies the same ID once. An endpoint first
+appearing after S may be verified as an exact proof-only dependency, but it is not
+added to this response's discovered/body set or counts. The next request can
+discover it normally. `nextAfterEvidenceId: null` means no default ID-page cursor.
+When valid originals outnumber included bodies, existing `work_context_partial`
+reports partial delivery, not recovery failure, an error or a user-action gate.
+Useful exact expansion remains optional; no automatic full audit is required.
+Known `evidenceIds` still expand exact originals without enumerating the Session
+inventory: `coverage.originals` and `omissions.uninspected` are `null`, and
+`nextAfterEvidenceId` is `null`. Inspected counts describe the deduplicated request,
+not the Session total. Empty exact results describe only those requested IDs,
+not absence of Session history. An explicit non-null
 `afterEvidenceId` keeps the earlier lexical ID inspection-page behavior (up to
 512), including its continuation cursor and within-page time ordering. This is
-not a global time-order cursor or a complete ID-discovery interface. Bounded
-omission samples do not expose every omitted ID.
+not a global time-order cursor or a complete ID-discovery interface. Its numeric
+`coverage.originals` remains the discovered inventory size; an exhausted page
+describes that page, not absence of Session history. Text stays quiet only for
+observed numeric `coverage.originals` equal to `0`, not unknown inventory.
+Bounded omission samples do not expose every omitted ID.
 
-Global recent selection costs one verification of each discovered original,
-O(N) filename/order metadata and O(N log N) sorting. Only needed candidates are
-reread; reference checks stop after the output is full and skip bodies already
-known not to fit. Linked reads also retain compact relation metadata O(N+E) and
-bounded selected/related bodies, not all original bodies. Relation processing is
-O(N+E); it does not remove the original scan/sort costs. Each generic reference
+Default discovery still reads bounded JSON bytes for all matching names:
+I/O remains O(total bounded original bytes), compact metadata O(N), and sorting
+O(N log N). All N discovered originals receive canonical verification in S;
+the optimization removes a second contributor-validation pass, not that scan.
+Bounded selected/related
+bodies and compact proof metadata are retained, not the entire original body set.
+Reference checks can skip bodies already known not to fit. Each generic reference
 may still temporarily read up to 16MiB.
 Incoming counts/state sets use request-local aggregates; failed qualifier removal
 does not walk its full history again. Bounded qualifier-list materialization and
 record-array serialization still cost work proportional to the displayed data.
-The related fresh-load cap is not a cap on generic reference reads: references
-outside that cache can be checked again for different selected records.
-Candidate rereads can add up to N original reads. This is a sequential view of
+Within one read request, the existing read context reuses observed raw reference
+bytes or read failures; each descriptor still receives its own digest, kind and
+owner checks. The 128MiB retention limit is not an admission gate: outside it a
+valid reference falls back to the existing bounded read. No verdict or parsed-JSON
+cache is added. Fresh selected-original rereads and the final owner/direction
+basis check remain separate observations, and later detected failures take
+precedence over earlier success. A new request observes the files again.
+For the scan/body/direct-endpoint path, `N+B+E` describes N scan reads, B fresh
+body-read attempts (including prepared but unreturned bodies), and E necessary
+direct-endpoint reads not shared with those prepared bodies. It is not an upper
+bound on all file I/O: generic reference enrichment may read work-original paths
+again as G. Fitting fallback can make B approach N. The related body-expansion
+bound does not cap generic reference reads or the initial scan. This is a sequential view of
 the discovered set, not atomic latest-at-return: records added after enumeration
 may be absent. No mandatory index, lock, write or service is added.
 
@@ -193,9 +236,17 @@ this is a serialization bound, not a token estimate or semantic verdict.
 Large records are disclosed as omitted and remain available by exact read.
 
 Default unavailable details are sampled up to 32 entries. `coverage.unavailable`
-is the total and `omissions.unavailableDetailCount` is that total minus the
-displayed sample; `coverage.valid` includes both returned and budget-omitted
-valid records. Unique inspected originals are counted once even if reread.
+counts unavailable originals within the inspected set, and
+`omissions.unavailableDetailCount` is that total minus the displayed sample.
+`coverage.valid` includes successful scanned originals that were never offered
+as bodies, proof-only relation/qualifier originals and returned bodies, less
+observed later failures. `omissions.byBudget` counts only canonical-valid originals
+actually offered body admission and rejected by record or enriched character
+budgets; it does not count every undisplayed or proof-only original. Thus
+`coverage.inspected = coverage.valid + coverage.unavailable` and
+`coverage.included <= coverage.valid`, but default
+`coverage.valid = coverage.included + omissions.byBudget` is not guaranteed.
+Unique inspected originals are counted once even if reread.
 An original changed or lost on reread becomes unavailable, not a mixed old-order/
 new-body result. Explicit page and exact-ID reads retain their bounded detail
 range. Body and diagnostic omissions are separate; no empty sample proves absence.

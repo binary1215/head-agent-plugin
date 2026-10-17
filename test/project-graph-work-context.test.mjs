@@ -44,6 +44,59 @@ async function call(name, arguments_, routed = false, options = {}) {
   assert.notEqual(response.result?.isError, true, JSON.stringify(response));
   return response.result;
 }
+async function withoutGraphWrites(action) {
+  const restore = [], attempts = [];
+  const block = (object, name, asynchronous = false) => {
+    const original = object[name];
+    if (typeof original !== "function") return;
+    restore.push(() => { object[name] = original; });
+    const rejected = () => { attempts.push(name); assert.fail(`Read-only graph attempted ${name}`); };
+    object[name] = asynchronous ? async () => rejected() : rejected;
+  };
+  const writable = flags => typeof flags === "number"
+    ? Boolean(flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_APPEND))
+    : /[wa+]/u.test(flags || "");
+  const guardOpen = (object, name) => {
+    const original = object[name]; restore.push(() => { object[name] = original; });
+    object[name] = (file, flags, ...args) => {
+      if (writable(flags)) { attempts.push(name); assert.fail("Read-only graph attempted writable open"); }
+      return original.call(object, file, flags, ...args);
+    };
+  };
+  for (const name of ["writeFileSync", "appendFileSync", "writeSync", "mkdirSync", "renameSync", "unlinkSync", "rmSync", "rmdirSync", "truncateSync", "ftruncateSync", "chmodSync", "fchmodSync", "utimesSync", "linkSync", "symlinkSync", "createWriteStream"]) block(fs, name);
+  for (const name of ["writeFile", "appendFile", "write", "mkdir", "rename", "unlink", "rm", "rmdir", "truncate", "ftruncate", "chmod", "fchmod", "utimes", "link", "symlink"]) block(fs, name);
+  for (const name of ["writeFile", "appendFile", "mkdir", "rename", "unlink", "rm", "rmdir", "truncate", "chmod", "utimes", "link", "symlink"]) block(fs.promises, name, true);
+  guardOpen(fs, "openSync"); guardOpen(fs, "open"); guardOpen(fs.promises, "open");
+  try { return await action(); }
+  finally { for (const undo of restore.reverse()) undo(); assert.deepEqual(attempts, [], "Caught writes still violate graph read-only behavior"); }
+}
+async function graphResponse(args, routed, binding) {
+  const result = await call("head_project_graph", args, routed, { resolveSessionContext() {
+    binding.calls++; throw new Error("Project graph must not ask for native binding");
+  } });
+  assert.deepEqual(JSON.parse(result.content[0].text), JSON.parse(JSON.stringify(result.structuredContent)));
+  return result.structuredContent;
+}
+const originalPath = (f, saved) => path.relative(f.root, saved.file).replaceAll("\\", "/");
+function scopedWorkResult(value, f, saved, referencePath) {
+  const node = completeNode(value, saved);
+  assert.equal(value.reuse.status, "scoped-originals-reused"); assert.equal(value.reuse.wholeProjectCurrent, false);
+  assert.deepEqual(value.integrity.verifiedLayers, []);
+  assert.ok(value.integrity.verifiedRecordPaths.includes(originalPath(f, saved)));
+  assert.ok(value.integrity.verifiedRecordPaths.includes(referencePath));
+  assert.equal(new Set(value.integrity.verifiedRecordPaths).size, value.integrity.verifiedRecordPaths.length);
+  assert.ok(value.integrity.verifiedRecordPaths.length <= 256);
+  assert.equal(value.integrity.verifiedRecordCount, value.integrity.verifiedRecordPaths.length + value.integrity.omittedVerifiedRecordPathCount);
+  assert.match(value.basis.proofDigest, /^[a-f0-9]{64}$/u);
+  assert.match(value.basis.recordsDigestScope, /retained/iu);
+  assert.equal(value.coverage.membership, "current-names-and-types");
+  assert.equal(value.coverage.unrelatedRecordBytesReverified, false);
+  assert.ok(value.coverage.layers.every(layer => layer.status === "retained-discovery-basis"));
+  assert.match(value.sourceFallback.action, /retained/iu);
+  assert.match(value.sourceFallback.action, /exclu/iu);
+  assert.match(value.sourceFallback.action, /historical|not a fresh/iu);
+  return node;
+}
 function completeNode(value, saved) {
   const node = workNodes(value).find(item => item.nodeId === saved.evidence.evidenceId);
   assert.ok(node, `Missing work original ${saved.evidence.evidenceId}`);
@@ -164,6 +217,100 @@ test("CLI and direct/router MCP retain the same work body without requesting nat
   }
   assert.equal(bindingCalls, 0);
   assert.deepEqual(snapshot(f.base), before);
+});
+
+test("returned node detail follows direct/router MCP with default120, compact12 and explicit0 scoped keys", async t => {
+  const f = fixture(t), selectedReference = "selected-source.txt", sourceBytes = Buffer.from("Small required reference; not execution authority");
+  fs.writeFileSync(path.join(f.root, selectedReference), sourceBytes);
+  fs.writeFileSync(path.join(f.root, "independent-source.txt"), "i".repeat(16384));
+  const anchor = f.save({ summary: "Declared earlier anchor", pending: ["Earlier X remains"] });
+  const exactAnchor = { evidenceId: anchor.evidence.evidenceId, evidenceDigest: anchor.evidence.evidenceDigest };
+  const saved = f.save({ judgments: [{ assessment: "Preserve the original choice", reason: "ConnectedDetailReasonNeedle ".padEnd(6073, "r"), alternatives: ["Rejected rewrite"] }],
+    pending: ["X remains"], unknowns: ["External effect is unknown"],
+    references: [{ path: selectedReference, digest: sha(sourceBytes), kind: "source" }],
+    workLink: { root: exactAnchor, predecessor: exactAnchor }, executionObservation: { state: "paused", target: exactAnchor } });
+  f.save({ summary: "Independent work with an unrelated reference", references: [{ path: "independent-source.txt", digest: sha(fs.readFileSync(path.join(f.root, "independent-source.txt"))), kind: "source" }] });
+  const direction = updateProjectDirection({ root: f.root, input: { goal: "Inspect retained graph evidence only", constraints: ["No external effects"], cancelledActions: ["deployment"] } }).direction;
+  const before = snapshot(f.base), binding = { calls: 0 };
+  await withoutGraphWrites(async () => {
+    const broad = await queryProjectGraph({ root: f.root, query: "ConnectedDetailReasonNeedle", depth: 0 });
+    const discovered = completeNode(broad, saved), detail = structuredClone(discovered.detail);
+    assert.deepEqual(detail.anchorIds, [saved.evidence.evidenceId]); assert.equal(detail.details, true); assert.equal(detail.depth, 0);
+    assert.equal(Object.hasOwn(detail, "maxEdges"), false, "Follow the actual returned detail without silently forcing zero edges");
+    const keys = new Set();
+    for (const mode of [
+      { details: detail.details, expectedEdges: 120 },
+      { details: false, expectedEdges: 12 },
+      { details: detail.details, maxEdges: 0, expectedEdges: 0 },
+    ]) {
+      const args = { project_root: f.root, anchor_ids: detail.anchorIds, details: mode.details, depth: detail.depth,
+        ...(mode.maxEdges !== undefined ? { max_edges: mode.maxEdges } : {}) };
+      const first = await graphResponse(args, false, binding);
+      assert.equal(first.query.maxEdges, mode.expectedEdges); assert.equal(first.query.details, mode.details);
+      assert.equal(first.query.maxNodes, mode.details ? 60 : 8); assert.equal(first.query.depth, detail.depth);
+      assert.deepEqual(first.query.anchorIds, detail.anchorIds);
+      const original = completeNode(first, saved);
+      assert.equal(original.referenceEvidence[0].currentness, "current"); assert.equal(original.referenceEvidence[0].currentDigest, sha(sourceBytes));
+      assert.ok(first.boundary.nextAnchorIds.includes(f.session.sessionId), "Depth0 still discloses its incident boundary");
+      assert.equal(first.edges.length, 0);
+      for (const routed of [false, true]) {
+        const warm = await graphResponse(args, routed, binding), node = scopedWorkResult(warm, f, saved, selectedReference);
+        assert.equal(warm.query.maxEdges, mode.expectedEdges); assert.equal(warm.query.details, mode.details);
+        assert.deepEqual(node.workContent, original.workContent); assert.deepEqual(node.workContentCoverage, original.workContentCoverage);
+        assert.deepEqual(node.referenceEvidence, original.referenceEvidence); assert.deepEqual(node.originalExpansion, original.originalExpansion);
+        assert.deepEqual(node.sourceReference, original.sourceReference); assert.deepEqual(warm.boundary, first.boundary);
+        assert.deepEqual(warm.edges, first.edges); assert.deepEqual(warm.unmatchedAnchorIds, first.unmatchedAnchorIds);
+        assert.equal(warm.omittedMatchCount, first.omittedMatchCount);
+        assert.deepEqual(node.workContent.pending, ["X remains"]); assert.deepEqual(node.workContent.unknowns, ["External effect is unknown"]);
+        keys.add(warm.resultId);
+        node.workContent.pending[0] = "Caller mutation must not enter cache";
+        warm.boundary.nextAnchorIds.push("caller-supplied-anchor");
+        const repeated = await graphResponse(args, routed, binding);
+        assert.deepEqual(completeNode(repeated, saved).workContent, original.workContent);
+        assert.deepEqual(repeated.boundary, first.boundary);
+      }
+    }
+    assert.equal(keys.size, 3, "Normalized default120/default12/explicit0 queries retain separate identities");
+    assert.deepEqual(readProjectDirection({ root: f.root }), direction);
+  });
+  assert.equal(binding.calls, 0); assert.deepEqual(snapshot(f.base), before);
+});
+
+test("partial matched anchors and unsupported detail queries retain conservative proof or cold fallback", async t => {
+  const f = fixture(t), selected = f.save({ summary: "ConservativeDetailNeedle one", pending: ["X remains"], unknowns: ["Unknown effect"] });
+  const other = f.save({ summary: "ConservativeDetailNeedle two" }), independent = f.save({ summary: "Independent unselected work" });
+  const before = snapshot(f.base), binding = { calls: 0 };
+  await withoutGraphWrites(async () => {
+    const found = await queryProjectGraph({ root: f.root, query: "ConservativeDetailNeedle", depth: 0 });
+    const detail = completeNode(found, selected).detail;
+    const cases = [
+      { label: "partial-matched", args: { anchor_ids: [...detail.anchorIds, other.evidence.evidenceId], details: detail.details, depth: detail.depth, max_nodes: 1 } },
+      { label: "unmatched", args: { anchor_ids: [...detail.anchorIds, "work-evidence-" + "f".repeat(24)], details: detail.details, depth: detail.depth } },
+      { label: "depth1", args: { anchor_ids: detail.anchorIds, details: detail.details, depth: 1 } },
+      { label: "text-query", args: { anchor_ids: detail.anchorIds, details: detail.details, depth: detail.depth, query: "ConservativeDetailNeedle" } },
+    ];
+    for (const entry of cases) {
+      const args = { project_root: f.root, ...entry.args };
+      await graphResponse(args, false, binding);
+      for (const routed of [false, true]) {
+        const value = await graphResponse(args, routed, binding);
+        assert.equal(value.query.maxEdges, 120);
+        for (const node of workNodes(value)) completeNode(value, [selected, other, independent].find(saved => saved.evidence.evidenceId === node.nodeId));
+        if (entry.label === "partial-matched") {
+          assert.equal(workNodes(value).length, 1); assert.equal(value.omittedMatchCount, 1);
+          assert.deepEqual(value.unmatchedAnchorIds, [], "Matched-but-unreturned is not an unmatched anchor");
+        }
+        if (entry.label === "unmatched") {
+          assert.deepEqual(value.unmatchedAnchorIds, ["work-evidence-" + "f".repeat(24)]);
+          assert.notEqual(value.reuse?.status, "scoped-originals-reused", "An unresolved requested anchor cannot prime narrow reuse");
+        }
+        if (value.reuse?.status === "scoped-originals-reused") {
+          for (const saved of [selected, other, independent]) assert.ok(value.integrity.verifiedRecordPaths.includes(originalPath(f, saved)), `${entry.label}: unsupported narrowing must retain the old conservative work proof`);
+        }
+      }
+    }
+  });
+  assert.equal(binding.calls, 0); assert.deepEqual(snapshot(f.base), before);
 });
 
 test("identical text in separate Sessions keeps distinct graph identity and exact expansion ownership", async t => {

@@ -116,12 +116,19 @@ target의 여러 상태는 역사로 공존하며 시각·predecessor로 현재 
 정돈하지 않습니다. 현재 live 상태·미저장 재개·native Session 종료는 미관측입니다.
 삭제·숨김·자동 정산·실행 재시도는 하지 않습니다.
 
-연결된 기본 조회의 `selectionRole`은 최근·명시 인용·선언 root 본문을 구분합니다.
+기본 조회의 `selectionRole`은 최근·명시 인용·선언 root 본문을 구분합니다.
 `savedActivity`는 incoming 역사 상태 집합과 제한된 exact qualifier selector·개수,
 관계 가용성을 보존합니다. 자기 관측은 원본 `content`에 그대로 남습니다. 별도
-`organization` 안내가 역사이지 live가 아님을 한 번 설명합니다. 누락·변경 관계는
-해당 뷰만 제한하고, 선택 재읽기에서 실제 확인한 실패는 같은 응답의 의존 overlay에도
-부분 상태로 반영합니다. 순차 읽기로 이후 모든 변경을 검출하지는 못합니다. exact-ID나
+`organization` 안내가 역사이지 live가 아님을 한 번 설명합니다. `organization.scope`는
+실제 반환한 source 원본의 수치 범위이며 전체 이력의 조직 통계가 아닙니다.
+incoming qualifier 개수는 별도로 검증한 scan 범위입니다. 누락·변경 관계는
+해당 뷰만 제한하고, 선택 재읽기에서 실제 확인한 실패는 같은 응답의
+의존 overlay·endpoint 진단·typed reference에도 부분 상태로 반영합니다.
+incoming producer는 단일 scan S에서 canonical 검증합니다. 본문이 아닌 producer가
+S 이후 바뀌어도 반드시 다시 읽지는 않습니다. 유지된 projection은 S 시점의 과거
+관측이지 반환 순간까지 원본 bytes가 정상이라는 증명이 아닙니다. 실제 본문과 직접
+사용한 선언 endpoint는 계속 fresh 검사합니다. 이후 실제 관측한 실패가 우선하며
+미관측 변경과 ABA는 보장 밖입니다. exact-ID나
 page 조회는 숨은 조상이나 qualifier를 추가 검색하지 않으며 미검사를 부재·종료로
 단정하지 않습니다.
 
@@ -133,36 +140,66 @@ root를 recent → cited → root 순으로 섞습니다. 최소 절반의 슬�
 파일 바이트 해시로 원본 `evidenceDigest`와 다릅니다. 인용은 실제 판단 이유 본문이지
 새 요약이나 경로를 복구 내용으로 제시하는 것이 아닙니다.
 
-추가 관련 fresh-load 시도는 실패·oversized를 포함해 `maxRecords` 이하입니다.
+추가 관련 본문 확대 시도는 실패·oversized를 포함해 `maxRecords` 이하입니다.
+이 상한은 최초 canonical scan이나 필요한 직접 endpoint 검증의 상한이 아닙니다.
+표시 target마다 모든 incoming producer를 다시 읽지는 않습니다.
 중복 읽기 방지용 proof metadata를 유지하고 선택하지 않은 큰 본문은 버립니다.
 선택/관련 본문만 제한적으로 유지하며 전체 역사를 상주시키지 않습니다. 관련 확대
-보류 수와 고유 원본 예산 생략 수는 별개라 합산하지 않습니다. 기존 필드만 있는
-저장소는 최신 우선 fallback을 유지하고 명시 page/cursor도 바꾸지 않습니다.
+보류 수와 고유 원본 예산 생략 수는 별개라 합산하지 않습니다. 연결 확장이 없어도
+recent/related/fallback 정책은 같으며 무관한 옛 확장이 슬롯 정책을 바꾸지 않습니다.
+연결 없는 이력은 남은 슬롯을 최신 우선으로 채우고 명시 page/cursor는 바꾸지 않습니다.
 
 작업 원본은 선택된 Session의 `work-evidence/` 디렉터리에 있습니다. 필수 index나
-cache는 없습니다. 기본 진입/조회는 선택 Session에서 발견한 원본을 모두 검증하고
-기록 시각 내림차순, 동시각이면 evidence ID 순으로 고려합니다. 기본 출력은 최대
-여덟 기록이며 의미적 관련성·충분성·현재 권한을 판정하지 않습니다. 자동 정리나
-조용한 삭제는 없습니다.
+cache는 없습니다. 기본 진입/조회는 선택 Session의 해당 이름 집합을 고정한 뒤 scan S에서
+각 원본을 한 번 안전하게 읽고 canonical 검증합니다. 작은 검증 metadata만 남기며
+scan의 원본 bytes와 전체 본문은 버립니다. 실제 본문 후보와 직접 사용하는 선언
+root/predecessor/observation endpoint는 별도 fresh 검사합니다. 단일 scan이라고 이
+재읽기를 없애지는 않습니다.
+후보는 기록 시각 내림차순, 동시각이면 evidence ID 순으로 고려합니다. 기본 출력은
+최대 여덟 기록이며 의미적 관련성·충분성·현재 권한을 판정하지 않습니다. 손상되거나
+너무 큰 후보 뒤에도 들어가는 정상 작업을 계속 고려합니다. 자동 정리·조용한 삭제·
+필수 전체 이력 감사는 없습니다.
 
-기본 coverage는 발견한 전체 원본의 검사 수를 기록하고 `nextAfterEvidenceId: null`을
-반환합니다. 발견 집합에 미검사 페이지가 없다는 뜻이지 모든 본문 제공을 뜻하지
-않습니다. 기본 첫 결과에서 다음 ID 페이지로 완전 순회하는 방식은 더 이상 제공하지
-않습니다. 아는 `evidenceIds`는 계속 정확히 펼칠 수 있고, 명시한 non-null
+기본 `coverage.originals`와 `coverage.inspected`는 고정한 발견 ID 집합 수이며 확정된
+읽기·JSON·검증 실패도 포함합니다. 성공한 scan 검증은 단순 JSON parse가 아닙니다.
+`omissions.uninspected`는 그 scan에 대해0이지 모든 본문 제공·의미적 충분성·반환 순간
+최신 상태의 증거가 아닙니다. 이후 관측한 실패는 같은 ID를 한 번 재분류합니다.
+S 뒤 처음 나타난 endpoint는 정확한 proof-only 의존성으로 검증할 수 있지만 같은
+응답의 발견/body 집합이나 수에 넣지 않습니다. 다음 요청에서 정상 발견할 수 있습니다.
+`nextAfterEvidenceId: null`은 기본 ID-page cursor가 없다는 뜻입니다. valid가 included보다
+많으면 기존 `work_context_partial`로 부분 본문 전달을 표시하며 복구 실패·오류·사용자
+조치 gate가 아닙니다. 유용한 exact 확대는 선택적이며 자동 전체 감사를 요구하지 않습니다.
+아는 `evidenceIds`는 Session inventory를 열거하지 않고 정확히 펼칠 수 있습니다.
+이때 `coverage.originals`와 `omissions.uninspected`는 `null`,
+`nextAfterEvidenceId`도 `null`입니다. inspected는 중복 제거한 요청 집합이지 Session
+전체 수가 아닙니다. 빈 exact 결과는 요청 ID 범위일 뿐 Session 이력 부재가 아닙니다.
+명시한 non-null
 `afterEvidenceId`는 기존 lexical ID 검사 페이지(최대512)와 다음 cursor·페이지 안의
 시각 정렬을 유지합니다. 전역 시각 순 cursor나 완전 ID 발견 인터페이스는 아닙니다.
+숫자 `coverage.originals`는 계속 발견 inventory 크기이며 끝난 페이지는 그 페이지의
+결과이지 Session 이력 부재가 아닙니다. text는 관측한 숫자 `coverage.originals`가
+`0`일 때만 조용히 유지하며 inventory 미관측을 빈 이력으로 바꾸지 않습니다.
 제한된 생략 ID 샘플에 모든 누락 ID가 나타나지는 않습니다.
 
-전역 최신 선택에는 발견 원본당 한 번의 검증, O(N) 이름/정렬 메타데이터와
-O(N log N) 정렬 비용이 듭니다. 필요한 후보만 재조회하며 출력이 찼거나 본문만으로
-예산을 넘으면 참조를 읽지 않습니다. 연결 조회는 O(N+E)의 작은 관계 metadata와
-제한된 선택/관련 본문만 유지합니다. 관계 계산은 O(N+E)이며 기존 원본 scan·정렬
-비용을 없애지 않습니다. 일반 참조 하나는 최대16MiB를 임시로 읽을 수 있습니다.
+기본 발견은 여전히 모든 해당 이름의 제한된 JSON bytes를 읽습니다. I/O는
+O(total bounded original bytes), 작은 metadata는 O(N), 정렬은 O(N log N)입니다.
+발견한 N개 원본 모두 S에서 canonical 검증합니다. 두 번째 contributor 검증 pass를
+없애는 것이지 최초 scan을 없애지 않습니다. 전체 원본 본문 대신 제한된 선택/관련 본문과 작은 proof metadata를
+유지합니다. 이미 들어가지 않는 본문은 참조 검사를 생략할 수 있습니다.
+일반 참조 하나는 최대16MiB를 임시로 읽을 수 있습니다.
 incoming 개수·상태 집합은 요청 내 집계를 재사용하며 qualifier 실패 때 전체 역사를
 다시 걷지 않습니다. 제한된 qualifier 목록 구성과 기록 배열 직렬화에는 표시 데이터에
-비례한 비용이 계속 듭니다. 관련 fresh-load 상한이 일반 참조 읽기 상한은 아닙니다.
-캐시 밖 참조는 서로 다른 선택 기록에서 다시 검사할 수 있습니다.
-후보 재조회는 최악에 원본 N회 읽기를 추가합니다. 열거 뒤 추가된 원본은 빠질 수
+비례한 비용이 계속 듭니다. 한 조회 요청에서는 기존 read context가 관측한 참조 raw bytes나
+읽기 실패를 재사용하되 descriptor마다 digest·kind·owner를 각각 검사합니다.
+128MiB retention은 거부 gate가 아니며 그 밖의 정상 참조는 기존 bounded read로
+되돌아갑니다. 판정 결과나 parse한 JSON cache는 추가하지 않습니다. 선택 원본의 fresh
+재읽기와 마지막 owner/direction basis 검사는 별도 관측이며 나중에 발견한 실패가
+앞선 성공보다 우선합니다. 새 요청은 파일을 다시 관측합니다. scan/body/direct-endpoint의
+`N+B+E`는 scan N회, 준비했으나 미반환한 본문을 포함한 fresh body read 시도 B회,
+준비 본문과 공유하지 못한 필요한 직접 endpoint read E회를 뜻합니다. 모든 파일 I/O의
+일반 상한은 아닙니다. generic reference enrichment가 work-original 경로를 다시 읽는
+G는 별도입니다. fitting fallback으로 B가 N에 가까워질 수 있습니다. 관련 본문 확대
+상한은 일반 참조 읽기나 최초 scan의 상한이 아닙니다. 열거 뒤 추가된 원본은 빠질 수
 있는 순차 관찰이지 반환 순간의 원자적 최신 보장은 아닙니다. 필수 index·잠금·쓰기·
 서비스는 추가하지 않습니다.
 
@@ -172,10 +209,17 @@ incoming 개수·상태 집합은 요청 내 집계를 재사용하며 qualifier
 32,768문자입니다. 직렬화 제한이지 토큰 추정이나 의미적 판정이 아닙니다. 큰 기록은
 생략 사실을 공개하고 정확한 원본 조회로 계속 읽을 수 있습니다.
 
-기본 unavailable 상세는 최대32개 샘플입니다. `coverage.unavailable`은 전체 수,
-`omissions.unavailableDetailCount`는 전체 수에서 표시한 상세 수를 뺀 누락 상세 수입니다.
-`coverage.valid`에는 출력과 예산 생략을 합친 정상 원본 수가 들어갑니다. 재조회해도
-동일 원본의 inspected를 두 번 세지 않습니다. 재조회 중 변경·소실된 원본은 이전 순서와
+기본 unavailable 상세는 최대32개 샘플입니다. `coverage.unavailable`은 검사 집합 안의
+불가용 원본 수이며 `omissions.unavailableDetailCount`는 그 수에서 표시한 상세 수를
+뺀 값입니다. `coverage.valid`에는 body admission을 시도하지 않은 정상 scan 원본,
+관계/qualifier proof-only 원본과 반환 본문도 들어가며 이후 관측한 실패는 제외합니다.
+`omissions.byBudget`은 실제 body admission을 시도했지만 기록 수나
+enriched 문자 예산으로 탈락한 canonical-valid 원본만 셉니다. 모든 미표시 원본이나
+proof-only 원본을 세지 않습니다. 따라서
+`coverage.inspected = coverage.valid + coverage.unavailable`,
+`coverage.included <= coverage.valid`는 유지하지만 기본 조회에서
+`coverage.valid = coverage.included + omissions.byBudget`는 보장하지 않습니다.
+재조회해도 동일 원본의 inspected를 두 번 세지 않습니다. 재조회 중 변경·소실된 원본은 이전 순서와
 새 본문을 섞지 않고 unavailable로 분리합니다. 명시 페이지·정확 ID는 기존 제한된
 상세 범위를 유지합니다. 본문 생략과 진단 샘플 생략은 별개이며 빈 샘플이 부재 증거는
 아닙니다.

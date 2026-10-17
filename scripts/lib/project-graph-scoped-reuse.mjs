@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { canonicalGraphJson, projectGraphDigest, readGraphProject, readGraphRecord, safeGraphFile,
   PROJECT_GRAPH_INDEX_PATH, PROJECT_GRAPH_RECORD_DIRECTORIES } from "./discovery-index.mjs";
+import { sessionWorkPath } from "./session-work-evidence-original.mjs";
 
 // Process-local optimization of an already typed/byte-verified discovery, not
 // a new record store. Cold, broad, World and custom-store queries keep the
@@ -60,6 +61,79 @@ function previousMatches(previous, entry) {
     && canonicalGraphJson({ ...previous, reuse: null }) === canonicalGraphJson({ ...result, reuse: null }));
 }
 
+// Cold typed nodes, not caller projections, establish this narrow scope. Bounds
+// other than depth retain their real defaults/key; every anchor must be returned.
+function exactWorkScope(query, result, inventory, nodes) {
+  if (query.depth !== 0 || result.nodes.length !== query.anchorIds.length
+    || query.anchorIds.some(id => !result.nodes.some(node => node.nodeId === id))) return null;
+  const entries = new Map(inventory.entries.map(entry => [entry.path, entry]));
+  const work = new Map(), byId = new Map(), ids = new Set(), ambiguous = new Set();
+  for (const entry of inventory.entries) {
+    const selector = sessionWorkPath(entry.path);
+    if (!selector) continue;
+    if (ids.has(selector.evidenceId)) ambiguous.add(selector.evidenceId);
+    ids.add(selector.evidenceId);
+  }
+  for (const node of nodes) {
+    if (node.kind !== "Evidence" || node.subtype !== "SessionWorkEvidence" || node.origin?.layer !== "sessionWork") continue;
+    const selector = sessionWorkPath(node.origin.path), entry = entries.get(node.origin.path);
+    if (!selector || selector.evidenceId !== node.nodeId || !entry || entry.sha256 !== node.origin.digest
+      || node.sourceReference?.path !== entry.path || node.sourceReference?.digest !== entry.sha256
+      || selector.sessionId && selector.sessionId !== node.sessionId || node.projectedReferences?.length
+      || ambiguous.has(node.nodeId) || work.has(entry.path)) continue;
+    work.set(entry.path, node);
+    byId.set(node.nodeId, node);
+  }
+  const anchors = query.anchorIds.map(id => byId.get(id));
+  return anchors.some(node => !node) ? null : { work, anchors };
+}
+
+function workProofPaths(query, result, inventory, nodes, requiredIds, paths) {
+  const scope = exactWorkScope(query, result, inventory, nodes);
+  if (!scope) return paths;
+  const keep = new Set(), removable = new Set(scope.work.keys());
+  const workDependencies = inventory.readerDependencies?.sessionWork;
+  const layout = new Set((workDependencies?.layout || []).map(entry => entry.path));
+  let uncertain = false;
+  for (const entry of inventory.entries) {
+    if (!sessionWorkPath(entry.path)) keep.add(entry.path);
+    else if (!scope.work.has(entry.path)) { keep.add(entry.path); uncertain = true; }
+  }
+  for (const [layer, dependencies] of Object.entries(inventory.readerDependencies || {})) {
+    if (layer !== "sessionWork") for (const entry of dependencies.entries) keep.add(entry.path);
+  }
+  // Owner/default and other-layer proof is never subtracted. The old first-hop
+  // endpoint origins stay protected; owner provenance must not fan back out to
+  // every sibling work body merely because it was in the old second edge pass.
+  for (const node of nodes) if (requiredIds.has(node.nodeId)) {
+    for (const relative of [node.origin?.path, node.sourceReference?.path, node.sourceCurrentness?.path]) if (relative) keep.add(relative);
+  }
+  for (const entry of workDependencies?.entries || []) {
+    if (uncertain || entry.path === ".head/project.json"
+      || /^\.head\/sessions(?:\/by-id\/session-[a-fA-F0-9-]{36})?\/current\.json$/.test(entry.path)) keep.add(entry.path);
+    else if (!sessionWorkPath(entry.path)) removable.add(entry.path);
+  }
+  const anchorIds = new Set(query.anchorIds), anchorPaths = new Set(scope.anchors.map(node => node.origin.path));
+  for (const node of scope.work.values()) {
+    const content = node.workContent;
+    const selectors = [content.workLink?.root, content.workLink?.predecessor, content.executionObservation?.target].filter(Boolean);
+    // Test selectors even when no edge currently exists: a bad root or digest
+    // can suppress an incoming edge whose later repair must invalidate reuse.
+    if (!requiredIds.has(node.nodeId) && !selectors.some(selector => anchorIds.has(selector.evidenceId))
+      && !content.references.some(ref => anchorPaths.has(ref.path))) continue;
+    keep.add(node.origin.path);
+    const owner = sessionWorkPath(node.origin.path);
+    const dependencies = [...selectors.map(selector => `${owner.directory}/${selector.evidenceId}.json`), ...content.references.map(ref => ref.path)];
+    for (const relative of dependencies) {
+      if (!paths.has(relative) && !layout.has(relative)) return paths;
+      keep.add(relative);
+    }
+  }
+  const narrowed = new Set(paths);
+  for (const relative of removable) if (!keep.has(relative)) narrowed.delete(relative);
+  return narrowed;
+}
+
 export function beginScopedDiscovery(options, normalized) {
   if (!supported(options, normalized)) return null;
   try {
@@ -108,7 +182,7 @@ export function rememberScopedDiscovery({ options, normalized, inventory, result
     const entries = new Map([...inventory.entries, ...Object.values(inventory.readerDependencies || {})
       .flatMap(dependencies => dependencies.entries)].map(entry => [entry.path, entry]));
     if ([...paths].some(relative => !entries.has(relative))) return;
-    const proof = [...paths].sort().map(relative => entries.get(relative));
+    const proof = [...workProofPaths(normalized, result, inventory, nodes, requiredIds, paths)].sort().map(relative => entries.get(relative));
     const selectedSourcePaths = new Set(nodes.filter(node => requiredIds.has(node.nodeId))
       .flatMap(node => [node.sourceCurrentness?.path, node.sourceReference?.path]).filter(relative => relative && !relative.startsWith(".head/")));
     const sources = sourceCurrentness.filter(source => selectedSourcePaths.has(source.path));
@@ -130,7 +204,7 @@ export function rememberScopedDiscovery({ options, normalized, inventory, result
         broadQueriesUseFullDiscovery: true },
       sourceFallback: { ...retained.sourceFallback, needed: true,
         reasonCodes: [...new Set([...retained.sourceFallback.reasonCodes, "PROJECT_GRAPH_SCOPED_VERIFICATION"])],
-        action: "Read affected originals before relying on current effects; use a new or broad query to rediscover unrelated changes." },
+        action: "Read affected originals before relying on current effects; use a new or broad query to rediscover unrelated changes. Excluded inputs and retained discovery diagnostics are historical, not a fresh whole-inventory validation." },
       reuse: { status: "scoped-originals-reused", semanticSufficiency: "HEAD-owned", wholeProjectCurrent: false } };
     delete scopedPayload.resultId; delete scopedPayload.resultHash;
     const resultHash = projectGraphDigest(scopedPayload);

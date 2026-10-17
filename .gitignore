@@ -115,3 +115,4 @@ Thumbs.db
 !test/document-change-recovery.test.mjs
 !test/arcadedb-http-bridge.test.mjs
 !test/helpers/arcadedb-fetch-fault-fixture.mjs
+!test/session-work-restoration-reader.test.mjs

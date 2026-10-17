@@ -117,19 +117,40 @@ For an exact local anchor with no text/path search and no World/custom store or
 adapter, Core may reuse a process-local discovery after checking Project and
 index bytes, directory names/types, selected originals, relation producers and
 boundary endpoints, selected source bytes, and hidden review/lineage/Session/Run
-dependencies. All typed records except unrelated additional Session current-state
-bodies remain in the byte proof. Missing/stale index, membership change or proof
-failure silently uses the existing original-backed discovery, not a new gate.
+dependencies. This does not add a census of unrelated Session state bodies that
+the existing path omitted. For depth0 work-only anchors that all actually fit in the returned
+node set, the proof may omit unrelated reference-only bytes and uniquely mapped,
+previously canonical-valid independent work originals. Selected work references,
+actual or potential incoming producers, their directly needed endpoints/root
+gates, existing non-work/owner/default dependencies and uncertain work remain
+protected. A missing current edge is not proof that its potential producer is
+irrelevant. Ambiguous identity/origin, a matched anchor omitted by maxNodes, or an
+unsupported query keeps the old conservative proof or original-backed fallback.
+No source path is dropped when another required or uncertain role needs it.
+
+Follow the returned node's `detail` through `head_project_graph` with its
+`anchor_ids`, `details` and `depth`; no extra selector or native binding is needed.
+The normalized defaults remain maxEdges120 for detail and maxEdges12 for compact
+output. Explicit maxEdges0 is a separate query key, not a prerequisite for this
+reuse. Depth0 still discloses incident boundary/next anchors. Missing/stale index,
+membership/layout change or required proof failure silently uses the existing
+original-backed discovery, not a new gate, repair write or mandatory extra query.
 
 This narrower result has its own identity and `scoped-originals-reused` status.
 `verifiedLayers` is empty; `retainedVerifiedLayers` describes the earlier typed
-discovery and `verifiedRecordPaths` lists up to 256 current byte-proof paths;
-`verifiedRecordCount` and `omittedVerifiedRecordPathCount` disclose the remainder. Basis digests
-for the inventory/relations remain a retained discovery basis, not whole-project
-currentness. Coverage says unrelated record bytes were not reverified and current
-membership means names/types only. Sources outside selected/boundary nodes and
-new relations introduced by edits to unread Session bodies remain unverified;
-original-source fallback stays available and needed. Before effects, read the
+discovery. `verifiedRecordPaths` lists up to 256 paths in the actual byte proof;
+`verifiedRecordCount`, `omittedVerifiedRecordPathCount` and `basis.proofDigest`
+describe that proof, not all inventory records. Inventory/relationship basis
+digests, `retainedDiscoveryNodeCount` and `coverage.layers` retain the earlier
+discovery scope. Likewise `integrity.excluded` and `sourceFallback.excludedInputs`
+are retained exclusion diagnostics, not a fresh census of currently damaged or
+absent unrelated originals; `sourceFallback.action` discloses that distinction.
+An independent unread original's later timestamp change or damage need not break
+this narrow reuse, and the result does not certify its current integrity.
+Coverage says unrelated bytes were not reverified; current membership means
+names/types only. Sources outside selected/boundary nodes and new relations from
+unread Session bodies remain unverified. Original-source fallback stays available.
+Before effects, read the
 affected originals and use the independent current-effect checks. New anchors
 and broad queries can rediscover external changes without extra user approval.
 
@@ -137,7 +158,13 @@ Cold reads, ranked/path searches, source-collection-failure anchors, retained Wo
 queries still use the full existing path. Membership and index bytes grow with
 the record set; cold preparation adds proof/index/membership work. Fewer warm
 file reads is not a constant-byte or latency claim, and small projects can read
-more bytes due to the index. No query writes a record or installs a watcher.
+more bytes due to the index. Cold typed discovery, proof classification, retained
+result copies and warm output cloning still cost work and memory. Existing seed
+and hit checks keep their order; there is no new membership/index post-check after
+the hit's proof scan, so sequential observations are not an atomic latest-at-return
+snapshot. This graph-only reuse does not improve default recovery, startup or
+SessionStart Hook reads. It creates no approval, P2 direction or effect authority.
+No query writes a record, installs a watcher or asks the user to audit all history.
 
 ### Installed package versus active connection
 

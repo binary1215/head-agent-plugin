@@ -33,6 +33,34 @@ function presentedWork(text) {
   assert.ok(start >= 0, text);
   return JSON.parse(text.slice(start + heading.length).split("\n")[0]);
 }
+function withoutSyncWrites(action) {
+  const names = ["writeFileSync", "appendFileSync", "writeSync", "mkdirSync", "renameSync", "unlinkSync", "rmSync", "rmdirSync", "truncateSync", "ftruncateSync", "chmodSync", "fchmodSync", "utimesSync", "linkSync", "symlinkSync"];
+  const originals = new Map(names.map(name => [name, fs[name]])), open = fs.openSync;
+  const restore = () => { for (const [name, method] of originals) fs[name] = method; fs.openSync = open; };
+  for (const name of names) fs[name] = () => { assert.fail(`Read-only consumer attempted ${name}`); };
+  fs.openSync = (file, flags, ...args) => {
+    const writable = typeof flags === "number" ? flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_APPEND) : /[wa+]/u.test(flags || "");
+    assert.equal(Boolean(writable), false, "Read-only consumer attempted a writable open");
+    return open(file, flags, ...args);
+  };
+  let result;
+  try { result = action(); } catch (error) { restore(); throw error; }
+  if (result && typeof result.then === "function") return result.finally(restore);
+  restore(); return result;
+}
+function assertHookWorkScope(value, work) {
+  assert.equal(value.workCoverage.status, work.status);
+  if (work.status === "work_context_partial") assert.match(value.expansion, /head_session_work_read/u);
+  if (value.workCoverage.coverage) {
+    assert.deepEqual(value.workCoverage.coverage, work.coverage);
+    assert.deepEqual(value.workCoverage.omissions, work.omissions);
+  } else {
+    assert.equal(value.workCoverage.sourceOriginals, work.coverage.originals);
+    assert.equal(value.workCoverage.sourceInspected, work.coverage.inspected);
+    assert.equal(value.workCoverage.sourceIncluded, work.coverage.included);
+  }
+  if (value.workOrganization) assert.equal(value.workOrganization.scope, work.organization.scope);
+}
 function checkpoint(f) {
   return f.route(() => syncRecoveryCheckpoint({ root: f.root,
     expectedRecoveryBasisId: inspectRecoveryCheckpointBasis({ root: f.root }).basis.basisId,
@@ -102,11 +130,116 @@ test("organized originals and overlays reach CLI, direct/router MCP and entry wi
   assert.deepEqual(recordFor(expected, saved.running).savedActivity.states, ["ended"]);
 });
 
+test("empty exact IDs and an exhausted lexical page retain their scope in CLI and direct/router MCP text", async t => {
+  const f = fixture(t); f.save({ summary: "Other Session history remains recorded", pending: ["X remains"] });
+  const cases = [
+    { label: "exact-empty", options: { evidenceIds: [] }, args: { evidence_ids: [] }, originals: null, uninspected: null,
+      selection: "newest-recorded-first-within-requested-exact-ids; Session inventory not enumerated; no global completeness or semantic sufficiency claim" },
+    { label: "page-end", options: { afterEvidenceId: "work-evidence-" + "f".repeat(24) }, args: { after_evidence_id: "work-evidence-" + "f".repeat(24) }, originals: 1, uninspected: 0,
+      selection: "newest-recorded-first-within-inspected-original-page; no semantic relevance or sufficient-context judgment" },
+  ];
+  for (const item of cases) {
+    item.input = path.join(f.base, item.label + ".json"); fs.writeFileSync(item.input, JSON.stringify(item.options));
+  }
+  const before = snapshot(f.base);
+  await withoutSyncWrites(async () => {
+    for (const item of cases) {
+      const expected = f.read(item.options);
+      assert.deepEqual(expected.records, []); assert.equal(expected.status, "work_context_not_recorded");
+      assert.equal(expected.coverage.originals, item.originals); assert.equal(expected.coverage.inspected, 0);
+      assert.equal(expected.coverage.selection, item.selection);
+      assert.equal(expected.omissions.uninspected, item.uninspected); assert.equal(expected.nextAfterEvidenceId, null);
+      const cli = runCommand(["session-work-read", f.root, "--session", f.session.sessionId, "--input", item.input]);
+      assert.deepEqual(cli, expected);
+      const cliText = formatCliResult("session-work-read", cli), presented = presentedWork(cliText);
+      assert.deepEqual(presented.coverage, expected.coverage); assert.deepEqual(presented.omissions, expected.omissions);
+      assert.doesNotMatch(cliText, /No selected Session work evidence is recorded/u);
+      for (const routed of [false, true]) {
+        const read = await call(f, "head_session_work_read", item.args, routed);
+        assert.deepEqual(read.structuredContent, expected);
+        assert.deepEqual(presentedWork(read.content[0].text).coverage, expected.coverage);
+        assert.deepEqual(presentedWork(read.content[0].text).omissions, expected.omissions);
+        assert.doesNotMatch(read.content[0].text, /No selected Session work evidence is recorded/u);
+      }
+    }
+  });
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("only observed numeric zero originals keeps default no-history entry quiet", async t => {
+  const f = fixture(t), before = snapshot(f.base);
+  await withoutSyncWrites(async () => {
+    const empty = f.read();
+    assert.equal(empty.coverage.originals, 0); assert.equal(empty.coverage.inspected, 0);
+    assert.equal(empty.omissions.uninspected, 0); assert.deepEqual(empty.records, []);
+    const quiet = "No selected Session work evidence is recorded. Ordinary work continues.\n";
+    assert.equal(formatCliResult("session-work-read", empty), quiet);
+    for (const routed of [false, true]) {
+      const read = await call(f, "head_session_work_read", {}, routed);
+      assert.deepEqual(read.structuredContent, empty); assert.equal(read.content[0].text, quiet);
+    }
+    const entry = f.route(() => enterConversationRecovery({ root: f.root }));
+    assert.doesNotMatch(formatCliResult("conversation-enter", entry), /Selected Session work evidence \(P3/u);
+    assert.equal(entry.ordinaryWorkBlocked, false); assert.equal(entry.userDecisionRequired, false);
+    // Serializer-only unknown/malformed counts must not become observed numeric
+    // zero. This does not broaden the reader's public count schema.
+    for (const originals of [null, undefined, "0"]) {
+      const scoped = { ...empty, coverage: { ...empty.coverage, originals } };
+      assert.deepEqual(presentedWork(formatCliResult("session-work-read", scoped)).records, []);
+      assert.deepEqual(presentedWork(formatMcpToolContent("head_session_work_read", scoped)).records, []);
+    }
+  });
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("default canonical scan counts all originals while partial body delivery does not invent budget omissions", async t => {
+  const f = fixture(t), target = f.save({ summary: "Older exact target", executionObservation: { state: "running" } });
+  for (let i = 0; i < 12; i += 1) f.save({ summary: `Unrelated discovery-only original ${i}` });
+  const latest = f.save({ summary: "Latest bounded result", executionObservation: { state: "ended", target: exact(target) },
+    pending: ["X remains; no repeated effect"], unknowns: ["External outcome is unknown"] });
+  const options = { maxRecords: 1 }, input = path.join(f.base, "one-body.json"); fs.writeFileSync(input, JSON.stringify(options));
+  const before = snapshot(f.base);
+  await withoutSyncWrites(async () => {
+    const expected = f.read(options);
+    assert.deepEqual(expected.records.map(record => record.evidenceId), [latest.evidence.evidenceId]);
+    assert.equal(expected.coverage.originals, 14); assert.equal(expected.coverage.inspected, 14);
+    assert.equal(expected.coverage.valid, 14); assert.equal(expected.coverage.unavailable, 0);
+    assert.equal(expected.coverage.inspected, expected.coverage.valid + expected.coverage.unavailable);
+    assert.equal(expected.omissions.uninspected, 0);
+    assert.equal(expected.status, "work_context_partial"); assert.equal(expected.ordinaryWorkBlocked, false);
+    assert.ok(expected.coverage.valid > expected.coverage.included); assert.equal(expected.omissions.byBudget, 0);
+    assert.deepEqual(expected.omissions.evidenceIds, []); assert.equal(expected.omissions.omittedIdCount, 0);
+    assert.equal(expected.nextAfterEvidenceId, null); assert.equal(expected.organization.scope, "inspected-originals-only");
+    const record = recordFor(expected, latest);
+    assert.deepEqual(record.content.pending, ["X remains; no repeated effect"]);
+    assert.deepEqual(record.content.unknowns, ["External outcome is unknown"]);
+    assert.ok(record.savedActivity.relations.some(relation => relation.role === "target" && relation.status === "verified"));
+    // A scan-qualified historical observation is not a fresh read of every
+    // non-body producer or a live-state/returned-at-integrity guarantee.
+    assert.match(expected.coverage.selection, /all discovered originals canonically inspected once/u);
+    const cli = runCommand(["session-work-read", f.root, "--session", f.session.sessionId, "--input", input]);
+    assert.deepEqual(cli, expected); assert.deepEqual(presentedWork(formatCliResult("session-work-read", cli)).coverage, expected.coverage);
+    for (const routed of [false, true]) {
+      const read = await call(f, "head_session_work_read", { max_records: 1 }, routed);
+      assert.deepEqual(read.structuredContent, expected);
+      const text = presentedWork(read.content[0].text);
+      assert.deepEqual(text.coverage, expected.coverage); assert.deepEqual(text.organization, expected.organization);
+      assert.deepEqual(text.records[0].content, record.content);
+    }
+  });
+  assert.deepEqual(snapshot(f.base), before);
+});
+
 for (const runtime of ["codex", "claude"]) test(`${runtime} public synthetic Hook carries saved activity with its body and current P2/common priority`, t => {
   const f = fixture(t, "CURRENT SELECTED PURPOSE: investigate locally"), saved = representative(f);
   const direction = updateProjectDirection({ root: f.root, input: { goal: "CURRENT COMMON GOAL: explain only", constraints: ["No external effects"], cancelledActions: ["deployment"] } }).direction;
   const synced = checkpoint(f), caller = hostFixture(f, runtime), before = snapshot(f.base);
-  const entry = caller.host.enter({ root: f.root }), { value, text } = caller.read();
+  const entry = withoutSyncWrites(() => caller.host.enter({ root: f.root })), { value, text } = withoutSyncWrites(() => caller.read());
+  assertHookWorkScope(value, entry.workContext);
+  assert.equal(entry.workContext.coverage.inspected, entry.workContext.coverage.originals);
+  assert.equal(entry.workContext.omissions.uninspected, 0);
+  assert.ok(entry.workContext.coverage.valid > entry.workContext.coverage.included);
+  assert.equal(entry.workContext.status, "work_context_partial");
   assert.deepEqual(value.currentProjectDirection, directionView(direction)); assert.equal(value.sessionPurpose, entry.workContext.sessionPurpose);
   assert.equal(value.sessionRecovery.checkpointId, synced.checkpoint.checkpointId);
   assert.deepEqual(value.sessionRecovery.approvedDecisions, synced.checkpoint.approvedDecisions);
@@ -172,23 +305,23 @@ test("P3 ended never clears canonical pending review, and CLI/Hook expose the se
   assert.deepEqual(snapshot(f.base), before);
 });
 
-test("private startup serializer retains record-overlay tuples at 9999/10000 and omits them whole beyond capacity", t => {
+test("private startup serializer retains record-overlay tuples at exact 9999 and 10000 and omits them whole beyond capacity", t => {
   // Serializer-only capacity evidence complements the public Hook fixtures.
   const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
   const formatter = new Function("path", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"), source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path);
   const id = "work-evidence-" + "a".repeat(24), digest = "b".repeat(64);
   const activity = { states: ["ended"], qualifierCount: 1, qualifiers: [{ evidenceId: "work-evidence-" + "c".repeat(24), evidenceDigest: digest, state: "ended" }],
     omittedQualifierCount: 0, unavailableQualifierCount: 0, coverage: "verified-scan", relations: [] };
-  const entry = { status: "conversation_ready", currentProjectDirection: null, workContext: {
+  const entry = { status: "conversation_ready", currentProjectDirection: null, workContext: { status: "work_context_partial",
     sessionId: "session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE", sessionPurpose: "Protected local purpose", organization: {
       interpretation: "Saved historical observations coexist; neither their state, time nor predecessor establishes current live state, success or authority.",
-      liveState: "not-observed", scope: "discovered-selected-session", roots: 1, branchingPredecessors: 0,
+      liveState: "not-observed", scope: "inspected-originals-only", roots: 1, branchingPredecessors: 0,
       unavailableRelations: 0, uninspectedRelations: 0, relatedReadAttempts: 0, relatedExpansionDeferred: 0,
     },
     records: [{ evidenceId: id, evidenceDigest: digest, selectionRole: "recent", content: { summary: "" }, references: [], savedActivity: activity }],
-    coverage: { originals: 1, inspected: 1, valid: 1, included: 1 }, omissions: { byBudget: 0, uninspected: 0, evidenceIds: [] }, nextAfterEvidenceId: null,
+    coverage: { originals: 40, inspected: 40, valid: 40, included: 1 }, omissions: { byBudget: 0, uninspected: 0, evidenceIds: [] }, nextAfterEvidenceId: null,
   } };
-  let boundary = null;
+  const boundaries = new Map();
   // Output overhead can change when optional coverage is omitted. Search the
   // finite 10000-character input domain; no model or filesystem mutation occurs.
   for (let length = 0; length <= 10000; length += 1) {
@@ -198,16 +331,31 @@ test("private startup serializer retains record-overlay tuples at 9999/10000 and
     if (value.records.length) {
       assert.deepEqual(value.records[0].savedActivity, activity);
       assert.equal(value.savedObservationScope, "Saved historical observations coexist; no current live state, success or authority is inferred.");
-      if (text.length === 9999 || text.length === 10000) boundary = { length, outputLength: text.length };
-    } else if (boundary) break;
+      if (value.workOrganization) assert.equal(value.workOrganization.scope, entry.workContext.organization.scope);
+      if (text.length === 9999 || text.length === 10000) boundaries.set(text.length, { length, outputLength: text.length });
+    } else if (boundaries.size) break;
   }
-  assert.ok(boundary, "An included tuple must reach the final 9999/10000 boundary");
+  for (const outputLength of [9999, 10000]) {
+    const boundary = boundaries.get(outputLength);
+    assert.ok(boundary, `An included tuple must reach the exact ${outputLength} serialized boundary`);
+    entry.workContext.records[0].content.summary = "s".repeat(boundary.length);
+    const text = formatter(entry, pluginRoot), value = JSON.parse(text);
+    assert.equal(text.length, outputLength); assert.equal(value.records.length, 1);
+    assertHookWorkScope(value, entry.workContext);
+    assert.deepEqual(value.records[0].content, entry.workContext.records[0].content);
+    assert.deepEqual(value.records[0].savedActivity, activity);
+  }
+  entry.workContext.records[0].content.summary = "s".repeat(boundaries.get(10000).length + 1);
+  const justBeyond = JSON.parse(formatter(entry, pluginRoot));
+  assert.deepEqual(justBeyond.records, []); assert.equal(justBeyond.omittedEvidenceCount, 1);
+  assert.equal(justBeyond.savedObservationScope, undefined);
+  assert.equal(justBeyond.sessionPurpose, "Protected local purpose");
   entry.workContext.records[0].content.summary = "s".repeat(14000);
   const overflow = JSON.parse(formatter(entry, pluginRoot));
   assert.deepEqual(overflow.records, []); assert.equal(overflow.omittedEvidenceCount, 1);
   assert.equal(overflow.savedObservationScope, undefined);
   assert.equal(overflow.sessionPurpose, "Protected local purpose");
-  t.diagnostic(JSON.stringify({ scope: "private-serializer-only", ...boundary }));
+  t.diagnostic(JSON.stringify({ scope: "private-serializer-only", boundaries: [...boundaries.values()] }));
 });
 
 test("serializer-only incomplete/conflict execution status survives CLI quiet/common-unavailable/normal and private Hook without P2 writes", t => {

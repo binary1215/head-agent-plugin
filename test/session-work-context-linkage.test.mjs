@@ -156,7 +156,9 @@ test("shared root and citations reuse a single fresh proof and related attempts 
   };
   let value; try { value = f.read({ maxRecords: 4 }); } finally { fs.readFileSync = readFile; }
   assert.ok(value.organization.relatedReadAttempts <= 4);
-  for (const [file, count] of reads) assert.ok(count <= 2, `${file}: one metadata scan plus at most one fresh selected/related load, got ${count}`);
+  const countFor = saved => [...reads].find(([file]) => path.resolve(file) === path.resolve(saved.file))?.[1];
+  assert.equal(countFor(root), 2, "The S observation plus one prepared fresh root body also supplies its direct endpoint proof");
+  assert.equal(countFor(cited), 2, "The S observation plus one prepared cited body also supplies the exact artifact proof");
   assert.equal(value.records.filter(record => record.evidenceId === root.evidence.evidenceId).length, 1);
   assert.equal(value.records.filter(record => record.evidenceId === cited.evidence.evidenceId).length, 1);
   accounting(value); assert.deepEqual(snapshot(f.base), before);
@@ -221,7 +223,7 @@ test("exact and lexical page reads keep only requested bodies and disclose unins
   assert.deepEqual(snapshot(f.base), before);
 });
 
-test("a selected qualifier changed after metadata scan makes dependent activity partial in the same response", t => {
+test("a valid S qualifier whose later fresh body fails is removed once from historical activity", t => {
   const f = fixture(t), target = f.save({ summary: "Target", executionObservation: { state: "running" } });
   const qualifier = f.save({ workLink: link(target), executionObservation: { state: "ended", target: exact(target) } });
   const originalRead = fs.readFileSync; let changed = false;
@@ -233,7 +235,9 @@ test("a selected qualifier changed after metadata scan makes dependent activity 
   let value; try { value = f.read({ maxRecords: 8 }); } finally { fs.readFileSync = originalRead; }
   assert.equal(changed, true); assert.equal(recordFor(value, qualifier), undefined);
   const activity = recordFor(value, target).savedActivity;
-  assert.equal(activity.coverage, "partial"); assert.ok(activity.unavailableQualifierCount >= 1);
+  assert.equal(activity.coverage, "partial"); assert.equal(activity.unavailableQualifierCount, 1);
+  assert.equal(activity.qualifierCount, 0);
+  assert.equal(value.unavailable.filter(item => item.evidenceId === qualifier.evidence.evidenceId).length, 1);
   assert.ok(!activity.states.includes("ended")); assert.equal(value.ordinaryWorkBlocked, false); accounting(value);
 });
 

@@ -71,7 +71,12 @@ export function accounting(value, maxRecords = value.coverage.maxRecords, maxCha
   assert.ok(JSON.stringify(value.records).length <= maxCharacters);
   assert.equal(value.coverage.usedCharacters, JSON.stringify(value.records).length);
   assert.equal(value.coverage.inspected, value.coverage.valid + value.coverage.unavailable);
-  assert.equal(value.coverage.valid, value.coverage.included + value.omissions.byBudget);
+  if (value.coverage.selection.includes("recent-results-with-bounded-explicit-citations-and-declared-roots")) {
+    assert.ok(value.coverage.included <= value.coverage.valid);
+    assert.ok(value.omissions.byBudget <= value.coverage.valid - value.coverage.included);
+    assert.equal(value.omissions.uninspected, value.coverage.originals - value.coverage.inspected);
+    assert.equal(value.coverage.inspected, value.coverage.originals);
+  } else assert.equal(value.coverage.valid, value.coverage.included + value.omissions.byBudget);
   assert.equal(value.coverage.included, value.records.length);
   assert.equal(new Set(value.records.map(record => record.evidenceId)).size, value.records.length);
 }

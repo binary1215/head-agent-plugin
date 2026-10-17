@@ -996,7 +996,7 @@ const allTools = [
   },
   {
     name: "head_session_work_read",
-    description: "Read selected Session work Evidence with bounded output. Default reads inspect discovered originals and select recent work; exact IDs or an explicit after_evidence_id use bounded exact/ID-page expansion. Entry already includes work context: expand only when useful. No write, repair, sufficiency judgment or recovery direction; omissions remain explicit.",
+    description: "Read the selected Session's recent work and explicitly linked earlier reasons with verified originals and bounded output. Entry already provides work context; expand only when useful. Exact IDs avoid inventory enumeration; an explicit cursor reads an ID page. Some history may remain outside the returned bodies. No write, repair, replay or recovery direction.",
     inputSchema: { type: "object", properties: {
       project_root: workEvidenceText,
       evidence_ids: { type: "array", maxItems: 512, items: { type: "string", pattern: "^work-evidence-[a-f0-9]{24}$" } },

@@ -108,18 +108,36 @@ head-agent graph-query <project> --session <logical-session> --query "<task>"
 텍스트·경로 검색이 없고 World·사용자 store·adapter가 없는 정확한 로컬 anchor는
 프로세스 내 이전 탐색을 재사용할 수 있습니다. Project·색인 bytes, 디렉터리 이름·타입,
 선택 원본, 관계 생성 원본과 잘린 이웃 endpoint, 선택 소스 bytes와 숨은
-review·lineage·Session·Run 근거를 검사합니다. 무관한 추가 Session의 현재 상태 본문을
-제외한 모든 typed 기록은 바이트 증명에 남깁니다. 색인이 없거나 stale이거나,
-membership·증명 검사가 달라지면 새 게이트 없이 기존 원본 탐색으로 돌아갑니다.
+review·lineage·Session·Run 근거를 검사합니다. 기존 경로가 생략하던 무관한 Session
+현재 상태 본문을 새로 전수 검사하지 않습니다. depth0의 work 전용 anchor가 모두 실제 반환
+node 집합에 들어가면 무관한 reference-only bytes와 유일하게 대응한 과거 canonical-valid
+독립 work 원본은 proof에서 빠질 수 있습니다. 선택 work의 참조, 실제·잠재 incoming
+producer와 직접 필요한 endpoint/root gate, 기존 non-work/owner/default 의존과 불확실한
+work는 보호합니다. 현재 edge가 없다고 potential producer가 무관한 것은 아닙니다.
+identity/origin이 모호하거나 maxNodes 때문에 matched anchor가 빠지거나 미지원 query이면
+기존 보수적 proof 또는 원본 fallback을 유지합니다. 같은 path에 필요한 역할이나 불확실한
+역할이 하나라도 있으면 생략하지 않습니다.
+
+반환된 node의 `detail`을 기존 `head_project_graph`의 `anchor_ids`, `details`, `depth`로
+따라가며 추가 selector나 native binding은 필요하지 않습니다. 정규화 기본값은 상세의
+maxEdges120, compact의 maxEdges12 그대로입니다. 명시 maxEdges0은 별도 query key이지
+재사용 조건이 아닙니다. depth0도 incident boundary/다음 anchor를 공개합니다. 색인 부재·
+stale·membership/layout 변경·필요 proof 실패는 새 gate·복구 쓰기·필수 추가 조회 없이
+기존 원본 탐색으로 돌아갑니다.
 
 더 좁은 결과는 별도 ID와 `scoped-originals-reused` 상태를 갖습니다.
-`verifiedLayers`는 비어 있고, `retainedVerifiedLayers`는 이전 typed 탐색을,
-`verifiedRecordPaths`는 현재 바이트 검증 경로를 최대 256개까지 표시하며,
-`verifiedRecordCount`와 `omittedVerifiedRecordPathCount`로 전체·생략 개수를 밝힙니다. 목록·관계의 basis digest는
-보존 탐색 기준이지 전체 프로젝트의 현재성 증명이 아닙니다. Coverage는 무관한
-기록 본문을 재검증하지 않았음을 밝히고, 현재 membership은 이름·타입만 뜻합니다.
+`verifiedLayers`는 비어 있고, `retainedVerifiedLayers`는 이전 typed 탐색입니다.
+`verifiedRecordPaths`는 실제 byte proof의 경로를 최대256개까지 표시하며
+`verifiedRecordCount`, `omittedVerifiedRecordPathCount`, `basis.proofDigest`는 그 proof를
+설명하지 inventory 전체 기록을 뜻하지 않습니다. 목록·관계의 basis digest,
+`retainedDiscoveryNodeCount`, `coverage.layers`는 이전 탐색 범위입니다.
+`integrity.excluded`와 `sourceFallback.excludedInputs`도 보존한 제외 진단이지 지금의 무관한
+손상·부재 원본을 새로 전수 검사한 통계가 아닙니다. `sourceFallback.action`이 이 차이를
+밝힙니다. 읽지 않은 독립 원본의 이후 timestamp 변경이나 손상만으로 좁은 재사용이
+깨지지 않을 수 있으며 그 원본의 현재 무결성을 인증하지 않습니다. Coverage는 무관한
+bytes를 재검증하지 않았음을 밝히고 현재 membership은 이름·타입만 뜻합니다.
 선택·boundary 밖 소스와 읽지 않은 Session 본문 수정으로 새로 생긴 관계는 미확인입니다.
-원본 fallback은 계속 가능하며 필요한 상태입니다. 효과 전에는 관련 현재 원본과 별도
+원본 fallback은 계속 가능합니다. 효과 전에는 관련 현재 원본과 별도
 효과 권한 검사를 사용합니다. 새 anchor나 전체 검색으로 외부 변경을 다시 발견할 때
 추가 사용자 승인은 필요하지 않습니다.
 
@@ -127,7 +145,12 @@ membership·증명 검사가 달라지면 새 게이트 없이 기존 원본 탐
 유지합니다. Membership·색인 bytes는 기록 수에 따라 증가하고 최초 준비에는 증명·색인·
 membership 작업이 추가됩니다. Warm 파일 읽기 감소가 상수 bytes나 지연시간 개선을
 뜻하지 않으며 작은 프로젝트는 색인 때문에 더 많은 bytes를 읽을 수 있습니다.
-조회는 기록을 쓰거나 watcher를 설치하지 않습니다.
+cold typed 탐색·proof 분류·보존 result 복사·warm 출력 clone의 비용과 메모리는 남습니다.
+기존 seed/hit 검사 순서는 유지하며 hit의 proof scan 뒤 새 membership/index 후검사는
+없습니다. 따라서 순차 관측이지 반환 순간의 원자적 snapshot이 아닙니다. 이 graph 전용
+재사용이 기본 복구·startup·SessionStart Hook 조회를 개선하지는 않습니다. 승인·P2 방향·
+효과 권한을 만들지 않습니다. 조회는 기록을 쓰거나 watcher를 설치하거나 사용자에게
+전체 이력 감사를 요구하지 않습니다.
 
 ### 설치 패키지와 활성 연결의 구분
 

@@ -60,12 +60,38 @@ function replaceSameMetadata(file, before, after) {
 }
 async function warm(f, saved, extra = {}) {
   indexProjectGraph({ root: f.root });
-  const request = q(f, saved, extra), cold = await queryProjectGraph(request);
+  const request = q(f, saved, extra);
+  // Re-priming can encounter the independent same-basis result cache after a
+  // cold comparison. A nonmatching previousResult takes the existing public
+  // original-backed path through remember, rather than that early return.
+  const cold = await queryProjectGraph({ ...request, previousResult: { resultId: "not-a-retained-prime-result" } });
+  assert.equal(cold.reuse.status, "fresh-read");
   const reused = await queryProjectGraph({ ...request, previousResult: cold });
   assert.equal(reused.reuse.status, "scoped-originals-reused");
   assert.equal(reused.reuse.wholeProjectCurrent, false);
   assert.deepEqual(reused.nodes, cold.nodes); assert.deepEqual(reused.edges, cold.edges);
   noAuthority(reused); return { request, cold, reused };
+}
+// Only the current selected payload/incident navigation is compared with a new
+// original-backed discovery. Retained inventory/layer/exclusion diagnostics are
+// deliberately not represented as a fresh whole-Project observation.
+const selectedProjection = result => ({ nodes: result.nodes, edges: result.edges, boundary: result.boundary,
+  unmatchedAnchorIds: result.unmatchedAnchorIds, omittedMatchCount: result.omittedMatchCount, truncated: result.truncated });
+async function compareWithCold(request, actual) {
+  // A deliberately nonmatching previous result uses the existing cold path;
+  // callers neither seed the private cache nor supply verification authority.
+  const cold = await queryProjectGraph({ ...request, previousResult: { resultId: "not-a-retained-result" } });
+  assert.notEqual(cold.reuse.status, "scoped-originals-reused");
+  assert.deepEqual(selectedProjection(actual), selectedProjection(cold));
+  noAuthority(actual); noAuthority(cold); return cold;
+}
+function changeValidHeader(saved) {
+  const stat = fs.statSync(saved.file), bytes = fs.readFileSync(saved.file), { evidenceDigest, ...payload } = JSON.parse(bytes);
+  payload.recordedAt = new Date(Date.parse(payload.recordedAt) + 1000).toISOString();
+  const evidence = { ...payload, evidenceDigest: sha(encoded(payload)) }, changed = JSON.stringify(evidence, null, 2) + "\n";
+  assert.notEqual(evidence.evidenceDigest, evidenceDigest); assert.equal(Buffer.byteLength(changed), bytes.length);
+  fs.writeFileSync(saved.file, changed); fs.utimesSync(saved.file, stat.atime, stat.mtime);
+  saved.evidence = evidence; return bytes;
 }
 
 test("new default/named public work publications add exact index paths without scanning unrelated work bodies", t => {
@@ -241,11 +267,11 @@ test("same evidence ID with a changed valid header digest does not satisfy an ex
   assert.deepEqual(snapshot(f.base), before);
 });
 
-test("warm exact work proof includes hidden named owners and nonselected work with zero visible edges", async t => {
+test("depth>0 keeps the conservative hidden-owner/nonselected-work proof even with zero visible edges", async t => {
   const f = fixture(t), selected = f.save({ summary: "Exact anchor" });
   const other = createHeadSession({ root: f.root, purpose: "Unselected work owner" });
   const nonselected = withSessionRoute(f.root, other.sessionId, () => recordSessionWorkEvidence({ root: f.root, input: { summary: "Nonselected candidate" } }));
-  const { request, reused } = await warm(f, selected), before = snapshot(f.base);
+  const { request, reused } = await warm(f, selected, { depth: 1 }), before = snapshot(f.base);
   for (const file of [selected.file, nonselected.file, f.route(() => sessionStatePath(f.root)), path.join(f.root, ".head/sessions/by-id", other.sessionId, "current.json")]) {
     assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, file)), "Missing hidden proof " + relative(f, file));
   }
@@ -254,6 +280,35 @@ test("warm exact work proof includes hidden named owners and nonselected work wi
   const after = snapshot(f.base), changed = await queryProjectGraph({ ...request, previousResult: reused });
   assert.notEqual(changed.reuse.status, "scoped-originals-reused"); assertWork(changed, selected);
   assert.deepEqual(snapshot(f.base), after);
+});
+
+test("A1 exact depth0 omits only independent valid work bytes, retains hidden owners and distinguishes retained global exclusions", async t => {
+  const f = fixture(t), selected = f.save({ summary: "Exact useful anchor", pending: ["X"], unknowns: ["Effect unknown"] });
+  const other = createHeadSession({ root: f.root, purpose: "Independent retained work owner" });
+  const independent = withSessionRoute(f.root, other.sessionId, () => recordSessionWorkEvidence({ root: f.root,
+    input: { summary: "Independent candidate" } }));
+  const { request, reused } = await warm(f, selected);
+  assert.ok(!reused.integrity.verifiedRecordPaths.includes(relative(f, independent.file)));
+  for (const file of [selected.file, f.route(() => sessionStatePath(f.root)),
+    path.join(f.root, ".head/sessions/by-id", other.sessionId, "current.json"), path.join(f.root, ".head/sessions/current.json")]) {
+    assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, file)), "Required owner/default proof " + relative(f, file));
+  }
+  changeValidHeader(independent);
+  let before = snapshot(f.base), result = await queryProjectGraph({ ...request, previousResult: reused });
+  assert.equal(result.reuse.status, "scoped-originals-reused"); assertWork(result, selected);
+  await compareWithCold(request, result); assert.deepEqual(snapshot(f.base), before);
+  // Re-prime against the changed header before testing a separate independent
+  // corruption. The fixture mutation is not a query-side repair/write.
+  const again = await warm(f, selected);
+  replaceSameMetadata(independent.file, "Independent candidate", "Independent corrupted");
+  before = snapshot(f.base); result = await queryProjectGraph({ ...again.request, previousResult: again.reused });
+  assert.equal(result.reuse.status, "scoped-originals-reused"); assertWork(result, selected);
+  const cold = await compareWithCold(again.request, result);
+  assert.deepEqual(result.integrity.excluded, again.reused.integrity.excluded);
+  assert.deepEqual(result.sourceFallback.excludedInputs, again.reused.sourceFallback.excludedInputs);
+  assert.notDeepEqual(cold.integrity.excluded, result.integrity.excluded, "Cold discovers a global exclusion that the retained diagnostic does not claim to refresh");
+  assert.match(result.sourceFallback.action, /retain/i); assert.match(result.sourceFallback.action, /exclu/i);
+  assert.equal(result.reuse.wholeProjectCurrent, false); assert.deepEqual(snapshot(f.base), before);
 });
 
 test("per-reference source/artifact kind and changed/missing facts do not overwrite intact work freshness", async t => {
@@ -369,6 +424,7 @@ test("restoring an excluded same-path producer discovers its incoming relation v
 
 test("text/path/exact discovery performs no sync or async file writes and leaves current Session/P2 originals unchanged", async t => {
   const f = fixture(t), saved = f.save({ judgments: [{ assessment: "Choose B", reason: "Proof sentinel reason", alternatives: ["Keep A"] }], pending: ["X"] });
+  const sequence = await warm(f, saved);
   const before = snapshot(f.base), originals = [], attempts = [];
   const trap = name => (...args) => { attempts.push(name); throw new Error("Read-only graph attempted " + name); };
   const replace = (object, name, value) => { originals.push([object, name, object[name]]); object[name] = value; };
@@ -385,6 +441,8 @@ test("text/path/exact discovery performs no sync or async file writes and leaves
   });
   syncBuiltinESMExports();
   try {
+    const repeated = await queryProjectGraph({ ...sequence.request, previousResult: sequence.reused });
+    assert.equal(repeated.reuse.status, "scoped-originals-reused"); assertWork(repeated, saved);
     for (const options of [q(f, saved), { root: f.root, paths: [relative(f, saved.file)], details: true },
       { root: f.root, query: "Proof sentinel reason", details: true }]) assertWork(await queryProjectGraph(options), saved);
   } finally {
@@ -459,4 +517,190 @@ test("old/no work index uses originals without query-time repair or Session sele
     assert.deepEqual(f.route(() => fs.readFileSync(sessionStatePath(f.root))), selectedState);
     assert.deepEqual(snapshot(f.base), before);
   }
+});
+
+test("A1 selected header bytes remain fresh despite identical size/mtime, and a returned clone cannot mutate private cache state", async t => {
+  const f = fixture(t), selected = f.save({ summary: "Selected header must be current", pending: ["X"] });
+  const { request, reused } = await warm(f, selected), retained = structuredClone(reused);
+  reused.nodes[0].workContent.pending.push("Caller injection"); reused.boundary.nextAnchorIds.push("Caller anchor");
+  const isolated = await queryProjectGraph({ ...request, previousResult: retained });
+  assert.equal(isolated.reuse.status, "scoped-originals-reused");
+  assert.deepEqual(selectedProjection(isolated), selectedProjection(retained));
+  changeValidHeader(selected); const before = snapshot(f.base);
+  const changed = await queryProjectGraph({ ...request, previousResult: isolated });
+  assert.notEqual(changed.reuse.status, "scoped-originals-reused"); assertWork(changed, selected);
+  assert.notEqual(nodeFor(changed, selected).sourceReference.digest, nodeFor(isolated, selected).sourceReference.digest);
+  await compareWithCold(request, changed); assert.deepEqual(snapshot(f.base), before);
+});
+
+for (const mode of ["root", "observation", "potential-citation", "potential-source"]) test(`A1 ${mode} producer header remains a proof dependency even when no current citation edge exists`, async t => {
+  const f = fixture(t), selected = f.save({ summary: "Selected producer target" });
+  const producer = f.save(mode === "root" ? { summary: "Related root producer", workLink: link(selected) }
+    : mode === "observation" ? { executionObservation: { state: "paused", target: exact(selected) } }
+      : { summary: "Potential exact-path reference producer", references: [{ ...citation(f, selected), kind: mode === "potential-source" ? "source" : "artifact" }] });
+  if (mode === "potential-citation") changeValidHeader(selected); // P's retained artifact digest is now stale, but its exact path is still potential.
+  const { request, reused } = await warm(f, selected);
+  assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, producer.file)));
+  const originalBoundary = structuredClone(reused.boundary);
+  changeValidHeader(producer); const before = snapshot(f.base);
+  const changed = await queryProjectGraph({ ...request, previousResult: reused });
+  assert.notEqual(changed.reuse.status, "scoped-originals-reused"); assertWork(changed, selected);
+  if (mode === "root" || mode === "observation") assert.notDeepEqual(changed.boundary, originalBoundary, "Current producer raw provenance changes its incident edge identity");
+  await compareWithCold(request, changed); assert.deepEqual(snapshot(f.base), before);
+});
+
+for (const mode of ["missing", "digest-mismatch"]) test(`A1 hidden root gate ${mode} restoration discovers the previously suppressed incoming predecessor boundary`, async t => {
+  const f = fixture(t), root = f.save({ summary: "Separate required root gate" });
+  const selected = f.save({ summary: "Selected predecessor", workLink: link(root) });
+  const producer = f.save({ summary: "Potential follows producer", workLink: link(root, selected) });
+  const rootBytes = fs.readFileSync(root.file);
+  if (mode === "missing") fs.unlinkSync(root.file); else changeValidHeader(root);
+  const { request, reused } = await warm(f, selected);
+  assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, producer.file)));
+  if (mode !== "missing") assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, root.file)));
+  assert.ok(!reused.boundary.nextAnchorIds.includes(producer.evidence.evidenceId));
+  fs.writeFileSync(root.file, rootBytes); const before = snapshot(f.base);
+  const restored = await queryProjectGraph({ ...request, previousResult: reused });
+  assert.notEqual(restored.reuse.status, "scoped-originals-reused"); assertWork(restored, selected);
+  assert.ok(restored.boundary.nextAnchorIds.includes(producer.evidence.evidenceId));
+  await compareWithCold(request, restored); assert.deepEqual(snapshot(f.base), before);
+});
+
+test("A1 same-path invalid producer and unowned original restoration cannot be mistaken for independent valid work", async t => {
+  const f = fixture(t), selected = f.save({ summary: "Independent valid selected original" });
+  const producer = f.save({ summary: "Initially invalid incoming producer", workLink: link(selected) });
+  const producerBytes = fs.readFileSync(producer.file); fs.writeFileSync(producer.file, "{}");
+  let sequence = await warm(f, selected);
+  assert.ok(sequence.reused.integrity.verifiedRecordPaths.includes(relative(f, producer.file)));
+  fs.writeFileSync(producer.file, producerBytes); let before = snapshot(f.base);
+  let result = await queryProjectGraph({ ...sequence.request, previousResult: sequence.reused });
+  assert.notEqual(result.reuse.status, "scoped-originals-reused");
+  assert.ok(result.boundary.nextAnchorIds.includes(producer.evidence.evidenceId));
+  await compareWithCold(sequence.request, result); assert.deepEqual(snapshot(f.base), before);
+  const other = createHeadSession({ root: f.root, purpose: "Temporarily invalid owner" });
+  const unowned = withSessionRoute(f.root, other.sessionId, () => recordSessionWorkEvidence({ root: f.root,
+    input: { summary: "Unowned exact citation producer", references: [citation(f, selected)] } }));
+  const ownerPath = path.join(f.root, ".head/sessions/by-id", other.sessionId, "current.json");
+  const ownerBytes = fs.readFileSync(ownerPath), state = JSON.parse(ownerBytes);
+  state.projectId = "head-" + "0".repeat(20); fs.writeFileSync(ownerPath, JSON.stringify(state));
+  // A bad generic Session layer may make the existing proof unsupported; this
+  // is legitimate cold fallback, not a reason to weaken owner verification.
+  indexProjectGraph({ root: f.root });
+  const request = q(f, selected), absent = await queryProjectGraph(request);
+  const repeated = await queryProjectGraph({ ...request, previousResult: absent });
+  assert.equal(nodeFor(repeated, unowned), undefined);
+  assert.ok(!repeated.boundary.nextAnchorIds.includes(unowned.evidence.evidenceId));
+  const workBytes = fs.readFileSync(unowned.file); fs.writeFileSync(ownerPath, ownerBytes);
+  before = snapshot(f.base); result = await queryProjectGraph({ ...request, previousResult: repeated });
+  assert.notEqual(result.reuse.status, "scoped-originals-reused");
+  assert.ok(result.boundary.nextAnchorIds.includes(unowned.evidence.evidenceId));
+  assert.deepEqual(fs.readFileSync(unowned.file), workBytes, "Only the real owner was repaired, not the work original");
+  await compareWithCold(request, result); assert.deepEqual(snapshot(f.base), before);
+});
+
+for (const field of ["activeRunId", "lastResultPacketId", "latestCheckpoint", "currentWholePlanId"]) test(`A1 retains another named owner's mutable ${field} even when it newly points to a work ID`, async t => {
+  const f = fixture(t), selected = f.save({ summary: "Incoming generic state target" });
+  const other = createHeadSession({ root: f.root, purpose: "Mutable nonselected owner" });
+  withSessionRoute(f.root, other.sessionId, () => recordSessionWorkEvidence({ root: f.root, input: { summary: "Independent owned work" } }));
+  const ownerPath = path.join(f.root, ".head/sessions/by-id", other.sessionId, "current.json");
+  const { request, reused } = await warm(f, selected);
+  assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, ownerPath)));
+  const state = JSON.parse(fs.readFileSync(ownerPath)); state[field] = selected.evidence.evidenceId;
+  fs.writeFileSync(ownerPath, JSON.stringify(state)); const before = snapshot(f.base);
+  const changed = await queryProjectGraph({ ...request, previousResult: reused });
+  assert.notEqual(changed.reuse.status, "scoped-originals-reused"); assertWork(changed, selected);
+  assert.ok(changed.boundary.nextAnchorIds.includes(other.sessionId));
+  await compareWithCold(request, changed); assert.deepEqual(snapshot(f.base), before);
+});
+
+test("A1 shared selected reference wins over independent-work exclusion, retaining separate source/artifact facts through changed/missing/reappeared bytes", async t => {
+  const f = fixture(t), file = path.join(f.root, "shared-selected.json");
+  fs.writeFileSync(file, JSON.stringify({ projectId: f.session.projectId, value: "shared 11" }));
+  const bytes = fs.readFileSync(file), references = ["source", "artifact"].map(kind => ({ path: "shared-selected.json", digest: sha(bytes), kind }));
+  const selected = f.save({ summary: "Selected reference-dependent body", references });
+  const independent = f.save({ summary: "Independent sibling shares physical bytes", references });
+  for (const mutate of [() => replaceSameMetadata(file, "11", "22"), () => fs.unlinkSync(file), () => fs.writeFileSync(file, bytes)]) {
+    const { request, reused } = await warm(f, selected);
+    // A shared FileRevisionReference is a first-hop required node. Its origin
+    // can be this sibling's work path under inventory ordering, so the accepted
+    // conservative origin rule may retain that work too. The no-ref A1 case
+    // separately requires genuinely independent work exclusion; here selected
+    // descriptor/raw-reference proof takes precedence over removal savings.
+    const siblingRetained = reused.integrity.verifiedRecordPaths.includes(relative(f, independent.file));
+    t.diagnostic(`Shared-reference sibling proof retained=${siblingRetained}; first-hop FileRevisionReference origin may conservatively retain it. Selected reference proof/currentness and cold boundary equality remain required.`);
+    if (fs.existsSync(file)) assert.ok(reused.integrity.verifiedRecordPaths.includes("shared-selected.json"));
+    mutate(); const before = snapshot(f.base), changed = await queryProjectGraph({ ...request, previousResult: reused });
+    assert.notEqual(changed.reuse.status, "scoped-originals-reused");
+    const facts = nodeFor(changed, selected).referenceEvidence;
+    assert.deepEqual(facts.map(ref => ref.kind).sort(), ["artifact", "source"]);
+    assert.ok(facts.every(ref => ref.contentReconstructed === false));
+    assert.ok(facts.every(ref => ref.currentDigest === (fs.existsSync(file) ? sha(fs.readFileSync(file)) : null)));
+    await compareWithCold(request, changed); assert.deepEqual(snapshot(f.base), before);
+  }
+});
+
+test("A1 requires every exact anchor to be returned; partial/unmatched anchors retain conservative behavior rather than hiding omitted matches", async t => {
+  const f = fixture(t), first = f.save({ summary: "First requested anchor" }), second = f.save({ summary: "Second requested anchor" });
+  const independent = f.save({ summary: "Unrelated independent sibling" }), anchorIds = [first.evidence.evidenceId, second.evidence.evidenceId];
+  const all = await warm(f, first, { anchorIds, maxNodes: 2 });
+  assert.equal(all.reused.nodes.length, 2); assert.equal(all.reused.omittedMatchCount, 0);
+  assert.ok(!all.reused.integrity.verifiedRecordPaths.includes(relative(f, independent.file)));
+  const partial = await warm(f, first, { anchorIds, maxNodes: 1 });
+  assert.equal(partial.reused.nodes.length, 1); assert.equal(partial.reused.omittedMatchCount, 1);
+  assert.ok(partial.reused.integrity.verifiedRecordPaths.includes(relative(f, independent.file)));
+  replaceSameMetadata(independent.file, "Unrelated independent sibling", "Unrelated independent corrupt");
+  const before = snapshot(f.base), changed = await queryProjectGraph({ ...partial.request, previousResult: partial.reused });
+  assert.notEqual(changed.reuse.status, "scoped-originals-reused"); await compareWithCold(partial.request, changed);
+  const request = q(f, first, { anchorIds: [first.evidence.evidenceId, "work-evidence-" + "0".repeat(24)], maxNodes: 2 });
+  const cold = await queryProjectGraph(request), repeat = await queryProjectGraph({ ...request, previousResult: cold });
+  assert.notEqual(repeat.reuse.status, "scoped-originals-reused"); assert.equal(repeat.unmatchedAnchorIds.length, 1);
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("A1 selected inventory identity ambiguity preserves raw duplicate/independent proofs instead of classifying an origin by node ID alone", async t => {
+  const f = fixture(t), selected = f.save({ summary: "Exact selected identity" }), independent = f.save({ summary: "Independent original" });
+  const other = createHeadSession({ root: f.root, purpose: "Duplicate path owner" });
+  const otherWork = withSessionRoute(f.root, other.sessionId, () => recordSessionWorkEvidence({ root: f.root, input: { summary: "Other owner work" } }));
+  const duplicate = path.join(path.dirname(otherWork.file), path.basename(selected.file));
+  fs.copyFileSync(selected.file, duplicate); // Public bytes, deliberately wrong owner at this second recognized path.
+  const { request, reused } = await warm(f, selected);
+  assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, duplicate)));
+  assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, independent.file)));
+  replaceSameMetadata(independent.file, "Independent original", "Independent corrupt!");
+  const before = snapshot(f.base), changed = await queryProjectGraph({ ...request, previousResult: reused });
+  assert.notEqual(changed.reuse.status, "scoped-originals-reused"); assertWork(changed, selected);
+  await compareWithCold(request, changed); assert.deepEqual(snapshot(f.base), before);
+});
+
+test("A1 late index change after the hit's single index observation is a sequential boundary, not a promised post-proof recheck", async t => {
+  const f = fixture(t), selected = f.save({ summary: "Stable selected body through late index drift" });
+  const { request, reused } = await warm(f, selected), read = fs.readFileSync;
+  const originalIndex = fs.readFileSync(indexFile(f)); let injected = false;
+  fs.readFileSync = (file, ...args) => {
+    const bytes = read(file, ...args);
+    if (path.resolve(String(file)) === path.resolve(indexFile(f)) && !injected) {
+      injected = true; fs.appendFileSync(indexFile(f), " ");
+    }
+    return bytes;
+  };
+  let value; try { value = await queryProjectGraph({ ...request, previousResult: reused }); } finally { fs.readFileSync = read; }
+  assert.equal(injected, true); assert.equal(value.reuse.status, "scoped-originals-reused");
+  assert.deepEqual(selectedProjection(value), selectedProjection(reused));
+  assert.notDeepEqual(fs.readFileSync(indexFile(f)), originalIndex);
+  const before = snapshot(f.base), next = await queryProjectGraph({ ...request, previousResult: value });
+  assert.notEqual(next.reuse.status, "scoped-originals-reused"); assertWork(next, selected);
+  await compareWithCold(request, next); assert.deepEqual(snapshot(f.base), before);
+  t.diagnostic("Fault injection writes the synthetic index after its observed bytes are returned; this is not an atomic/latest-at-return or query-write claim.");
+});
+
+for (const kind of ["selected", "reference"]) test(`A1 ${kind} file-to-directory layout change invalidates warm reuse without read-side repair`, async t => {
+  const f = fixture(t), referencePath = path.join(f.root, "required-layout.txt"); fs.writeFileSync(referencePath, "Required exact bytes");
+  const selected = f.save({ summary: "Layout-bound selected evidence", references: [{ path: "required-layout.txt", digest: sha(fs.readFileSync(referencePath)), kind: "source" }] });
+  const { request, reused } = await warm(f, selected), file = kind === "selected" ? selected.file : referencePath;
+  fs.unlinkSync(file); fs.mkdirSync(file); const before = snapshot(f.base);
+  const result = await queryProjectGraph({ ...request, previousResult: reused });
+  assert.notEqual(result.reuse.status, "scoped-originals-reused");
+  if (kind === "selected") assert.equal(nodeFor(result, selected), undefined);
+  else { assertWork(result, selected); assert.equal(nodeFor(result, selected).referenceEvidence[0].status, "unavailable"); }
+  await compareWithCold(request, result); assert.deepEqual(snapshot(f.base), before);
 });

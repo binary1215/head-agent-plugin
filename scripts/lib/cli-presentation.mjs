@@ -271,7 +271,7 @@ export function formatConversationRecovery(value) {
 }
 
 export function formatSessionWorkContext(value) {
-  if (!value || value.status === "work_context_not_recorded") return "";
+  if (!value || value.status === "work_context_not_recorded" && value.coverage?.originals === 0) return "";
   const records = (value.records || []).map(({ evidenceId, evidenceDigest, recordedAt, content, references, selectionRole, savedActivity }) => ({ evidenceId, recordedAt, content, references,
     ...(selectionRole ? { evidenceDigest, selectionRole, ...(savedActivity ? { savedActivity } : {}) } : {}) }));
   return `Selected Session work evidence (P3, not current direction or permission):\n${JSON.stringify({

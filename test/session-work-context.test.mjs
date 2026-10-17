@@ -204,7 +204,10 @@ test("bounded entry discloses omissions; exact expansion is read-only and missin
   for (let i = 0; i < 10; i += 1) ids.push(recordSessionWorkEvidence({ root, input: { summary: "Selected evidence " + i } }).evidence.evidenceId);
   const before = originals(root), bounded = readSessionWorkContext({ root });
   assert.equal(bounded.records.length, 8);
-  assert.equal(bounded.omissions.byBudget, 2);
+  assert.equal(bounded.coverage.inspected, 10);
+  assert.equal(bounded.omissions.uninspected, 0);
+  assert.equal(bounded.status, "work_context_partial");
+  assert.equal(bounded.omissions.byBudget, 0); // Not offered bodies, not actual budget failures.
   const expanded = readSessionWorkContext({ root, evidenceIds: ids, maxRecords: 10 });
   assert.equal(expanded.records.length, 10);
   assert.deepEqual(originals(root), before);

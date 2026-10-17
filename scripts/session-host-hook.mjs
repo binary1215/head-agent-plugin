@@ -138,7 +138,7 @@ function startupProjection(entry, root, runtime = "claude") {
     }
   }
   if (context.savedObservationScope && work?.organization) {
-    context.workOrganization = { roots: work.organization.roots, branchingPredecessors: work.organization.branchingPredecessors,
+    context.workOrganization = { scope: work.organization.scope, roots: work.organization.roots, branchingPredecessors: work.organization.branchingPredecessors,
       unavailableRelations: work.organization.unavailableRelations, uninspectedRelations: work.organization.uninspectedRelations,
       relatedExpansionDeferred: work.organization.relatedExpansionDeferred };
     if (exceedsBound()) delete context.workOrganization;

@@ -49,7 +49,11 @@ function snapshot(root) {
 }
 function accounting(value) {
   assert.equal(value.coverage.inspected, value.coverage.valid + value.coverage.unavailable);
-  assert.equal(value.coverage.valid, value.coverage.included + value.omissions.byBudget);
+  if (value.coverage.selection.includes("recent-results-with-bounded-explicit-citations-and-declared-roots")) {
+    assert.ok(value.coverage.included <= value.coverage.valid);
+    assert.ok(value.omissions.byBudget <= value.coverage.valid - value.coverage.included);
+    assert.equal(value.omissions.uninspected, value.coverage.originals - value.coverage.inspected);
+  } else assert.equal(value.coverage.valid, value.coverage.included + value.omissions.byBudget);
   assert.equal(value.coverage.usedCharacters, JSON.stringify(value.records).length);
   assert.equal(value.omissions.unavailableDetailCount, value.coverage.unavailable - value.unavailable.length);
   assert.equal(value.omissions.omittedIdCount, value.omissions.byBudget - value.omissions.evidenceIds.length);
@@ -71,9 +75,10 @@ test("global recent selection crosses 511/512/513/514 lexical boundaries; explic
     assert.deepEqual(value.records.map((record) => record.evidenceId), expected, `size ${i + 1}`);
     assert.equal(value.coverage.inspected, i + 1);
     assert.equal(value.omissions.uninspected, 0);
-    assert.equal(value.nextAfterEvidenceId, null); // exhausted inspection, not complete body delivery
-    assert.ok(value.omissions.byBudget > 0);
-    assert.equal(value.omissions.evidenceIds.length, 32);
+    assert.equal(value.status, "work_context_partial"); // Verified history is larger than delivered bodies.
+    assert.equal(value.nextAfterEvidenceId, null);
+    assert.equal(value.omissions.byBudget, 0);
+    assert.deepEqual(value.omissions.evidenceIds, []);
     accounting(value);
     const entry = enterConversationRecovery({ root });
     assert.deepEqual(entry.workContext.records.map((record) => record.evidenceId), expected);
@@ -92,6 +97,7 @@ test("global recent selection crosses 511/512/513/514 lexical boundaries; explic
   assert.equal(lastPage.nextAfterEvidenceId, null);
   const exact = readSessionWorkContext({ root, evidenceIds: [inputs[0].id, inputs[513].id, inputs[0].id] });
   assert.equal(exact.coverage.inspected, 2);
+  assert.equal(exact.coverage.originals, null);
   assert.equal(exact.omissions.uninspected, null);
   assert.deepEqual(exact.records.map((record) => record.evidenceId), [inputs[513].id, inputs[0].id]);
   accounting(exact);
