@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { atomicWriteArtifact } from "./artifact-storage.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
+import { sessionWorkPath, createSessionWorkReadContext, normalizeSessionWorkEvidence,
+  MAX_RECORD_BYTES, MAX_REFERENCE_BYTES } from "./session-work-evidence-original.mjs";
 
 // A replaceable inventory of original records, not a second record store. No
 // bodies, decisions, credentials or provider handles are copied into the index.
@@ -12,7 +14,7 @@ export const PROJECT_GRAPH_RECORD_DIRECTORIES = Object.freeze([
   ".head/onboarding/review-decisions", ".head/onboarding/product-model-revisions",
   ".head/product-policy", ".head/change-sets", ".head/release-observations",
   ".head/conformance", ".head/sessions/records", ".head/sessions/by-id",
-  ".head/sessions/ledger", ".head/sessions/runs", ".head/project-direction/revisions",
+  ".head/sessions/ledger", ".head/sessions/runs", ".head/project-direction/revisions", ".head/sessions/work-evidence",
 ]);
 const singletonPaths = [".head/context/product-model.json", ".head/world-model/current.json",
   ".head/sessions/current.json", ".head/project-direction/current.json"];
@@ -66,13 +68,54 @@ export function readGraphRecord(root, relative, maximum = MAX_BYTES) {
   return { document: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), bytes, digest: hash(bytes) };
 }
 
+// Exact reader dependencies, not semantic nodes. Absence is an observation
+// whose later appearance invalidates a proof; malformed work stays local.
+function sessionWorkDependencies(root, entries, context) {
+  const dependencies = { version: 1, entries: [], layout: [], unavailable: [], complete: true };
+  const seen = new Set(); let total = 0;
+  const add = (relative, maximum = MAX_REFERENCE_BYTES) => {
+    if (seen.has(relative)) return;
+    seen.add(relative);
+    if (seen.size > MAX_RECORDS) { dependencies.complete = false; return; }
+    try {
+      const file = safeGraphFile(root, relative);
+      if (!fs.existsSync(file)) { dependencies.layout.push({ path: relative, type: "absent" }); return; }
+      const bytes = context.read(relative, maximum);
+      if (total + bytes.length > MAX_INVENTORY_BYTES) { dependencies.complete = false; return; }
+      total += bytes.length;
+      dependencies.entries.push({ path: relative, sha256: hash(bytes), bytes: bytes.length });
+      dependencies.layout.push({ path: relative, type: "file" });
+    } catch (error) { dependencies.unavailable.push({ path: relative, reasonCode: error.code || "PROJECT_GRAPH_DEPENDENCY_UNAVAILABLE" }); }
+  };
+  for (const entry of entries) {
+    const selector = sessionWorkPath(entry.path);
+    if (!selector) continue;
+    add(selector.statePath); add(".head/sessions/current.json");
+    try {
+      const content = JSON.parse(context.read(entry.path, MAX_RECORD_BYTES)).content;
+      const normalized = normalizeSessionWorkEvidence(Object.fromEntries(Object.entries(content || {}).filter(([, v]) => v !== null)));
+      for (const exact of [normalized.workLink?.root, normalized.workLink?.predecessor, normalized.executionObservation?.target].filter(Boolean)) {
+        add(`${selector.directory}/${exact.evidenceId}.json`, MAX_RECORD_BYTES);
+      }
+      for (const ref of normalized.references) {
+        add(ref.path);
+        const work = ref.kind === "artifact" && sessionWorkPath(ref.path);
+        if (work) { add(work.statePath); add(".head/sessions/current.json"); }
+      }
+    } catch { /* Typed verifier reports this original only; its bytes remain in proof. */ }
+  }
+  for (const field of ["entries", "layout", "unavailable"]) dependencies[field].sort((a, b) => a.path.localeCompare(b.path));
+  return dependencies;
+}
+
 export function collectProjectGraphInventory(root) {
   const { projectRoot, project } = readGraphProject(root);
   if (!project) return { projectRoot, project, entries: [], unavailable: [], complete: false, recordsDigest: null };
-  const entries = [], unavailable = [];
+  const entries = [], unavailable = [], workContext = createSessionWorkReadContext(projectRoot);
   let complete = true, examinedBytes = 0;
   const add = (relative) => {
-    if (relative.startsWith(".head/sessions/by-id/") && !/^\.head\/sessions\/by-id\/session-[a-fA-F0-9-]{36}\/current\.json$/.test(relative)) return;
+    if (relative.startsWith(".head/sessions/by-id/") && !/^\.head\/sessions\/by-id\/session-[a-fA-F0-9-]{36}\/current\.json$/.test(relative) && !sessionWorkPath(relative)) return;
+    if (relative.startsWith(".head/sessions/work-evidence/") && !sessionWorkPath(relative)) return;
     if (relative.startsWith(".head/sessions/runs/") && !relative.endsWith("/run.json")) return;
     if (entries.length >= MAX_RECORDS) { complete = false; return; }
     try {
@@ -83,7 +126,8 @@ export function collectProjectGraphInventory(root) {
       examinedBytes += stat.size;
       // Byte hashing, never mtime alone, detects tampering even on unchanged
       // stat metadata. Unchanged records reuse verification/analysis later.
-      entries.push({ path: relative, sha256: hash(fs.readFileSync(file)), bytes: stat.size });
+      const bytes = sessionWorkPath(relative) ? workContext.read(relative, MAX_RECORD_BYTES) : fs.readFileSync(file);
+      entries.push({ path: relative, sha256: hash(bytes), bytes: bytes.length });
     } catch (error) { unavailable.push({ path: relative, reasonCode: error.code || "PROJECT_GRAPH_RECORD_UNAVAILABLE" }); }
   };
   const visit = (relative, depth = 0) => {
@@ -149,9 +193,9 @@ export function collectProjectGraphInventory(root) {
     } catch { /* Malformed boundary is rejected by its original typed reader. */ }
   }
   for (const field of ["entries", "layout", "unavailable"]) dependencies[field].sort((a, b) => a.path.localeCompare(b.path));
-  const readerDependencies = { onboarding: dependencies };
+  const readerDependencies = { onboarding: dependencies, sessionWork: sessionWorkDependencies(projectRoot, entries, workContext) };
   const recordsDigest = projectGraphDigest({ projectId: project.projectId, projectRoot, entries, unavailable, complete, readerDependencies });
-  return { projectRoot, project, entries, unavailable, complete, readerDependencies, recordsDigest };
+  return { projectRoot, project, entries, unavailable, complete, readerDependencies, recordsDigest, workContext };
 }
 
 export function refreshProjectGraphIndex({ root = "." } = {}) {
@@ -180,7 +224,7 @@ function updateProjectGraphIndex(root, changedPaths) {
   const indexFile = safeGraphFile(projectRoot, PROJECT_GRAPH_INDEX_PATH);
   if (!fs.existsSync(indexFile)) return refreshProjectGraphIndex({ root });
   const previous = JSON.parse(fs.readFileSync(indexFile, "utf8"));
-  if (!previous.readerDependencies || changedPaths.some((relative) => relative.startsWith(".head/onboarding/")
+  if (!previous.readerDependencies?.sessionWork?.version || changedPaths.some((relative) => relative.startsWith(".head/onboarding/")
     || relative.startsWith(".head/world-model/snapshots/"))) return refreshProjectGraphIndex({ root });
   if (previous.kind !== "ProjectGraphRecordIndex" || previous.version !== 1 || previous.projectId !== project.projectId
     || previous.rootDigest !== hash(projectRoot) || !Array.isArray(previous.entries) || previous.entries.length > MAX_RECORDS
@@ -200,10 +244,20 @@ function updateProjectGraphIndex(root, changedPaths) {
   const allEntries = [...entries.values()].sort((a, b) => a.path.localeCompare(b.path));
   const complete = previous.complete && allEntries.length <= MAX_RECORDS;
   const boundedEntries = allEntries.slice(0, MAX_RECORDS);
+  const readerDependencies = { ...previous.readerDependencies };
+  const changedWork = boundedEntries.filter(entry => changedPaths.includes(entry.path) && sessionWorkPath(entry.path));
+  if (changedWork.length) {
+    const added = sessionWorkDependencies(projectRoot, changedWork, createSessionWorkReadContext(projectRoot));
+    const retained = previous.readerDependencies.sessionWork;
+    const combine = field => [...new Map([...retained[field], ...added[field]].map(entry => [entry.path, entry])).values()].sort((a, b) => a.path.localeCompare(b.path));
+    const repaired = new Set([...added.entries, ...added.layout].map(entry => entry.path));
+    readerDependencies.sessionWork = { version: 1, entries: combine("entries"), layout: combine("layout"),
+      unavailable: [...retained.unavailable.filter(entry => !repaired.has(entry.path)), ...added.unavailable], complete: retained.complete && added.complete };
+  }
   const recordsDigest = projectGraphDigest({ projectId: project.projectId, projectRoot, entries: boundedEntries, unavailable, complete,
-    readerDependencies: previous.readerDependencies });
+    readerDependencies });
   return publishInventory(projectRoot, { ...previous, authorityBoundary: artifactAuthorityBoundary("ProjectGraphRecordIndex"),
-    entries: boundedEntries, unavailable, complete, recordsDigest });
+    entries: boundedEntries, unavailable, complete, recordsDigest, readerDependencies });
 }
 
 // Writers already verified/persisted their evidence. Index failure is a loss

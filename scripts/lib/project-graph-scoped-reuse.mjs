@@ -37,6 +37,23 @@ function membership(root) {
   return projectGraphDigest(layout);
 }
 
+function dependencyLayoutMatches(root, layout) {
+  for (const expected of layout) {
+    const file = safeGraphFile(root, expected.path);
+    let type = "absent";
+    if (fs.existsSync(file)) { const stat = fs.lstatSync(file); type = stat.isFile() ? "file" : stat.isDirectory() ? "directory" : "other"; }
+    if (type !== expected.type) return false;
+  }
+  return true;
+}
+function rawProofDigest(root, relative) {
+  const file = safeGraphFile(root, relative), stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error("proof input limit");
+  const bytes = fs.readFileSync(file);
+  if (bytes.length > 16 * 1024 * 1024) throw new Error("proof input limit");
+  return projectGraphDigest(bytes);
+}
+
 function previousMatches(previous, entry) {
   if (!previous) return true;
   return [entry.result, entry.scopedResult].some(result => previous.resultId === result.resultId
@@ -82,7 +99,7 @@ export function rememberScopedDiscovery({ options, normalized, inventory, result
     // Typed layer readers have global uniqueness, review and lineage inputs.
     // Reverify all of those, rather than just the returned candidate/receipt.
     // Only unrelated mutable Session current-state bodies may be skipped.
-    for (const entry of inventory.entries) if (!entry.path.startsWith(".head/sessions/by-id/")
+    for (const entry of inventory.entries) if (!/^\.head\/sessions\/by-id\/session-[a-fA-F0-9-]{36}\/current\.json$/.test(entry.path)
       || paths.has(entry.path)) paths.add(entry.path);
     for (const dependencies of Object.values(inventory.readerDependencies || {})) {
       if (!dependencies.complete || dependencies.unavailable.length) return;
@@ -123,8 +140,10 @@ export function rememberScopedDiscovery({ options, normalized, inventory, result
     const projectDigest = projectRead.digest;
     const membershipDigest = membership(root);
     if (!initialMembership || membershipDigest !== initialMembership) return;
+    const workLayout = inventory.readerDependencies?.sessionWork?.layout || [];
+    if (!dependencyLayoutMatches(root, workLayout) || proof.some(entry => rawProofDigest(root, entry.path) !== entry.sha256)) return;
     const entry = { projectId: inventory.project.projectId, projectDigest, indexDigest: index.digest,
-      membershipDigest, proof, sources, result: retained, scopedResult };
+      membershipDigest, proof, sources, workLayout, result: retained, scopedResult };
     // Do not prime from a mixed sequence if the index changed during proof assembly.
     if (readGraphRecord(root, PROJECT_GRAPH_INDEX_PATH).digest !== index.digest) return;
     if (cache.size >= 16) cache.delete(cache.keys().next().value);
@@ -142,8 +161,8 @@ export function reuseScopedDiscovery(options, normalized) {
     if (!entry || !project || project.projectId !== entry.projectId || !previousMatches(options.previousResult, entry)) return null;
     if (readGraphRecord(root, ".head/project.json").digest !== entry.projectDigest
       || readGraphRecord(root, PROJECT_GRAPH_INDEX_PATH).digest !== entry.indexDigest
-      || membership(root) !== entry.membershipDigest) throw new Error("navigation basis changed");
-    for (const proof of entry.proof) if (readGraphRecord(root, proof.path).digest !== proof.sha256) throw new Error("original bytes changed");
+      || membership(root) !== entry.membershipDigest || !dependencyLayoutMatches(root, entry.workLayout || [])) throw new Error("navigation basis changed");
+    for (const proof of entry.proof) if (rawProofDigest(root, proof.path) !== proof.sha256) throw new Error("original bytes changed");
     for (const source of entry.sources) {
       let digest = null;
       try {

@@ -1,0 +1,302 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { isDeepStrictEqual } from "node:util";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
+import { recordSessionWorkEvidence, readSessionWorkContext } from "../scripts/lib/session-work-context.mjs";
+import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
+import { runCommand } from "../scripts/head.mjs";
+import { dispatch } from "../scripts/mcp-server.mjs";
+import { formatCliResult } from "../scripts/lib/cli-presentation.mjs";
+import { readProjectDirection, updateProjectDirection } from "../scripts/lib/project-direction.mjs";
+import { sha, snapshot } from "./helpers/session-work-linkage-fixture.mjs";
+
+const pluginRoot = path.resolve(import.meta.dirname, "..");
+const isWork = node => node.kind === "Evidence" && node.subtype === "SessionWorkEvidence";
+const workNodes = value => value.nodes.filter(isWork);
+function fixture(t) {
+  const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  fs.mkdirSync(parent, { recursive: true });
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(parent, "head-graph-work-context-")));
+  const root = path.join(base, "project");
+  fs.mkdirSync(root);
+  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const session = createHeadSession({ root, purpose: "Synthetic graph investigation; no external effects" });
+  t.after(() => {
+    assert.equal(path.dirname(base), fs.realpathSync(parent));
+    assert.ok(path.basename(base).startsWith("head-graph-work-context-"));
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+  return { base, root, session,
+    save: (input, sessionId = session.sessionId) => withSessionRoute(root, sessionId, () => recordSessionWorkEvidence({ root, input })),
+    read: options => withSessionRoute(root, session.sessionId, () => readSessionWorkContext({ root, ...options })),
+  };
+}
+async function call(name, arguments_, routed = false, options = {}) {
+  const response = await dispatch({ jsonrpc: "2.0", id: "graph-work-consumer", method: "tools/call", params: {
+    name: routed ? "head_tools_read" : name,
+    arguments: routed ? { name, arguments: arguments_ } : arguments_,
+  } }, options);
+  assert.equal(response.error, undefined, JSON.stringify(response));
+  assert.notEqual(response.result?.isError, true, JSON.stringify(response));
+  return response.result;
+}
+function completeNode(value, saved) {
+  const node = workNodes(value).find(item => item.nodeId === saved.evidence.evidenceId);
+  assert.ok(node, `Missing work original ${saved.evidence.evidenceId}`);
+  assert.equal(node.sessionId, saved.evidence.sessionId);
+  assert.equal(node.evidenceDigest, saved.evidence.evidenceDigest);
+  assert.equal(node.sourceReference.digest, sha(fs.readFileSync(saved.file)));
+  assert.deepEqual(node.workContent, saved.evidence.content);
+  assert.equal(node.workContentCoverage.partial, false);
+  fieldCoverage(node, saved.evidence.content);
+  assert.notEqual(node.contentPartial, true, "A complete work body must not be an omitted generic excerpt");
+  for (const key of ["instructionAuthority", "promotionAuthority", "recoveryAuthority", "executionAuthority"]) assert.equal(node[key], false);
+  return node;
+}
+function expansion(node, f, saved) {
+  assert.equal(node.originalExpansion.tool, "head_session_work_read");
+  const args = node.originalExpansion.arguments;
+  assert.equal(args.project_root, f.root);
+  assert.equal(args.session_id, saved.evidence.sessionId);
+  assert.deepEqual(args.evidence_ids, [saved.evidence.evidenceId]);
+  assert.equal(args.max_records, 1);
+  assert.ok(Number.isSafeInteger(args.max_characters) && args.max_characters >= 2 && args.max_characters <= 524288);
+  return args;
+}
+function exactResult(value, saved, args) {
+  assert.equal(value.records.length, 1, "A callable expansion must return its original, not a budget-only omission");
+  assert.equal(value.omissions.byBudget, 0);
+  assert.equal(value.records[0].evidenceId, saved.evidence.evidenceId);
+  assert.equal(value.records[0].sessionId, saved.evidence.sessionId);
+  assert.equal(value.records[0].evidenceDigest, saved.evidence.evidenceDigest);
+  assert.deepEqual(value.records[0].content, saved.evidence.content);
+  assert.equal(args.max_characters, JSON.stringify(value.records).length);
+}
+function semanticCharacters(content) {
+  const fields = [content.summary, ...(content.judgments || []).flatMap(item => [item.assessment, item.reason, ...item.alternatives]),
+    ...["observedWork", "pending", "unknowns", "suggestedFollowUp"].flatMap(field => content[field] || [])];
+  return fields.reduce((total, value) => total + (typeof value === "string" ? value.length : 0), 0);
+}
+function originalExcerpts(node, original) {
+  const content = original.evidence.content, coverage = node.workContentCoverage;
+  fieldCoverage(node, content);
+  assert.equal(coverage.totalCharacters, semanticCharacters(content));
+  assert.equal(coverage.totalCharacters, coverage.includedCharacters + coverage.omittedCharacters);
+  assert.equal(coverage.partial, coverage.omittedCharacters > 0);
+  for (const [field, value] of Object.entries(node.workContent || {})) {
+    assert.ok(Object.hasOwn(content, field), `Unexpected projected work field: ${field}`);
+    if (Array.isArray(value)) {
+      for (const item of value) assert.ok(content[field].some(source => isDeepStrictEqual(source, item)), `Incomplete item presented as original ${field}`);
+    } else assert.deepEqual(value, content[field], `Truncated value presented as complete ${field}`);
+  }
+  for (const excerpt of node.workContentExcerpts || []) {
+    let source;
+    if (excerpt.field === "judgments") {
+      assert.ok(Number.isSafeInteger(excerpt.index) && excerpt.index >= 0 && excerpt.index < content.judgments.length);
+      assert.ok(["assessment", "reason", "alternatives"].includes(excerpt.subfield));
+      const judgment = content.judgments[excerpt.index];
+      if (excerpt.subfield === "alternatives") {
+        assert.ok(Number.isSafeInteger(excerpt.alternativeIndex) && excerpt.alternativeIndex >= 0 && excerpt.alternativeIndex < judgment.alternatives.length);
+        source = judgment.alternatives[excerpt.alternativeIndex];
+      } else source = judgment[excerpt.subfield];
+    } else {
+      assert.equal(excerpt.subfield, null);
+      if (Array.isArray(content[excerpt.field])) {
+        assert.ok(Number.isSafeInteger(excerpt.index) && excerpt.index >= 0 && excerpt.index < content[excerpt.field].length);
+        source = content[excerpt.field][excerpt.index];
+      } else { assert.equal(excerpt.index, null); source = content[excerpt.field]; }
+    }
+    assert.equal(typeof source, "string");
+    assert.ok(Number.isSafeInteger(excerpt.start) && Number.isSafeInteger(excerpt.end) && excerpt.start >= 0 && excerpt.end > excerpt.start && excerpt.end <= source.length);
+    assert.equal(excerpt.totalCharacters, source.length);
+    assert.equal(excerpt.text, source.slice(excerpt.start, excerpt.end));
+  }
+}
+
+function fieldCoverage(node, original) {
+  assert.equal(node.workContentCoverage.rangeSource, "workContentExcerpts");
+  for (const field of ["summary", "judgments", "observedWork", "pending", "unknowns", "suggestedFollowUp"]) {
+    const originalItems = field === "summary" ? Number(typeof original.summary === "string") : original[field].length;
+    const completeItems = field === "summary" ? Number(typeof node.workContent.summary === "string") : node.workContent[field].length;
+    const partialItems = new Set((node.workContentExcerpts || []).filter(e => e.field === field).map(e => e.index)).size;
+    const counts = node.workContentCoverage.fieldItems[field];
+    assert.deepEqual(counts, { originalItems, completeItems, partialItems, omittedItems: originalItems - completeItems - partialItems });
+    assert.ok(counts.omittedItems >= 0);
+    if (!node.contentPartial) assert.equal(counts.completeItems, originalItems);
+  }
+}
+
+test("public saved semantic fields are discoverable in fitting short, detail, path, anchor and owner-neighbor results", async t => {
+  const f = fixture(t), saved = f.save({ summary: "A plain progress note", judgments: [{
+    assessment: "AssessmentNeedle", reason: "Earlier context. ".repeat(40) + "ReasonNeedle preserves the original tradeoff", alternatives: ["AlternativeNeedle"] }],
+    observedWork: ["ObservationNeedle"], pending: ["PendingNeedle"], unknowns: ["UnknownNeedle"], suggestedFollowUp: ["FollowUpNeedle"] });
+  const before = snapshot(f.base);
+  for (const query of ["AssessmentNeedle", "ReasonNeedle", "AlternativeNeedle", "ObservationNeedle", "PendingNeedle", "UnknownNeedle", "FollowUpNeedle"]) {
+    completeNode(await queryProjectGraph({ root: f.root, query, depth: 0 }), saved);
+  }
+  const relative = path.relative(f.root, saved.file).replaceAll("\\", "/");
+  for (const options of [{ paths: [relative], depth: 0 }, { anchorIds: [saved.evidence.evidenceId], depth: 0 },
+    { anchorIds: [saved.evidence.evidenceId], depth: 0, details: true }, { anchorIds: [f.session.sessionId], depth: 1, maxNodes: 20, maxEdges: 30 }]) {
+    const value = await queryProjectGraph({ root: f.root, ...options });
+    expansion(completeNode(value, saved), f, saved);
+  }
+  const related = await queryProjectGraph({ root: f.root, anchorIds: [saved.evidence.evidenceId], depth: 1 });
+  assert.ok(related.edges.some(edge => edge.type === "RECORDED_FOR_SESSION" && edge.from === saved.evidence.evidenceId && edge.to === f.session.sessionId));
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("CLI and direct/router MCP retain the same work body without requesting native binding or writing", async t => {
+  const f = fixture(t), saved = f.save({ judgments: [{ assessment: "Keep original", reason: "SurfaceReasonNeedle", alternatives: ["Rejected alternative"] }], pending: ["X remains"], unknowns: ["Provider unverified"] });
+  const before = snapshot(f.base), core = await queryProjectGraph({ root: f.root, query: "SurfaceReasonNeedle", depth: 0 });
+  const expected = completeNode(core, saved), cli = await runCommand(["graph-query", f.root, "--query", "SurfaceReasonNeedle", "--depth", "0"]);
+  assert.deepEqual(completeNode(cli, saved).workContent, expected.workContent);
+  assert.deepEqual(JSON.parse(formatCliResult("graph-query", cli)), JSON.parse(JSON.stringify(cli)));
+  let bindingCalls = 0;
+  for (const routed of [false, true]) {
+    const result = await call("head_project_graph", { project_root: f.root, query: "SurfaceReasonNeedle", depth: 0 }, routed,
+      { resolveSessionContext() { bindingCalls++; throw new Error("Project graph must not require native binding"); } });
+    assert.deepEqual(completeNode(result.structuredContent, saved).workContent, expected.workContent);
+    assert.deepEqual(JSON.parse(result.content[0].text), JSON.parse(JSON.stringify(result.structuredContent)));
+  }
+  assert.equal(bindingCalls, 0);
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("identical text in separate Sessions keeps distinct graph identity and exact expansion ownership", async t => {
+  const f = fixture(t), other = createHeadSession({ root: f.root, purpose: "Independent second owner" });
+  const direction = updateProjectDirection({ root: f.root, input: { goal: "Inspect retained work only", constraints: ["No external effects"], cancelledActions: ["deploy"] } }).direction;
+  const input = { judgments: [{ assessment: "Same", reason: "DistinctOwnerNeedle", alternatives: ["Same alternative"] }] };
+  const a = f.save(input), b = f.save(input, other.sessionId), d = f.save(input, inspectProject(f.root).state.sessionId), before = snapshot(f.base);
+  assert.notEqual(a.evidence.evidenceId, b.evidence.evidenceId);
+  const found = await queryProjectGraph({ root: f.root, query: "DistinctOwnerNeedle", depth: 0 });
+  assert.equal(workNodes(found).length, 3);
+  assert.equal(new Set(workNodes(found).map(node => node.nodeId)).size, 3);
+  for (const saved of [a, b, d]) {
+    const args = expansion(completeNode(found, saved), f, saved);
+    const result = await call("head_session_work_read", args);
+    exactResult(result.structuredContent, saved, args);
+  }
+  assert.deepEqual(readProjectDirection({ root: f.root }), direction);
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("one near-limit work keeps its full reason in question, path, anchor and neighbor output despite navigation nodes", async t => {
+  const f = fixture(t), reason = "LargeSingleReasonNeedle " + "r".repeat(59000), saved = f.save({
+    judgments: [{ assessment: "Preserve the exact long reason", reason, alternatives: ["Do not replace it with a generic prefix"] }], pending: ["X"], unknowns: ["External effect unknown"] });
+  assert.ok(fs.statSync(saved.file).size > 58000 && fs.statSync(saved.file).size <= 65536);
+  const originalDefault = f.read({ evidenceIds: [saved.evidence.evidenceId], maxRecords: 1 });
+  assert.equal(originalDefault.records.length, 0); assert.equal(originalDefault.omissions.byBudget, 1);
+  const before = snapshot(f.base), relative = path.relative(f.root, saved.file).replaceAll("\\", "/");
+  for (const options of [{ query: "LargeSingleReasonNeedle", depth: 1 }, { paths: [relative], depth: 1 },
+    { anchorIds: [saved.evidence.evidenceId], depth: 1 }, { anchorIds: [f.session.sessionId], depth: 1, maxNodes: 20, maxEdges: 30 },
+    { anchorIds: [saved.evidence.evidenceId], details: true, depth: 1 }]) {
+    const value = await queryProjectGraph({ root: f.root, ...options });
+    assert.equal(workNodes(value).length, 1);
+    assert.ok(value.nodes.some(node => !isWork(node)), "The single-work rule must count work originals, not navigation nodes");
+    const args = expansion(completeNode(value, saved), f, saved);
+    assert.ok(args.max_characters > 32768);
+    for (const routed of [false, true]) exactResult((await call("head_session_work_read", args, routed)).structuredContent, saved, args);
+  }
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("graph-generated exact expansion fits the actual enriched record through reader, CLI and direct/router MCP", async t => {
+  const f = fixture(t), anchor = f.save({ summary: "Referenced original" });
+  const saved = f.save({ judgments: [{ assessment: "Long linked reason", reason: "EnrichedExactNeedle " + "e".repeat(58000), alternatives: ["Keep the original alternatives"] }],
+    workLink: { root: { evidenceId: anchor.evidence.evidenceId, evidenceDigest: anchor.evidence.evidenceDigest }, predecessor: { evidenceId: anchor.evidence.evidenceId, evidenceDigest: anchor.evidence.evidenceDigest } },
+    executionObservation: { state: "ended", target: { evidenceId: anchor.evidence.evidenceId, evidenceDigest: anchor.evidence.evidenceDigest } },
+    references: [{ path: path.relative(f.root, anchor.file).replaceAll("\\", "/"), digest: sha(fs.readFileSync(anchor.file)), kind: "artifact" }], pending: ["X remains"] });
+  const value = await queryProjectGraph({ root: f.root, anchorIds: [saved.evidence.evidenceId], depth: 0 });
+  const args = expansion(completeNode(value, saved), f, saved);
+  const inputFile = path.join(f.base, "exact-reader-input.json");
+  fs.writeFileSync(inputFile, JSON.stringify({ evidenceIds: args.evidence_ids, maxRecords: args.max_records, maxCharacters: args.max_characters }));
+  const before = snapshot(f.base);
+  exactResult(f.read({ evidenceIds: args.evidence_ids, maxRecords: args.max_records, maxCharacters: args.max_characters }), saved, args);
+  exactResult(await runCommand(["session-work-read", f.root, "--session", args.session_id, "--input", inputFile]), saved, args);
+  for (const routed of [false, true]) exactResult((await call("head_session_work_read", args, routed)).structuredContent, saved, args);
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("multiple small 6073-character reasons automatically fit together beyond the old default body budget", async t => {
+  const f = fixture(t), saved = [];
+  for (let i = 0; i < 6; i++) saved.push(f.save({ judgments: [{ assessment: `Choice ${i}`, reason: ("SmallBundleReasonNeedle " + String(i) + " ").padEnd(6073, "s"), alternatives: [`Alternative ${i}`] }], pending: [`X${i}`], unknowns: [`Unknown ${i}`] }));
+  const before = snapshot(f.base);
+  for (const details of [false, true]) {
+    const value = await queryProjectGraph({ root: f.root, query: "SmallBundleReasonNeedle", depth: 0, details });
+    assert.equal(workNodes(value).length, saved.length);
+    for (const original of saved) completeNode(value, original);
+    assert.ok(JSON.stringify(workNodes(value).map(node => node.workContent)).length > 32768);
+  }
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("large multiple work bodies disclose real original excerpts and preserve exact expansion instead of claiming complete text", async t => {
+  const f = fixture(t), saved = [];
+  for (let i = 0; i < 10; i++) saved.push(f.save({ judgments: [{ assessment: `Large choice ${i}`, reason: `LargeBundleReasonNeedle ${i} 가🙂 ` + String(i).repeat(58000), alternatives: [`Alternative ${i}`] }], pending: [`Pending ${i}`], unknowns: [`Unknown ${i}`] }));
+  const before = snapshot(f.base);
+  for (const options of [{ details: false, expected: 8 }, { details: true, expected: 10 }, { details: true, maxNodes: 500, expected: 10 }]) {
+    const { expected, ...queryOptions } = options;
+    const value = await queryProjectGraph({ root: f.root, query: "LargeBundleReasonNeedle", depth: 0, maxEdges: 0, ...queryOptions });
+    const nodes = workNodes(value), partial = nodes.filter(node => node.workContentCoverage.partial);
+    assert.equal(nodes.length, expected); assert.ok(partial.length > 0);
+    for (const node of nodes) {
+      const original = saved.find(item => item.evidence.evidenceId === node.nodeId);
+      expansion(node, f, original);
+      originalExcerpts(node, original);
+      if (!node.workContentCoverage.partial) assert.deepEqual(node.workContent, original.evidence.content);
+      assert.ok(node.workContent.pending?.length || node.workContentExcerpts?.some(excerpt => excerpt.field === "pending"), "Every represented node must retain its original pending work");
+      assert.ok(node.workContent.unknowns?.length || node.workContentExcerpts?.some(excerpt => excerpt.field === "unknowns"), "Every represented node must retain its original unknowns");
+    }
+    assert.ok(partial.some(node => Array.isArray(node.workContentExcerpts) && node.workContentExcerpts.length > 0), "Partial long reasons need actual original ranges, not paths alone");
+    t.diagnostic(JSON.stringify({ scope: "synthetic-graph-presentation-only", details: options.details, maxNodes: value.query.maxNodes, workNodes: nodes.length, partial: partial.length,
+      coreCharacters: JSON.stringify(value).length, coreBytes: Buffer.byteLength(JSON.stringify(value)), cliPrettyBytes: Buffer.byteLength(formatCliResult("graph-query", value)) }));
+  }
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("escaped semantic text fits real JSON shares without dropping reasons, pending or unknowns", async t => {
+  const f = fixture(t), saved = [];
+  for (let i = 0; i < 2; i++) saved.push(f.save({
+    summary: `EscapedBudgetNeedle ${i}`,
+    judgments: [{ assessment: "Keep uncertainty", reason: '"'.repeat(10000), alternatives: [] }],
+    pending: ["\\".repeat(5000)], unknowns: ["\u0001".repeat(2000)],
+  }));
+  const before = snapshot(f.base), options = { root: f.root, query: "EscapedBudgetNeedle", depth: 0, maxEdges: 0 };
+  const core = await queryProjectGraph(options), cli = await runCommand(["graph-query", f.root, "--query", options.query, "--depth", "0", "--max-edges", "0"]);
+  const mcp = (await call("head_project_graph", { project_root: f.root, query: options.query, depth: 0, max_edges: 0 })).structuredContent;
+  for (const result of [core, cli, mcp]) {
+    const nodes = workNodes(result); assert.equal(nodes.length, 2);
+    assert.ok(nodes.reduce((sum, node) => sum + JSON.stringify({ workContent: node.workContent, workContentExcerpts: node.workContentExcerpts }).length, 0) <= 32768);
+    for (const node of nodes) {
+      const original = saved.find(item => item.evidence.evidenceId === node.nodeId);
+      originalExcerpts(node, original);
+      for (const field of ["pending", "unknowns"]) assert.ok(node.workContent[field].length || node.workContentExcerpts.some(e => e.field === field && e.text.length));
+      assert.ok(node.workContent.judgments.some(j => j.reason.length) || node.workContentExcerpts.some(e => e.subfield === "reason" && e.text.length));
+    }
+  }
+  assert.deepEqual(workNodes(core).map(n => [n.workContent, n.workContentExcerpts, n.workContentCoverage]), workNodes(mcp).map(n => [n.workContent, n.workContentExcerpts, n.workContentCoverage]));
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("escaped unknowns alone and surrogate-rich reasons preserve exact nonempty ranges", async t => {
+  const f = fixture(t), saved = [];
+  for (let i = 0; i < 2; i++) saved.push(f.save({ summary: `EscapedUnknownNeedle ${i}`, unknowns: ['"'.repeat(25000)] }));
+  for (let i = 0; i < 2; i++) saved.push(f.save({ summary: `SurrogateBudgetNeedle ${i}`,
+    judgments: [{ assessment: "Retain code points", reason: '🙂"\\\u0001'.repeat(4000), alternatives: [] }] }));
+  for (const query of ["EscapedUnknownNeedle", "SurrogateBudgetNeedle"]) {
+    const result = await queryProjectGraph({ root: f.root, query, depth: 0, maxEdges: 0 });
+    assert.equal(workNodes(result).length, 2);
+    for (const node of workNodes(result)) {
+      const original = saved.find(item => item.evidence.evidenceId === node.nodeId); originalExcerpts(node, original);
+      const excerpts = node.workContentExcerpts.filter(e => query === "EscapedUnknownNeedle" ? e.field === "unknowns" : e.subfield === "reason");
+      assert.ok(excerpts.length > 0);
+      for (const entry of excerpts) {
+        assert.ok(entry.text.length > 0); assert.equal(entry.text.isWellFormed(), true);
+      }
+    }
+  }
+});

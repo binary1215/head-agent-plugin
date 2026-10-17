@@ -34,6 +34,48 @@ provenance와 coverage를 보존하면서 반복되는 큰 payload를 생략합�
 상세 기본값은 node 60개·edge 120개이며 명시적 한도로 양쪽 뷰를 확대할 수 있습니다.
 짧은 응답은 task의 충분성을 증명하지 않습니다.
 
+### 저장된 작업 이유와 남은 일
+
+이미 보존한 `SessionWorkEvidence`는 기존 `head_project_graph`와
+`graph-query` 경로로 찾습니다. 요약에 없는 용어라도 실제 판단의 assessment,
+이유·대안, 관측한 작업, 남은 일과 불확실성에서 검색할 수 있습니다. 정확한 경로,
+anchor, Session 또는 근거의 이웃 조회도 같은 typed 작업 노드와 실제 소유자를
+반환합니다. 기존 원본을 찾기 위해 새 저장, native 연결, Run, 색인 갱신이나
+사용자 작성 selector를 요구하지 않습니다.
+
+노드의 `workContent`는 생성한 설명이 아닌 원문 값입니다.
+`workContentCoverage.partial`로 완전한 본문과 표시 생략을 구별합니다.
+작고 fitting인 이유는 short에서도 완전하게 보이며, 작은 이유 여러 개의 합이
+일반 작업 reader의 기본32768자를 넘는 경우도 포함합니다. 선택된 작업 원본이
+한 건이고 기존 최대 안에 들면 Session·파일 탐색 노드가 함께 있어도 약64KiB에
+가까운 본문을 보존합니다. 짧은 질문 결과라는 이유로 상세 조회를 추가하지 않습니다.
+
+큰 다중 원본 결과의 `workContentExcerpts`는 실제 원문의 field/index/subfield
+범위와 전체 길이를 표시합니다. 축약한 이유를 완전한 원문 값인 것처럼 넣지
+않습니다. 한 노드의 긴 이유가 다른 노드의 몫을 모두 차지하지 않도록 원래 남은
+일과 불확실성도 노드들에 걸쳐 표시합니다. `details`는 기존의 더 풍부한 표시를
+요청하며 어느 표시도 의미적 충분성을 판정하지 않습니다.
+
+`originalExpansion`은 기존 `head_session_work_read` 호출에 검증된 소유자의
+`session_id`, 정확한 `evidence_ids`, 한 건을 뜻하는 `max_records`, 실제 enriched
+record 배열 크기의 `max_characters`를 제공합니다. 같은 기준의 확장이 성공하면
+예산 생략 없이 그 원본 한 건을 반환합니다. 소유자·ID·`evidenceDigest`를 그래프
+결과와 비교합니다. 이 digest는 원본 파일 bytes를 식별하는 `sourceReference.digest`와
+다릅니다. 탐색 뒤 원본·소유자·참조가 바뀌면 해당 원본만 재확인하며 과거 크기
+추정으로 현재 완전성을 증명하지 않습니다. enriched 한 건이 reader의 기존 최대를
+넘으면 거짓 완전 확장 호출을 만들지 않고 원본 소스 fallback을 유지합니다.
+
+저장된 running·paused·ended·unknown 관측은 과거 근거입니다. 남은 일, 미확인 효과,
+canonical 검토 의무나 현재 취소를 지우지 않습니다. 파일 인용은 보존한 리비전과
+현재 bytes 상태를 유지하며, 참조가 바뀌거나 확인 불가여도 온전한 작업 원본을
+지우거나 과거 파일 본문이 복원됐다고 주장하지 않습니다.
+
+조회는 읽기 전용이며 Project 범위입니다. 정확한 재조회 proof도 허용된 모든 작업
+producer bytes와 소유자·관계 의존을 확인하므로 상수 시간·상수 bytes 조회가
+아닙니다. cold 탐색, 참조 확인, 출력 shell, JSON text/structured 중복 비용은
+남습니다. 한정된 표시 본문과 기존 cache 퇴출만으로 작은 메모리 사용, Host 전달,
+모델 준수나 성능 향상을 증명하지 않습니다.
+
 자연어 질문은 권한 플래그나 리비전·출처 메타데이터가 아닌, 한정된 표시·도메인
 값을 검색합니다. 일치하는 드문 용어를 우선 정렬하고 전송 한도를 적용합니다.
 이는 재현 가능한 어휘 탐색이지 의미 추론이 아닙니다. 관련성과 부족한 맥락은

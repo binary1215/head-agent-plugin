@@ -2,6 +2,8 @@ node_modules/
 .agent-work/
 /dist/
 test/*
+!test/project-graph-work-context.test.mjs
+!test/project-graph-work-proof.test.mjs
 !test/session-start-delivery.test.mjs
 !test/session-work-context-linkage.test.mjs
 !test/session-work-context-consumers.test.mjs

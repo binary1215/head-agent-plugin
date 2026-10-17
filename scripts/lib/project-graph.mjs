@@ -5,6 +5,9 @@ import {
   readGraphRecord, refreshProjectGraphIndex, safeGraphFile,
 } from "./discovery-index.mjs";
 import { beginScopedDiscovery, rememberScopedDiscovery, reuseScopedDiscovery } from "./project-graph-scoped-reuse.mjs";
+import { sessionWorkPath } from "./session-work-evidence-original.mjs";
+import { projectSessionWorkLayer } from "./project-graph-session-work.mjs";
+import { isWorkNode, workTextEntries, presentSessionWorkContent } from "./project-graph-work-presentation.mjs";
 
 export const PROJECT_GRAPH_PROTOCOL_VERSION = "0.2.0";
 export const indexProjectGraph = refreshProjectGraphIndex;
@@ -20,7 +23,7 @@ const fail = (code, message = code) => { const error = new Error(message); error
 const reason = (error) => error.code || "PROJECT_GRAPH_LAYER_UNAVAILABLE";
 const clone = (value) => structuredClone(value);
 function boundedCache(cache, key, value, limit = 16) { if (cache.size >= limit) cache.delete(cache.keys().next().value); cache.set(key, value); return value; }
-const layerFor = (relative) => relative.startsWith(".head/observations/source-bundles/") ? "source-bundles"
+const layerFor = (relative) => sessionWorkPath(relative) ? "sessionWork" : relative.startsWith(".head/observations/source-bundles/") ? "source-bundles"
   : relative.startsWith(".head/observations/") ? "observations"
     : relative.startsWith(".head/onboarding/") ? "onboarding"
       : relative.startsWith(".head/product-policy/") ? "policy"
@@ -32,6 +35,7 @@ const layerFor = (relative) => relative.startsWith(".head/observations/source-bu
                   : relative.startsWith(".head/project-direction/") ? "direction" : "product";
 
 function recordIdentity(document) {
+  if (document.kind === "Evidence" && document.subtype === "SessionWorkEvidence") return document.evidenceId || null;
   const field = {
     ObservationRecord: "observationId", DerivedObservationRecord: "derivedObservationId", ObservationTypeDescriptor: "descriptorId",
     ObservationCollectionReceipt: "receiptId", OnboardingCandidateSet: "candidateSetId", OnboardingProductCandidate: "candidateId",
@@ -92,7 +96,8 @@ async function verifiedLayer(inventory, layer, entries, model) {
     entries, dependencies, model: ["onboarding", "policy"].includes(layer) ? model?.productModelId : null });
   // Never reuse success on an incomplete dependency observation. A failed
   // optional layer remains local to that layer, not an ordinary-work gate.
-  if (dependencies && (!dependencies.complete || dependencies.unavailable.length)) fail("PROJECT_GRAPH_DEPENDENCY_UNAVAILABLE");
+  if (layer !== "sessionWork" && dependencies && (!dependencies.complete || dependencies.unavailable.length)) fail("PROJECT_GRAPH_DEPENDENCY_UNAVAILABLE");
+  if (layer === "sessionWork") return projectSessionWorkLayer(inventory, { nodeFromRecord, relation, authority, id });
   if (layerCache.has(key)) return { ...clone(layerCache.get(key)), reused: true };
   const nodes = [], edges = [], skipped = [], sources = [];
   const projectId = inventory.project.projectId, root = inventory.projectRoot;
@@ -362,6 +367,7 @@ function searchTerms(value) {
   return terms;
 }
 function searchText(node) {
+  if (isWorkNode(node)) return [...workTextEntries(node.workContent).map(entry => entry.text), ...nodePaths(node)].join("\n");
   // Only display/domain values participate. Hashes, authority flags, revision
   // keys and provenance boilerplate must not crowd out actual task evidence.
   const values = [];
@@ -445,6 +451,8 @@ function navigationState(node) {
 }
 
 function compactNode(node) {
+  if (isWorkNode(node)) return { ...node, contentScope: "verified-work-original-display", contentPartial: Boolean(node.workContentCoverage?.partial),
+    detail: { anchorIds: [node.nodeId], details: true, depth: 0 }, ...authority };
   const fields = ["nodeId", "kind", "name", "key", "path", "digest", "revisionId", "views", "reviewState", "freshness", "integrity", "sourceAuthority", "sourceReference", "sourceCurrentness", "snapshotState", "policyKey", "baseProductModelId", "resultingProductModelId",
     "status", "disposition", "applicationStatus", "mode", "activeRunId", "sessionId", "runId", "latestCheckpoint"];
   const compact = Object.fromEntries(fields.filter(key => node[key] !== undefined).map(key => [key, node[key]]));
@@ -469,7 +477,8 @@ function compactNode(node) {
 function compactTraversal(traversed) {
   return { ...traversed, nodes: traversed.nodes.map(compactNode),
     edges: traversed.edges.map(edge => ({ edgeId: edge.edgeId, type: edge.type, from: edge.from, to: edge.to,
-      endpointStates: edge.endpointStates.map(({ proposedPolicy, ...state }) => state), provenance: edge.provenance, ...authority })),
+      endpointStates: edge.endpointStates.map(({ proposedPolicy, ...state }) => state), provenance: edge.provenance,
+      ...(edge.referenceEvidence ? { referenceEvidence: edge.referenceEvidence } : {}), ...authority })),
     boundary: { items: traversed.boundary.items.slice(0, 8),
       omittedCount: traversed.boundary.omittedCount + Math.max(0, traversed.boundary.items.length - 8),
       nextAnchorIds: traversed.boundary.nextAnchorIds.slice(0, 16),
@@ -613,7 +622,8 @@ export async function queryProjectGraph(options = {}) {
   const traversed = viewTraversal(allNodes, graphEdges, normalized);
   const partialDirection = traversed.nodes.some(node => node.directionContentCoverage?.partial);
   const count = (field) => Object.fromEntries([...new Set(traversed.nodes.map((node) => node[field] || "unknown"))].sort().map((key) => [key, traversed.nodes.filter((node) => (node[field] || "unknown") === key).length]));
-  const presentation = normalized.details ? traversed : compactTraversal(traversed);
+  const withWorkContent = { ...traversed, nodes: presentSessionWorkContent(traversed.nodes, normalized) };
+  const presentation = normalized.details ? withWorkContent : compactTraversal(withWorkContent);
   const partialContent = presentation.nodes.some(node => node.contentPartial);
   const payload = { kind: "ProjectGraphDiscoveryProjection", protocol: { name: "head-agent-core-project-graph", version: PROJECT_GRAPH_PROTOCOL_VERSION },
     authorityBoundary: artifactAuthorityBoundary("ProjectGraphDiscoveryProjection"),

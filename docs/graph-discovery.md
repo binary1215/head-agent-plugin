@@ -32,6 +32,55 @@ Use `details: true` with returned anchors for original bounded detail and
 relations; detailed defaults are 60 nodes and 120 edges. Explicit bounds can
 expand either view. A short result never proves task sufficiency.
 
+### Saved work reasons and remaining work
+
+Already retained `SessionWorkEvidence` is discoverable through the existing
+`head_project_graph` and `graph-query` paths. Questions can match actual judgment
+assessment, reason and alternatives, observed work, pending work and uncertainty,
+even when the matching term is absent from the summary. Exact paths, anchors and
+Session or evidence neighbors return the same typed work node and its actual
+owner. No new save, native binding, Run, index refresh or user-supplied selector is
+required merely to discover an existing original.
+
+The node's `workContent` contains original values, not a generated explanation.
+`workContentCoverage.partial` distinguishes complete content from display
+omission. Small fitting reasons remain complete in short output, including a
+bundle of small reasons whose total exceeds the ordinary work reader's default
+32768 characters. One selected work original can retain its complete near-64KiB
+body when it fits the existing maximum, even with Session or file navigation
+nodes beside it; a short question result does not require an extra detail read.
+
+For a large multi-original result, `workContentExcerpts` identifies actual source
+field/index/subfield ranges and their total length. It does not put a shortened
+reason into a field that claims to contain the whole value. Display allocation
+preserves available pending work and unknowns across nodes instead of allowing
+one long reason to consume every node's share. `details` requests the richer
+existing presentation; neither presentation establishes semantic sufficiency.
+
+`originalExpansion` supplies the existing `head_session_work_read` call with the
+verified owner's `session_id`, exact `evidence_ids`, `max_records` of one and the
+actual enriched record-array size as `max_characters`. A successful same-basis
+expansion returns that one original with no budget omission. Compare its owner,
+ID and `evidenceDigest` with the graph result. This digest is distinct from
+`sourceReference.digest`, which identifies the original file bytes. If the
+original, owner or reference changes after discovery, recheck the affected
+source; an old size estimate does not prove current completeness. An enriched
+record exceeding the reader's existing maximum has no falsely callable complete
+expansion and retains the original-source fallback.
+
+Saved running, paused, ended and unknown observations remain historical evidence.
+They do not clear pending work, unknown effects, canonical review obligations or
+current cancellations. A file citation preserves its retained revision and
+current byte status; a changed or unavailable reference does not erase an intact
+work original or claim that historical file contents were recovered.
+
+Queries remain read-only and Project-scoped. Exact repeat proof still observes
+all admitted work producer bytes, owner and relationship dependencies; it is not
+constant-time or constant-byte lookup. Cold discovery, reference checks, output
+shells and JSON text/structured duplication retain costs. Bounded displayed
+content and existing cache eviction do not prove low memory use, Host delivery,
+model adherence or a performance improvement.
+
 Natural-language questions match bounded display/domain values, excluding
 authority flags and revision/provenance boilerplate. Rare matching terms help
 order results before the transport bound. This is deterministic lexical

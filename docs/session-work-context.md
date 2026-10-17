@@ -42,6 +42,21 @@ second direction store, history document, global memory database or daemon.
 - `head_session_work_read` expands known exact originals or an explicitly anchored
   ID inspection page. Use it when needed, not as a compulsory tool chain.
 
+Already saved work also appears in existing `head_project_graph` discovery.
+Questions, paths, anchors and neighbors can return actual reasons, alternatives,
+observed work, pending work and uncertainty across their verified owner Sessions.
+Graph discovery is Project-scoped and needs no native binding or Session switch;
+it does not replace the selected Session's entry or current P2 direction.
+
+Small fitting `workContent` is usable directly in short results. Single-work
+results may include their complete large reason beside navigation nodes, while
+large multi-original results disclose omitted content and original text ranges.
+Inspect `workContentCoverage.partial` before treating a displayed value as
+complete. `originalExpansion` uses the existing exact reader with one actual
+owner and the size needed by its enriched record. Verify returned identity and
+digest after expansion; changes since graph discovery remain possible. No extra
+save, approval, tool chain or user-authored ID is required for this discovery.
+
 Known generated instruction, role and provider-configuration differences remain
 visible without blocking intact selected-Session recovery or work-context reads.
 Edited or missing projections are never repaired by entry. Their update/mutation

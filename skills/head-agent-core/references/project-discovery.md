@@ -11,6 +11,17 @@ names, paths or anchors without asking the user for a query form. Shared directi
 excerpts retain constraints, decisions, cancellations, revision and freshness.
 Omission disclosure leads to the original direction read, not a new gate.
 
+Existing saved work reasons, alternatives, observed work, pending work and
+unknowns are also graph evidence. Use fitting `workContent` directly, including
+one complete large work original beside ordinary navigation nodes. For a large
+multi-original result, inspect `workContentCoverage.partial` and the original
+ranges in `workContentExcerpts`; expand only useful missing content with its
+returned `originalExpansion`. Keep the actual owner and compare the expanded
+ID/digest. Graph discovery itself needs no native binding or Session switch.
+Saved observations and citations remain historical P3 evidence, not current
+direction, live execution, review acceptance or effect authorization. Do not
+require another save, mandatory details/read call or user selector form.
+
 For code impact use `head_world_query` (discover/invoke through the existing
 optional tool route) or `world-query --query <symbol> --depth <0..3> --limit <n>`.
 General containment/revision expansion is not IMPORTS/CALLS analysis. If World
