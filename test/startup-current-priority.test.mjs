@@ -7,7 +7,7 @@ import test from "node:test";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
-import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
+import { recordSessionWorkEvidence, readSessionWorkContext } from "../scripts/lib/session-work-context.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
@@ -65,7 +65,16 @@ function fixture(t, purpose, { records = 40, checkpoint = false } = {}) {
       for (const flag of ["ordinaryWorkBlocked", "userDecisionRequired", "persisted"]) assert.equal(value[flag], false);
       assert.match(value.scope, /Read-only, non-atomic.*history\/P3 grant no effects/);
       assert.match(value.hostCapability, /Verified.*never guess.*No extra bind\/save\/repeated Session ID/);
-      assert.match(value.expansion, /^When needed, head_conversation_enter.*project_root:projectRoot.*exact route/);
+      const omittedWork = value.omittedEvidenceCount > 0 || value.workCoverage.status === "work_context_partial";
+      if (value.expansion.startsWith("When needed,")) {
+        assert.match(value.expansion, /^When needed, head_conversation_enter with project_root:projectRoot and the exact route above reads originals/);
+        assert.equal(value.expansion.includes("Omitted work:"), omittedWork);
+        if (omittedWork) assert.match(value.expansion, /Omitted work: head_session_work_read with the same root\/route\.$/);
+      } else {
+        const enter = value.requiredSourceExpansion ? "When needed: head_conversation_enter(project_root:projectRoot, ...route)" : "";
+        const work = omittedWork ? "Omitted work: head_session_work_read(project_root:projectRoot, ...route)" : "";
+        assert.equal(value.expansion, enter + (enter && work ? "; " : "") + work);
+      }
       return { text, value };
     } };
   });
@@ -78,6 +87,40 @@ function checkpointView(raw) {
   return c ? { checkpointId: c.checkpointId, ...(c.checkpointDigest ? { checkpointDigest: c.checkpointDigest } : {}), ...(c.openReviewIds ? { openReviewIds: c.openReviewIds } : {}), purpose: c.purpose, approvedDecisions: c.approvedDecisions,
     historicalPosition: c.currentPosition, historicalNextExpectedResult: c.nextExpectedResult,
     historicalApprovalGrantsCurrentEffect: false } : null;
+}
+
+function assertOptionalWorkExpansion(f, raw, value, runtime) {
+  assert.equal(value.projectRoot, f.root); assert.deepEqual(value.route, { session_id: f.session.sessionId });
+  const work = raw.workContext;
+  assert.equal(work.status, "work_context_partial");
+  for (const key of ["originals", "inspected", "valid"]) assert.equal(work.coverage[key], 40);
+  assert.equal(work.coverage.included, 8); assert.equal(work.records.length, 8);
+  assert.equal(work.omissions.byBudget, 0); assert.deepEqual(work.omissions.evidenceIds, []);
+  assert.equal(value.workCoverage.status, work.status);
+  if (value.workCoverage.omitted) {
+    assert.equal(value.workCoverage.sourceOriginals, 40); assert.equal(value.workCoverage.sourceInspected, 40);
+    assert.equal(value.workCoverage.sourceIncluded, 8);
+  } else {
+    assert.deepEqual(value.workCoverage.coverage, work.coverage); assert.deepEqual(value.workCoverage.omissions, work.omissions);
+  }
+  const included = new Set(value.records.map(record => record.evidenceId));
+  for (const record of value.records) {
+    const original = work.records.find(source => source.evidenceId === record.evidenceId);
+    assert.ok(original); assert.equal(record.evidenceDigest, original.evidenceDigest); assert.deepEqual(record.content, original.content);
+  }
+  const omitted = work.records.filter(record => !included.has(record.evidenceId));
+  if (runtime === "claude") assert.ok(omitted.length > 0, "Exercise additional Hook omission, not source budget rejection");
+  assert.equal(value.omittedEvidenceCount, omitted.length);
+  for (const id of value.omittedEvidenceIds) assert.ok(omitted.some(record => record.evidenceId === id));
+  assert.ok(value.omittedEvidenceIds.length <= omitted.length);
+  const read = input => withSessionRoute(value.projectRoot, value.route.session_id,
+    () => readSessionWorkContext({ root: value.projectRoot, ...input }));
+  const expanded = read({}); assert.deepEqual(expanded, work);
+  assert.equal(expanded.sessionPurpose, value.sessionPurpose);
+  const target = omitted[0] || work.records[0], exact = read({ evidenceIds: [target.evidenceId], maxRecords: 1 });
+  assert.equal(exact.sessionId, value.route.session_id); assert.equal(exact.coverage.originals, null);
+  assert.equal(exact.records.length, 1); assert.equal(exact.records[0].evidenceId, target.evidenceId);
+  assert.equal(exact.records[0].evidenceDigest, target.evidenceDigest); assert.deepEqual(exact.records[0].content, target.content);
 }
 
 test("public Hook: current common cancellation and 4200-character selected purpose precede P3/metadata in both runtimes", (t) => {
@@ -95,6 +138,7 @@ test("public Hook: current common cancellation and 4200-character selected purpo
     assert.equal(Object.hasOwn(value, "sessionPurposeCoverage"), false);
     assert.equal(value.omittedEvidenceCount, raw.workContext.records.length - value.records.length);
     assert.equal(value.sessionRecovery, null);
+    assertOptionalWorkExpansion(f, raw, value, caller.runtime);
     t.diagnostic(JSON.stringify({ runtime: caller.runtime, length: text.length, currentPurposeExact: true, currentCommonExact: true,
       omittedEvidenceCount: value.omittedEvidenceCount, omittedIdSample: value.omittedEvidenceIds.length }));
   }
@@ -110,6 +154,7 @@ test("public Hook: all four latest selected checkpoint direction fields survive 
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.deepEqual(value.sessionRecovery, checkpointView(raw));
     assert.equal(Object.hasOwn(value, "requiredSourceExpansion"), false);
+    assertOptionalWorkExpansion(f, raw, value, caller.runtime);
     t.diagnostic(JSON.stringify({ runtime: caller.runtime, length: text.length, latestSelectedP2FieldsExact: true }));
   }
   assert.deepEqual(snapshot(f.base), before);
@@ -121,6 +166,7 @@ test("public Hook: all four latest selected checkpoint direction fields survive 
     assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.deepEqual(value.sessionRecovery, checkpointView(raw));
+    assertOptionalWorkExpansion(f, raw, value, caller.runtime);
   }
   assert.deepEqual(snapshot(f.base), before);
 });

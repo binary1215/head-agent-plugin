@@ -9,7 +9,7 @@ import { createHeadSession, withSessionRoute } from "../scripts/lib/session-rout
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
 import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
-import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
+import { recordSessionWorkEvidence, readSessionWorkContext } from "../scripts/lib/session-work-context.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 
 const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
@@ -75,6 +75,52 @@ const checkpoint = (f, purpose = "Historical checkpoint purpose", fields = {}) =
   nextExpectedResult: "Historical suggestion; no effect permission", ...fields,
 }));
 const evidence = (f, summary) => f.selected(() => recordSessionWorkEvidence({ root: f.root, input: { summary } }));
+
+function assertPartialWorkExpansion(f, raw, value, runtime) {
+  const work = raw.workContext;
+  assert.equal(work.status, "work_context_partial");
+  for (const key of ["originals", "inspected", "valid"]) assert.equal(work.coverage[key], 40);
+  assert.equal(work.coverage.included, 8); assert.equal(work.records.length, 8);
+  assert.equal(work.coverage.unavailable, 0); assert.equal(work.nextAfterEvidenceId, null);
+  assert.equal(work.omissions.uninspected, 0); assert.equal(work.omissions.byBudget, 0);
+  assert.deepEqual(work.omissions.evidenceIds, []); assert.equal(work.omissions.omittedIdCount, 0);
+  assert.match(work.coverage.selection, /all discovered originals canonically inspected once.*partial body delivery.*not live state or semantic sufficiency/);
+  assert.equal(value.workCoverage.status, work.status);
+  if (value.workCoverage.omitted) {
+    assert.equal(value.workCoverage.sourceOriginals, 40); assert.equal(value.workCoverage.sourceInspected, 40);
+    assert.equal(value.workCoverage.sourceIncluded, 8);
+  } else {
+    assert.deepEqual(value.workCoverage.coverage, work.coverage);
+    assert.deepEqual(value.workCoverage.omissions, work.omissions);
+  }
+  const included = new Set(value.records.map(record => record.evidenceId));
+  const omitted = work.records.filter(record => !included.has(record.evidenceId));
+  if (runtime === "claude") assert.ok(omitted.length > 0, "Exercise additional Hook omission, not source budget rejection");
+  assert.equal(value.omittedEvidenceCount, omitted.length);
+  assert.ok(value.omittedEvidenceIds.length <= omitted.length);
+  for (const id of value.omittedEvidenceIds) assert.ok(omitted.some(record => record.evidenceId === id));
+  for (const record of value.records) {
+    const original = work.records.find(source => source.evidenceId === record.evidenceId);
+    assert.ok(original); assert.equal(record.evidenceDigest, original.evidenceDigest);
+    assert.deepEqual(record.content, original.content);
+  }
+  assert.equal(value.projectRoot, f.root); assert.deepEqual(value.route, { session_id: f.session.sessionId });
+  if (value.expansion.startsWith("Omitted work:")) {
+    assert.equal(value.expansion, "Omitted work: head_session_work_read(project_root:projectRoot, ...route)");
+  } else {
+    assert.match(value.expansion, /^When needed, head_conversation_enter with project_root:projectRoot and the exact route above reads originals/);
+    assert.match(value.expansion, /Omitted work: head_session_work_read with the same root\/route\.$/);
+  }
+  // Use the actual emitted root/route, not an evaluated prose instruction.
+  const read = input => withSessionRoute(value.projectRoot, value.route.session_id,
+    () => readSessionWorkContext({ root: value.projectRoot, ...input }));
+  assert.deepEqual(read({}), work); // Restores source-selected eight, not the other 32.
+  const target = omitted[0] || work.records[0];
+  const exact = read({ evidenceIds: [target.evidenceId], maxRecords: 1 });
+  assert.equal(exact.sessionId, value.route.session_id); assert.equal(exact.coverage.originals, null);
+  assert.equal(exact.records.length, 1); assert.equal(exact.records[0].evidenceId, target.evidenceId);
+  assert.equal(exact.records[0].evidenceDigest, target.evidenceDigest); assert.deepEqual(exact.records[0].content, target.content);
+}
 
 for (const runtime of ["codex", "claude"]) {
   test(`${runtime}: selected purpose survives no checkpoint with empty and saved work; reads write nothing`, (t) => {
@@ -155,9 +201,7 @@ for (const runtime of ["codex", "claude"]) {
     fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
     const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
     assert.equal(raw.workContext.records.length, 8);
-    assert.equal(raw.workContext.omissions.byBudget, 32);
-    if (value.workCoverage.omitted) assert.equal(value.workCoverage.sourceOriginals, 40);
-    else assert.equal(value.workCoverage.omissions.evidenceIds.length, 32);
+    assertPartialWorkExpansion(f, raw, value, runtime);
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.ok(value.records.length <= raw.workContext.records.length);
     assert.equal(value.omittedEvidenceCount, raw.workContext.records.length - value.records.length);
@@ -180,9 +224,7 @@ for (const runtime of ["codex", "claude"]) {
     updateProjectDirection({ root: f.root, input: { goal: "Known direction loss with a fitting current purpose" } });
     fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
     const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
-    assert.equal(raw.workContext.omissions.evidenceIds.length, 32);
-    if (value.workCoverage.omitted) { assert.equal(value.workCoverage.sourceOriginals, 40); assert.equal(value.workCoverage.sourceIncluded, 8); }
-    else assert.equal(value.workCoverage.coverage.included, 8);
+    assertPartialWorkExpansion(f, raw, value, runtime);
     assert.equal(value.sessionPurpose, purpose);
     assert.equal(Object.hasOwn(value, "sessionPurposeCoverage"), false);
     assert.equal(value.projectRoot, f.root);

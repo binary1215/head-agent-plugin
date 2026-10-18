@@ -64,10 +64,16 @@ test('generated instructions lead with the original outcome and preserve only ne
 test('default selected work coverage crosses CLI and direct/router MCP without extra calls or writes',async t=>{
  const f=fixture(t);for(let i=0;i<10;i++)f.route(()=>recordSessionWorkEvidence({root:f.root,input:{summary:`Synthetic observation ${i}`,occurrenceKey:`useful-${i}`}}));
  const expected=f.route(()=>readSessionWorkContext({root:f.root})),before=snapshot(f.base);
+ assert.equal(expected.status,'work_context_partial');assert.equal(expected.coverage.originals,10);
  assert.equal(expected.nextAfterEvidenceId,null);assert.equal(expected.coverage.inspected,10);
  assert.equal(expected.coverage.valid,10);assert.equal(expected.coverage.unavailable,0);
- assert.equal(expected.omissions.uninspected,0);assert.equal(expected.omissions.byBudget,2);
+ assert.equal(expected.coverage.included,8);assert.equal(expected.records.length,8);
+ // Unattempted valid tails are not failed body admissions or full delivery.
+ assert.equal(expected.omissions.uninspected,0);assert.equal(expected.omissions.byBudget,0);
+ assert.deepEqual(expected.omissions.evidenceIds,[]);assert.equal(expected.omissions.omittedIdCount,0);
  assert.equal(expected.omissions.unavailableDetailCount,0);
+ assert.match(expected.coverage.selection,/all discovered originals canonically inspected once.*partial body delivery.*not live state or semantic sufficiency/);
+ assert.match(expected.expansion,/Read exact evidenceIds.*when useful.*does not require a full audit or repeating default entry/);
  const cli=await runCommand(['session-work-read',f.root,'--session',f.selected.sessionId]);assert.deepEqual(cli,expected);
  const presentation=formatCliResult('session-work-read',cli);assert.match(presentation,/"nextAfterEvidenceId":null/);
  assert.match(presentation,/"unavailableDetailCount":0/);
