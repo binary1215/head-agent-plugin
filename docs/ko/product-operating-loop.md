@@ -141,13 +141,24 @@ HEAD 직접 작업이 기본이고, 유용하면 일반 Host 위임을 사용합
 - `head_product_operating_status`
 - `head_continuity_snapshot`
 
-기본 MCP 목록은 Core와 복구에 집중합니다. 필요한 스키마는
-`head_tools_discover`의 정확한 이름이나 반환된 prefix로 찾고, 반환된
-`invokeWith`에 따라 `head_tools_read` 또는 `head_tools_call`로 호출합니다.
-상태를 저장하지 않는 이 경로는 기존 dispatch·권한 검사·결과를 그대로 사용하며
-등록·활성화·추가 사용자 승인을 만들지 않습니다. 읽기 전용 경로는 별도로 유지하고,
-HEAD가 계약을 이미 알면 사전 탐색을 생략할 수 있습니다. 지속 작업에 유용한
+기본 MCP 목록은 독립 Session 생성과 현재 공통 방향 갱신을 포함한 Core·복구에
+집중합니다. 이미 제공된 typed 도구는 정상적인 최초 사용에서 직접 호출합니다.
+필요한 선택적 스키마는 `head_tools_discover`의 정확한 이름이나 반환된 prefix로
+찾습니다. 호환되는 `invokeWith`는 여전히 `head_tools_read` 또는
+`head_tools_call`이며, `{name, arguments}` 안에 기존 원래 스키마의 인자를 전달합니다.
+상태를 저장하지 않는 이 경로는 기존 dispatch·검사·결과를 유지하며 등록·활성화나
+새 내부 승인 게이트를 추가하지 않습니다. 읽기 전용 경로는 별도로 유지하고,
+이미 아는 선택적 계약은 사전 탐색 없이 기존 router로 호출할 수 있습니다.
+정상 최초 사용은 거부된 효과를 다른 경로로 수행할 권한이 아닙니다. 지속 작업에 유용한
 관리형 변경은 `head_tools_call`의 `execution_mode: "managed"`를 사용하고
 사용자 unlock 없이 원래 검사를 유지합니다.
+
+Session 생성은 기존 canonical 원본을 덮어쓰지 않고 추가하거나 재사용합니다.
+재생성 가능한 그래프 inventory와 임시 lock은 바뀔 수 있습니다. 공통 방향·체크포인트
+갱신은 현재 제약·취소나 Session 복구 방향을 대체할 수 있어 파괴적 가능성 표시가
+true입니다. 기존 Host 정책이 승인을 요구하거나 `never`에서 해당 저장을 거부할 수
+있으며, 도구 노출이 면제를 뜻하지는 않습니다. 보존하지 못한 내용과 복구 영향만
+알리고 독립적으로 허용된 작업은 계속합니다. 기록 거부가 완료된 코드를 무효로 하거나
+그 효과를 재실행할 권한을 만들지는 않습니다.
 
 Initiative 검토에는 `confirm_user_review: true`가 필요합니다. 이 확인은 사용자가 소유한 검토 권한을 기록합니다. MCP를 사용할 수 있다는 사실만으로 그 권한이 부여되지는 않습니다.

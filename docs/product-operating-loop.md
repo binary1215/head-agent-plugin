@@ -149,13 +149,24 @@ The optional typed MCP catalog includes:
 - `head_product_operating_status`
 - `head_continuity_snapshot`
 
-The default MCP list focuses on Core and recovery. Find a needed schema through
-`head_tools_discover` (exact name or returned prefix) and call its `invokeWith`
-route, `head_tools_read` or `head_tools_call`. These stateless routes preserve the
-same original dispatch, authority checks and results; no activation, registration
-or extra user approval is added. Read-only calls retain a separate read-only route.
-Discovery can be skipped when HEAD already knows the contract. Managed mutations
+The default MCP list focuses on Core and recovery, including independent Session
+creation and current common-direction updates. Use an already-provided typed tool
+directly for normal first use. For a needed optional schema, use
+`head_tools_discover` (exact name or returned prefix). Its compatible `invokeWith`
+still names `head_tools_read` or `head_tools_call`, accepting `{name, arguments}`
+with the original inner schema. These stateless routes preserve dispatch, checks
+and results; no registration, activation or new internal approval gate is added.
+Read-only calls retain their separate route. A known optional contract needs no
+prior discovery. Normal first use is not a route around a refused effect. Managed mutations
 use the explicit managed route when useful for durable work: `head_tools_call`
 with `execution_mode: "managed"`, preserving the original checks without user unlock.
+
+Session creation adds or reuses a no-clobber canonical Session; its replaceable
+graph inventory and temporary locks may change. Common-direction and checkpoint
+updates can replace current constraints/cancellations or Session recovery direction,
+so their destructive hints are true. Existing Host policy may require approval or
+refuse those writes under `never`; availability is not an exemption. Report the
+affected preservation/recovery gap and continue independently allowed work. A
+recording refusal does not undo completed code or authorize replaying it.
 
 Initiative review requires `confirm_user_review: true`. The confirmation records user-owned review authority; MCP availability alone does not grant it.

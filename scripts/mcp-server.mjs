@@ -985,7 +985,7 @@ const allTools = [
       required: ["project_root", "expected_recovery_basis_id", "purpose", "approved_decisions", "current_position", "next_expected_result"],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "head_session_work_record",
@@ -1891,7 +1891,7 @@ allTools.push(
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 }, expected_direction_id: { type: ["string", "null"] },
       direction: { type: "object", properties: { goal: { type: "string" }, constraints: { type: "array", items: { type: "string" } }, decisions: { type: "array", items: { type: "string" } }, cancelledActions: { type: "array", items: { type: "string" } } }, required: ["goal", "constraints", "decisions", "cancelledActions"], additionalProperties: false },
     }, required: ["project_root", "expected_direction_id", "direction"], additionalProperties: false },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
 );
 
@@ -1930,6 +1930,7 @@ allTools.push({
 const defaultToolNames = new Set([
   SESSION_HOST_REQUEST_HELPER,
   "head_core_contract", "head_project_initialize_or_resume", "head_conversation_enter", "head_project_graph",
+  "head_session_create", "head_project_direction_update",
   "head_project_status", "head_checkpoint_diagnose", "head_checkpoint_basis",
   "head_checkpoint_sync", "head_session_restore", "head_pending_review",
   "head_runtime_invocation_lease_status", "head_bounded_worker_job_status",

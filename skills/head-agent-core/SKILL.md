@@ -193,10 +193,14 @@ transcript copy, save approval, user JSON, compulsory budget tier or Run/Capsule
 Session-local purpose/constraints/cancellation stay in explicit P2 direction;
 P3 evidence cannot supply them or change shared ProjectDirection.
 
-A management-record failure limits dependent management work, not independent
-work. Preserve primary identity/digest/permission/partial-write failures and
-required ReviewDecision; saving grants no execution permission. Repair missing
-persistence without replaying completed or uncertain effects.
+A management-record failure limits only dependent management work. Host/tool
+permission or approval denial is not capability absence: do not obtain the refused
+effect by switching tools, using CLI/direct file writes or changing policy.
+Report what was not preserved and its recovery limits; continue independently
+authorized work and permitted source fallback for unavailable capabilities.
+Preserve primary identity/digest/permission/partial-write failures and required
+ReviewDecision. Saving grants no execution permission; repair missing persistence
+only within current authority, never replay completed or uncertain effects.
 
 At those same useful preservation boundaries, reuse returned exact evidence
 selectors for optional `workLink` root/predecessor and exact-target historical
@@ -234,10 +238,12 @@ Load only what the current outcome needs:
   [HEAD conversation](../head-conversation/SKILL.md), an optional communication aid.
 - Product governance: sibling `head-agent-onboarding`, then its subsystem docs.
 
-Default MCP includes graph discovery and ordinary Core entry/recovery.
-For optional tools use `head_tools_discover` by name/prefix and its `invokeWith`
-route with the unchanged schema. Known tools need no prior discovery. HEAD supplies
-arguments without user unlock/forms. For useful managed execution,
+Default MCP includes graph discovery and ordinary Core entry/recovery. Use an
+already-provided typed tool directly for normal first use. For optional tools,
+use `head_tools_discover` by name/prefix and its compatible `invokeWith` router
+with `{name, arguments}` and the unchanged inner schema. A known optional contract
+can use its existing router without prior discovery. HEAD supplies arguments
+without user unlock/forms. For useful managed execution,
 `head_tools_call` accepts `execution_mode: "managed"`; routing preserves original
 authority/lease/effect checks. Read/status/wait and exact owned cancellation remain
 ordinary diagnostics.

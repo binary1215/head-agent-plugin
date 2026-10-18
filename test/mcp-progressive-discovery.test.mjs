@@ -5,7 +5,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { dispatch, discoverTools, tools, catalogTools } from "../scripts/mcp-server.mjs";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { sessionStatePath } from "../scripts/lib/session-routing.mjs";
 import { runCommand, usage } from "../scripts/head.mjs";
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const request = (name, args = {}) => ({ id: 1, method: "tools/call", params: { name, arguments: args } });
@@ -38,7 +39,24 @@ test("an absent common direction remains null text, not invalid MCP structuredCo
 });
 
 test("small default catalog discovers every ordinary contract without registering, unlocking or initializing", async () => {
-  assert.equal(tools.length, 18);
+  assert.equal(tools.length, 20);
+  assert.deepEqual(tools.map(tool => tool.name).sort(), [
+    "head_core_contract", "head_project_status", "head_project_initialize_or_resume",
+    "head_runtime_invocation_lease_status", "head_pending_review", "head_checkpoint_basis",
+    "head_checkpoint_diagnose", "head_checkpoint_sync", "head_session_restore",
+    "head_worker_integration_status", "head_bounded_worker_job_status", "head_bounded_worker_cancel",
+    "head_conversation_enter", "head_project_graph", "head_session_host_request_prepare",
+    "head_session_create", "head_project_direction_update", "head_tools_discover", "head_tools_read", "head_tools_call",
+  ].sort());
+  for (const name of ["head_session_create", "head_project_direction_update", "head_checkpoint_sync"]) {
+    const descriptor = tools.find(tool => tool.name === name);
+    assert.strictEqual(descriptor, catalogTools.find(tool => tool.name === name));
+    assert.equal(descriptor.inputSchema.properties.session_id.type, "string");
+    assert.deepEqual(descriptor.annotations, { readOnlyHint: false,
+      destructiveHint: name !== "head_session_create", idempotentHint: name !== "head_session_create", openWorldHint: false });
+  }
+  assert.equal(tools.find(tool => tool.name === "head_tools_call").annotations.destructiveHint, true);
+  assert.equal(tools.find(tool => tool.name === "head_tools_call").annotations.openWorldHint, true);
   assert(tools.some(tool => tool.name === "head_session_host_request_prepare"));
   assert(tools.some(tool => tool.name === "head_project_graph"));
   assert(Buffer.byteLength(JSON.stringify(tools)) < 112030 / 2);
@@ -68,6 +86,75 @@ test("small default catalog discovers every ordinary contract without registerin
     assert(!usage({ all: true }).commands.some(command => command.split(/\s+/)[1] === name.replace(/^head_/, "").replaceAll("_", "-")));
   }
   assert((await call("head_tools_discover", { name: "head_product_note", prefix: "head_" })).error);
+});
+
+test("ordinary typed Session creation and compatible router share no-clobber retry and rejection", async t => {
+  const root = fixture(t), defaultId = inspectProject(root).state.sessionId;
+  const original = fs.readFileSync(sessionStatePath(root));
+  const args = { project_root: root, new_session_id: "session-00000000-0000-4000-8000-000000000001", purpose: "Independent synthetic work" };
+  const first = await call("head_session_create", args);
+  assert.equal(first.error, undefined);
+  assert.equal(first.result.structuredContent.status, "created");
+  const routed = await call("head_tools_call", { name: "head_session_create", arguments: args });
+  assert.equal(routed.result.structuredContent.status, "existing");
+  assert.deepEqual(await call("head_session_create", args), routed);
+  assert.equal(inspectProject(root).state.sessionId, defaultId);
+  assert.deepEqual(fs.readFileSync(sessionStatePath(root)), original);
+  const before = snapshot(root), divergent = { ...args, purpose: "Different purpose" };
+  const directError = await call("head_session_create", divergent);
+  assert(directError.error);
+  assert.deepEqual(await call("head_tools_call", { name: "head_session_create", arguments: divergent }), directError);
+  assert.match((await call("head_tools_read", { name: "head_session_create", arguments: args })).error.message, /not read-only/);
+  assert.deepEqual(snapshot(root), before);
+});
+
+test("ordinary direction updates retain replacement, current-basis conflicts and router parity", async t => {
+  const root = fixture(t);
+  const initial = { project_root: root, expected_direction_id: null,
+    direction: { goal: "Synthetic local work", constraints: ["Read only"], decisions: [], cancelledActions: ["deploy"] } };
+  const first = await call("head_project_direction_update", initial);
+  assert.equal(first.error, undefined);
+  const old = first.result.structuredContent.direction;
+  const revisionDir = path.join(root, ".head/project-direction/revisions");
+  const originalRevisions = snapshot(revisionDir);
+  const replacement = { ...initial, expected_direction_id: old.directionId,
+    direction: { goal: "Synthetic approved local edits", constraints: [], decisions: ["Local edits allowed"], cancelledActions: [] } };
+  const second = await call("head_project_direction_update", replacement);
+  assert.equal(second.error, undefined);
+  assert.equal(second.result.structuredContent.status, "updated");
+  assert.deepEqual(second.result.structuredContent.direction.input.cancelledActions, []);
+  assert.deepEqual(second.result.structuredContent.direction.input.constraints, []);
+  assert.equal(second.result.structuredContent.direction.grantsExecutionAuthorization, false);
+  for (const [file, bytes] of originalRevisions) assert.equal(fs.readFileSync(file).toString("base64"), bytes);
+  const retried = await call("head_tools_call", { name: "head_project_direction_update", arguments: replacement });
+  assert.equal(retried.result.structuredContent.status, "reused");
+  assert.deepEqual(await call("head_project_direction_update", replacement), retried);
+  const before = snapshot(root), stale = { ...replacement, expected_direction_id: null };
+  const directError = await call("head_project_direction_update", stale);
+  assert(directError.error);
+  assert.deepEqual(await call("head_tools_call", { name: "head_project_direction_update", arguments: stale }), directError);
+  assert.match((await call("head_tools_read", { name: "head_project_direction_update", arguments: replacement })).error.message, /not read-only/);
+  assert.deepEqual(snapshot(root), before);
+});
+
+test("independent default operations do not require optional Host binding; explicit routes still validate", async t => {
+  const root = fixture(t), defaultId = inspectProject(root).state.sessionId;
+  let resolutions = 0;
+  const options = { resolveSessionContext() { resolutions++; throw Object.assign(new Error("Synthetic unavailable binding"), { code: "HEAD_SESSION_CONTEXT_UNAVAILABLE" }); } };
+  const args = { project_root: root, new_session_id: "session-00000000-0000-4000-8000-000000000002", purpose: "Independent work" };
+  assert.equal((await call("head_session_create", args, options)).error, undefined);
+  assert.equal(resolutions, 0);
+  const explicit = await call("head_session_create", { ...args, session_id: defaultId }, options);
+  assert.equal(explicit.error, undefined);
+  assert.equal(explicit.result.structuredContent.status, "existing");
+  assert.equal(explicit.result._meta.headSessionBinding.status, "unavailable");
+  const before = snapshot(root);
+  const foreign = fixture(t), foreignId = inspectProject(foreign).state.sessionId;
+  for (const session_id of [42, "session-00000000-0000-4000-8000-000000000003", foreignId]) {
+    const invalid = { ...args, session_id, new_session_id: "session-00000000-0000-4000-8000-000000000004" };
+    assert((await call("head_session_create", invalid, options)).error);
+    assert.deepEqual(snapshot(root), before);
+  }
 });
 
 test("direct small work, optional context, status and recovery preserve authority without advisory tools", async t => {
