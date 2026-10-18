@@ -323,9 +323,9 @@ function originalField(location, value) {
 }
 
 function originalFacts(value, keys, location, handled) {
-  return keys.filter(key => Object.hasOwn(value, key)).map(key => {
+  return keys.filter(key => Object.hasOwn(value, key) && !handled.has(key)).map(key => {
     handled.add(key);
-    return `${location}.${key}: ${JSON.stringify(value[key])}\n`;
+    return `${location ? location + "." : ""}${key}: ${JSON.stringify(value[key])}\n`;
   }).join("");
 }
 
@@ -366,19 +366,52 @@ function originalWorkBody(value, location) {
   return text + originalRemainder(value, handled, location);
 }
 
-function originalWorkRecord(value, location, bodyKey) {
+function commonStoredWorkFields(entries, label, bodyKey) {
+  const common = {}, keys = new Set();
+  const result = () => ({ keys, text: keys.size
+    ? `Common stored fields for ${entries.map(({ index }) => `${label}[${index}]`).join(", ")}:\n${JSON.stringify(common, null, 2)}\n` : "" });
+  const first = entries[0]?.value;
+  // This is display factoring of stored own fields, not inferred inheritance.
+  // Ambiguous owners, non-work members and unsupported bodies stay individual.
+  if (entries.length < 2 || !entries.every(({ value }) => originalObject(value)
+    && ["projectId", "sessionId", "kind", "subtype", bodyKey].every(key => Object.hasOwn(value, key))
+    && value.kind === "Evidence" && value.subtype === "SessionWorkEvidence" && originalObject(value[bodyKey])
+    && ["projectId", "sessionId"].every(key => typeof value[key] === "string" && value[key].length > 0 && value[key] === first[key]))) return result();
+  const encoding = value => {
+    let supported = true;
+    try {
+      const encoded = JSON.stringify(value, (_key, item) => {
+        if (["undefined", "function", "symbol", "bigint"].includes(typeof item)
+          || typeof item === "number" && !Number.isFinite(item)) supported = false;
+        return item;
+      });
+      return supported && typeof encoded === "string" ? encoded : undefined;
+    } catch { return undefined; }
+  };
+  for (const key of ["projectId", "sessionId", "kind", "subtype", "schemaVersion", "protocol", "authorityBoundary"]) {
+    if (!Object.hasOwn(first, key)) continue;
+    const encoded = encoding(first[key]);
+    if (encoded !== undefined && entries.every(({ value }) => Object.hasOwn(value, key)
+      && typeof value[key] === typeof first[key] && encoding(value[key]) === encoded)) {
+      keys.add(key); common[key] = first[key];
+    }
+  }
+  return result();
+}
+
+function originalWorkRecord(value, location, bodyKey, commonKeys = []) {
   if (!originalObject(value) || !Object.keys(value).length) return originalField(location, value);
-  const handled = new Set();
+  const handled = new Set(commonKeys);
   let text = originalFacts(value, ["evidenceId", "nodeId", "projectId", "sessionId", "ownerSessionId", "owner", "kind", "subtype",
-    "selectionRole", "reviewState", "freshness", "contentScope", "contentPartial"], location, handled);
+    "selectionRole", "reviewState", "freshness", "contentScope", "contentPartial"], "", handled);
   const activity = value.savedActivity, coverage = value.workContentCoverage;
-  if (originalObject(activity)) text += originalFacts(activity, ["states"], `${location}.savedActivity`, new Set());
-  if (originalObject(coverage)) text += originalFacts(coverage, ["partial"], `${location}.workContentCoverage`, new Set());
-  if (Object.hasOwn(value, bodyKey)) { text += originalWorkBody(value[bodyKey], `${location}.${bodyKey}`); handled.add(bodyKey); }
+  if (originalObject(activity)) text += originalFacts(activity, ["states"], "savedActivity", new Set());
+  if (originalObject(coverage)) text += originalFacts(coverage, ["partial"], "workContentCoverage", new Set());
+  if (Object.hasOwn(value, bodyKey)) { text += originalWorkBody(value[bodyKey], bodyKey); handled.add(bodyKey); }
   if (Array.isArray(value.workContentExcerpts)) {
-    if (!value.workContentExcerpts.length) text += originalField(`${location}.workContentExcerpts`, []);
+    if (!value.workContentExcerpts.length) text += originalField("workContentExcerpts", []);
     for (const [index, excerpt] of value.workContentExcerpts.entries()) {
-      const at = `${location}.workContentExcerpts[${index}]`, keys = new Set();
+      const at = `workContentExcerpts[${index}]`, keys = new Set();
       if (!originalObject(excerpt)) { text += originalField(at, excerpt); continue; }
       text += originalFacts(excerpt, ["field", "index", "subfield", "alternativeIndex", "start", "end", "totalCharacters"], at, keys);
       if (Object.hasOwn(excerpt, "text")) { text += originalField(`${at}.text`, excerpt.text); keys.add("text"); }
@@ -387,14 +420,14 @@ function originalWorkRecord(value, location, bodyKey) {
     handled.add("workContentExcerpts");
   }
   if (originalObject(activity)) {
-    text += Object.keys(activity).length ? originalRemainder(activity, new Set(["states"]), `${location}.savedActivity`) : originalField(`${location}.savedActivity`, activity);
+    text += Object.keys(activity).length ? originalRemainder(activity, new Set(["states"]), "savedActivity") : originalField("savedActivity", activity);
     handled.add("savedActivity");
   }
   if (originalObject(coverage)) {
-    text += Object.keys(coverage).length ? originalRemainder(coverage, new Set(["partial"]), `${location}.workContentCoverage`) : originalField(`${location}.workContentCoverage`, coverage);
+    text += Object.keys(coverage).length ? originalRemainder(coverage, new Set(["partial"]), "workContentCoverage") : originalField("workContentCoverage", coverage);
     handled.add("workContentCoverage");
   }
-  return text + originalRemainder(value, handled, location);
+  return text + originalRemainder(value, handled, bodyKey === "content" ? "record" : "node");
 }
 
 export function formatSessionWorkContext(value) {
@@ -404,7 +437,9 @@ export function formatSessionWorkContext(value) {
   const handled = new Set(["records"]);
   let text = heading + originalFacts(value, ["status", "projectId", "sessionId"], "workContext", handled);
   if (!value.records.length) text += originalField("workContext.records", value.records);
-  for (const [index, record] of value.records.entries()) text += `Record[${index}]:\n${originalWorkRecord(record, `records[${index}]`, "content")}`;
+  const common = commonStoredWorkFields(value.records.map((record, index) => ({ index, value: record })), "Record", "content");
+  text += common.text;
+  for (const [index, record] of value.records.entries()) text += `Record[${index}]:\n${originalWorkRecord(record, `records[${index}]`, "content", common.keys)}`;
   return text + originalRemainder(value, handled, "workContext");
 }
 
@@ -416,9 +451,13 @@ function formatProjectGraph(value) {
     + originalFacts(value, ["status", "query"], "graph", handled);
   if (originalObject(value.coverage) && Object.hasOwn(value.coverage, "state")) text += `graph.coverage.state: ${JSON.stringify(value.coverage.state)}\n`;
   if (!value.nodes.length) text += originalField("graph.nodes", value.nodes);
+  const work = value.nodes.map((node, index) => ({ index, value: node }))
+    .filter(({ value: node }) => originalObject(node) && Object.hasOwn(node, "workContent"));
+  const common = commonStoredWorkFields(work, "Node", "workContent");
+  text += common.text;
   for (const [index, node] of value.nodes.entries()) {
     text += `Node[${index}]:\n`;
-    if (originalObject(node) && Object.hasOwn(node, "workContent")) text += originalWorkRecord(node, `nodes[${index}]`, "workContent");
+    if (originalObject(node) && Object.hasOwn(node, "workContent")) text += originalWorkRecord(node, `nodes[${index}]`, "workContent", common.keys);
     else if (originalObject(node)) {
       const keys = new Set();
       text += originalFacts(node, ["nodeId", "kind", "projectId", "sessionId", "ownerSessionId", "reviewState", "freshness", "contentScope", "contentPartial"], `nodes[${index}]`, keys);

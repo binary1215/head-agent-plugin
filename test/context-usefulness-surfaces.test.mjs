@@ -16,20 +16,42 @@ import {formatCliResult,formatMcpToolContent} from '../scripts/lib/cli-presentat
 
 const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
 
+// Test-only decoding of the explicit common block, not a runtime text parser.
+function assertCommonRecords(text,records){
+ const first=records[0],object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+ const eligible=records.length>=2&&records.every(record=>object(record)&&['projectId','sessionId','kind','subtype','content'].every(key=>Object.hasOwn(record,key))
+  &&record.kind==='Evidence'&&record.subtype==='SessionWorkEvidence'&&object(record.content)
+  &&['projectId','sessionId'].every(key=>typeof record[key]==='string'&&record[key].length>0&&record[key]===first[key]));
+ const expected=eligible?Object.fromEntries(['projectId','sessionId','kind','subtype','schemaVersion','protocol','authorityBoundary']
+  .filter(key=>Object.hasOwn(first,key)&&records.every(record=>Object.hasOwn(record,key)&&typeof record[key]===typeof first[key]&&JSON.stringify(record[key])===JSON.stringify(first[key])))
+  .map(key=>[key,first[key]])):{};
+ const blocks=[...text.matchAll(/^Common stored fields for (.+):\n/gmu)];
+ assert.equal(blocks.length,Object.keys(expected).length?1:0);
+ if(blocks.length){
+  const block=blocks[0];assert.equal(block[1],records.map((_,index)=>`Record[${index}]`).join(', '));
+  const firstRecord=text.indexOf('\nRecord[0]:\n');assert.ok(block.index<firstRecord);
+  assert.deepEqual(JSON.parse(text.slice(block.index+block[0].length,firstRecord)),expected);
+ }
+ return expected;
+}
 function assertWorkPresentation(text,value){
  assert.match(text,/Selected Session work evidence \(P3/u);
+ const common=assertCommonRecords(text,value.records);
  for(const key of ['status','projectId','sessionId'])if(value[key]!==undefined)assert.ok(text.includes(`${key}: ${JSON.stringify(value[key])}`),key);
  for(const key of ['coverage','omissions','nextAfterEvidenceId']){
   if(value[key]!==undefined)assert.ok(text.includes(JSON.stringify({[key]:value[key]},null,2).slice(2,-2)),`Missing original ${key}`);
  }
  for(const [index,record]of value.records.entries()){
-  const start=text.indexOf(`Record[${index}]:\n`),next=text.indexOf(`Record[${index+1}]:\n`,start);
-  assert.ok(start>=0,`Missing Record[${index}]`);const section=text.slice(start,next<0?undefined:next);
+  const start=text.indexOf(`\nRecord[${index}]:\n`),ends=[text.indexOf(`\nRecord[${index+1}]:\n`,start),text.indexOf('Additional original fields at workContext:\n',start)].filter(offset=>offset>=0);
+  assert.ok(start>=0,`Missing Record[${index}]`);const section=text.slice(start,ends.length?Math.min(...ends):undefined);
   assert.ok(section.includes(`evidenceId: ${JSON.stringify(record.evidenceId)}`));
-  if(record.sessionId!==undefined)assert.ok(section.includes(`sessionId: ${JSON.stringify(record.sessionId)}`));
+  for(const key of ['projectId','sessionId','kind','subtype'])if(Object.hasOwn(record,key)){
+   const line=`${key}: ${JSON.stringify(record[key])}`;
+   assert.equal(section.split('\n').includes(line),!Object.hasOwn(common,key),`Record[${index}] ${key} must be local or exact common, not inherited from the envelope`);
+  }
   assert.ok(section.includes(record.content.summary),`Missing original summary for ${record.evidenceId}`);
  }
- assert.equal(text.includes(`Record[${value.records.length}]:\n`),false);
+ assert.equal(text.includes(`\nRecord[${value.records.length}]:\n`),false);
 }
 
 const pluginRoot=path.resolve(import.meta.dirname,'..');

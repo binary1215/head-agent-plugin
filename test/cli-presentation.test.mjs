@@ -20,6 +20,109 @@ import {
   formatSessionWorkContext,
 } from "../scripts/lib/cli-presentation.mjs";
 
+function repeatedWorkFixture() {
+  const common = { projectId: "project-owner", sessionId: "session-owner", kind: "Evidence", subtype: "SessionWorkEvidence",
+    schemaVersion: 1, protocol: { name: "synthetic-work", version: "1" },
+    authorityBoundary: { planeId: "P3", instructionAuthority: false, recoveryAuthority: false } };
+  return { status: "work_context_partial", records: [0, 1].map(index => ({ ...structuredClone(common),
+    evidenceId: `evidence-${index}`, evidenceDigest: `digest-${index}`, recordedAt: `time-${index}`,
+    content: { summary: `Body ${index}`, references: [{ path: "same.txt", digest: `declared-${index}` }],
+      pending: [`Not completed ${index}`], unknowns: [`Unknown ${index}`] },
+    references: [{ path: "same.txt", digest: `verified-${index}`, status: index ? "changed" : "matching-current-bytes" }] })),
+    coverage: { originals: 9, inspected: 2, included: 2, selection: "historical hints; no completeness claim" },
+    omissions: { uninspected: 7, byBudget: 0 }, expansion: "Read exact original only when useful", common };
+}
+function presentedRecord(text, index) {
+  const heading = i => { const offset = text.indexOf(`\nRecord[${i}]:\n`); return offset < 0 ? -1 : offset + 1; };
+  const start = heading(index), next = heading(index + 1);
+  const envelope = text.indexOf("Additional original fields at workContext:\n", start);
+  assert.ok(start >= 0); const ends = [next, envelope].filter(offset => offset >= 0);
+  return text.slice(start, ends.length ? Math.min(...ends) : undefined);
+}
+test("common work fields preserve exact collection membership, all values and separate reference roles", () => {
+  const value = repeatedWorkFixture(), before = JSON.stringify(value), text = formatSessionWorkContext(value);
+  assert.ok(text.includes(`Common stored fields for Record[0], Record[1]:\n${JSON.stringify(value.common, null, 2)}\nRecord[0]:\n`));
+  for (const [index, record] of value.records.entries()) {
+    const part = presentedRecord(text, index);
+    for (const key of Object.keys(value.common)) assert.ok(!part.includes(`"${key}":`) && !part.includes(`${key}:`), key);
+    for (const key of ["evidenceId", "evidenceDigest", "recordedAt"]) assert.ok(part.includes(JSON.stringify(record[key])));
+    for (const refs of [record.content.references, record.references]) assert.ok(part.includes(JSON.stringify({ references: refs }, null, 2).slice(2, -2)));
+    assert.ok(part.includes(`Body ${index}`)); assert.ok(part.includes(`Not completed ${index}`)); assert.ok(part.includes(`Unknown ${index}`));
+  }
+  for (const key of ["coverage", "omissions", "expansion"]) assert.ok(text.includes(JSON.stringify({ [key]: value[key] }, null, 2).slice(2, -2)));
+  assert.equal(JSON.stringify(value), before); assert.equal(text, formatCliResult("session-work-read", value));
+  assert.equal(text, formatMcpToolContent("head_session_work_read", value));
+});
+test("mixed missing null empty and unsupported work owners stay individual without filling absent fields", () => {
+  for (const key of ["projectId", "sessionId"]) for (const raw of [undefined, null, "", false, 0, "other-owner"]) {
+    const value = repeatedWorkFixture(); if (raw === undefined) delete value.records[1][key]; else value.records[1][key] = raw;
+    const before = JSON.stringify(value), text = formatSessionWorkContext(value); assert.ok(!text.includes("Common stored fields for"));
+    assert.ok(presentedRecord(text, 0).includes(`${key}: ${JSON.stringify(value.records[0][key])}`));
+    if (raw === undefined) assert.ok(!presentedRecord(text, 1).includes(`${key}:`));
+    else assert.ok(presentedRecord(text, 1).includes(`${key}: ${JSON.stringify(raw)}`));
+    assert.equal(JSON.stringify(value), before);
+  }
+  for (const raw of [null, false, 0, "", [], {}, { kind: "Other", content: {} }]) {
+    const value = repeatedWorkFixture(); value.records[1] = raw; assert.ok(!formatSessionWorkContext(value).includes("Common stored fields for"));
+  }
+  for (const raw of [null, false, 0, "", []]) {
+    const value = repeatedWorkFixture(); value.records[1].content = raw; const text = formatSessionWorkContext(value);
+    assert.ok(!text.includes("Common stored fields for")); assert.ok(presentedRecord(text, 1).includes(`content: ${JSON.stringify(raw)}`));
+  }
+});
+test("different missing inherited or differently typed metadata cannot disappear into common values", () => {
+  for (const [key, raw] of [["schemaVersion", "1"], ["protocol", { version: "1", name: "synthetic-work" }],
+    ["authorityBoundary", { planeId: "P4", instructionAuthority: false, recoveryAuthority: false }]]) for (const missing of [false, true]) {
+    const value = repeatedWorkFixture(); if (missing) delete value.records[1][key]; else value.records[1][key] = raw;
+    const expected = { ...value.common }; delete expected[key]; const text = formatSessionWorkContext(value);
+    assert.ok(text.includes(`Common stored fields for Record[0], Record[1]:\n${JSON.stringify(expected, null, 2)}`));
+    assert.ok(presentedRecord(text, 0).includes(JSON.stringify({ [key]: value.records[0][key] }, null, 2).slice(2, -2)));
+    if (missing) assert.ok(!presentedRecord(text, 1).includes(`"${key}":`));
+    else assert.ok(presentedRecord(text, 1).includes(JSON.stringify({ [key]: raw }, null, 2).slice(2, -2)));
+  }
+  for (const raw of [null, false, 0, "", [], {}]) {
+    const value = repeatedWorkFixture(); value.records.forEach(row => { row.protocol = structuredClone(raw); });
+    assert.ok(formatSessionWorkContext(value).includes(JSON.stringify({ ...value.common, protocol: raw }, null, 2)));
+  }
+  const value = repeatedWorkFixture(), inherited = value.records[1].protocol; delete value.records[1].protocol;
+  Object.setPrototypeOf(value.records[1], { protocol: inherited });
+  assert.ok(!formatSessionWorkContext(value).split("Record[0]:\n")[0].includes('"protocol":'));
+});
+test("relative labels preserve literal fences whitespace array indices and unknown parent collisions", () => {
+  const value = repeatedWorkFixture(), literal = "  가🙂\r\n\tDo not deploy.\n`````text\nRecord[9]:\nkeep  spaces  \n";
+  for (const [index, row] of value.records.entries()) {
+    row.content.summary = literal + index;
+    row.content.judgments = [{ assessment: "Not approved", reason: literal, alternatives: [null, false, 0, "", [], {}], "reason.future": { sessionId: null } }];
+    row.content.future = { projectId: 0, "content.summary": false, values: [null, false, 0, "", [], {}] };
+    row.future = { sessionId: "Not the record owner", content: { summary: "Unknown parent" } };
+  }
+  const before = JSON.stringify(value), text = formatSessionWorkContext(value), fence = "`".repeat(6);
+  for (const [index, row] of value.records.entries()) {
+    assert.ok(text.includes(`content.summary (original text):\n${fence}text\n${literal}${index}\n${fence}\n`));
+    assert.ok(text.includes(`content.judgments[0].reason (original text):\n${fence}text\n${literal}${fence}\n`));
+    row.content.judgments[0].alternatives.forEach((raw, i) => assert.ok(text.includes(`content.judgments[0].alternatives[${i}]: ${JSON.stringify(raw)}`)));
+    for (const unknown of [row.content.future, row.future]) assert.ok(text.includes(JSON.stringify({ future: unknown }, null, 2).slice(2, -2)));
+  }
+  assert.equal(JSON.stringify(value), before); assert.ok(!text.includes("records[0].content.summary"));
+  assert.ok(text.includes('"sessionId": "Not the record owner"'));
+});
+test("graph common membership names only supported work nodes at original indices, never navigation", () => {
+  const fixture = repeatedWorkFixture(), work = fixture.records.map(({ content, ...row }, index) => ({ ...row, nodeId: `work-${index}`, workContent: content,
+    workContentCoverage: { partial: true, unknown: false }, workContentExcerpts: [{ field: "summary", text: `Excerpt ${index}`, index: 0 }] }));
+  const graph = { kind: "ProjectGraphDiscoveryProjection", nodes: [{ nodeId: "nav", kind: "Session", sessionId: "nav-owner", excerpt: "Navigation only" },
+    work[0], { nodeId: "reference", kind: "Reference", future: null }, work[1]], edges: [], coverage: { state: "partial", hint: "not proof" } };
+  const before = JSON.stringify(graph), text = formatMcpToolContent("head_project_graph", graph);
+  assert.ok(text.includes(`Common stored fields for Node[1], Node[3]:\n${JSON.stringify(fixture.common, null, 2)}`));
+  assert.ok(text.includes('nodes[0].sessionId: "nav-owner"'));
+  for (let i = 0; i < 3; i++) assert.ok(text.indexOf(`\nNode[${i}]:\n`) < text.indexOf(`\nNode[${i + 1}]:\n`));
+  assert.ok(text.includes("workContentCoverage.partial: true")); assert.ok(text.includes("workContentExcerpts[0].text (original text):"));
+  assert.ok(text.includes('"hint": "not proof"')); assert.equal(text, formatCliResult("graph-query", graph)); assert.equal(JSON.stringify(graph), before);
+  for (const change of [node => { delete node.projectId; }, node => { node.sessionId = null; }, node => { node.kind = "Other"; }, node => { node.workContent = null; }]) {
+    const ambiguous = structuredClone(graph); change(ambiguous.nodes[3]); const output = formatMcpToolContent("head_project_graph", ambiguous);
+    assert.ok(!output.includes("Common stored fields for")); assert.ok(output.includes('sessionId: "session-owner"')); assert.ok(output.includes('nodes[0].sessionId: "nav-owner"'));
+  }
+});
+
 test("unresolved Session cards preserve current cancellation without claiming recovery or diagnostics", () => {
   const value = { status: "session_selection_unresolved", sessionId: null,
     currentProjectDirection: { input: { goal: "Inspect local source", constraints: ["Do not publish"], decisions: [], cancelledActions: ["deploy"] } },

@@ -37,28 +37,52 @@ function assertLiteralValues(text, value) {
   else if (Array.isArray(value)) for (const item of value) assertLiteralValues(text, item);
   else if (value && typeof value === "object") for (const item of Object.values(value)) assertLiteralValues(text, item);
 }
+// Decode only the explicit display block and check its exact member indexes.
+function assertCommonRecords(text, records) {
+  const object = value => value !== null && typeof value === "object" && !Array.isArray(value), first = records[0];
+  const eligible = records.length >= 2 && records.every(record => object(record)
+    && ["projectId", "sessionId", "kind", "subtype", "content"].every(key => Object.hasOwn(record, key))
+    && record.kind === "Evidence" && record.subtype === "SessionWorkEvidence" && object(record.content)
+    && ["projectId", "sessionId"].every(key => typeof record[key] === "string" && record[key].length > 0 && record[key] === first[key]));
+  const expected = eligible ? Object.fromEntries(["projectId", "sessionId", "kind", "subtype", "schemaVersion", "protocol", "authorityBoundary"]
+    .filter(key => Object.hasOwn(first, key) && records.every(record => Object.hasOwn(record, key)
+      && typeof record[key] === typeof first[key] && JSON.stringify(record[key]) === JSON.stringify(first[key])))
+    .map(key => [key, first[key]])) : {};
+  const blocks = [...text.matchAll(/^Common stored fields for (.+):\n/gmu)];
+  assert.equal(blocks.length, Object.keys(expected).length ? 1 : 0);
+  if (blocks.length) {
+    const block = blocks[0], firstRecord = text.indexOf("\nRecord[0]:\n");
+    assert.equal(block[1], records.map((_, index) => `Record[${index}]`).join(", "));
+    assert.ok(block.index < firstRecord);
+    assert.deepEqual(JSON.parse(text.slice(block.index + block[0].length, firstRecord)), expected);
+  }
+  return expected;
+}
 function assertPresentedWork(text, expected) {
   assert.match(text, /Selected Session work evidence \(P3/u);
+  const common = assertCommonRecords(text, expected.records);
   for (const name of ["status", "projectId", "sessionId"]) {
     if (expected[name] !== undefined) assert.ok(text.includes(`${name}: ${JSON.stringify(expected[name])}`), name);
   }
   for (const name of ["organization", "coverage", "omissions", "nextAfterEvidenceId"]) assertJsonMember(text, name, expected[name]);
   for (const [index, record] of expected.records.entries()) {
-    const start = text.indexOf(`Record[${index}]:\n`), next = text.indexOf(`Record[${index + 1}]:\n`, start);
+    const start = text.indexOf(`\nRecord[${index}]:\n`), ends = [text.indexOf(`\nRecord[${index + 1}]:\n`, start),
+      text.indexOf("Additional original fields at workContext:\n", start)].filter(offset => offset >= 0);
     assert.ok(start >= 0, `Missing Record[${index}]`);
-    const section = text.slice(start, next < 0 ? undefined : next);
-    for (const name of ["evidenceId", "projectId", "sessionId", "selectionRole"]) {
-      if (record[name] !== undefined) assert.ok(section.includes(`${name}: ${JSON.stringify(record[name])}`), name);
+    const section = text.slice(start, ends.length ? Math.min(...ends) : undefined);
+    for (const name of ["evidenceId", "projectId", "sessionId", "kind", "subtype", "selectionRole"]) {
+      if (record[name] !== undefined) assert.equal(section.split("\n").includes(`${name}: ${JSON.stringify(record[name])}`),
+        !Object.hasOwn(common, name), `Record[${index}] ${name} must be local or exact common`);
     }
     assertLiteralValues(section, record.content);
     for (const name of ["evidenceDigest", "references"]) assertJsonMember(section, name, record[name]);
     if (record.savedActivity) {
       const { states, ...residual } = record.savedActivity;
-      assert.ok(section.includes(`records[${index}].savedActivity.states: ${JSON.stringify(states)}`));
+      assert.ok(section.includes(`savedActivity.states: ${JSON.stringify(states)}`));
       for (const [name, value] of Object.entries(residual)) assertJsonMember(section, name, value);
     }
   }
-  assert.equal(text.includes(`Record[${expected.records.length}]:\n`), false, "No invented record body");
+  assert.equal(text.includes(`\nRecord[${expected.records.length}]:\n`), false, "No invented record body");
 }
 function withoutSyncWrites(action) {
   const names = ["writeFileSync", "appendFileSync", "writeSync", "mkdirSync", "renameSync", "unlinkSync", "rmSync", "rmdirSync", "truncateSync", "ftruncateSync", "chmodSync", "fchmodSync", "utimesSync", "linkSync", "symlinkSync"];

@@ -25,27 +25,54 @@ function assertLiteralValues(text, value) {
   else if (Array.isArray(value)) for (const item of value) assertLiteralValues(text, item);
   else if (value && typeof value === "object") for (const item of Object.values(value)) assertLiteralValues(text, item);
 }
+function assertCommonNodes(text, nodes) {
+  const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  const members = nodes.map((value, index) => ({ value, index })).filter(({ value }) => object(value) && Object.hasOwn(value, "workContent"));
+  const first = members[0]?.value;
+  const eligible = members.length >= 2 && members.every(({ value }) => ["projectId", "sessionId", "kind", "subtype", "workContent"].every(key => Object.hasOwn(value, key))
+    && value.kind === "Evidence" && value.subtype === "SessionWorkEvidence" && object(value.workContent)
+    && ["projectId", "sessionId"].every(key => typeof value[key] === "string" && value[key].length > 0 && value[key] === first[key]));
+  const expected = eligible ? Object.fromEntries(["projectId", "sessionId", "kind", "subtype", "schemaVersion", "protocol", "authorityBoundary"]
+    .filter(key => Object.hasOwn(first, key) && members.every(({ value }) => Object.hasOwn(value, key)
+      && typeof value[key] === typeof first[key] && JSON.stringify(value[key]) === JSON.stringify(first[key])))
+    .map(key => [key, first[key]])) : {};
+  const blocks = [...text.matchAll(/^Common stored fields for (.+):\n/gmu)];
+  assert.equal(blocks.length, Object.keys(expected).length ? 1 : 0);
+  if (blocks.length) {
+    const block = blocks[0], firstNode = text.indexOf("\nNode[0]:\n");
+    assert.equal(block[1], members.map(({ index }) => `Node[${index}]`).join(", "), "Common membership uses original node indices, never navigation nodes");
+    assert.ok(block.index < firstNode);
+    assert.deepEqual(JSON.parse(text.slice(block.index + block[0].length, firstNode)), expected);
+  }
+  return expected;
+}
 function assertGraphPresentation(text, value) {
+  const common = assertCommonNodes(text, value.nodes);
   for (const name of ["coverage", "sourceFallback", "boundary"]) assertJsonMember(text, name, value[name]);
   for (const [index, node] of value.nodes.entries()) {
-    const start = text.indexOf(`Node[${index}]:\n`), next = text.indexOf(`Node[${index + 1}]:\n`, start);
+    const start = text.indexOf(`\nNode[${index}]:\n`), next = text.indexOf(`\nNode[${index + 1}]:\n`, start);
     assert.ok(start >= 0, `Missing Node[${index}]`);
-    const edge = text.indexOf("Edge[0]:\n", start), end = [next, edge].filter(offset => offset >= 0);
+    const edge = text.indexOf("\nEdge[0]:\n", start), end = [next, edge,
+      text.indexOf("Additional original fields at graph:\n", start)].filter(offset => offset >= 0);
     const section = text.slice(start, end.length ? Math.min(...end) : undefined);
     assert.ok(section.includes(`nodeId: ${JSON.stringify(node.nodeId)}`));
-    if (node.sessionId !== undefined) assert.ok(section.includes(`sessionId: ${JSON.stringify(node.sessionId)}`));
+    if (!isWork(node) && node.sessionId !== undefined) assert.ok(section.includes(`sessionId: ${JSON.stringify(node.sessionId)}`));
     if (isWork(node)) {
+      for (const name of ["projectId", "sessionId", "kind", "subtype"]) {
+        if (Object.hasOwn(node, name)) assert.equal(section.split("\n").includes(`${name}: ${JSON.stringify(node[name])}`),
+          !Object.hasOwn(common, name), `Node[${index}] ${name} must be local or exact common`);
+      }
       assertLiteralValues(section, node.workContent);
       for (const name of ["evidenceDigest", "referenceEvidence", "originalExpansion"]) assertJsonMember(section, name, node[name]);
       if (node.workContentCoverage) {
         const { partial, ...residual } = node.workContentCoverage;
-        assert.ok(section.includes(`nodes[${index}].workContentCoverage.partial: ${JSON.stringify(partial)}`));
+        assert.ok(section.includes(`workContentCoverage.partial: ${JSON.stringify(partial)}`));
         for (const [name, value] of Object.entries(residual)) assertJsonMember(section, name, value);
       }
       if (node.workContentExcerpts) {
-        if (!node.workContentExcerpts.length) assert.ok(section.includes(`nodes[${index}].workContentExcerpts: []`));
+        if (!node.workContentExcerpts.length) assert.ok(section.includes("workContentExcerpts: []"));
         for (const [excerptIndex, excerpt] of node.workContentExcerpts.entries()) {
-          const location = `nodes[${index}].workContentExcerpts[${excerptIndex}]`;
+          const location = `workContentExcerpts[${excerptIndex}]`;
           for (const name of ["field", "index", "subfield", "alternativeIndex", "start", "end", "totalCharacters"]) {
             if (Object.hasOwn(excerpt, name)) assert.ok(section.includes(`${location}.${name}: ${JSON.stringify(excerpt[name])}`));
           }
@@ -55,7 +82,7 @@ function assertGraphPresentation(text, value) {
       }
     }
   }
-  assert.equal(text.includes(`Node[${value.nodes.length}]:\n`), false);
+  assert.equal(text.includes(`\nNode[${value.nodes.length}]:\n`), false);
 }
 function fixture(t) {
   const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
