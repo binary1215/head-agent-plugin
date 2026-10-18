@@ -27,6 +27,7 @@ const sessionWorkEvidenceSchema = {
     summary: workEvidenceText,
     judgments: { type: "array", items: { type: "object", properties: { assessment: workEvidenceText, reason: workEvidenceText, alternatives: workEvidenceList }, required: ["assessment", "reason"], additionalProperties: false } },
     observedWork: workEvidenceList, pending: workEvidenceList, unknowns: workEvidenceList, suggestedFollowUp: workEvidenceList,
+    workTopics: { ...workEvidenceList, description: "Optional HEAD-authored navigation labels from actual work, not Product Features, completion, approval or P2 direction. No taxonomy or user form required." },
     occurrenceKey: { ...workEvidenceText, description: "Optional HEAD-owned distinction for a genuinely separate occurrence; identical input retry reuses its original." },
     workLink: { type: "object", description: "Optional exact same-Session saved context anchor and predecessor; not execution identity or authority.",
       properties: { root: exactWorkEvidenceSchema, predecessor: exactWorkEvidenceSchema }, required: ["root", "predecessor"], additionalProperties: false },

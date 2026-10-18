@@ -210,6 +210,14 @@ declared anchor alongside recent results/pending work. Coexisting saved states
 are not live execution or an inferred conflict. Unsaved conversation can still
 be lost on abrupt exit.
 
+At meaningful completion, handoff or changed conditions, connect the whole user
+outcome to actual consumer results, reasons and remaining work; reuse originals
+instead of saving each turn. Optional `workTopics` labels help find that work
+without Product onboarding or a user taxonomy. Session/root groups organize
+returned bodies only: identical labels do not merge work, create a Feature or
+prove completion. Native automatic end, ancestry and live activity are not
+implemented by these saved observations.
+
 Native init/resume can retain verified selection; startup only reads that linkage.
 Its loss does not erase Core success or permit replay. Other reads, work recording
 and checkpoint sync do not select the chat.

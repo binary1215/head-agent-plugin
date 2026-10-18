@@ -5,6 +5,7 @@ import test from "node:test";
 import { inspectProject } from "../scripts/lib/head-core.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { normalizeSessionWorkEvidence, recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
+import { MAX_RECORD_BYTES } from "../scripts/lib/session-work-evidence-original.mjs";
 import { fixture, exact, link, citation, representative, snapshot, sha, encoded, recordFor } from "./helpers/session-work-linkage-fixture.mjs";
 
 // Numeric scopes, not selection wording, distinguish hinted default from
@@ -34,6 +35,8 @@ test("legacy optional-absent normalized bytes, identity, protocol and exact retr
   const legacy = { summary: "Legacy selected work", judgments: [{ assessment: "Keep", reason: "Original reason", alternatives: [] }],
     observedWork: [], pending: [], unknowns: [], suggestedFollowUp: [], references: [], occurrenceKey: null };
   assert.equal(encoded(normalizeSessionWorkEvidence(input)), encoded(legacy));
+  assert.equal(encoded(normalizeSessionWorkEvidence({ ...input, workTopics: undefined })), encoded(legacy));
+  assert.equal(Object.hasOwn(normalizeSessionWorkEvidence(input), "workTopics"), false);
   const owner = f.route(() => inspectProject(f.root)), saved = f.save(input);
   const id = "work-evidence-" + sha(encoded({ projectId: owner.project.projectId, sessionId: f.session.sessionId, content: legacy })).slice(0, 24);
   assert.equal(saved.evidence.evidenceId, id);
@@ -42,10 +45,75 @@ test("legacy optional-absent normalized bytes, identity, protocol and exact retr
   const { evidenceDigest, ...payload } = saved.evidence;
   assert.equal(evidenceDigest, sha(encoded(payload)));
   assert.equal(fs.readFileSync(saved.file, "utf8"), JSON.stringify(saved.evidence, null, 2) + "\n");
+  assert.equal(Object.hasOwn(saved.evidence.content, "workTopics"), false);
+  assert.equal(fs.readFileSync(saved.file, "utf8").includes('"workTopics"'), false);
   const before = snapshot(f.base), retried = f.save(input), read = f.read();
   assert.equal(retried.writes, 0); assert.deepEqual(retried.evidence, saved.evidence);
   assert.equal(read.records[0].selectionRole, undefined); assert.equal(read.organization, undefined);
   assert.deepEqual(snapshot(f.base), before); accounting(read);
+});
+
+test("optional work topics use ordinary list normalization without count or duplicate gates", t => {
+  const f = fixture(t), input = { summary: "Real retained result", workTopics: ["  예약 만료  ", "예약 만료", "Reservation", "reservation"] };
+  const normalized = normalizeSessionWorkEvidence(input);
+  assert.deepEqual(normalized.workTopics, ["예약 만료", "예약 만료", "Reservation", "reservation"]);
+  assert.deepEqual(normalizeSessionWorkEvidence({ summary: "Real retained result", workTopics: [] }).workTopics, []);
+  const many = Array.from({ length: 10000 }, () => "x");
+  assert.deepEqual(normalizeSessionWorkEvidence({ summary: "Real retained result", workTopics: many }).workTopics, many);
+  const saved = f.save(input);
+  assert.deepEqual(saved.evidence.content.workTopics, normalized.workTopics);
+  const absent = f.save({ summary: input.summary }), empty = f.save({ summary: input.summary, workTopics: [] });
+  assert.notEqual(saved.evidence.evidenceId, absent.evidence.evidenceId);
+  assert.notEqual(empty.evidence.evidenceId, absent.evidence.evidenceId);
+  assert.notEqual(saved.evidence.evidenceDigest, absent.evidence.evidenceDigest);
+  assert.deepEqual(recordFor(f.read(), saved).content.workTopics, normalized.workTopics);
+  const bytes = fs.readFileSync(saved.file), before = snapshot(f.base), retry = f.save(input);
+  assert.equal(retry.writes, 0); assert.equal(retry.executionReplayAllowed, false);
+  assert.deepEqual(retry.evidence, saved.evidence); assert.deepEqual(fs.readFileSync(saved.file), bytes);
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("topics alone are not meaningful evidence and invalid topic strings never publish", t => {
+  const f = fixture(t), root = f.save({ summary: "Real root" }), before = snapshot(f.base);
+  for (const input of [{ workTopics: [] }, { workTopics: ["Only navigation"] },
+    { workTopics: ["Only navigation"], workLink: link(root) }]) {
+    assert.throws(() => f.save(input), /meaningful work evidence/);
+  }
+  for (const workTopics of [null, "topic", {}, [""], ["  \t\n"], [1], [null], [true], [[]], ["valid", {}]]) {
+    assert.throws(() => f.save({ summary: "Real retained result", workTopics }), { code: "INVALID_SESSION_WORK_EVIDENCE" });
+  }
+  assert.deepEqual(snapshot(f.base), before);
+  const observation = f.save({ workTopics: ["Historical activity"], executionObservation: { state: "ended" } });
+  assert.deepEqual(observation.evidence.content.workTopics, ["Historical activity"]);
+  assert.deepEqual(observation.evidence.content.executionObservation, { state: "ended" });
+});
+
+test("topic bytes participate in the existing aggregate evidence bound", t => {
+  const f = fixture(t), summary = "s".repeat(30000), workTopics = ["주".repeat(10000)];
+  const normalized = normalizeSessionWorkEvidence({ summary, workTopics });
+  assert.ok(Buffer.byteLength(encoded(normalized)) <= MAX_RECORD_BYTES - 4096);
+  const saved = f.save({ summary, workTopics });
+  assert.deepEqual(saved.evidence.content.workTopics, workTopics);
+  const before = snapshot(f.base);
+  assert.throws(() => f.save({ summary, workTopics: ["주".repeat(11000)] }), { code: "SESSION_WORK_EVIDENCE_TOO_LARGE" });
+  assert.throws(() => f.save({ summary: "Small real result", workTopics: ["주".repeat(MAX_RECORD_BYTES)] }), { code: "SESSION_WORK_EVIDENCE_TOO_LARGE" });
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+for (const labeled of [false, true]) test(`retained exact retry preserves bytes after linked dependencies disappear (topics ${labeled})`, t => {
+  const f = fixture(t), root = f.save({ summary: "Retained dependency" });
+  const input = { summary: "Already completed contribution", workLink: link(root), references: [citation(f, root)],
+    pending: ["Still requires multi-server verification"], unknowns: ["Load has not been measured"],
+    ...(labeled ? { workTopics: ["예약 만료", "예약 만료"] } : {}) };
+  const saved = f.save(input), originalBytes = fs.readFileSync(saved.file);
+  fs.unlinkSync(root.file);
+  const before = snapshot(f.base), retry = f.save(input);
+  assert.equal(retry.status, "session_work_evidence_reused"); assert.equal(retry.writes, 0);
+  assert.equal(retry.executionReplayAllowed, false);
+  assert.equal(retry.evidence.evidenceId, saved.evidence.evidenceId);
+  assert.equal(retry.evidence.evidenceDigest, saved.evidence.evidenceDigest);
+  assert.deepEqual(retry.evidence, saved.evidence); assert.deepEqual(fs.readFileSync(saved.file), originalBytes);
+  assert.deepEqual(snapshot(f.base), before);
 });
 
 test("optional shapes are strict; observation alone is meaningful and link alone is not", t => {

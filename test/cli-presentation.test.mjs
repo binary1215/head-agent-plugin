@@ -1,5 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+
+test("Session list presents existing purpose and stored pointers without live-state inference", () => {
+  const value = { projectId: "project-A", defaultSessionId: "session-A", sessions: [
+    { sessionId: "session-A", purpose: "Investigate reservation expiry; local only", default: true,
+      state: { latestCheckpoint: "checkpoint-A", activeRunId: "run-A", pendingReview: "review-A", extra: { untouched: false } } },
+    { sessionId: "session-B", purpose: "Independent documentation", default: false, state: { latestCheckpoint: null } },
+  ], unknown: [] };
+  const before = JSON.stringify(value), cli = formatCliResult("session-list", value), mcp = formatMcpToolContent("head_session_list", value);
+  assert.equal(cli, mcp); assert.equal(JSON.stringify(value), before);
+  for (const text of ["Investigate reservation expiry; local only", "Independent documentation", "checkpoint-A", "review-A", "untouched", "unknown"]) assert.ok(cli.includes(text));
+  assert.match(cli, /not freshly verified execution or completion/);
+  assert.ok(!/verified successful|all work completed|live running/i.test(cli));
+});
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { catalogTools as tools, dispatch } from "../scripts/mcp-server.mjs";
@@ -41,7 +54,9 @@ function presentedRecord(text, index) {
 }
 test("common work fields preserve exact collection membership, all values and separate reference roles", () => {
   const value = repeatedWorkFixture(), before = JSON.stringify(value), text = formatSessionWorkContext(value);
-  assert.ok(text.includes(`Common stored fields for Record[0], Record[1]:\n${JSON.stringify(value.common, null, 2)}\nRecord[0]:\n`));
+  assert.ok(text.includes(`Common stored fields for Record[0], Record[1]:\n${JSON.stringify(value.common, null, 2)}\n`));
+  assert.match(text, /Session work group/);
+  for (const index of [0, 1]) assert.equal(text.split(`\nRecord[${index}]:\n`).length - 1, 1);
   for (const [index, record] of value.records.entries()) {
     const part = presentedRecord(text, index);
     for (const key of Object.keys(value.common)) assert.ok(!part.includes(`"${key}":`) && !part.includes(`${key}:`), key);
@@ -114,7 +129,8 @@ test("graph common membership names only supported work nodes at original indice
   const before = JSON.stringify(graph), text = formatMcpToolContent("head_project_graph", graph);
   assert.ok(text.includes(`Common stored fields for Node[1], Node[3]:\n${JSON.stringify(fixture.common, null, 2)}`));
   assert.ok(text.includes('nodes[0].sessionId: "nav-owner"'));
-  for (let i = 0; i < 3; i++) assert.ok(text.indexOf(`\nNode[${i}]:\n`) < text.indexOf(`\nNode[${i + 1}]:\n`));
+  // Grouped bodies retain exact source indices, not flat navigation ordering.
+  for (let i = 0; i < 4; i++) assert.equal(text.split(`\nNode[${i}]:\n`).length - 1, 1);
   assert.ok(text.includes("workContentCoverage.partial: true")); assert.ok(text.includes("workContentExcerpts[0].text (original text):"));
   assert.ok(text.includes('"hint": "not proof"')); assert.equal(text, formatCliResult("graph-query", graph)); assert.equal(JSON.stringify(graph), before);
   for (const change of [node => { delete node.projectId; }, node => { node.sessionId = null; }, node => { node.kind = "Other"; }, node => { node.workContent = null; }]) {

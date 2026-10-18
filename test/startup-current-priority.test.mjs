@@ -11,6 +11,7 @@ import { recordSessionWorkEvidence, readSessionWorkContext } from "../scripts/li
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
+import { fitSelectedBodyGroups, workBodyTuples } from "../scripts/lib/session-work-body-organization.mjs";
 
 const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
 
@@ -212,8 +213,8 @@ test("public Hook: normal complete context adds no omission-specific query instr
 // Exercise exact capacity boundaries using the unchanged private formatter,
 // independently of filesystem/Host behavior. This is serializer-only evidence.
 const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
-const privateFormatter = new Function("path", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"),
-  source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path);
+const privateFormatter = new Function("path", "fitSelectedBodyGroups", "workBodyTuples", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"),
+  source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path, fitSelectedBodyGroups, workBodyTuples);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const id = "session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
 function serializerEntry(purposeLength, checkpointLength = 0) {

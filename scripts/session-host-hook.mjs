@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createSessionHostAdapter } from "./lib/session-host-adapter.mjs";
+import { fitSelectedBodyGroups, workBodyTuples } from "./lib/session-work-body-organization.mjs";
 
 // Complete emitted JSON, not just P3 bodies. The Codex resource guard reuses
 // the default work-reader size; it is not a token/window or sufficiency claim.
@@ -170,6 +171,11 @@ function startupProjection(entry, root, runtime = "claude") {
     context.omittedEvidenceIds.push(record.evidenceId);
     if (exceedsBound()) context.omittedEvidenceIds.pop();
   }
+  // Use indices of the actually admitted output, not the upstream selection.
+  // Optional grouping never displaces current direction or a fitting body.
+  Object.assign(context, fitSelectedBodyGroups(workBodyTuples(context.records,
+    { projectId: work?.projectId, sessionId: logicalSessionId }), limit - serialize().length));
+  if (exceedsBound()) delete context.selectedBodyGroups;
   return serialize();
 }
 // A read-only command Hook. It neither parses transcript bytes nor registers

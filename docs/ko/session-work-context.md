@@ -27,6 +27,38 @@ Project 갱신이나 P3 메모로 대신하지 않습니다. 예를 들어 “�
 
 ## 가벼운 보존 경로
 
+### Session·선언된 작업 root·작성된 주제
+
+의미 있는 완료·인계·조건 변경에서 HEAD는 기존 두 writer로 실제 소비 경로의 결과,
+판단 이유·대안, 남은 일과 불확실성을 보존할 수 있습니다. 선택적 `workTopics: string[]`는
+작성된 탐색 라벨이며 Product 온보딩이나 사용자 분류표가 필요하지
+않습니다. 라벨만으로는 의미 있는 작업 근거가 되지 않습니다. 필드가 없으면 정규화
+원본에서도 생략되어 기존 ID·digest·정확 재시도 바이트가 같습니다. 주제 텍스트에는
+기존 전체 record 크기만 적용하며 별도 라벨 개수 gate는 추가하지 않습니다.
+
+주제에만 있는 단어로도 그래프의 실제 본문을 찾을 수 있고, 경로·anchor·이웃 조회도
+같은 원본을 사용합니다. 라벨은 Product Feature·IMPLEMENTS/VERIFIED_BY·승인·완료나
+복구 지침을 만들지 않습니다. 이미 검토된 Product 관계는 정확한 revision 계약을
+유지합니다. 부분 그래프의 주제는 `workContentExcerpts`의 원본 field/index/range로
+표시하며 빠진 항목을 조용히 재번호화하지 않습니다.
+
+기본 CLI/MCP 텍스트는 반환된 실제 본문을 정확한 Project/Session과 선언된 root의
+ID 및 digest별로 묶습니다. 연결 없는 기록은 독립적으로 남고, 중첩 anchor를
+전이적으로 합치지 않습니다. 같은 라벨의 여러 Session/root도 소유자가 다르며,
+다중 라벨이 저장 원본이나 본문을 복제하지 않습니다. reader/entry의 선택적
+`selectedBodyGroups`는 반환 record index를 가리키고 실제 내용은 `records`에 한 번만
+있습니다. scope·생략 안내·직렬화 wrapper를 포함한 추가 정보는 record 예산의 남는
+공간만 사용합니다. fitting 본문이 우선이며 group 정보 부재는 작업 부재가 아닙니다.
+`omittedGroups`는 view group의 생략 수이지 원문 생략 수가 아닙니다. `max_characters`는
+여전히 검증 정보가 포함된 record 배열의 상한이지 전체 reader/MCP 전송 상한이 아닙니다.
+
+startup은 실제로 출력에 담은 record의 index로 group을 만들고 Host별 최종 전체 JSON
+상한을 검사합니다. 현재 지침·목적·checkpoint·fitting 본문이 선택적 정보보다 우선합니다.
+추가 조회·쓰기·선택 변경·전체 이력 조사·필수 도구 순서나 저장/시작/종료/ID 의식은
+없습니다. 과거 ended와 실제 결과·남은 검증·unknown은 공존하며 서로 지우지 않습니다.
+이 정리는 native 자동종료·ancestry·실시간 활동판정을 구현하지 않습니다. 로컬 fixture와
+지침 검사는 실제 Host 전달이나 모델 준수의 증거가 아닙니다.
+
 - checkpoint 동기화가 이미 유용한 경우 HEAD는 기존 `head_checkpoint_sync`
   요청에 선택적인 `work_evidence`를 함께 넣습니다. P2와 P3 결과는 별개입니다.
   stale·deferred checkpoint 때문에 근거가 방향으로 승격되지 않으며, 선택적

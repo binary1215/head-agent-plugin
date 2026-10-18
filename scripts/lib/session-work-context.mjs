@@ -13,6 +13,7 @@ import { SESSION_WORK_CONTEXT_VERSION, PROTOCOL, DEFAULT_SCAN, sha, encoded, fai
   readSessionWorkFileBytes, MAX_RECORD_BYTES,
   SESSION_WORK_DEFAULT_CHARACTERS, SESSION_WORK_MAX_CHARACTERS } from "./session-work-evidence-original.mjs";
 import { noteProjectGraphChange, readSessionWorkNavigationHints } from "./discovery-index.mjs";
+import { fitSelectedBodyGroups, workBodyTuples } from "./session-work-body-organization.mjs";
 export { SESSION_WORK_CONTEXT_VERSION, normalizeSessionWorkEvidence };
 function identity(root) {
   const base = fs.realpathSync(path.resolve(root));
@@ -489,7 +490,8 @@ export function readSessionWorkContext({ root = ".", evidenceIds = null, maxReco
   if (evidenceIds === null && afterEvidenceId === null) {
     const result = readDefaultWorkContext(owner, maxRecords, maxCharacters, context);
     if (identity(owner.root).basis !== owner.basis) return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
-    return { ...shell, ...result };
+    return { ...shell, ...result, ...fitSelectedBodyGroups(workBodyTuples(result.records, owner),
+      maxCharacters - JSON.stringify(result.records).length) };
   }
   const directoryPath = directory(owner.root);
   const names = evidenceIds !== null ? null : fs.existsSync(directoryPath) ? fs.readdirSync(directoryPath).filter((name) => /^work-evidence-[a-f0-9]{24}\.json$/.test(name)).sort() : [];
@@ -555,7 +557,7 @@ export function readSessionWorkContext({ root = ".", evidenceIds = null, maxReco
   const organizationSummary = organization?.summary();
   return { ...shell, status: unavailableCount || evidenceIds === null && remainingNames.length > ids.length || omittedByBudget
       || organizationSummary?.unavailableRelations || organizationSummary?.uninspectedRelations ? "work_context_partial" : records.length ? "work_context_available" : "work_context_not_recorded",
-    records, unavailable,
+    records, unavailable, ...fitSelectedBodyGroups(workBodyTuples(records, owner), maxCharacters - used),
     ...(organization ? { organization: { ...organizationSummary, relatedReadAttempts: 0, relatedExpansionDeferred: 0 } } : {}),
     coverage: { originals: names?.length ?? null, inspected: ids.length, valid, unavailable: unavailableCount, included: records.length, maxRecords, maxCharacters, usedCharacters: used,
       characterBudgetScope: "JSON.stringify(records).length; separate bounded metadata envelope excluded",

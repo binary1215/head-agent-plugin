@@ -1,3 +1,5 @@
+import { organizeSelectedWorkBodies, workBodyTuples } from "./session-work-body-organization.mjs";
+
 const PRODUCT_LABELS = {
   unavailable: "unavailable until Core initialization",
   not_activated: "not activated",
@@ -342,6 +344,10 @@ function originalWorkBody(value, location) {
   if (!originalObject(value) || !Object.keys(value).length) return originalField(location, value);
   const handled = new Set();
   let text = "";
+  if (Array.isArray(value.workTopics)) {
+    text += "Authored work topics (navigation only):\n" + originalList(value.workTopics, `${location}.workTopics`);
+    handled.add("workTopics");
+  }
   if (Object.hasOwn(value, "executionObservation")) {
     text += `Saved execution observation (historical; qualifies its exact target only):\n${JSON.stringify(value.executionObservation, null, 2)}\n`;
     handled.add("executionObservation");
@@ -430,6 +436,24 @@ function originalWorkRecord(value, location, bodyKey, commonKeys = []) {
   return text + originalRemainder(value, handled, bodyKey === "content" ? "record" : "node");
 }
 
+function groupedWorkBodies(entries, bodyKey, owner, commonKeys) {
+  const label = bodyKey === "content" ? "Record" : "Node", array = bodyKey === "content" ? "records" : "nodes";
+  const tuples = workBodyTuples(entries.map(entry => entry.value), { ...owner, bodyKey })
+    .map((tuple, index) => ({ ...tuple, index: entries[index].index }));
+  const organized = organizeSelectedWorkBodies(tuples), byIndex = new Map(entries.map(entry => [entry.index, entry.value]));
+  let text = organized.groups.length ? `${organized.scope}\n` : "";
+  for (const group of organized.groups) {
+    text += `Session work group (${JSON.stringify(group.sessionId)}):\n`;
+    text += `Declared historical work root: ${group.rootKind === "standalone" ? "none; standalone saved original " : ""}${JSON.stringify(group.root)}\n`;
+    if (group.rootBodyIndex === null) text += "Root body not in returned selection; absence is not inferred.\n";
+    else if (!group.recordIndices.includes(group.rootBodyIndex)) text += `Root body: ${label}[${group.rootBodyIndex}], displayed in its own declared group, not repeated.\n`;
+    for (const index of group.recordIndices) {
+      text += `${label}[${index}]:\n${originalWorkRecord(byIndex.get(index), `${array}[${index}]`, bodyKey, commonKeys)}`;
+    }
+  }
+  return text;
+}
+
 export function formatSessionWorkContext(value) {
   if (value == null || value.status === "work_context_not_recorded" && value.coverage?.originals === 0) return "";
   const heading = "Selected Session work evidence (P3, not current direction or permission):\n";
@@ -439,7 +463,7 @@ export function formatSessionWorkContext(value) {
   if (!value.records.length) text += originalField("workContext.records", value.records);
   const common = commonStoredWorkFields(value.records.map((record, index) => ({ index, value: record })), "Record", "content");
   text += common.text;
-  for (const [index, record] of value.records.entries()) text += `Record[${index}]:\n${originalWorkRecord(record, `records[${index}]`, "content", common.keys)}`;
+  text += groupedWorkBodies(value.records.map((record, index) => ({ index, value: record })), "content", value, common.keys);
   return text + originalRemainder(value, handled, "workContext");
 }
 
@@ -456,9 +480,9 @@ function formatProjectGraph(value) {
   const common = commonStoredWorkFields(work, "Node", "workContent");
   text += common.text;
   for (const [index, node] of value.nodes.entries()) {
+    if (originalObject(node) && Object.hasOwn(node, "workContent")) continue;
     text += `Node[${index}]:\n`;
-    if (originalObject(node) && Object.hasOwn(node, "workContent")) text += originalWorkRecord(node, `nodes[${index}]`, "workContent", common.keys);
-    else if (originalObject(node)) {
+    if (originalObject(node)) {
       const keys = new Set();
       text += originalFacts(node, ["nodeId", "kind", "projectId", "sessionId", "ownerSessionId", "reviewState", "freshness", "contentScope", "contentPartial"], `nodes[${index}]`, keys);
       if (Object.hasOwn(node, "excerpt")) { text += originalField(`nodes[${index}].excerpt`, node.excerpt); keys.add("excerpt"); }
@@ -466,6 +490,9 @@ function formatProjectGraph(value) {
       if (!Object.keys(node).length) text += originalField(`nodes[${index}]`, node);
     } else text += originalField(`nodes[${index}]`, node);
   }
+  // Graph work nodes carry their exact Session; Project identity is verified
+  // in the query basis, not a top-level projectId or current caller Session.
+  text += groupedWorkBodies(work, "workContent", { projectId: value.basis?.projectId }, common.keys);
   if (!value.edges.length) text += originalField("graph.edges", value.edges);
   for (const [index, edge] of value.edges.entries()) {
     text += `Edge[${index}]:\n`;
@@ -815,7 +842,24 @@ export function formatDeliveryStatus(value) {
   return `${lines.join("\n")}\n`;
 }
 
+function formatSessionList(value) {
+  if (!originalObject(value) || !Array.isArray(value.sessions)) return JSON.stringify(value);
+  const handled = new Set(["sessions"]);
+  let text = "Logical Sessions: purpose and stored P2 pointers; not freshly verified execution or completion.\n";
+  text += originalFacts(value, ["projectId", "defaultSessionId"], "sessions", handled);
+  for (const [index, session] of value.sessions.entries()) {
+    text += `Session[${index}]:\n`;
+    if (!originalObject(session)) { text += originalField(`sessions[${index}]`, session); continue; }
+    const fields = new Set();
+    text += originalFacts(session, ["purpose", "sessionId", "default"], `sessions[${index}]`, fields);
+    text += originalRemainder(session, fields, `sessions[${index}]`);
+  }
+  if (!value.sessions.length) text += originalField("sessions", value.sessions);
+  return text + originalRemainder(value, handled, "sessions");
+}
+
 export function formatMcpToolContent(name, value) {
+  if (name === "head_session_list") return formatSessionList(value);
   if (name === "head_project_graph") return formatProjectGraph(value) ?? JSON.stringify(value);
   if (name === "head_bounded_worker_prepare") return formatWorkerPreparation(value);
   if (["head_worker_integration_status", "head_worker_integration"].includes(name)) return formatWorkerGuidance(value);
@@ -855,6 +899,7 @@ export function formatCliError(error) {
 }
 
 export function formatCliResult(command, value) {
+  if (command === "session-list") return formatSessionList(value);
   if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value, { doctor: command === "doctor" });
   if (command === "worker-prepare") return formatWorkerPreparation(value);
   if (["worker-integration-status", "worker-integrate", "worker-wave-status", "worker-wave-wait"].includes(command)) return formatWorkerGuidance(value);

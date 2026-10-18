@@ -42,7 +42,7 @@ function exactEvidence(value) {
 }
 export const sameEvidence = (a, b) => a?.evidenceId === b?.evidenceId && a?.evidenceDigest === b?.evidenceDigest;
 export function normalizeSessionWorkEvidence(input) {
-  object(input, ["summary", "judgments", "observedWork", "pending", "unknowns", "suggestedFollowUp", "references", "occurrenceKey", "workLink", "executionObservation"], "work evidence");
+  object(input, ["summary", "judgments", "observedWork", "pending", "unknowns", "suggestedFollowUp", "references", "occurrenceKey", "workLink", "executionObservation", "workTopics"], "work evidence");
   if (input.judgments !== undefined && !Array.isArray(input.judgments)) fail("Judgments must be an array.");
   if (input.references !== undefined && !Array.isArray(input.references)) fail("References must be an array.");
   const content = {
@@ -66,6 +66,7 @@ export function normalizeSessionWorkEvidence(input) {
   };
   // Absent extensions remain absent: legacy normalized bytes and identities do
   // not change. These selectors name saved notes, never execution attempts.
+  if (input.workTopics !== undefined) content.workTopics = list(input.workTopics, "Work topics");
   if (input.workLink !== undefined) {
     object(input.workLink, ["root", "predecessor"], "work link");
     content.workLink = { root: exactEvidence(input.workLink.root), predecessor: exactEvidence(input.workLink.predecessor) };

@@ -67,13 +67,50 @@ keys and empty values, retain their own object location. Identity, reference
 diagnostics and other residual detail follow the corresponding body; coverage,
 omissions and supported expansion remain with the enclosing context.
 
-This only changes default text presentation. Core values, MCP
+This body formatter changes default text presentation. Core original values, MCP
 `structuredContent`, CLI `--json`, Hooks, selection and proof checks are unchanged.
 A complete returned body remains usable even alongside a changed reference or
 `sourceFallback`; their presence does not require an automatic reread. Missing
 content or a decision depending on current source can still need the disclosed
 exact expansion or affected-source check. Historical content grants no current
 effect permission, and a truly empty ready entry stays quiet.
+
+### Session, declared work root and authored topics
+
+At meaningful completion, handoff or changed conditions, HEAD can retain actual
+consumer results, reasons/alternatives and unfinished work through the same two
+writers. Optional `workTopics: string[]` supplies authored navigation labels;
+it requires neither Product onboarding nor a user taxonomy. Topics alone are not
+meaningful work evidence. Absent topics stay absent in normalized originals, so
+legacy identities, digests and exact retry bytes remain unchanged. Existing
+aggregate record bounds include topic text; no separate label-count gate is added.
+
+Topic-only graph questions can retrieve the same real body as paths, anchors or
+neighbors. A label never creates a Product Feature, IMPLEMENTS/VERIFIED_BY edge,
+approval, completion or recovery direction. Existing reviewed Product relations
+retain their exact revision contracts. Partial graph labels use original
+`workContentExcerpts` field/index/ranges, not a silently renumbered topic array.
+
+Default CLI/MCP text groups actual returned bodies by exact Project/Session and
+declared root ID **and digest**. Unlinked records stay standalone; nested anchors
+are not transitively collapsed. The same label across Sessions/roots never merges
+owners, and multiple labels do not duplicate a stored original or its full body.
+Reader/entry may include `selectedBodyGroups` referencing the returned record
+indices; actual content remains once in `records`. The optional envelope, including
+scope/omission notice and serialization overhead, uses only spare record budget.
+Fitting bodies are admitted first. Missing group metadata does not mean missing
+work; `omittedGroups` counts omitted view groups, not omitted source content.
+The existing `max_characters` contract still bounds the enriched record array,
+not the complete reader/MCP transport envelope.
+
+Startup derives groups from its actually admitted output records and checks its
+complete Host-specific JSON ceiling after optional metadata. Current direction,
+purpose, checkpoint and fitting work bodies have priority. No new reads, writes,
+selection changes, archive census, mandatory tool chain or save/start/end/ID ritual
+is introduced. Historical ended can coexist with an actual result and pending
+verification/unknowns; it does not clear either. Native automatic end, ancestry
+and live activity are not implemented by this organization. Local fixture and
+instruction checks are not proof of actual Host delivery or model compliance.
 
 The self-contained [head-conversation Skill](../skills/head-conversation/SKILL.md)
 helps explain HEAD work, choices, progress and results in the user's language.

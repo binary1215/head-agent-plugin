@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { dispatch } from "../scripts/mcp-server.mjs";
+import { dispatch, catalogTools } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { formatCliResult, formatMcpToolContent, formatConversationRecovery } from "../scripts/lib/cli-presentation.mjs";
 import { enterConversationRecovery } from "../scripts/lib/compaction-lifecycle.mjs";
@@ -13,6 +13,7 @@ import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createWholePlanSnapshot, createExecutionContract } from "../scripts/lib/execution-lineage.mjs";
 import { startRun, finishRun } from "../scripts/lib/run-lineage.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
+import { fitSelectedBodyGroups, workBodyTuples } from "../scripts/lib/session-work-body-organization.mjs";
 import { fixture, exact, link, representative, snapshot, recordFor, accounting, pluginRoot } from "./helpers/session-work-linkage-fixture.mjs";
 
 const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
@@ -51,10 +52,12 @@ function assertCommonRecords(text, records) {
   const blocks = [...text.matchAll(/^Common stored fields for (.+):\n/gmu)];
   assert.equal(blocks.length, Object.keys(expected).length ? 1 : 0);
   if (blocks.length) {
-    const block = blocks[0], firstRecord = text.indexOf("\nRecord[0]:\n");
+    const block = blocks[0], firstRecord = text.search(/^Record\[\d+\]:\n/mu);
     assert.equal(block[1], records.map((_, index) => `Record[${index}]`).join(", "));
     assert.ok(block.index < firstRecord);
-    assert.deepEqual(JSON.parse(text.slice(block.index + block[0].length, firstRecord)), expected);
+    const encoded = text.slice(block.index + block[0].length).match(/^\{[\s\S]*?\n\}/u);
+    assert.ok(encoded, "Common fields remain one exact JSON object before grouped bodies");
+    assert.deepEqual(JSON.parse(encoded[0]), expected);
   }
   return expected;
 }
@@ -66,9 +69,11 @@ function assertPresentedWork(text, expected) {
   }
   for (const name of ["organization", "coverage", "omissions", "nextAfterEvidenceId"]) assertJsonMember(text, name, expected[name]);
   for (const [index, record] of expected.records.entries()) {
-    const start = text.indexOf(`\nRecord[${index}]:\n`), ends = [text.indexOf(`\nRecord[${index + 1}]:\n`, start),
-      text.indexOf("Additional original fields at workContext:\n", start)].filter(offset => offset >= 0);
+    const heading = `\nRecord[${index}]:\n`, start = text.indexOf(heading);
     assert.ok(start >= 0, `Missing Record[${index}]`);
+    assert.equal(text.split(heading).length - 1, 1, `Record[${index}] body is displayed once`);
+    const following = text.slice(start + heading.length).search(/^(?:Record\[\d+\]:|Session work group \(|Additional original fields at workContext:)/mu);
+    const ends = following < 0 ? [] : [start + heading.length + following];
     const section = text.slice(start, ends.length ? Math.min(...ends) : undefined);
     for (const name of ["evidenceId", "projectId", "sessionId", "kind", "subtype", "selectionRole"]) {
       if (record[name] !== undefined) assert.equal(section.split("\n").includes(`${name}: ${JSON.stringify(record[name])}`),
@@ -165,26 +170,204 @@ function hostFixture(f, runtime) {
   } };
 }
 
+function assertSelectedBodyGroups(value, records = value.records, complete = true) {
+  const organized = value.selectedBodyGroups;
+  assert.ok(organized, "A small fitting selected body view should expose its navigation groups");
+  assert.match(organized.scope, /returned bodies only/iu);
+  assert.match(organized.scope, /navigation/iu);
+  if (complete) assert.equal(organized.omittedGroups, 0);
+  const indices = [];
+  for (const group of organized.groups) {
+    assert.equal(Object.hasOwn(group, "content"), false, "Group metadata references existing bodies without copying them");
+    for (const index of group.recordIndices) {
+      assert.ok(Number.isSafeInteger(index) && index >= 0 && index < records.length);
+      indices.push(index);
+      const record = records[index];
+      assert.equal(group.projectId, record.projectId ?? value.projectId);
+      assert.equal(group.sessionId, record.sessionId ?? value.sessionId);
+      assert.deepEqual(group.root, record.content.workLink?.root || { evidenceId: record.evidenceId, evidenceDigest: record.evidenceDigest });
+    }
+    if (group.rootBodyIndex !== null) {
+      const record = records[group.rootBodyIndex];
+      assert.ok(record, "Root pointers must use actual admitted indices");
+      assert.deepEqual(group.root, { evidenceId: record.evidenceId, evidenceDigest: record.evidenceDigest });
+    }
+    for (const association of group.topicAssociations) {
+      assert.ok(group.recordIndices.includes(association.recordIndex));
+      const source = records[association.recordIndex].content.workTopics;
+      assert.equal(typeof source?.[association.index], "string", "Every association retains its authored topic source index");
+      assert.equal(Object.hasOwn(association, "text"), false, "Topic metadata need not repeat the original label text");
+    }
+  }
+  assert.equal(new Set(indices).size, indices.length, "No actual body is repeated in metadata groups");
+  if (complete) assert.deepEqual([...indices].sort((a, b) => a - b), records.map((_, index) => index));
+  return organized;
+}
+
+function assertGroupedBodyOwnership(text, records) {
+  for (const [index, record] of records.entries()) {
+    const offset = text.indexOf(`\nRecord[${index}]:\n`);
+    assert.ok(offset >= 0);
+    const ownerOffset = text.lastIndexOf("Session work group (", offset), rootOffset = text.lastIndexOf("Declared historical work root:", offset);
+    assert.ok(ownerOffset >= 0 && rootOffset > ownerOffset, "Each actual body is below an owner and declared root heading");
+    assert.ok(text.slice(ownerOffset, rootOffset).includes(record.sessionId));
+    const root = record.content.workLink?.root || { evidenceId: record.evidenceId, evidenceDigest: record.evidenceDigest };
+    const rootLine = text.slice(rootOffset, text.indexOf("\n", rootOffset));
+    assert.ok(rootLine.includes(root.evidenceId)); assert.ok(rootLine.includes(root.evidenceDigest));
+  }
+}
+
+function privateStartupFormatter(groupFitter = fitSelectedBodyGroups) {
+  const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
+  return new Function("path", "fitSelectedBodyGroups", "workBodyTuples",
+    source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"), source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")
+    (path, groupFitter, workBodyTuples);
+}
+
 test("shared optional schema travels through direct record, CLI JSON and checkpoint work_evidence without extra saves", async t => {
   const f = fixture(t);
-  const root = (await call(f, "head_session_work_record", { evidence: { summary: "Synthetic initial anchor" } })).structuredContent;
-  const input = { summary: "CLI running note", workLink: link(root), executionObservation: { state: "running" } };
+  const topics = ["ConnectedTopicMhjv4172", "Alternative topic", "ConnectedTopicMhjv4172"];
+  const root = (await call(f, "head_session_work_record", { evidence: { summary: "Synthetic initial anchor", workTopics: topics } })).structuredContent;
+  assert.deepEqual(root.evidence.content.workTopics, topics);
+  const recordSchema = catalogTools.find(tool => tool.name === "head_session_work_record").inputSchema.properties.evidence;
+  const checkpointSchema = catalogTools.find(tool => tool.name === "head_checkpoint_sync").inputSchema.properties.work_evidence;
+  assert.deepEqual(recordSchema.properties.workTopics, checkpointSchema.properties.workTopics);
+  assert.equal(recordSchema.properties.workTopics.type, "array");
+  assert.equal(recordSchema.properties.workTopics.items.type, "string");
+  assert.equal(recordSchema.required?.includes("workTopics") || false, false);
+  const input = { summary: "CLI running note", workTopics: topics, workLink: link(root), executionObservation: { state: "running" } };
   const inputFile = path.join(f.base, "cli-evidence.json"); fs.writeFileSync(inputFile, JSON.stringify(input));
   const running = runCommand(["session-work-record", f.root, "--session", f.session.sessionId, "--input", inputFile]);
   assert.deepEqual(running.evidence.content.workLink, input.workLink);
+  assert.deepEqual(running.evidence.content.workTopics, topics);
   const basis = f.route(() => inspectRecoveryCheckpointBasis({ root: f.root }).basis.basisId);
   const synced = (await call(f, "head_checkpoint_sync", {
     expected_recovery_basis_id: basis, purpose: "Explain synthetic work", approved_decisions: [],
     current_position: "Observed bounded completion", next_expected_result: "Explain remaining X",
-    work_evidence: { pending: ["X"], workLink: link(root, running), executionObservation: { state: "ended", target: exact(running) } },
+    work_evidence: { pending: ["X"], workTopics: [topics[0]], workLink: link(root, running), executionObservation: { state: "ended", target: exact(running) } },
   }, true)).structuredContent;
   assert.equal(synced.outcome, "created"); assert.equal(synced.workEvidence.writes, 1);
   assert.equal(synced.checkpoint.workEvidence, undefined);
   const before = snapshot(f.base), read = f.read({ maxRecords: 8 });
   assert.equal(read.coverage.originals, 3); assert.deepEqual(recordFor(read, running).savedActivity.states, ["ended"]);
+  assert.deepEqual(read.records.find(record => record.evidenceId === synced.workEvidence.evidenceId).content.workTopics, [topics[0]]);
+  const grouped = assertSelectedBodyGroups(read);
+  const runningIndex = read.records.findIndex(record => record.evidenceId === running.evidence.evidenceId);
+  assert.equal(grouped.groups.flatMap(group => group.topicAssociations).filter(item => item.recordIndex === runningIndex).length, 2,
+    "Duplicate authored topics do not duplicate navigation associations or full bodies");
   const retry = await call(f, "head_session_work_record", { evidence: input }, true);
   assert.equal(retry.structuredContent.writes, 0); assert.equal(retry.structuredContent.executionReplayAllowed, false);
   assert.deepEqual(snapshot(f.base), before); defaultAccounting(read);
+});
+
+test("authored topics connect old reason and checkpoint result to selected reader, grouped CLI/MCP, entry and both synthetic startup helpers", async t => {
+  const f = fixture(t, "CURRENT SELECTED PURPOSE: explain retained work only"), topic = "ConnectedTopicVqmb9064";
+  const root = f.save({ workTopics: [topic], summary: "Old root body marker Dtfr3111", judgments: [{ assessment: "Use the narrow branch",
+    reason: "OLD REASON marker Xjcv4222: broad replacement loses provenance", alternatives: ["Rejected rewrite marker Hqns5333"] }] });
+  const running = (await call(f, "head_session_work_record", { evidence: { summary: "Earlier observed running marker Bzkl6444", workTopics: [topic, "Second authored association"],
+    workLink: link(root), executionObservation: { state: "running" } } })).structuredContent;
+  const direction = updateProjectDirection({ root: f.root, input: { goal: "CURRENT COMMON GOAL: explain only", constraints: ["No external effects"], cancelledActions: ["deployment"] } }).direction;
+  const basis = f.route(() => inspectRecoveryCheckpointBasis({ root: f.root }).basis.basisId);
+  const synced = (await call(f, "head_checkpoint_sync", { expected_recovery_basis_id: basis,
+    purpose: "CURRENT P2 PURPOSE: inspect only", approved_decisions: ["Current constraint: no deployment"],
+    current_position: "Retained results need separate native verification", next_expected_result: "Explain remaining work; no deployment",
+    work_evidence: { summary: "Recent result body marker Lmwd7555", workTopics: [topic],
+      observedWork: ["ACTUAL RESULT marker Kfng8666: bounded local bytes were retained"], pending: ["PENDING marker Cjxr9777: another check remains"],
+      unknowns: ["UNKNOWN marker Ptvs1888: native outcome remains unknown"], workLink: link(root, running), executionObservation: { state: "ended", target: exact(running) } },
+  }, true)).structuredContent;
+  assert.equal(synced.workEvidence.writes, 1);
+  const callers = ["codex", "claude"].map(runtime => ({ runtime, ...hostFixture(f, runtime) })), before = snapshot(f.base);
+  await withoutSyncWrites(async () => {
+    const expected = f.read(), grouped = assertSelectedBodyGroups(expected);
+    assert.equal(expected.records.length, 3); assert.equal(grouped.groups.length, 1);
+    assert.deepEqual(grouped.groups[0].root, exact(root));
+    assert.deepEqual(recordFor(expected, running).savedActivity.states, ["ended"]);
+    for (const record of expected.records) {
+      assert.ok(record.content.workTopics.includes(topic));
+      const { workTopics, ...searchableBody } = record.content;
+      assert.equal(JSON.stringify(searchableBody).includes(topic), false, "The connected label witness must be absent from every ordinary body");
+    }
+    const cli = runCommand(["session-work-read", f.root, "--session", f.session.sessionId]);
+    assert.deepEqual(cli, expected);
+    const outputs = [formatCliResult("session-work-read", cli)];
+    for (const routed of [false, true]) {
+      const read = await call(f, "head_session_work_read", {}, routed);
+      assert.deepEqual(read.structuredContent, expected); outputs.push(read.content[0].text);
+      const entry = await call(f, "head_conversation_enter", {}, routed);
+      assert.deepEqual(entry.structuredContent.workContext, expected);
+      assert.deepEqual(entry.structuredContent.restore?.projection?.currentProjectDirection
+        ?? entry.structuredContent.projectStatus?.currentProjectDirection ?? entry.structuredContent.currentProjectDirection, direction);
+      assert.equal(entry.structuredContent.ordinaryWorkBlocked, false); outputs.push(entry.content[0].text);
+    }
+    const entry = f.route(() => enterConversationRecovery({ root: f.root }));
+    assert.deepEqual(entry.workContext, expected); outputs.push(formatCliResult("conversation-enter", entry));
+    for (const text of outputs) {
+      assertPresentedWork(text, expected); assertGroupedBodyOwnership(text, expected.records);
+      for (const marker of ["Old root body marker Dtfr3111", "OLD REASON marker Xjcv4222", "ACTUAL RESULT marker Kfng8666", "PENDING marker Cjxr9777", "UNKNOWN marker Ptvs1888"])
+        assert.equal(text.split(marker).length - 1, 1, "One coherent output carries each retained body once");
+    }
+    for (const caller of callers) {
+      const { value, text } = caller.read();
+      assert.ok(text.length <= (caller.runtime === "codex" ? 32768 : 10000));
+      assert.equal(value.records.length, expected.records.length, "Small fitting bodies survive optional grouping metadata");
+      assertSelectedBodyGroups({ ...value, projectId: expected.projectId, sessionId: expected.sessionId });
+      assert.equal(value.sessionPurpose, expected.sessionPurpose); assert.deepEqual(value.currentProjectDirection, directionView(direction));
+      assert.equal(value.sessionRecovery.checkpointId, synced.checkpoint.checkpointId);
+      assert.deepEqual(value.currentProjectDirection.input.cancelledActions, ["deployment"]);
+      assert.equal(value.sessionRecovery.historicalApprovalGrantsCurrentEffect, false);
+      assert.equal(value.ordinaryWorkBlocked, false); assert.equal(value.userDecisionRequired, false);
+      assert.match(value.savedObservationScope, /no current live state, success or authority/u);
+      for (const record of value.records) {
+        const original = expected.records.find(item => item.evidenceId === record.evidenceId);
+        assert.deepEqual(record.content, original.content); assert.deepEqual(record.savedActivity, original.savedActivity);
+      }
+      for (const marker of ["OLD REASON marker Xjcv4222", "ACTUAL RESULT marker Kfng8666", "PENDING marker Cjxr9777", "UNKNOWN marker Ptvs1888"])
+        assert.equal(text.split(marker).length - 1, 1);
+    }
+  });
+  assert.deepEqual(snapshot(f.base), before);
+  t.diagnostic("Local public APIs and packaged startup serializer only; no native lifecycle, Host attachment or model compliance verified");
+});
+
+test("exact reader can omit all optional grouping metadata without evicting its already-fitting original", t => {
+  const f = fixture(t), saved = f.save({ workTopics: ["BudgetTopicFpmx2579"], summary: "Fitting original remains available",
+    judgments: [{ assessment: "Keep it", reason: "Original reason remains intact", alternatives: ["Rejected expansion"] }], pending: ["X remains"], unknowns: ["Outcome unknown"] });
+  const before = snapshot(f.base);
+  const full = withoutSyncWrites(() => f.read({ evidenceIds: [saved.evidence.evidenceId], maxRecords: 1 }));
+  assertSelectedBodyGroups(full);
+  const budget = JSON.stringify(full.records).length;
+  const tight = withoutSyncWrites(() => f.read({ evidenceIds: [saved.evidence.evidenceId], maxRecords: 1, maxCharacters: budget }));
+  assert.deepEqual(tight.records, full.records); assert.equal(tight.selectedBodyGroups, undefined);
+  assert.equal(tight.omissions.byBudget, 0); assert.equal(tight.coverage.usedCharacters, budget);
+  const text = formatCliResult("session-work-read", tight);
+  assertPresentedWork(text, tight); assertGroupedBodyOwnership(text, tight.records);
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+for (const runtime of ["codex", "claude"]) test(`${runtime} private startup grouping metadata yields to intact protected context and an admitted body`, () => {
+  const formatter = privateStartupFormatter(), withoutGroups = privateStartupFormatter(() => ({})), limit = runtime === "codex" ? 32768 : 10000;
+  const record = { evidenceId: "work-evidence-" + "a".repeat(24), evidenceDigest: "b".repeat(64), content: {
+    summary: "", workTopics: ["Optional topic association"], pending: ["Unfinished work"], unknowns: ["Outcome remains unknown"] } };
+  const entry = { status: "conversation_ready", currentProjectDirection: { directionId: "direction-" + "c".repeat(24),
+    input: { goal: "Protected current goal", constraints: ["No external effects"], cancelledActions: ["deployment"] } },
+    restore: { checkpoint: { checkpointId: "checkpoint-" + "d".repeat(24), purpose: "Protected current P2", approvedDecisions: ["No deployment"],
+      currentPosition: "Retained checkpoint position", nextExpectedResult: "Explain only" } },
+    workContext: { status: "work_context_restored", projectId: "project-fixture", sessionId: "session-fixture", sessionPurpose: "Protected selected purpose",
+      records: [record], coverage: { originals: 1, inspected: 1, valid: 1, included: 1 }, omissions: { byBudget: 0, uninspected: 0, evidenceIds: [] } } };
+  let fitting;
+  for (let length = 0; length <= limit; length += 73) {
+    record.content.summary = "s".repeat(length);
+    const control = JSON.parse(withoutGroups(entry, pluginRoot, runtime));
+    if (control.records.length) fitting = { summary: record.content.summary, control };
+    else if (fitting) break;
+  }
+  assert.ok(fitting); record.content.summary = fitting.summary;
+  const text = formatter(entry, pluginRoot, runtime), value = JSON.parse(text);
+  assert.ok(text.length <= limit); assert.deepEqual(value.records, fitting.control.records);
+  assert.deepEqual(value.currentProjectDirection, fitting.control.currentProjectDirection);
+  assert.deepEqual(value.sessionRecovery, fitting.control.sessionRecovery); assert.equal(value.sessionPurpose, fitting.control.sessionPurpose);
+  assert.equal(value.selectedBodyGroups, undefined, "Metadata must be omitted when the fitting body leaves no room for its wrapper");
+  assert.equal(value.omittedEvidenceCount, 0); assert.equal(value.ordinaryWorkBlocked, false);
 });
 
 test("organized originals and overlays reach CLI, direct/router MCP and entry with zero writes", async t => {
@@ -398,8 +581,7 @@ test("P3 ended never clears canonical pending review, and CLI/Hook expose the se
 
 for (const uninspected of [0, 32]) test(`private startup serializer retains record-overlay tuples at exact 9999 and 10000 (${uninspected} uninspected) and omits them whole beyond capacity`, t => {
   // Serializer-only capacity evidence complements the public Hook fixtures.
-  const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
-  const formatter = new Function("path", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"), source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path);
+  const formatter = privateStartupFormatter();
   const id = "work-evidence-" + "a".repeat(24), digest = "b".repeat(64);
   const activity = { states: ["ended"], qualifierCount: 1, qualifiers: [{ evidenceId: "work-evidence-" + "c".repeat(24), evidenceDigest: digest, state: "ended" }],
     omittedQualifierCount: 0, unavailableQualifierCount: 0, coverage: "verified-scan", relations: [] };
@@ -451,8 +633,7 @@ for (const uninspected of [0, 32]) test(`private startup serializer retains reco
 
 test("serializer-only incomplete/conflict execution status survives CLI quiet/common-unavailable/normal and private Hook without P2 writes", t => {
   const f = fixture(t), before = snapshot(f.base);
-  const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
-  const formatter = new Function("path", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"), source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path);
+  const formatter = privateStartupFormatter();
   const activeRunId = "run-1767225600000-abcdef";
   for (const status of ["incomplete", "conflict"]) {
     const entry = { status: "conversation_direction_restored", currentProjectDirection: null,
@@ -485,8 +666,7 @@ test("serializer-only incomplete/conflict execution status survives CLI quiet/co
 });
 
 test("private Hook execution-detail omission keeps an expansion notice without evicting fitting protected fields", t => {
-  const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
-  const formatter = new Function("path", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"), source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path);
+  const formatter = privateStartupFormatter();
   const entry = { status: "conversation_direction_restored", currentProjectDirection: { directionId: "direction-" + "a".repeat(24),
     input: { goal: "Current goal", constraints: ["Local only"], cancelledActions: ["deployment"] } },
     restore: { checkpoint: { checkpointId: "checkpoint-" + "b".repeat(24), purpose: "Retained P2 purpose", approvedDecisions: ["No network"],

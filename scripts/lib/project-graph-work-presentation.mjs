@@ -11,6 +11,7 @@ export function workTextEntries(content) {
     item.alternatives.forEach((text, alternativeIndex) => add(text, "judgments", index, "alternatives", alternativeIndex));
   }
   for (const field of ["observedWork", "pending", "unknowns", "suggestedFollowUp"]) content[field].forEach((text, index) => add(text, field, index));
+  (content.workTopics || []).forEach((text, index) => add(text, "workTopics", index));
   return entries;
 }
 const characters = content => workTextEntries(content).reduce((n, entry) => n + entry.text.length, 0);
@@ -18,9 +19,9 @@ const cost = content => JSON.stringify({ workContent: content, workContentExcerp
 function coverage(content, included, partial, extra = {}, projected = content, excerpts = []) {
   const total = characters(content);
   const fieldItems = {};
-  for (const field of ["summary", "judgments", "observedWork", "pending", "unknowns", "suggestedFollowUp"]) {
+  for (const field of ["summary", "judgments", "observedWork", "pending", "unknowns", "suggestedFollowUp", ...(content.workTopics === undefined ? [] : ["workTopics"])]) {
     const originalItems = field === "summary" ? Number(typeof content.summary === "string") : content[field].length;
-    const completeItems = field === "summary" ? Number(typeof projected.summary === "string") : projected[field].length;
+    const completeItems = field === "summary" ? Number(typeof projected.summary === "string") : (projected[field] || []).length;
     const partialItems = new Set(excerpts.filter(entry => entry.field === field).map(entry => entry.index)).size;
     fieldItems[field] = { originalItems, completeItems, partialItems, omittedItems: originalItems - completeItems - partialItems };
   }
@@ -67,7 +68,9 @@ function partialBody(node, capacity, terms) {
       if (size && end === start) return null;
       const all = start === 0 && end === entry.text.length;
       const nextContent = { ...content }, nextExcerpts = [...excerpts];
-      if (all && entry.field !== "judgments") {
+      // Topics in a partial projection retain their exact original index/range,
+      // even when an individual label fits whole; no compacted-array aliasing.
+      if (all && entry.field !== "judgments" && entry.field !== "workTopics") {
         if (entry.field === "summary") nextContent.summary = entry.text;
         else nextContent[entry.field] = [...content[entry.field], entry.text];
       } else nextExcerpts.push({ ...entry, text: entry.text.slice(start, end), start, end, totalCharacters: entry.text.length });
