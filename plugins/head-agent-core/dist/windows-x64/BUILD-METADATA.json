@@ -1,0 +1,7 @@
+{
+  "version": "0.3.0-beta.34",
+  "commit": "da1014e99467915430273b65044186cebf891826",
+  "goos": "windows",
+  "goarch": "amd64",
+  "cgoEnabled": false
+}
