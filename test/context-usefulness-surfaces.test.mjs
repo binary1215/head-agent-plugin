@@ -30,7 +30,10 @@ function assertCommonRecords(text,records){
  if(blocks.length){
   const block=blocks[0];assert.equal(block[1],records.map((_,index)=>`Record[${index}]`).join(', '));
   const firstRecord=text.indexOf('\nRecord[0]:\n');assert.ok(block.index<firstRecord);
-  assert.deepEqual(JSON.parse(text.slice(block.index+block[0].length,firstRecord)),expected);
+  // Decode only the common JSON object, not the following P4 group headings.
+  const jsonStart=block.index+block[0].length,jsonEnd=text.indexOf('\n}\n',jsonStart)+2;
+  assert.ok(jsonEnd>jsonStart&&jsonEnd<firstRecord);
+  assert.deepEqual(JSON.parse(text.slice(jsonStart,jsonEnd)),expected);
  }
  return expected;
 }
@@ -44,6 +47,13 @@ function assertWorkPresentation(text,value){
  for(const [index,record]of value.records.entries()){
   const start=text.indexOf(`\nRecord[${index}]:\n`),ends=[text.indexOf(`\nRecord[${index+1}]:\n`,start),text.indexOf('Additional original fields at workContext:\n',start)].filter(offset=>offset>=0);
   assert.ok(start>=0,`Missing Record[${index}]`);const section=text.slice(start,ends.length?Math.min(...ends):undefined);
+  const ownerStart=text.lastIndexOf('Session work group (',start),rootStart=text.lastIndexOf('Declared historical work root:',start);
+  assert.ok(ownerStart>=0&&rootStart>ownerStart&&rootStart<start);
+  assert.ok(text.slice(ownerStart,rootStart).includes(JSON.stringify(record.sessionId)));
+  const rootLine=text.slice(rootStart,text.indexOf('\n',rootStart));
+  const root=record.content.workLink?.root||{evidenceId:record.evidenceId,evidenceDigest:record.evidenceDigest};
+  assert.ok(rootLine.includes(root.evidenceId)&&rootLine.includes(root.evidenceDigest));
+  assert.equal([...text.matchAll(new RegExp(`^Record\\[${index}\\]:$`,'gmu'))].length,1);
   assert.ok(section.includes(`evidenceId: ${JSON.stringify(record.evidenceId)}`));
   for(const key of ['projectId','sessionId','kind','subtype'])if(Object.hasOwn(record,key)){
    const line=`${key}: ${JSON.stringify(record[key])}`;
