@@ -39,7 +39,7 @@ function assertHistoricalPresentation(text, result, node) {
   for (const text of [...node.workContent.pending, ...node.workContent.unknowns]) assert.ok(section.includes(text), `Missing original unresolved work: ${text}`);
   for (const name of ["evidenceDigest", "referenceEvidence", "originalExpansion"]) assertJsonMember(section, name, node[name]);
   const { partial, ...coverage } = node.workContentCoverage;
-  assert.ok(section.includes(`nodes[${index}].workContentCoverage.partial: ${JSON.stringify(partial)}`));
+  assert.ok(section.includes(`workContentCoverage.partial: ${JSON.stringify(partial)}`));
   for (const [name, value] of Object.entries(coverage)) assertJsonMember(section, name, value);
   for (const name of ["coverage", "sourceFallback"]) assertJsonMember(text, name, result[name]);
 }
