@@ -1,0 +1,466 @@
+import fs from "node:fs";
+import path from "node:path";
+import { atomicCreateArtifact } from "./artifact-storage.mjs";
+import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
+import { withProjectMutation } from "./project-mutation-lock.mjs";
+import { safeSessionPath, sessionStatePath, sessionDataPath, withSessionRoute } from "./session-routing.mjs";
+
+// Selected HEAD-authored P3 evidence, not a transcript, direction store, or
+// inference engine. Entry never repairs or writes these originals.
+import { SESSION_WORK_CONTEXT_VERSION, PROTOCOL, DEFAULT_SCAN, sha, encoded, fail, sameEvidence,
+  normalizeSessionWorkEvidence, inputIdentity, verifySessionWorkEvidenceOwner,
+  readSessionWorkEvidenceOriginalFile, inspectSessionWorkReference, createSessionWorkReadContext,
+  readSessionWorkFileBytes, MAX_RECORD_BYTES,
+  SESSION_WORK_DEFAULT_CHARACTERS, SESSION_WORK_MAX_CHARACTERS } from "./session-work-evidence-original.mjs";
+import { noteProjectGraphChange } from "./discovery-index.mjs";
+export { SESSION_WORK_CONTEXT_VERSION, normalizeSessionWorkEvidence };
+function identity(root) {
+  const base = fs.realpathSync(path.resolve(root));
+  const projectBytes = fs.readFileSync(safeSessionPath(base, ".head", "project.json"));
+  const stateBytes = fs.readFileSync(sessionStatePath(base));
+  return { ...verifySessionWorkEvidenceOwner({ root: base, projectBytes, stateBytes }),
+    statePath: path.relative(base, sessionStatePath(base)).replaceAll("\\", "/"),
+    workDirectory: path.relative(base, sessionDataPath(base, "work-evidence")).replaceAll("\\", "/") };
+}
+function directory(root) { return sessionDataPath(root, "work-evidence"); }
+function fileFor(root, evidenceId) {
+  if (!/^work-evidence-[a-f0-9]{24}$/.test(evidenceId || "")) fail("Invalid work evidence identity.");
+  return safeSessionPath(root, path.relative(root, path.join(directory(root), `${evidenceId}.json`)));
+}
+function readOriginalFile(owner, evidenceId) { return readSessionWorkEvidenceOriginalFile(owner, evidenceId); }
+function readOriginal(owner, evidenceId) { return readOriginalFile(owner, evidenceId).record; }
+const reference = inspectSessionWorkReference;
+// Internal graph reader: explicit real owner, without Host selection persistence.
+export function readSessionWorkEvidenceOwner({ root, sessionId }) {
+  if (!sessionId) fail("An exact logical owner is required.", "HEAD_SESSION_IDENTITY_MISMATCH");
+  return withSessionRoute(root, sessionId, () => identity(root));
+}
+export function recordSessionWorkEvidence({ root = ".", input } = {}) {
+  const content = normalizeSessionWorkEvidence(input);
+  return withProjectMutation({ root, scope: "session-recovery" }, () => {
+    const owner = identity(root);
+    const evidenceId = `work-evidence-${inputIdentity(owner, content).slice(0, 24)}`;
+    const file = fileFor(owner.root, evidenceId);
+    // A retry reuses intact originals even if their source has since changed.
+    // Revalidation cannot force the caller to redo an already completed effect.
+    if (fs.existsSync(file)) {
+      const evidence = readOriginal(owner, evidenceId);
+      if (encoded(evidence.content) !== encoded(content)) fail("Work evidence identity collision.", "SESSION_WORK_EVIDENCE_CONFLICT");
+      return { status: "session_work_evidence_reused", evidence, file, persisted: false, writes: 0, authorityChanged: false, executionReplayAllowed: false };
+    }
+    const endpoints = new Map();
+    const endpoint = (selector) => {
+      if (!endpoints.has(selector.evidenceId)) endpoints.set(selector.evidenceId, readOriginal(owner, selector.evidenceId));
+      const original = endpoints.get(selector.evidenceId);
+      if (!sameEvidence(original, selector)) fail("Work link endpoint differs from its exact original.", "SESSION_WORK_LINK_MISMATCH");
+      return original;
+    };
+    if (content.workLink) {
+      endpoint(content.workLink.root);
+      const predecessor = endpoint(content.workLink.predecessor);
+      if (!sameEvidence(predecessor, content.workLink.root) && !sameEvidence(predecessor.content.workLink?.root, content.workLink.root)) {
+        fail("Work predecessor does not declare this exact root.", "SESSION_WORK_LINK_MISMATCH");
+      }
+    }
+    if (content.executionObservation?.target) endpoint(content.executionObservation.target);
+    content.references.forEach((ref) => reference(owner, ref, { saving: true }));
+    if (identity(owner.root).basis !== owner.basis) fail("Session changed before work evidence publication.", "SESSION_WORK_OBSERVATION_CHANGED");
+    const payload = { schemaVersion: 1, kind: "Evidence", subtype: "SessionWorkEvidence", protocol: PROTOCOL,
+      projectId: owner.projectId, sessionId: owner.sessionId, content, recordedAt: new Date().toISOString(),
+      authorityBoundary: artifactAuthorityBoundary("Evidence"), evidenceId };
+    const evidence = { ...payload, evidenceDigest: sha(encoded(payload)) };
+    fs.mkdirSync(directory(owner.root), { recursive: true });
+    fileFor(owner.root, evidenceId); // revalidate new ancestors before publication
+    atomicCreateArtifact(file, `${JSON.stringify(evidence, null, 2)}\n`);
+    const derived = noteProjectGraphChange(owner.root, [path.relative(owner.root, file).replaceAll("\\", "/")]);
+    const graphIndex = derived.status === "unavailable" ? { status: "deferred", reasonCode: derived.reasonCode, ordinaryWorkBlocked: false } : derived;
+    return { status: "session_work_evidence_recorded", evidence, file, persisted: true, writes: 1, authorityChanged: false, executionReplayAllowed: false, graphIndex };
+  });
+}
+
+function workMetadata(original) {
+  return { evidenceId: original.evidenceId, evidenceDigest: original.evidenceDigest, recordedAt: original.recordedAt,
+    ...(original.content.workLink ? { workLink: original.content.workLink } : {}),
+    ...(original.content.executionObservation ? { executionObservation: original.content.executionObservation } : {}) };
+}
+// One compact relation pass over the already verified selected-Session scan.
+// No body/ancestor lookup, clock winner, execution epoch or state transition.
+function workOrganization(metadata, unavailableIds, globalRecent, maxRecords, resolver = null) {
+  const byId = new Map(metadata.map((m) => [m.evidenceId, m]));
+  const incoming = new Map(), qualifierNodes = new Map();
+  const lookup = (id) => unavailableIds.has(id) ? null : resolver ? resolver(id) : byId.get(id);
+  const cycles = new Set(), colors = new Map();
+  for (const m of metadata) {
+    const target = m.executionObservation?.target;
+    if (target && sameEvidence(byId.get(target.evidenceId), target)) {
+      if (!incoming.has(target.evidenceId)) incoming.set(target.evidenceId, { head: null, tail: null, count: 0, unavailable: 0, states: new Map(), version: 0, cached: null });
+      const group = incoming.get(target.evidenceId), node = { metadata: m, group, previous: group.tail, next: null };
+      if (group.tail) group.tail.next = node; else group.head = node;
+      group.tail = node; group.count++;
+      group.states.set(m.executionObservation.state, (group.states.get(m.executionObservation.state) || 0) + 1);
+      qualifierNodes.set(m.evidenceId, node);
+    }
+  }
+  for (const m of metadata) {
+    const trail = []; let id = m.evidenceId;
+    while (byId.has(id) && !colors.has(id)) {
+      colors.set(id, 1); trail.push(id);
+      const pred = byId.get(id).workLink?.predecessor;
+      id = pred && sameEvidence(byId.get(pred.evidenceId), pred) ? pred.evidenceId : null;
+    }
+    if (colors.get(id) === 1) {
+      for (let i = trail.length - 1; i >= 0; i--) { cycles.add(trail[i]); if (trail[i] === id) break; }
+    }
+    for (const visited of trail) colors.set(visited, 2);
+  }
+  const endpointStatus = (selector) => {
+    if (unavailableIds.has(selector.evidenceId)) return "unavailable";
+    const target = lookup(selector.evidenceId);
+    return target ? sameEvidence(target, selector) ? "verified" : "unavailable" : globalRecent ? "unavailable" : "not-inspected";
+  };
+  const relations = (m) => {
+    const rows = [];
+    if (!m) return rows;
+    for (const [role, selector] of [["root", m.workLink?.root], ["predecessor", m.workLink?.predecessor], ["target", m.executionObservation?.target]]) {
+      if (!selector) continue;
+      let status = endpointStatus(selector);
+      if (role === "predecessor" && status === "verified") {
+        const pred = lookup(selector.evidenceId);
+        if (cycles.has(m.evidenceId) || resolver && endpointStatus(m.workLink.root) === "unavailable"
+          || !pred || !sameEvidence(pred, m.workLink.root) && !sameEvidence(pred.workLink?.root, m.workLink.root)) status = "unavailable";
+      }
+      rows.push({ role, status, ...(status === "unavailable" ? { reasonCode: "SESSION_WORK_LINK_UNAVAILABLE" } : {}) });
+    }
+    return rows;
+  };
+  return {
+    byId, incoming,
+    invalidate(id) {
+      const node = qualifierNodes.get(id);
+      if (!node) return;
+      const group = node.group;
+      if (node.previous) node.previous.next = node.next; else group.head = node.next;
+      if (node.next) node.next.previous = node.previous; else group.tail = node.previous;
+      group.count--; group.unavailable++; group.version++;
+      const state = node.metadata.executionObservation.state;
+      group.states.set(state, group.states.get(state) - 1);
+      qualifierNodes.delete(id);
+    },
+    overlay(id) {
+      const m = lookup(id), group = incoming.get(id), rows = relations(m);
+      if (!m || !m.workLink && !m.executionObservation && !group) return null;
+      if (group && group.cached?.version !== group.version) {
+        const qualifiers = [];
+        for (let node = group.head; node && qualifiers.length < maxRecords; node = node.next) {
+          const q = node.metadata;
+          qualifiers.push({ evidenceId: q.evidenceId, evidenceDigest: q.evidenceDigest, state: q.executionObservation.state });
+        }
+        group.cached = { version: group.version, qualifiers };
+      }
+      const qualifiers = group?.cached.qualifiers || [], count = group?.count || 0, unavailableCount = group?.unavailable || 0;
+      return { states: ["running", "paused", "ended", "unknown"].filter((s) => group?.states.get(s) > 0), qualifierCount: count, qualifiers,
+        omittedQualifierCount: count - qualifiers.length, unavailableQualifierCount: unavailableCount,
+        coverage: unavailableCount || rows.some((r) => r.status === "unavailable") ? "partial" : globalRecent ? "verified-scan" : "not-inspected",
+        relations: rows };
+    },
+    summary(sourceIds = null) {
+      let unavailableRelations = 0, uninspectedRelations = 0;
+      const roots = new Set(), children = new Map();
+      const ids = sourceIds || byId.keys();
+      for (const id of ids) {
+        const m = lookup(id);
+        if (!m) continue;
+        if (m.workLink) {
+          roots.add(encoded(m.workLink.root));
+          const key = encoded(m.workLink.predecessor);
+          children.set(key, (children.get(key) || 0) + 1);
+        }
+        for (const row of relations(m)) {
+          if (row.status === "unavailable") unavailableRelations++;
+          if (row.status === "not-inspected") uninspectedRelations++;
+        }
+      }
+      return { interpretation: "Saved historical observations coexist; neither their state, time nor predecessor establishes current live state, success or authority.",
+        liveState: "not-observed", scope: globalRecent && !sourceIds ? "discovered-selected-session" : "inspected-originals-only",
+        roots: roots.size, branchingPredecessors: [...children.values()].filter((n) => n > 1).length,
+        unavailableRelations, uninspectedRelations };
+    },
+  };
+}
+
+// Internal pure single-original projection, shared by exact expansion sizing.
+export function projectExactSessionWorkRecord(original, references) {
+  const organized = Boolean(original.content.workLink || original.content.executionObservation);
+  const organization = organized ? workOrganization([workMetadata(original)], new Set(), false, 1) : null;
+  const overlay = organization?.overlay(original.evidenceId);
+  return { ...original, ...(organization ? { selectionRole: "recent", ...(overlay ? { savedActivity: overlay } : {}) } : {}), references };
+}
+
+// One canonical scan retains compact historical observations, not whole bodies.
+// Selected bodies/direct endpoints are fresh observations; no index is required.
+function readDefaultWorkContext(owner, maxRecords, maxCharacters, context) {
+  const names = fs.existsSync(directory(owner.root)) ? fs.readdirSync(directory(owner.root))
+    .filter((name) => /^work-evidence-[a-f0-9]{24}\.json$/.test(name)).sort() : [];
+  const discovered = new Set(names.map((name) => name.slice(0, -5)));
+  const metadata = [], fresh = new Map(), unavailableIds = new Set();
+  const budget = new Set();
+  const selected = [], roles = new Map(), attempted = new Set(), deferred = new Set();
+  let relatedReads = 0, organization;
+  const reject = (id, error) => {
+    unavailableIds.add(id);
+    budget.delete(id);
+    fresh.set(id, { error });
+    organization?.invalidate(id);
+    return fresh.get(id);
+  };
+  for (const id of discovered) {
+    try {
+      metadata.push(workMetadata(readOriginal(owner, id)));
+    } catch (error) { reject(id, error); }
+  }
+  metadata.sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)) || a.evidenceId.localeCompare(b.evidenceId));
+  let byId;
+  const resolve = (id) => unavailableIds.has(id) || fresh.get(id)?.error ? null : fresh.get(id)?.metadata || byId.get(id);
+  // Build incoming for every verified S identity, independent of future output
+  // membership. A non-body producer is its S observation, never a live state.
+  organization = workOrganization(metadata, unavailableIds, true, maxRecords, resolve);
+  byId = organization.byId;
+  const load = (id, body = false) => {
+    // A late-added endpoint can prove a relation, but it cannot enlarge S's
+    // body domain or its discovered-original counters in this response.
+    if (body && (!discovered.has(id) || !byId.has(id))) return null;
+    const previous = fresh.get(id);
+    if (previous?.error || previous && (!body || previous.record)) return previous;
+    try {
+      if (previous) {
+        const bytes = readSessionWorkFileBytes(owner.root, `${owner.workDirectory}/${id}.json`, MAX_RECORD_BYTES);
+        if (sha(bytes) !== previous.byteDigest) fail("Work evidence changed before body admission.", "SESSION_WORK_OBSERVATION_CHANGED");
+        // Exact bytes were already canonical-verified in this request. A new
+        // raw read is still required when proof-only becomes a body candidate.
+        previous.record = JSON.parse(bytes.toString("utf8"));
+        return previous;
+      }
+      const { record, bytes } = readOriginalFile(owner, id), observed = byId.get(id);
+      if (discovered.has(id) && (!observed || record.recordedAt !== observed.recordedAt || record.evidenceDigest !== observed.evidenceDigest)) {
+        fail("Work evidence changed during selection.", "SESSION_WORK_OBSERVATION_CHANGED");
+      }
+      const proof = { metadata: workMetadata(record), byteDigest: sha(bytes), ...(body ? { record } : {}) };
+      fresh.set(id, proof); return proof;
+    } catch (error) { return reject(id, error); }
+  };
+  const checkEndpoints = (original) => {
+    for (const endpoint of [original.content.workLink?.root, original.content.workLink?.predecessor, original.content.executionObservation?.target]) {
+      if (endpoint) load(endpoint.evidenceId);
+    }
+  };
+  const prefix = owner.workDirectory + "/";
+  const citedId = (ref) => ref.kind === "artifact" && ref.path.startsWith(prefix)
+    && /^work-evidence-[a-f0-9]{24}\.json$/.test(ref.path.slice(prefix.length)) ? ref.path.slice(prefix.length, -5) : null;
+  const showOrganization = (bodies) => bodies.some((record) => record.content.workLink || record.content.executionObservation
+    || roles.get(record.evidenceId) !== "recent" || organization.incoming.has(record.evidenceId));
+  const render = (bodies) => {
+    const organized = showOrganization(bodies);
+    return bodies.map((record) => {
+    const overlay = organized ? organization.overlay(record.evidenceId) : null;
+    const { references: retained, selectionRole: previousRole, savedActivity: previousOverlay, ...original } = record;
+    return { ...original, ...(organized ? { selectionRole: roles.get(record.evidenceId), ...(overlay ? { savedActivity: overlay } : {}) } : {}),
+      // Retain the already-admitted output tuple, as the original reader did.
+      // Do not rehash every generic ref whenever another body is considered.
+      // A later typed proof (including failure) always overrides that output.
+      // There is no shared descriptor/path verdict cache for other references.
+      references: record.content.references.map((ref, i) => {
+        const proof = fresh.get(citedId(ref));
+        return proof ? reference(owner, ref, { context, proof }) : retained?.[i] || reference(owner, ref, { context });
+      }) };
+    });
+  };
+  const reconcile = () => {
+    for (let i = selected.length - 1; i >= 0; i--) {
+      if (fresh.get(selected[i].evidenceId)?.error) { roles.delete(selected[i].evidenceId); selected.splice(i, 1); }
+    }
+    let records = render(selected);
+    while (records.length && JSON.stringify(records).length > maxCharacters) {
+      const removed = selected.pop(); budget.add(removed.evidenceId); roles.delete(removed.evidenceId);
+      delete fresh.get(removed.evidenceId).record;
+      records = render(selected);
+    }
+    return records;
+  };
+  const offer = (id, role) => {
+    if (attempted.has(id) || roles.has(id)) return false;
+    const proof = load(id, true);
+    if (!proof?.record) return false;
+    attempted.add(id);
+    const record = proof.record;
+    if (JSON.stringify([{ ...record, references: [] }]).length > maxCharacters) {
+      budget.add(id); delete proof.record; return false;
+    }
+    checkEndpoints(record);
+    reconcile();
+    roles.set(id, role);
+    const records = render([...selected, record]);
+    if (selected.length >= maxRecords || JSON.stringify(records).length > maxCharacters) {
+      roles.delete(id); budget.add(id); delete proof.record; return false;
+    }
+    selected.push(records.at(-1)); budget.delete(id); return true;
+  };
+  let seeds = 0, relatedSlots = 0;
+  for (const candidate of metadata) {
+    if (seeds >= Math.ceil(maxRecords / 2) || selected.length >= maxRecords) break;
+    if (attempted.has(candidate.evidenceId) || roles.has(candidate.evidenceId)) continue;
+    const seed = load(candidate.evidenceId, true);
+    if (!seed?.record) continue;
+    const original = seed.record;
+    if (JSON.stringify([{ ...original, references: [] }]).length > maxCharacters) {
+      offer(candidate.evidenceId, "recent"); continue;
+    }
+    const citations = original.content.references.map((ref) => ({ id: citedId(ref), ref })).filter((item) => item.id);
+    const root = original.content.workLink?.root;
+    const queue = [...citations.slice(0, 1), ...(root ? [{ id: root.evidenceId, selector: root }] : []), ...citations.slice(1)];
+    // Canonical prefetch precedes generic reference enrichment. Its byte proof
+    // checks the same citation without an additional generic file read. The
+    // bounded queue is body preparation, not admission or a recursive scan.
+    for (const item of queue) {
+      if (roles.has(item.id) || attempted.has(item.id) || !discovered.has(item.id) || fresh.get(item.id)?.record) continue;
+      if (relatedReads >= maxRecords) { deferred.add(item.id); continue; }
+      relatedReads++; load(item.id, true);
+    }
+    if (!offer(candidate.evidenceId, "recent")) continue;
+    seeds++;
+    for (const item of queue) {
+      if (relatedSlots >= Math.floor(maxRecords / 2) || selected.length >= maxRecords) {
+        if (!roles.has(item.id) && discovered.has(item.id)) deferred.add(item.id);
+        continue;
+      }
+      if (roles.has(item.id) || attempted.has(item.id) || !discovered.has(item.id)) continue;
+      const proof = fresh.get(item.id);
+      if (!proof?.record || item.ref && proof.byteDigest !== item.ref.digest || item.selector && !sameEvidence(proof.metadata, item.selector)) {
+        if (proof) delete proof.record;
+        continue;
+      }
+      if (offer(item.id, item.ref ? "cited" : "root")) relatedSlots++;
+    }
+  }
+  // Reconciliation can remove a body after a later proof failure. Continue
+  // remaining candidates, never retry unchanged failures or replay effects.
+  for (const candidate of metadata) {
+    reconcile();
+    if (selected.length >= maxRecords) break;
+    offer(candidate.evidenceId, "recent");
+  }
+  const records = reconcile();
+  const summary = showOrganization(records) ? organization.summary(new Set(records.map((record) => record.evidenceId))) : null;
+  const failed = [...discovered].filter((id) => unavailableIds.has(id));
+  const valid = discovered.size - failed.length;
+  const included = new Set(records.map((record) => record.evidenceId));
+  const omitted = [...budget].filter((id) => discovered.has(id) && !fresh.get(id)?.error && !included.has(id));
+  return { status: failed.length || omitted.length || valid > records.length || summary?.unavailableRelations || summary?.uninspectedRelations ? "work_context_partial"
+      : records.length ? "work_context_available" : "work_context_not_recorded", records,
+    unavailable: failed.slice(0, 32).map((id) => ({ evidenceId: id, reasonCode: fresh.get(id).error.code || "INVALID_SESSION_WORK_EVIDENCE" })),
+    ...(summary ? { organization: { ...summary, relatedReadAttempts: relatedReads, relatedExpansionDeferred: deferred.size } } : {}),
+    coverage: { originals: discovered.size, inspected: discovered.size, valid, unavailable: failed.length, included: records.length, maxRecords, maxCharacters,
+      usedCharacters: JSON.stringify(records).length, characterBudgetScope: "JSON.stringify(records).length; separate bounded metadata envelope excluded",
+      selection: "all discovered originals canonically inspected once; recent-results-with-bounded-explicit-citations-and-declared-roots; fresh body/declared-endpoint rereads; partial body delivery and sequential observations, not live state or semantic sufficiency" },
+    omissions: { uninspected: 0, byBudget: omitted.length, evidenceIds: omitted.slice(0, 32), omittedIdCount: Math.max(0, omitted.length - 32), unavailableDetailCount: Math.max(0, failed.length - 32) },
+    nextAfterEvidenceId: null,
+    expansion: "Read exact evidenceIds with larger useful bounds or read the named original when useful. Partial body delivery does not require a full audit or repeating default entry. A digest/path is not recovered contents." };
+}
+
+export function readSessionWorkContext({ root = ".", evidenceIds = null, maxRecords = 8, maxCharacters = SESSION_WORK_DEFAULT_CHARACTERS,
+  afterEvidenceId = null, expectedSessionId = null, expectedCheckpointId = undefined } = {}) {
+  if (!Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > DEFAULT_SCAN
+    || !Number.isSafeInteger(maxCharacters) || maxCharacters < 2 || maxCharacters > SESSION_WORK_MAX_CHARACTERS
+    || evidenceIds !== null && (!Array.isArray(evidenceIds) || evidenceIds.length > DEFAULT_SCAN)
+    || afterEvidenceId !== null && (!/^work-evidence-[a-f0-9]{24}$/.test(afterEvidenceId) || evidenceIds !== null)) fail("Invalid work context read bounds.");
+  const owner = identity(root);
+  const shell = { kind: "SessionWorkContextProjection", authorityPlane: "P4", projectId: owner.projectId, sessionId: owner.sessionId,
+    sessionPurpose: owner.state.purpose || null, basis: owner.basis, latestCheckpointId: owner.state.latestCheckpoint || null,
+    persisted: false, recoveryAuthority: false, instructionAuthority: false, promotionAuthority: false,
+    executionReplayAllowed: false, ordinaryWorkBlocked: false,
+    interpretation: "P3 HEAD-authored historical evidence, not current direction, approval, or proof of an external effect. Current Project constraints and selected Session P2 take precedence." };
+  if (expectedSessionId && owner.sessionId !== expectedSessionId
+    || expectedCheckpointId !== undefined && (owner.state.latestCheckpoint || null) !== expectedCheckpointId) {
+    return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
+  }
+  const context = createSessionWorkReadContext(owner.root);
+  if (evidenceIds === null && afterEvidenceId === null) {
+    const result = readDefaultWorkContext(owner, maxRecords, maxCharacters, context);
+    if (identity(owner.root).basis !== owner.basis) return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
+    return { ...shell, ...result };
+  }
+  const directoryPath = directory(owner.root);
+  const names = evidenceIds !== null ? null : fs.existsSync(directoryPath) ? fs.readdirSync(directoryPath).filter((name) => /^work-evidence-[a-f0-9]{24}\.json$/.test(name)).sort() : [];
+  const remainingNames = names === null ? [] : afterEvidenceId === null ? names : names.filter((name) => name > afterEvidenceId + ".json");
+  const ids = evidenceIds === null ? remainingNames.slice(0, DEFAULT_SCAN).map((name) => name.slice(0, -5)) : [...new Set(evidenceIds)];
+  const originals = [], unavailable = [], unavailableIds = new Set();
+  let unavailableCount = 0;
+  const markUnavailable = (id, error) => {
+    if (unavailableIds.has(id)) return;
+    unavailableIds.add(id);
+    unavailableCount += 1;
+    if (unavailable.length < DEFAULT_SCAN) {
+      unavailable.push({ evidenceId: id, reasonCode: error.code || "INVALID_SESSION_WORK_EVIDENCE" });
+    }
+  };
+  for (const id of ids) {
+    try {
+      const original = readOriginal(owner, id);
+      originals.push(original);
+    } catch (error) { markUnavailable(id, error); }
+  }
+  originals.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt) || a.evidenceId.localeCompare(b.evidenceId));
+  const metadata = originals.map(workMetadata);
+  const organized = metadata.some((m) => m.workLink || m.executionObservation);
+  const organization = organized ? workOrganization(metadata, unavailableIds, false, maxRecords) : null;
+  const records = [];
+  let used = 2, omittedByBudget = 0, valid = originals.length;
+  const omittedEvidenceIds = [];
+  const omit = (id) => {
+    omittedByBudget += 1;
+    if (omittedEvidenceIds.length < 32) omittedEvidenceIds.push(id);
+  };
+  const decorate = (original, role) => {
+    const overlay = organization?.overlay(original.evidenceId);
+    return { ...original, ...(organization ? { selectionRole: role, ...(overlay ? { savedActivity: overlay } : {}) } : {}) };
+  };
+  for (const candidate of originals) {
+    if (records.length >= maxRecords) {
+      omit(candidate.evidenceId);
+      continue;
+    }
+    const original = candidate;
+    // Even an empty enrichment array cannot fit: do not read its references.
+    // An oversized recent record must not hide an older, smaller fitting one.
+    if (JSON.stringify([...records, { ...original, references: [] }]).length > maxCharacters) {
+      omit(original.evidenceId);
+      continue;
+    }
+    const references = original.content.references.map((ref) => reference(owner, ref, { context }));
+    const selected = evidenceIds?.length === 1 && maxRecords === 1 ? projectExactSessionWorkRecord(original, references)
+      : { ...decorate(original, "recent"), references };
+    // Budget the actual enriched record array sent to consumers, not the smaller
+    // on-disk originals. The separately disclosed metadata envelope is excluded.
+    const nextSize = JSON.stringify([...records, selected]).length;
+    if (nextSize > maxCharacters) {
+      omit(original.evidenceId);
+      continue;
+    }
+    used = nextSize;
+    records.push(selected);
+  }
+  if (identity(owner.root).basis !== owner.basis) return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
+  const organizationSummary = organization?.summary();
+  return { ...shell, status: unavailableCount || evidenceIds === null && remainingNames.length > ids.length || omittedByBudget
+      || organizationSummary?.unavailableRelations || organizationSummary?.uninspectedRelations ? "work_context_partial" : records.length ? "work_context_available" : "work_context_not_recorded",
+    records, unavailable,
+    ...(organization ? { organization: { ...organizationSummary, relatedReadAttempts: 0, relatedExpansionDeferred: 0 } } : {}),
+    coverage: { originals: names?.length ?? null, inspected: ids.length, valid, unavailable: unavailableCount, included: records.length, maxRecords, maxCharacters, usedCharacters: used,
+      characterBudgetScope: "JSON.stringify(records).length; separate bounded metadata envelope excluded",
+      selection: evidenceIds !== null ? "newest-recorded-first-within-requested-exact-ids; Session inventory not enumerated; no global completeness or semantic sufficiency claim"
+        : "newest-recorded-first-within-inspected-original-page; no semantic relevance or sufficient-context judgment" },
+    omissions: { uninspected: evidenceIds === null ? Math.max(0, remainingNames.length - ids.length) : null, byBudget: omittedByBudget,
+      evidenceIds: omittedEvidenceIds, omittedIdCount: omittedByBudget - omittedEvidenceIds.length,
+      unavailableDetailCount: unavailableCount - unavailable.length },
+    nextAfterEvidenceId: evidenceIds === null && remainingNames.length > ids.length ? ids.at(-1) : null,
+    expansion: "Read exact evidenceIds with larger useful bounds or read the named original. A digest/path is not recovered contents. No evidence is deleted or silently considered irrelevant." };
+}
