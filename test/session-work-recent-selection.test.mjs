@@ -61,6 +61,17 @@ function accounting(value) {
   assert.ok(JSON.stringify(value.records).length <= value.coverage.maxCharacters);
 }
 
+function navigationCases(root) {
+  const file = path.join(root, ".head/graph-discovery/index.json");
+  const raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
+  assert.equal(legacy.sessionWorkNavigation?.version, 1);
+  delete legacy.sessionWorkNavigation;
+  return { restore() { fs.writeFileSync(file, raw); }, variants: ["hinted", "legacy", "missing"].map(mode => ({ mode, prepare() {
+    if (mode === "missing") fs.unlinkSync(file);
+    else fs.writeFileSync(file, mode === "hinted" ? raw : JSON.stringify(legacy));
+  } })) };
+}
+
 test("global recent selection crosses 511/512/513/514 lexical boundaries; explicit pages and exact IDs retain their contracts", (t) => {
   const root = project(t), inspected = inspectProject(root);
   const inputs = Array.from({ length: 514 }, (_, i) => ({ summary: `Boundary evidence ${i}` }))
@@ -70,11 +81,19 @@ test("global recent selection crosses 511/512/513/514 lexical boundaries; explic
   for (let i = 0; i < inputs.length; i += 1) {
     assert.equal(save(root, inputs[i].input, i).evidence.evidenceId, inputs[i].id);
     if (i < 510) continue;
+    const navigation = navigationCases(root);
+    for (const variant of navigation.variants) {
+    variant.prepare();
     const before = snapshot(root), value = readSessionWorkContext({ root });
     const expected = inputs.slice(Math.max(0, i - 7), i + 1).reverse().map(({ id }) => id);
     assert.deepEqual(value.records.map((record) => record.evidenceId), expected, `size ${i + 1}`);
-    assert.equal(value.coverage.inspected, i + 1);
-    assert.equal(value.omissions.uninspected, 0);
+    const inspected = variant.mode === "hinted" ? 8 : i + 1;
+    assert.equal(value.coverage.originals, i + 1);
+    assert.equal(value.coverage.inspected, inspected);
+    assert.equal(value.coverage.valid, inspected);
+    assert.equal(value.coverage.unavailable, 0);
+    assert.equal(value.omissions.uninspected, i + 1 - inspected);
+    assert.match(value.coverage.selection, variant.mode === "hinted" ? /historical navigation hints/ : /all discovered originals canonically inspected once/);
     assert.equal(value.status, "work_context_partial"); // Verified history is larger than delivered bodies.
     assert.equal(value.nextAfterEvidenceId, null);
     assert.equal(value.omissions.byBudget, 0);
@@ -84,6 +103,8 @@ test("global recent selection crosses 511/512/513/514 lexical boundaries; explic
     assert.deepEqual(entry.workContext.records.map((record) => record.evidenceId), expected);
     assert.equal(entry.workContext.ordinaryWorkBlocked, false);
     assert.deepEqual(snapshot(root), before);
+    }
+    navigation.restore();
   }
   const before = snapshot(root);
   const page = readSessionWorkContext({ root, afterEvidenceId: inputs[0].id });
@@ -142,8 +163,11 @@ test("early/late/newest corrupt originals are isolated with bounded default samp
 });
 
 for (const change of ["timestamp", "disappear", "corrupt"]) {
-  test(`candidate ${change} between scan and reread is unavailable once, without suppressing older evidence`, (t) => {
+  test(`fallback candidate ${change} between scan and reread is unavailable once, without suppressing older evidence`, (t) => {
     const root = project(t), older = save(root, { summary: "Intact older" }), newest = save(root, { summary: "Newest" }, 1);
+    // The canonical fallback still scans then rereads. Historical navigation
+    // reads each selected original directly; it does not promise an atomic scan.
+    navigationCases(root).variants.find(variant => variant.mode === "legacy").prepare();
     const read = fs.readFileSync;
     let changed = false;
     fs.readFileSync = (file, ...args) => {
@@ -169,6 +193,44 @@ for (const change of ["timestamp", "disappear", "corrupt"]) {
     assert.equal(value.unavailable[0].reasonCode, change === "timestamp" ? "SESSION_WORK_OBSERVATION_CHANGED"
       : change === "disappear" ? "ENOENT" : "INVALID_SESSION_WORK_EVIDENCE");
     assert.deepEqual(value.records.map((record) => record.evidenceId), [older.evidence.evidenceId]);
+    accounting(value);
+  });
+}
+
+for (const change of ["timestamp", "disappear", "corrupt"]) {
+  test(`hinted candidate ${change} before canonical read uses current bytes, not historical proof`, (t) => {
+    const root = project(t), older = save(root, { summary: "Intact older" }), newest = save(root, { summary: "Newest" }, 1);
+    const read = fs.readFileSync;
+    let changed = false;
+    fs.readFileSync = (file, ...args) => {
+      if (file === newest.file && !changed) {
+        changed = true;
+        if (change === "disappear") fs.unlinkSync(file);
+        else if (change === "corrupt") fs.writeFileSync(file, "{}");
+        else {
+          const { evidenceDigest, ...payload } = newest.evidence;
+          payload.recordedAt = "2026-01-02T00:00:00.000Z";
+          fs.writeFileSync(file, JSON.stringify({ ...payload, evidenceDigest: sha(encoded(payload)) }));
+        }
+      }
+      return read(file, ...args);
+    };
+    let value;
+    try { value = readSessionWorkContext({ root }); } finally { fs.readFileSync = read; }
+    assert.equal(changed, true);
+    assert.equal(value.coverage.inspected, 2);
+    if (change === "timestamp") {
+      // A valid current original contradicts an old hint, not its own digest.
+      assert.equal(value.coverage.unavailable, 0);
+      assert.equal(value.records[0].recordedAt, "2026-01-02T00:00:00.000Z");
+      assert.deepEqual(value.records.map(record => record.evidenceId), [newest.evidence.evidenceId, older.evidence.evidenceId]);
+      assert.match(value.coverage.selection, /all discovered originals canonically inspected once/);
+    } else {
+      assert.equal(value.coverage.unavailable, 1);
+      assert.equal(value.unavailable.length, 1);
+      assert.equal(value.unavailable[0].reasonCode, change === "disappear" ? "ENOENT" : "INVALID_SESSION_WORK_EVIDENCE");
+      assert.deepEqual(value.records.map(record => record.evidenceId), [older.evidence.evidenceId]);
+    }
     accounting(value);
   });
 }
