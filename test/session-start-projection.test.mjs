@@ -75,19 +75,31 @@ const checkpoint = (f, purpose = "Historical checkpoint purpose", fields = {}) =
   nextExpectedResult: "Historical suggestion; no effect permission", ...fields,
 }));
 const evidence = (f, summary) => f.selected(() => recordSessionWorkEvidence({ root: f.root, input: { summary } }));
+function navigationCases(root) {
+  const file = path.join(root, ".head/graph-discovery/index.json"), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
+  assert.equal(legacy.sessionWorkNavigation?.version, 1); delete legacy.sessionWorkNavigation;
+  return ["hinted", "legacy", "missing"].map(mode => ({ mode, prepare() {
+    if (mode === "missing") fs.unlinkSync(file); else fs.writeFileSync(file, mode === "hinted" ? raw : JSON.stringify(legacy));
+  } }));
+}
 
-function assertPartialWorkExpansion(f, raw, value, runtime) {
+function assertPartialWorkExpansion(f, raw, value, runtime, mode) {
   const work = raw.workContext;
+  const inspected = mode === "hinted" ? 8 : 40;
   assert.equal(work.status, "work_context_partial");
-  for (const key of ["originals", "inspected", "valid"]) assert.equal(work.coverage[key], 40);
+  assert.equal(work.coverage.originals, 40);
+  for (const key of ["inspected", "valid"]) assert.equal(work.coverage[key], inspected);
   assert.equal(work.coverage.included, 8); assert.equal(work.records.length, 8);
   assert.equal(work.coverage.unavailable, 0); assert.equal(work.nextAfterEvidenceId, null);
-  assert.equal(work.omissions.uninspected, 0); assert.equal(work.omissions.byBudget, 0);
+  assert.equal(work.omissions.uninspected, 40 - inspected); assert.equal(work.omissions.byBudget, 0);
   assert.deepEqual(work.omissions.evidenceIds, []); assert.equal(work.omissions.omittedIdCount, 0);
-  assert.match(work.coverage.selection, /all discovered originals canonically inspected once.*partial body delivery.*not live state or semantic sufficiency/);
+  if (mode === "hinted") {
+    assert.match(work.coverage.selection, /historical|hint/i); assert.match(work.coverage.selection, /inspected/i);
+    assert.match(value.scope, /historical|hint/i); assert.match(value.scope, /inspected/i);
+  } else assert.match(work.coverage.selection, /all discovered originals canonically inspected once.*partial body delivery.*not live state or semantic sufficiency/);
   assert.equal(value.workCoverage.status, work.status);
   if (value.workCoverage.omitted) {
-    assert.equal(value.workCoverage.sourceOriginals, 40); assert.equal(value.workCoverage.sourceInspected, 40);
+    assert.equal(value.workCoverage.sourceOriginals, 40); assert.equal(value.workCoverage.sourceInspected, inspected);
     assert.equal(value.workCoverage.sourceIncluded, 8);
   } else {
     assert.deepEqual(value.workCoverage.coverage, work.coverage);
@@ -199,9 +211,14 @@ for (const runtime of ["codex", "claude"]) {
     for (let i = 0; i < 40; i += 1) evidence(f, `${i}: ` + "reviewable evidence ".repeat(100));
     updateProjectDirection({ root: f.root, input: { goal: "Preserve unavailable diagnosis under evidence budget" } });
     fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    let selectedBodies;
+    for (const variant of navigationCases(f.root)) {
+    variant.prepare();
     const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
     assert.equal(raw.workContext.records.length, 8);
-    assertPartialWorkExpansion(f, raw, value, runtime);
+    assertPartialWorkExpansion(f, raw, value, runtime, variant.mode);
+    const bodies = raw.workContext.records.map(({ evidenceId, evidenceDigest, content }) => ({ evidenceId, evidenceDigest, content }));
+    if (selectedBodies) assert.deepEqual(bodies, selectedBodies); else selectedBodies = bodies;
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.ok(value.records.length <= raw.workContext.records.length);
     assert.equal(value.omittedEvidenceCount, raw.workContext.records.length - value.records.length);
@@ -216,6 +233,7 @@ for (const runtime of ["codex", "claude"]) {
     assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
     assert.equal(value.projectRoot, f.root);
     assert.deepEqual(snapshot(f.base), before);
+    }
   });
 
   test(`${runtime}: compact optional coverage before omitting a current purpose that fits`, (t) => {
@@ -223,13 +241,16 @@ for (const runtime of ["codex", "claude"]) {
     for (let i = 0; i < 40; i += 1) evidence(f, `${i}: ` + "bounded P3 history ".repeat(100));
     updateProjectDirection({ root: f.root, input: { goal: "Known direction loss with a fitting current purpose" } });
     fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    for (const variant of navigationCases(f.root)) {
+    variant.prepare();
     const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
-    assertPartialWorkExpansion(f, raw, value, runtime);
+    assertPartialWorkExpansion(f, raw, value, runtime, variant.mode);
     assert.equal(value.sessionPurpose, purpose);
     assert.equal(Object.hasOwn(value, "sessionPurposeCoverage"), false);
     assert.equal(value.projectRoot, f.root);
     assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
     assert.deepEqual(snapshot(f.base), before);
+    }
   });
 
   test(`${runtime}: malformed/unbound events do not guess or register a Session`, (t) => {

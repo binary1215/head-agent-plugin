@@ -12,7 +12,7 @@ import { SESSION_WORK_CONTEXT_VERSION, PROTOCOL, DEFAULT_SCAN, sha, encoded, fai
   readSessionWorkEvidenceOriginalFile, inspectSessionWorkReference, createSessionWorkReadContext,
   readSessionWorkFileBytes, MAX_RECORD_BYTES,
   SESSION_WORK_DEFAULT_CHARACTERS, SESSION_WORK_MAX_CHARACTERS } from "./session-work-evidence-original.mjs";
-import { noteProjectGraphChange } from "./discovery-index.mjs";
+import { noteProjectGraphChange, readSessionWorkNavigationHints } from "./discovery-index.mjs";
 export { SESSION_WORK_CONTEXT_VERSION, normalizeSessionWorkEvidence };
 function identity(root) {
   const base = fs.realpathSync(path.resolve(root));
@@ -85,22 +85,49 @@ function workMetadata(original) {
 }
 // One compact relation pass over the already verified selected-Session scan.
 // No body/ancestor lookup, clock winner, execution epoch or state transition.
-function workOrganization(metadata, unavailableIds, globalRecent, maxRecords, resolver = null) {
+function workOrganization(metadata, unavailableIds, globalRecent, maxRecords, resolver = null, incremental = false, failedQualifiers = null) {
   const byId = new Map(metadata.map((m) => [m.evidenceId, m]));
-  const incoming = new Map(), qualifierNodes = new Map();
+  const incoming = new Map(), qualifierNodes = new Map(), producers = new Map();
   const lookup = (id) => unavailableIds.has(id) ? null : resolver ? resolver(id) : byId.get(id);
   const cycles = new Set(), colors = new Map();
-  for (const m of metadata) {
+  const lostCount = m => failedQualifiers?.get(m.evidenceId + ":" + m.evidenceDigest)?.size || 0;
+  const groupFor = id => {
+    if (!incoming.has(id)) incoming.set(id, { head: null, tail: null, count: 0, unavailable: 0, states: new Map(), version: 0, cached: null });
+    return incoming.get(id);
+  };
+  const attach = (m) => {
     const target = m.executionObservation?.target;
-    if (target && sameEvidence(byId.get(target.evidenceId), target)) {
-      if (!incoming.has(target.evidenceId)) incoming.set(target.evidenceId, { head: null, tail: null, count: 0, unavailable: 0, states: new Map(), version: 0, cached: null });
-      const group = incoming.get(target.evidenceId), node = { metadata: m, group, previous: group.tail, next: null };
+    if (!unavailableIds.has(m.evidenceId) && target && !qualifierNodes.has(m.evidenceId) && sameEvidence(lookup(target.evidenceId), target)) {
+      const group = groupFor(target.evidenceId), node = { metadata: m, group, previous: group.tail, next: null };
       if (group.tail) group.tail.next = node; else group.head = node;
       group.tail = node; group.count++;
+      group.version++;
       group.states.set(m.executionObservation.state, (group.states.get(m.executionObservation.state) || 0) + 1);
       qualifierNodes.set(m.evidenceId, node);
     }
+  };
+  const register = (m) => {
+    if (lostCount(m)) groupFor(m.evidenceId);
+    const target = m.executionObservation?.target;
+    if (target) {
+      if (!producers.has(target.evidenceId)) producers.set(target.evidenceId, new Map());
+      producers.get(target.evidenceId).set(m.evidenceId, m);
+      attach(m);
+    }
+    for (const producer of producers.get(m.evidenceId)?.values() || []) attach(producer);
+  };
+  // The resolver is initialized by the caller after construction. Initial
+  // attachment uses the already-canonical local map, not external hints.
+  for (const m of metadata) {
+    const target = m.executionObservation?.target;
+    if (target) {
+      if (!producers.has(target.evidenceId)) producers.set(target.evidenceId, new Map());
+      producers.get(target.evidenceId).set(m.evidenceId, m);
+    }
   }
+  const initialResolver = resolver; resolver = null;
+  for (const m of metadata) { attach(m); if (lostCount(m)) groupFor(m.evidenceId); }
+  resolver = initialResolver;
   for (const m of metadata) {
     const trail = []; let id = m.evidenceId;
     while (byId.has(id) && !colors.has(id)) {
@@ -118,6 +145,19 @@ function workOrganization(metadata, unavailableIds, globalRecent, maxRecords, re
     const target = lookup(selector.evidenceId);
     return target ? sameEvidence(target, selector) ? "verified" : "unavailable" : globalRecent ? "unavailable" : "not-inspected";
   };
+  const observedCycle = (source) => {
+    if (!incremental) return cycles.has(source);
+    const visited = new Set(); let id = source;
+    // Only already observed exact metadata. Never follow a file/ancestor here,
+    // and a root equal to predecessor is not a terminal/acyclic proof.
+    while (byId.has(id) && !unavailableIds.has(id) && !visited.has(id)) {
+      visited.add(id);
+      const pred = byId.get(id).workLink?.predecessor;
+      if (!pred || !sameEvidence(lookup(pred.evidenceId), pred)) return false;
+      id = pred.evidenceId;
+    }
+    return id === source && visited.size > 0;
+  };
   const relations = (m) => {
     const rows = [];
     if (!m) return rows;
@@ -126,7 +166,7 @@ function workOrganization(metadata, unavailableIds, globalRecent, maxRecords, re
       let status = endpointStatus(selector);
       if (role === "predecessor" && status === "verified") {
         const pred = lookup(selector.evidenceId);
-        if (cycles.has(m.evidenceId) || resolver && endpointStatus(m.workLink.root) === "unavailable"
+        if (observedCycle(m.evidenceId) || resolver && endpointStatus(m.workLink.root) === "unavailable"
           || !pred || !sameEvidence(pred, m.workLink.root) && !sameEvidence(pred.workLink?.root, m.workLink.root)) status = "unavailable";
       }
       rows.push({ role, status, ...(status === "unavailable" ? { reasonCode: "SESSION_WORK_LINK_UNAVAILABLE" } : {}) });
@@ -135,6 +175,7 @@ function workOrganization(metadata, unavailableIds, globalRecent, maxRecords, re
   };
   return {
     byId, incoming,
+    add(m) { if (!byId.has(m.evidenceId)) { byId.set(m.evidenceId, m); register(m); } },
     invalidate(id) {
       const node = qualifierNodes.get(id);
       if (!node) return;
@@ -145,19 +186,23 @@ function workOrganization(metadata, unavailableIds, globalRecent, maxRecords, re
       const state = node.metadata.executionObservation.state;
       group.states.set(state, group.states.get(state) - 1);
       qualifierNodes.delete(id);
+      return node.metadata;
     },
     overlay(id) {
       const m = lookup(id), group = incoming.get(id), rows = relations(m);
       if (!m || !m.workLink && !m.executionObservation && !group) return null;
       if (group && group.cached?.version !== group.version) {
+        const candidates = [];
+        for (let node = group.head; node && (incremental || candidates.length < maxRecords); node = node.next) candidates.push(node.metadata);
+        if (incremental) candidates.sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)) || a.evidenceId.localeCompare(b.evidenceId));
         const qualifiers = [];
-        for (let node = group.head; node && qualifiers.length < maxRecords; node = node.next) {
-          const q = node.metadata;
+        for (const q of candidates.slice(0, maxRecords)) {
           qualifiers.push({ evidenceId: q.evidenceId, evidenceDigest: q.evidenceDigest, state: q.executionObservation.state });
         }
         group.cached = { version: group.version, qualifiers };
       }
-      const qualifiers = group?.cached.qualifiers || [], count = group?.count || 0, unavailableCount = group?.unavailable || 0;
+      const qualifiers = group?.cached.qualifiers || [], count = group?.count || 0;
+      const unavailableCount = failedQualifiers ? lostCount(m) : group?.unavailable || 0;
       return { states: ["running", "paused", "ended", "unknown"].filter((s) => group?.states.get(s) > 0), qualifierCount: count, qualifiers,
         omittedQualifierCount: count - qualifiers.length, unavailableQualifierCount: unavailableCount,
         coverage: unavailableCount || rows.some((r) => r.status === "unavailable") ? "partial" : globalRecent ? "verified-scan" : "not-inspected",
@@ -196,39 +241,72 @@ export function projectExactSessionWorkRecord(original, references) {
   return { ...original, ...(organization ? { selectionRole: "recent", ...(overlay ? { savedActivity: overlay } : {}) } : {}), references };
 }
 
-// One canonical scan retains compact historical observations, not whole bodies.
-// Selected bodies/direct endpoints are fresh observations; no index is required.
+// Discover D once. Optional headers only order historical candidates; all U
+// joins this same request. Fresh canonical proofs, not rows, populate validity.
 function readDefaultWorkContext(owner, maxRecords, maxCharacters, context) {
-  const names = fs.existsSync(directory(owner.root)) ? fs.readdirSync(directory(owner.root))
-    .filter((name) => /^work-evidence-[a-f0-9]{24}\.json$/.test(name)).sort() : [];
-  const discovered = new Set(names.map((name) => name.slice(0, -5)));
-  const metadata = [], fresh = new Map(), unavailableIds = new Set();
+  let names;
+  try { names = fs.readdirSync(directory(owner.root), { withFileTypes: true }); }
+  catch (error) { if (error.code !== "ENOENT") throw error; names = []; }
+  names = names.filter(entry => /^work-evidence-[a-f0-9]{24}\.json$/.test(entry.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const discovered = new Set(names.map(entry => entry.name.slice(0, -5)));
+  const regularIds = new Set(names.filter(entry => entry.isFile()).map(entry => entry.name.slice(0, -5)));
+  const hints = discovered.size ? readSessionWorkNavigationHints(owner, regularIds) : new Map();
+  const inspected = new Set(), observations = new Map(), errors = new Map(), failedQualifiers = new Map();
+  const hintMismatch = new Error("Historical navigation differs from a healthy current original.");
+  const select = (headers) => {
+  const hinted = headers.size > 0;
+  const metadata = [], currentMetadata = [], fresh = new Map([...errors].map(([id, error]) => [id, { error }])), unavailableIds = new Set(errors.keys());
   const budget = new Set();
   const selected = [], roles = new Map(), attempted = new Set(), deferred = new Set();
   let relatedReads = 0, organization;
   const reject = (id, error) => {
+    errors.set(id, error);
     unavailableIds.add(id);
     budget.delete(id);
     fresh.set(id, { error });
-    organization?.invalidate(id);
+    const lost = organization?.invalidate(id)?.executionObservation?.target;
+    // Only an actually canonical, exact-target-attached producer can create a
+    // loss count. Retain that fact through fallback, never its validity/state.
+    if (lost) {
+      const key = lost.evidenceId + ":" + lost.evidenceDigest;
+      if (!failedQualifiers.has(key)) failedQualifiers.set(key, new Set());
+      failedQualifiers.get(key).add(id);
+    }
     return fresh.get(id);
   };
+  const inspect = (id) => {
+    if (discovered.has(id)) inspected.add(id);
+    if (errors.has(id)) throw errors.get(id);
+    const { record, bytes } = readOriginalFile(owner, id), byteDigest = sha(bytes), m = workMetadata(record);
+    const previous = observations.get(id);
+    if (previous && (previous.byteDigest !== byteDigest || !sameEvidence(previous.metadata, m) || previous.metadata.recordedAt !== m.recordedAt)) {
+      fail("Work evidence changed during selection.", "SESSION_WORK_OBSERVATION_CHANGED");
+    }
+    observations.set(id, { metadata: m, byteDigest });
+    const header = headers.get(id);
+    if (header && (header.rawDigest !== byteDigest || header.recordedAt !== record.recordedAt
+      || header.observationTargetId !== (record.content.executionObservation?.target?.evidenceId || null))) throw hintMismatch;
+    return { record, bytes, metadata: m, byteDigest };
+  };
   for (const id of discovered) {
+    if (headers.has(id)) { metadata.push({ evidenceId: id, recordedAt: headers.get(id).recordedAt }); continue; }
     try {
-      metadata.push(workMetadata(readOriginal(owner, id)));
+      const observed = inspect(id);
+      metadata.push(observed.metadata); currentMetadata.push(observed.metadata);
     } catch (error) { reject(id, error); }
   }
   metadata.sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)) || a.evidenceId.localeCompare(b.evidenceId));
+  currentMetadata.sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)) || a.evidenceId.localeCompare(b.evidenceId));
   let byId;
   const resolve = (id) => unavailableIds.has(id) || fresh.get(id)?.error ? null : fresh.get(id)?.metadata || byId.get(id);
-  // Build incoming for every verified S identity, independent of future output
-  // membership. A non-body producer is its S observation, never a live state.
-  organization = workOrganization(metadata, unavailableIds, true, maxRecords, resolve);
+  // Only canonical observations enter this map. Further body/endpoint/known
+  // producer proofs join incrementally; no hint-only row becomes valid state.
+  organization = workOrganization(currentMetadata, unavailableIds, !hinted, maxRecords, resolve, hinted, failedQualifiers);
   byId = organization.byId;
   const load = (id, body = false) => {
     // A late-added endpoint can prove a relation, but it cannot enlarge S's
     // body domain or its discovered-original counters in this response.
-    if (body && (!discovered.has(id) || !byId.has(id))) return null;
+    if (body && !discovered.has(id)) return null;
     const previous = fresh.get(id);
     if (previous?.error || previous && (!body || previous.record)) return previous;
     try {
@@ -240,13 +318,27 @@ function readDefaultWorkContext(owner, maxRecords, maxCharacters, context) {
         previous.record = JSON.parse(bytes.toString("utf8"));
         return previous;
       }
-      const { record, bytes } = readOriginalFile(owner, id), observed = byId.get(id);
-      if (discovered.has(id) && (!observed || record.recordedAt !== observed.recordedAt || record.evidenceDigest !== observed.evidenceDigest)) {
-        fail("Work evidence changed during selection.", "SESSION_WORK_OBSERVATION_CHANGED");
-      }
-      const proof = { metadata: workMetadata(record), byteDigest: sha(bytes), ...(body ? { record } : {}) };
-      fresh.set(id, proof); return proof;
-    } catch (error) { return reject(id, error); }
+      const { record, metadata, byteDigest } = inspect(id);
+      const proof = { metadata, byteDigest, ...(body ? { record } : {}) };
+      fresh.set(id, proof);
+      if (discovered.has(id)) organization.add(metadata);
+      return proof;
+    } catch (error) { if (error === hintMismatch) throw error; return reject(id, error); }
+  };
+  const incomingCandidates = new Map(), incomingPrepared = new Set();
+  for (const candidate of metadata) {
+    const targetId = headers.has(candidate.evidenceId) ? headers.get(candidate.evidenceId).observationTargetId
+      : candidate.executionObservation?.target?.evidenceId;
+    if (!targetId) continue;
+    if (!incomingCandidates.has(targetId)) incomingCandidates.set(targetId, new Set());
+    incomingCandidates.get(targetId).add(candidate.evidenceId);
+  }
+  const ensureKnownIncoming = (id) => {
+    if (!hinted || incomingPrepared.has(id)) return;
+    incomingPrepared.add(id);
+    // All known producers, not just the displayed prefix. Self/owner/actual
+    // target proof only; unrelated producer links/refs are not recursive gates.
+    for (const producer of incomingCandidates.get(id) || []) load(producer);
   };
   const checkEndpoints = (original) => {
     for (const endpoint of [original.content.workLink?.root, original.content.workLink?.predecessor, original.content.executionObservation?.target]) {
@@ -296,6 +388,7 @@ function readDefaultWorkContext(owner, maxRecords, maxCharacters, context) {
       budget.add(id); delete proof.record; return false;
     }
     checkEndpoints(record);
+    ensureKnownIncoming(id);
     reconcile();
     roles.set(id, role);
     const records = render([...selected, record]);
@@ -351,19 +444,29 @@ function readDefaultWorkContext(owner, maxRecords, maxCharacters, context) {
   const records = reconcile();
   const summary = showOrganization(records) ? organization.summary(new Set(records.map((record) => record.evidenceId))) : null;
   const failed = [...discovered].filter((id) => unavailableIds.has(id));
-  const valid = discovered.size - failed.length;
+  const valid = inspected.size - failed.length;
+  const uninspected = discovered.size - inspected.size;
   const included = new Set(records.map((record) => record.evidenceId));
   const omitted = [...budget].filter((id) => discovered.has(id) && !fresh.get(id)?.error && !included.has(id));
-  return { status: failed.length || omitted.length || valid > records.length || summary?.unavailableRelations || summary?.uninspectedRelations ? "work_context_partial"
+  return { status: uninspected || failed.length || omitted.length || valid > records.length || summary?.unavailableRelations || summary?.uninspectedRelations ? "work_context_partial"
       : records.length ? "work_context_available" : "work_context_not_recorded", records,
     unavailable: failed.slice(0, 32).map((id) => ({ evidenceId: id, reasonCode: fresh.get(id).error.code || "INVALID_SESSION_WORK_EVIDENCE" })),
     ...(summary ? { organization: { ...summary, relatedReadAttempts: relatedReads, relatedExpansionDeferred: deferred.size } } : {}),
-    coverage: { originals: discovered.size, inspected: discovered.size, valid, unavailable: failed.length, included: records.length, maxRecords, maxCharacters,
+    coverage: { originals: discovered.size, inspected: inspected.size, valid, unavailable: failed.length, included: records.length, maxRecords, maxCharacters,
       usedCharacters: JSON.stringify(records).length, characterBudgetScope: "JSON.stringify(records).length; separate bounded metadata envelope excluded",
-      selection: "all discovered originals canonically inspected once; recent-results-with-bounded-explicit-citations-and-declared-roots; fresh body/declared-endpoint rereads; partial body delivery and sequential observations, not live state or semantic sufficiency" },
-    omissions: { uninspected: 0, byBudget: omitted.length, evidenceIds: omitted.slice(0, 32), omittedIdCount: Math.max(0, omitted.length - 32), unavailableDetailCount: Math.max(0, failed.length - 32) },
+      selection: (hinted ? "historical navigation hints order candidates; only inspected originals have current canonical proof" : "all discovered originals canonically inspected once")
+        + "; recent-results-with-bounded-explicit-citations-and-declared-roots; fresh body/declared-endpoint rereads; partial body delivery and sequential observations, not live state or semantic sufficiency" },
+    omissions: { uninspected, byBudget: omitted.length, evidenceIds: omitted.slice(0, 32), omittedIdCount: Math.max(0, omitted.length - 32), unavailableDetailCount: Math.max(0, failed.length - 32) },
     nextAfterEvidenceId: null,
     expansion: "Read exact evidenceIds with larger useful bounds or read the named original when useful. Partial body delivery does not require a full audit or repeating default entry. A digest/path is not recovered contents." };
+  };
+  try { return select(hints); }
+  catch (error) {
+    if (error !== hintMismatch) throw error;
+    // Same D, one canonical fallback. Already observed current failures remain
+    // sticky; a healthy original contradicting only its old hint is not corrupt.
+    return select(new Map());
+  }
 }
 
 export function readSessionWorkContext({ root = ".", evidenceIds = null, maxRecords = 8, maxCharacters = SESSION_WORK_DEFAULT_CHARACTERS,

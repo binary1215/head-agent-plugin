@@ -177,18 +177,60 @@ export function formatProjectBootstrap(value) {
   ].join("\n")}\n`;
 }
 
+// Use only the content and diagnosis returned together by Core. This is a
+// presentation helper, not a reader, Session resolver or authority validator.
+function formatReturnedRecoveryContext(views, checkpoint, workContext) {
+  const supplied = views.filter(Boolean);
+  const directionView = supplied.find((view) => view.currentProjectDirectionAvailability
+    && typeof view.currentProjectDirectionAvailability === "object" && !Array.isArray(view.currentProjectDirectionAvailability))
+    || supplied.find((view) => Object.hasOwn(view, "currentProjectDirection"));
+  const commonUnavailable = directionView?.currentProjectDirectionAvailability?.status === "unavailable";
+  const direction = directionView?.currentProjectDirection;
+  const lines = [];
+  if (commonUnavailable) {
+    lines.push("Current common direction is unavailable, not empty. Independent work continues; only direction-dependent effects or publication need HEAD follow-up.");
+  } else if (direction?.input) {
+    const input = direction.input;
+    if (input.goal === "" && ["constraints", "decisions", "cancelledActions"].every((key) => Array.isArray(input[key]) && input[key].length === 0)) {
+      lines.push("Current common direction: explicitly recorded empty goal and lists (not execution authorization).");
+    } else {
+      lines.push("Current common direction (constraints and cancellations take precedence; not execution authorization):",
+        `Goal: ${input.goal}`);
+      for (const [key, label] of [["constraints", "Constraint"], ["decisions", "Common decision"], ["cancelledActions", "Cancelled action"]]) {
+        for (const item of input[key] || []) lines.push(`${label}: ${item}`);
+      }
+    }
+  } else if (directionView && Object.hasOwn(directionView, "currentProjectDirection") && direction === null) {
+    lines.push("Current common direction: not recorded (not an approved empty direction).");
+  }
+  if (["work_context_available", "work_context_partial", "work_context_not_recorded"].includes(workContext?.status) && workContext.sessionPurpose) {
+    lines.push(`Selected Session purpose: ${workContext.sessionPurpose}`);
+  }
+  if (checkpoint) {
+    lines.push("Latest retained Session checkpoint (historical context, not current execution or permission):");
+    if (checkpoint.purpose != null) lines.push(`Purpose: ${checkpoint.purpose}`);
+    for (const decision of checkpoint.approvedDecisions || []) lines.push(`Previously approved decision: ${decision}`);
+    if (checkpoint.currentPosition != null) lines.push(`Historical position: ${checkpoint.currentPosition}`);
+    if (checkpoint.nextExpectedResult != null) lines.push(`Historical next expected result: ${checkpoint.nextExpectedResult}`);
+    lines.push("Historical approval and next plans grant no current effect or replay permission; current common constraints, cancellations and newer real user requests take precedence.");
+  }
+  return { commonUnavailable,
+    onlyUnrecordedDirection: direction === null && !directionView?.currentProjectDirectionAvailability && lines.length === 1,
+    text: lines.length ? `${lines.join("\n")}\n` : "" };
+}
+
 export function formatSessionRestore(value) {
   if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value);
-  const checkpoint = value?.checkpoint || {};
+  const restored = !value?.status || value.status === "session_restored_from_artifacts" ? value : null;
+  const checkpoint = restored?.checkpoint || restored?.projection?.checkpoint;
+  const context = formatReturnedRecoveryContext([value?.projection, value], checkpoint);
   return `${[
-    (value?.currentProjectDirectionAvailability || value?.projection?.currentProjectDirectionAvailability)?.status === "unavailable"
+    !checkpoint ? "No verified Session checkpoint was supplied; ordinary independent work remains available." : context.commonUnavailable
       ? "HEAD verified the retained Session checkpoint; current common direction remains unavailable, not empty."
       : "HEAD recovered the current direction from verified project artifacts.",
     "",
-    `Purpose: ${compactText(checkpoint.purpose || "not recorded", 240)}`,
-    `Current position: ${compactText(checkpoint.currentPosition || "not recorded", 240)}`,
-    `Next expected result: ${compactText(checkpoint.nextExpectedResult || "not recorded", 240)}`,
-    `Open reviews: ${Array.isArray(checkpoint.openReviewIds) ? checkpoint.openReviewIds.length : 0}`,
+    context.text,
+    ...(checkpoint ? [`Open reviews: ${Array.isArray(checkpoint.openReviewIds) ? checkpoint.openReviewIds.length : 0}`] : []),
     "",
     "A newer real user request takes priority over prepared continuation; this read changed no checkpoint or authority.",
     "Technical details remain available in the structured result or with --json.",
@@ -209,10 +251,9 @@ export function formatConversationRecovery(value) {
   } : null;
   const executionText = currentExecution ? `Canonical execution observation (${currentExecution.status}):\n${JSON.stringify(currentExecution)}\n` : "";
   if (entry?.status === "session_selection_unresolved") return formatUnavailableSession(entry);
-  if (entry?.projectStatus?.currentProjectDirectionAvailability?.status === "unavailable") {
-    return `Current common direction is unavailable, not empty. Independent work continues; only direction-dependent effects or publication need HEAD follow-up.${entry.recoveryDependentWorkBlocked ? " Checkpoint-dependent work also retains its existing recovery checks." : ""}\n${executionText}${formatSessionWorkContext(entry.workContext)}`;
-  }
-  const restored = entry?.restore?.checkpoint || entry?.restore?.projection?.checkpoint || {};
+  const restored = entry?.restore?.status === "session_restored_from_artifacts" ? entry.restore : null;
+  const context = formatReturnedRecoveryContext([entry?.restore?.projection, entry?.projectStatus, entry],
+    restored?.checkpoint || restored?.projection?.checkpoint, entry?.workContext);
   const lines = [];
   if (value?.status === "compaction_lifecycle_prepared") {
     lines.push(
@@ -222,11 +263,8 @@ export function formatConversationRecovery(value) {
     );
   } else if (entry?.status === "conversation_direction_restored") {
     lines.push(
-      "HEAD restored the verified project direction automatically.",
+      "HEAD restored the verified Session checkpoint automatically.",
       "User action: none — continue the task from the original objective.",
-      "",
-      `Purpose: ${compactText(restored.purpose || "verified current checkpoint", 240)}`,
-      `Next expected result: ${compactText(restored.nextExpectedResult || "continue from the verified checkpoint", 240)}`,
     );
   } else if (entry?.status === "conversation_ready") {
     lines.push(
@@ -244,7 +282,10 @@ export function formatConversationRecovery(value) {
   }
   if (["quiet", "notice"].includes(value?.presentation?.mode) && !value?.conversationEntry && ["conversation_ready", "conversation_direction_restored"].includes(value?.status)) {
     const suffix = value.presentation.mode === "notice" ? `; ${value.attention?.items?.length || 0} optional item(s) remain available when relevant` : "";
-    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified direction — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n${executionText}${formatSessionWorkContext(entry.workContext)}`;
+    const work = entry.workContext;
+    const emptyQuiet = value.presentation.mode === "quiet" && value.status === "conversation_ready" && context.onlyUnrecordedDirection
+      && work?.status === "work_context_not_recorded" && work.coverage?.originals === 0 && work.records?.length === 0 && !executionText;
+    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified Session checkpoint — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n${emptyQuiet ? "" : context.text}${executionText}${formatSessionWorkContext(entry.workContext)}`;
   }
   for (const attention of entry?.attention?.items || []) {
     if (attention.actionability === "immediate") lines.push(`${attention.owner} follow-up: ${compactText(attention.summary, 300)}`);
@@ -267,20 +308,134 @@ export function formatConversationRecovery(value) {
     lines.push("Provider HEAD must author the current bounded recovery direction internally; the user is not asked to fill a schema.");
   }
   lines.push("", "No provider summary, provider session identity, review result, or Product Canon was promoted by this projection.", "Technical details: use the structured result or --json");
-  return `${lines.join("\n")}\n${executionText}${formatSessionWorkContext(entry.workContext)}`;
+  return `${lines.join("\n")}\n${context.text}${executionText}${formatSessionWorkContext(entry.workContext)}`;
+}
+
+const originalObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+
+function originalField(location, value) {
+  if (typeof value !== "string" || value === "") return `${location}: ${JSON.stringify(value, null, 2)}\n`;
+  // The fence belongs to the display, never to the original string. Even
+  // embedded Markdown, whitespace and code fences remain literal data.
+  const longest = (value.match(/`+/gu) || []).reduce((length, run) => Math.max(length, run.length), 0);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${location} (original text):\n${fence}text\n${value}${value.endsWith("\n") ? "" : "\n"}${fence}\n`;
+}
+
+function originalFacts(value, keys, location, handled) {
+  return keys.filter(key => Object.hasOwn(value, key)).map(key => {
+    handled.add(key);
+    return `${location}.${key}: ${JSON.stringify(value[key])}\n`;
+  }).join("");
+}
+
+function originalRemainder(value, handled, location) {
+  const residual = Object.fromEntries(Object.entries(value).filter(([key]) => !handled.has(key)));
+  return Object.keys(residual).length ? `Additional original fields at ${location}:\n${JSON.stringify(residual, null, 2)}\n` : "";
+}
+
+function originalList(value, location) {
+  return value.length ? value.map((item, index) => originalField(`${location}[${index}]`, item)).join("") : originalField(location, value);
+}
+
+function originalWorkBody(value, location) {
+  if (!originalObject(value) || !Object.keys(value).length) return originalField(location, value);
+  const handled = new Set();
+  let text = "";
+  if (Object.hasOwn(value, "executionObservation")) {
+    text += `Saved execution observation (historical; qualifies its exact target only):\n${JSON.stringify(value.executionObservation, null, 2)}\n`;
+    handled.add("executionObservation");
+  }
+  if (Object.hasOwn(value, "summary")) { text += originalField(`${location}.summary`, value.summary); handled.add("summary"); }
+  if (Array.isArray(value.judgments)) {
+    if (!value.judgments.length) text += originalField(`${location}.judgments`, value.judgments);
+    for (const [index, judgment] of value.judgments.entries()) {
+      const at = `${location}.judgments[${index}]`, keys = new Set();
+      if (!originalObject(judgment) || !Object.keys(judgment).length) { text += originalField(at, judgment); continue; }
+      for (const key of ["assessment", "reason"]) if (Object.hasOwn(judgment, key)) {
+        text += originalField(`${at}.${key}`, judgment[key]); keys.add(key);
+      }
+      if (Array.isArray(judgment.alternatives)) { text += originalList(judgment.alternatives, `${at}.alternatives`); keys.add("alternatives"); }
+      text += originalRemainder(judgment, keys, at);
+    }
+    handled.add("judgments");
+  }
+  for (const key of ["observedWork", "pending", "unknowns", "suggestedFollowUp"]) if (Array.isArray(value[key])) {
+    text += originalList(value[key], `${location}.${key}`); handled.add(key);
+  }
+  return text + originalRemainder(value, handled, location);
+}
+
+function originalWorkRecord(value, location, bodyKey) {
+  if (!originalObject(value) || !Object.keys(value).length) return originalField(location, value);
+  const handled = new Set();
+  let text = originalFacts(value, ["evidenceId", "nodeId", "projectId", "sessionId", "ownerSessionId", "owner", "kind", "subtype",
+    "selectionRole", "reviewState", "freshness", "contentScope", "contentPartial"], location, handled);
+  const activity = value.savedActivity, coverage = value.workContentCoverage;
+  if (originalObject(activity)) text += originalFacts(activity, ["states"], `${location}.savedActivity`, new Set());
+  if (originalObject(coverage)) text += originalFacts(coverage, ["partial"], `${location}.workContentCoverage`, new Set());
+  if (Object.hasOwn(value, bodyKey)) { text += originalWorkBody(value[bodyKey], `${location}.${bodyKey}`); handled.add(bodyKey); }
+  if (Array.isArray(value.workContentExcerpts)) {
+    if (!value.workContentExcerpts.length) text += originalField(`${location}.workContentExcerpts`, []);
+    for (const [index, excerpt] of value.workContentExcerpts.entries()) {
+      const at = `${location}.workContentExcerpts[${index}]`, keys = new Set();
+      if (!originalObject(excerpt)) { text += originalField(at, excerpt); continue; }
+      text += originalFacts(excerpt, ["field", "index", "subfield", "alternativeIndex", "start", "end", "totalCharacters"], at, keys);
+      if (Object.hasOwn(excerpt, "text")) { text += originalField(`${at}.text`, excerpt.text); keys.add("text"); }
+      text += Object.keys(excerpt).length ? originalRemainder(excerpt, keys, at) : originalField(at, excerpt);
+    }
+    handled.add("workContentExcerpts");
+  }
+  if (originalObject(activity)) {
+    text += Object.keys(activity).length ? originalRemainder(activity, new Set(["states"]), `${location}.savedActivity`) : originalField(`${location}.savedActivity`, activity);
+    handled.add("savedActivity");
+  }
+  if (originalObject(coverage)) {
+    text += Object.keys(coverage).length ? originalRemainder(coverage, new Set(["partial"]), `${location}.workContentCoverage`) : originalField(`${location}.workContentCoverage`, coverage);
+    handled.add("workContentCoverage");
+  }
+  return text + originalRemainder(value, handled, location);
 }
 
 export function formatSessionWorkContext(value) {
-  if (!value || value.status === "work_context_not_recorded" && value.coverage?.originals === 0) return "";
-  const records = (value.records || []).map(({ evidenceId, evidenceDigest, recordedAt, content, references, selectionRole, savedActivity }) => ({ evidenceId, recordedAt, content, references,
-    ...(selectionRole ? { evidenceDigest, selectionRole, ...(savedActivity ? { savedActivity } : {}) } : {}) }));
-  return `Selected Session work evidence (P3, not current direction or permission):\n${JSON.stringify({
-    status: value.status, sessionId: value.sessionId, sessionPurpose: value.sessionPurpose,
-    records, unavailable: value.unavailable, omissions: value.omissions, coverage: value.coverage,
-    ...(value.organization ? { organization: value.organization } : {}),
-    reasonCode: value.reasonCode, expansion: value.expansion, nextAfterEvidenceId: value.nextAfterEvidenceId,
-    currentP2Precedence: true, executionReplayAllowed: false,
-  })}\n`;
+  if (value == null || value.status === "work_context_not_recorded" && value.coverage?.originals === 0) return "";
+  const heading = "Selected Session work evidence (P3, not current direction or permission):\n";
+  if (!originalObject(value) || !Array.isArray(value.records)) return heading + originalField("workContext", value);
+  const handled = new Set(["records"]);
+  let text = heading + originalFacts(value, ["status", "projectId", "sessionId"], "workContext", handled);
+  if (!value.records.length) text += originalField("workContext.records", value.records);
+  for (const [index, record] of value.records.entries()) text += `Record[${index}]:\n${originalWorkRecord(record, `records[${index}]`, "content")}`;
+  return text + originalRemainder(value, handled, "workContext");
+}
+
+function formatProjectGraph(value) {
+  if (!originalObject(value) || value.kind !== "ProjectGraphDiscoveryProjection" || !Array.isArray(value.nodes) || !Array.isArray(value.edges)) return null;
+  const handled = new Set(["nodes", "edges"]);
+  let text = "Project graph evidence (P4 navigation, not current direction or effect permission):\n"
+    + "Returned nodes/edges only; empty or partial results do not prove absence.\n"
+    + originalFacts(value, ["status", "query"], "graph", handled);
+  if (originalObject(value.coverage) && Object.hasOwn(value.coverage, "state")) text += `graph.coverage.state: ${JSON.stringify(value.coverage.state)}\n`;
+  if (!value.nodes.length) text += originalField("graph.nodes", value.nodes);
+  for (const [index, node] of value.nodes.entries()) {
+    text += `Node[${index}]:\n`;
+    if (originalObject(node) && Object.hasOwn(node, "workContent")) text += originalWorkRecord(node, `nodes[${index}]`, "workContent");
+    else if (originalObject(node)) {
+      const keys = new Set();
+      text += originalFacts(node, ["nodeId", "kind", "projectId", "sessionId", "ownerSessionId", "reviewState", "freshness", "contentScope", "contentPartial"], `nodes[${index}]`, keys);
+      if (Object.hasOwn(node, "excerpt")) { text += originalField(`nodes[${index}].excerpt`, node.excerpt); keys.add("excerpt"); }
+      text += originalRemainder(node, keys, `nodes[${index}]`);
+      if (!Object.keys(node).length) text += originalField(`nodes[${index}]`, node);
+    } else text += originalField(`nodes[${index}]`, node);
+  }
+  if (!value.edges.length) text += originalField("graph.edges", value.edges);
+  for (const [index, edge] of value.edges.entries()) {
+    text += `Edge[${index}]:\n`;
+    if (originalObject(edge) && Object.keys(edge).length) {
+      const keys = new Set();
+      text += originalFacts(edge, ["from", "kind", "to"], `edges[${index}]`, keys) + originalRemainder(edge, keys, `edges[${index}]`);
+    } else text += originalField(`edges[${index}]`, edge);
+  }
+  return text + originalRemainder(value, handled, "graph");
 }
 
 function formatSessionWorkRecord(value) {
@@ -622,6 +777,7 @@ export function formatDeliveryStatus(value) {
 }
 
 export function formatMcpToolContent(name, value) {
+  if (name === "head_project_graph") return formatProjectGraph(value) ?? JSON.stringify(value);
   if (name === "head_bounded_worker_prepare") return formatWorkerPreparation(value);
   if (["head_worker_integration_status", "head_worker_integration"].includes(name)) return formatWorkerGuidance(value);
   if (["head_bounded_worker_wave_status", "head_bounded_worker_wave_wait"].includes(name)) return formatWorkerGuidance(value);
@@ -664,6 +820,7 @@ export function formatCliResult(command, value) {
   if (command === "worker-prepare") return formatWorkerPreparation(value);
   if (["worker-integration-status", "worker-integrate", "worker-wave-status", "worker-wave-wait"].includes(command)) return formatWorkerGuidance(value);
   if (command === "source-context") return formatSourceContext(value);
+  if (command === "graph-query") return formatProjectGraph(value) ?? `${JSON.stringify(value, null, 2)}\n`;
   if (["help", "--help", "-h", "help-all"].includes(command)) return formatHelp(value);
   if (command === "status" || command === "doctor") return formatProjectStatus(value, { doctor: command === "doctor" });
   if (command === "init" || command === "resume") return formatProjectBootstrap(value);

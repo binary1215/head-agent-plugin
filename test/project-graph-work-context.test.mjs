@@ -17,6 +17,46 @@ import { sha, snapshot } from "./helpers/session-work-linkage-fixture.mjs";
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const isWork = node => node.kind === "Evidence" && node.subtype === "SessionWorkEvidence";
 const workNodes = value => value.nodes.filter(isWork);
+function assertJsonMember(text, name, value) {
+  if (value !== undefined) assert.ok(text.includes(JSON.stringify({ [name]: value }, null, 2).slice(2, -2)), `Missing original ${name}`);
+}
+function assertLiteralValues(text, value) {
+  if (typeof value === "string") assert.ok(text.includes(value) || text.includes(JSON.stringify(value)), `Missing original literal: ${value}`);
+  else if (Array.isArray(value)) for (const item of value) assertLiteralValues(text, item);
+  else if (value && typeof value === "object") for (const item of Object.values(value)) assertLiteralValues(text, item);
+}
+function assertGraphPresentation(text, value) {
+  for (const name of ["coverage", "sourceFallback", "boundary"]) assertJsonMember(text, name, value[name]);
+  for (const [index, node] of value.nodes.entries()) {
+    const start = text.indexOf(`Node[${index}]:\n`), next = text.indexOf(`Node[${index + 1}]:\n`, start);
+    assert.ok(start >= 0, `Missing Node[${index}]`);
+    const edge = text.indexOf("Edge[0]:\n", start), end = [next, edge].filter(offset => offset >= 0);
+    const section = text.slice(start, end.length ? Math.min(...end) : undefined);
+    assert.ok(section.includes(`nodeId: ${JSON.stringify(node.nodeId)}`));
+    if (node.sessionId !== undefined) assert.ok(section.includes(`sessionId: ${JSON.stringify(node.sessionId)}`));
+    if (isWork(node)) {
+      assertLiteralValues(section, node.workContent);
+      for (const name of ["evidenceDigest", "referenceEvidence", "originalExpansion"]) assertJsonMember(section, name, node[name]);
+      if (node.workContentCoverage) {
+        const { partial, ...residual } = node.workContentCoverage;
+        assert.ok(section.includes(`nodes[${index}].workContentCoverage.partial: ${JSON.stringify(partial)}`));
+        for (const [name, value] of Object.entries(residual)) assertJsonMember(section, name, value);
+      }
+      if (node.workContentExcerpts) {
+        if (!node.workContentExcerpts.length) assert.ok(section.includes(`nodes[${index}].workContentExcerpts: []`));
+        for (const [excerptIndex, excerpt] of node.workContentExcerpts.entries()) {
+          const location = `nodes[${index}].workContentExcerpts[${excerptIndex}]`;
+          for (const name of ["field", "index", "subfield", "alternativeIndex", "start", "end", "totalCharacters"]) {
+            if (Object.hasOwn(excerpt, name)) assert.ok(section.includes(`${location}.${name}: ${JSON.stringify(excerpt[name])}`));
+          }
+          assert.ok(section.includes(`${location}.text (original text):`));
+          assert.ok(section.includes(excerpt.text));
+        }
+      }
+    }
+  }
+  assert.equal(text.includes(`Node[${value.nodes.length}]:\n`), false);
+}
 function fixture(t) {
   const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
@@ -74,7 +114,7 @@ async function graphResponse(args, routed, binding) {
   const result = await call("head_project_graph", args, routed, { resolveSessionContext() {
     binding.calls++; throw new Error("Project graph must not ask for native binding");
   } });
-  assert.deepEqual(JSON.parse(result.content[0].text), JSON.parse(JSON.stringify(result.structuredContent)));
+  assertGraphPresentation(result.content[0].text, result.structuredContent);
   return result.structuredContent;
 }
 const originalPath = (f, saved) => path.relative(f.root, saved.file).replaceAll("\\", "/");
@@ -207,13 +247,13 @@ test("CLI and direct/router MCP retain the same work body without requesting nat
   const before = snapshot(f.base), core = await queryProjectGraph({ root: f.root, query: "SurfaceReasonNeedle", depth: 0 });
   const expected = completeNode(core, saved), cli = await runCommand(["graph-query", f.root, "--query", "SurfaceReasonNeedle", "--depth", "0"]);
   assert.deepEqual(completeNode(cli, saved).workContent, expected.workContent);
-  assert.deepEqual(JSON.parse(formatCliResult("graph-query", cli)), JSON.parse(JSON.stringify(cli)));
+  assertGraphPresentation(formatCliResult("graph-query", cli), cli);
   let bindingCalls = 0;
   for (const routed of [false, true]) {
     const result = await call("head_project_graph", { project_root: f.root, query: "SurfaceReasonNeedle", depth: 0 }, routed,
       { resolveSessionContext() { bindingCalls++; throw new Error("Project graph must not require native binding"); } });
     assert.deepEqual(completeNode(result.structuredContent, saved).workContent, expected.workContent);
-    assert.deepEqual(JSON.parse(result.content[0].text), JSON.parse(JSON.stringify(result.structuredContent)));
+    assertGraphPresentation(result.content[0].text, result.structuredContent);
   }
   assert.equal(bindingCalls, 0);
   assert.deepEqual(snapshot(f.base), before);

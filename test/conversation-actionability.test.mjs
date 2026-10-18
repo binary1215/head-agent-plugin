@@ -70,7 +70,25 @@ async function verifySurfaces(root, { headActionRequired, recoveryBlocked = fals
   assert.equal(hostless.userDecisionRequired, false);
   assert.equal(hostless.ordinaryWorkBlocked, false);
   assert.deepEqual(bytes(root), before, "status, CLI/MCP entry and absent Host must write no authority, repair, lock or queue");
-  assert.equal(mcp.result.content[0].text, formatCliResult("conversation-enter", cli));
+  const beforeFormatting = JSON.stringify(cli);
+  const text = formatCliResult("conversation-enter", cli);
+  assert.equal(mcp.result.content[0].text, text);
+  assert.equal(JSON.stringify(cli), beforeFormatting, "Text formatting must not mutate the CLI JSON/Core value");
+  assert.deepEqual(mcpEntry.projectStatus.currentProjectDirection, cli.projectStatus.currentProjectDirection,
+    "MCP structured content retains the unchanged current direction");
+  const direction = entry.projectStatus.currentProjectDirection;
+  if (direction) for (const literal of [direction.input.goal, ...direction.input.constraints,
+    ...direction.input.decisions, ...direction.input.cancelledActions]) assert(text.includes(literal), literal);
+  if (entry.restore) {
+    const checkpoint = entry.restore.checkpoint;
+    assert.deepEqual(mcpEntry.restore.checkpoint, cli.restore.checkpoint);
+    for (const literal of [checkpoint.purpose, ...checkpoint.approvedDecisions, checkpoint.currentPosition, checkpoint.nextExpectedResult]) {
+      assert(text.includes(literal), literal);
+    }
+    assert.match(text, /Historical approval and next plans grant no current effect or replay permission/u);
+  }
+  if (["work_context_available", "work_context_partial", "work_context_not_recorded"].includes(entry.workContext?.status)
+    && entry.workContext.sessionPurpose) assert(text.includes(entry.workContext.sessionPurpose));
   return entry;
 }
 
@@ -85,10 +103,22 @@ test("uninitialized Core advises initialization without blocking direct work; al
 });
 
 test("ready Core without checkpoint has consistent quiet flags and adds no recovery gate", async (t) => {
-  const entry = await verifySurfaces(fixture(t), { headActionRequired: false });
+  const root = fixture(t);
+  updateProjectDirection({ root, input: { goal: "Inspect only the synthetic local service",
+    constraints: ["Do not contact or modify a service"], decisions: ["Local investigation only"], cancelledActions: ["publish"] } });
+  const entry = await verifySurfaces(root, { headActionRequired: false });
   assert.equal(entry.status, "conversation_ready");
   assert.equal(entry.projectStatus.readiness.recovery.state, "no-current-checkpoint");
   assert.deepEqual(entry.blockedOperations, []);
+});
+
+test("default initialized Core has explicit-null direction and no history without adding quiet administrative text", async (t) => {
+  const entry = await verifySurfaces(fixture(t), { headActionRequired: false });
+  assert.equal(entry.projectStatus.currentProjectDirection, null);
+  assert.equal(entry.workContext.sessionPurpose, null);
+  assert.equal(entry.workContext.status, "work_context_not_recorded");
+  assert.equal(entry.workContext.coverage.originals, 0);
+  assert.equal(formatCliResult("conversation-enter", entry), "HEAD is ready — continue the task.\n");
 });
 
 test("verified restore preserves exact checkpoint plus newer shared cancellation without rewriting either", async (t) => {

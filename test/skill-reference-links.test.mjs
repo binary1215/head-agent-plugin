@@ -69,6 +69,9 @@ test("HEAD Skill and changed references route to existing files and anchors", ()
     assert(checked.get("SKILL.md").includes(target), `Missing discoverable Markdown route: ${target}`);
   }
   assert(checked.get("references/runtime-composition.md").includes("conversation-ux.md#recovery-presentation"));
+  assert(checked.get("SKILL.md").includes("../head-conversation/SKILL.md"));
+  assert(checked.get("references/conversation-ux.md").includes("../../head-conversation/SKILL.md"));
+  verifyLinks(path.join(pluginRoot, "skills/head-conversation/SKILL.md"), pluginRoot);
 });
 
 test("link checker accepts local, same-page and duplicate-heading fragments", (t) => {

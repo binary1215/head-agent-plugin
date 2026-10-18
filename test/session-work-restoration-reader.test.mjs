@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { recordSessionWorkEvidence, readSessionWorkContext, readSessionWorkEvidenceOwner, normalizeSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
 import { createSessionWorkReadContext, inspectSessionWorkReference } from "../scripts/lib/session-work-evidence-original.mjs";
+import { PROJECT_GRAPH_INDEX_PATH, refreshProjectGraphIndex } from "../scripts/lib/discovery-index.mjs";
 import { fixture, exact, link, citation, snapshot, sha, encoded } from "./helpers/session-work-linkage-fixture.mjs";
 
 // Independent public-reader synthetic regressions. No legacy all-history
@@ -11,7 +13,23 @@ import { fixture, exact, link, citation, snapshot, sha, encoded } from "./helper
 const ids = value => value.records.map(record => record.evidenceId);
 const found = (value, saved) => value.records.find(record => record.evidenceId === saved.evidence.evidenceId);
 const sameFile = (a, b) => typeof a === "string" && path.resolve(a) === path.resolve(b);
-function account(value, { exactRequest = false, page = false } = {}) {
+const indexFile = f => path.join(f.root, PROJECT_GRAPH_INDEX_PATH);
+function navigation(f) {
+  const index = JSON.parse(fs.readFileSync(indexFile(f)));
+  assert.equal(index.sessionWorkNavigation?.version, 1);
+  assert.ok(Array.isArray(index.sessionWorkNavigation.rows));
+  return index;
+}
+function prepareLegacyFullScan(f) {
+  const index = JSON.parse(fs.readFileSync(indexFile(f)));
+  delete index.sessionWorkNavigation;
+  fs.writeFileSync(indexFile(f), JSON.stringify(index)); // Fixture setup outside read snapshots.
+}
+function editNavigation(f, edit) {
+  const index = navigation(f); edit(index);
+  fs.writeFileSync(indexFile(f), JSON.stringify(index)); // Explicit historical-metadata fault/legacy fixture, not a writer claim.
+}
+function account(value, { exactRequest = false, page = false, fullScan = false } = {}) {
   assert.equal(value.coverage.inspected, value.coverage.valid + value.coverage.unavailable);
   assert.ok(value.coverage.included <= value.coverage.valid);
   assert.equal(value.coverage.included, value.records.length);
@@ -28,8 +46,11 @@ function account(value, { exactRequest = false, page = false } = {}) {
   } else {
     assert.equal(typeof value.coverage.originals, "number");
     if (!page) {
-      assert.equal(value.coverage.inspected, value.coverage.originals);
-      assert.equal(value.omissions.uninspected, 0);
+      assert.equal(value.omissions.uninspected, value.coverage.originals - value.coverage.inspected);
+      if (fullScan) {
+        assert.equal(value.coverage.inspected, value.coverage.originals);
+        assert.equal(value.omissions.uninspected, 0);
+      }
       assert.ok(value.omissions.byBudget <= value.coverage.valid - value.coverage.included);
     }
   }
@@ -67,6 +88,20 @@ function afterScanReads(originals, observe, callback) {
     return bytes;
   };
   try { return callback(); } finally { fs.readFileSync = read; }
+}
+function immutableRead(f, options = {}, readProjection = () => f.read(options)) {
+  const before = snapshot(f.base), restored = [], writes = [];
+  const trap = (object, name, label = name) => {
+    restored.push([object, name, object[name]]);
+    object[name] = () => { writes.push(label); throw new Error("Read attempted " + label); };
+  };
+  for (const name of ["writeFileSync", "appendFileSync", "mkdirSync", "unlinkSync", "renameSync", "linkSync", "rmSync", "copyFileSync", "truncateSync"]) trap(fs, name);
+  for (const name of ["writeFile", "appendFile", "mkdir", "unlink", "rename", "link", "rm", "copyFile", "truncate"]) {
+    trap(fs, name, "callback." + name); trap(fsp, name, "promises." + name);
+  }
+  let value;
+  try { value = readProjection(); } finally { for (const [object, name, method] of restored.reverse()) object[name] = method; }
+  assert.deepEqual(writes, []); assert.deepEqual(snapshot(f.base), before); return value;
 }
 
 test("R1: eight public originals share one 256KiB generic-reference read per request and observe the next request's changed bytes", t => {
@@ -263,8 +298,9 @@ test("R3: a producer's unrelated bad link/ref and its own incoming producer are 
   assert.deepEqual(found(value, target).savedActivity.states, ["ended"]);
   assert.equal(found(value, target).savedActivity.qualifierCount, 1);
   assert.equal(counts.root, 0); assert.equal(counts.reference, 0);
-  assert.equal(counts.irrelevant, 1, "S canonically observes this original without recursively following its target");
-  assert.equal(value.coverage.inspected, 3); assert.equal(value.coverage.valid, 3);
+  assert.equal(counts.irrelevant, 0, "A hinted producer-of-producer is not recursively inspected for this target");
+  assert.equal(value.coverage.inspected, 2); assert.equal(value.coverage.valid, 2);
+  assert.equal(value.omissions.uninspected, 1);
   assert.equal(value.coverage.unavailable, 0); assert.equal(value.omissions.byBudget, 0);
   assert.equal(value.organization.roots, 0); account(value);
 });
@@ -273,6 +309,7 @@ test("R3: a late proof-only body promotion drift removes its old qualifier once 
   const f = fixture(t), fallback = saveAt(f, { summary: "Independent fitting fallback" }, -10);
   const target = saveAt(f, { summary: "Displayed target", pending: ["X"], executionObservation: { state: "running" } }, 100);
   const producer = saveAt(f, { executionObservation: { state: "ended", target: exact(target) } }, 0);
+  prepareLegacyFullScan(f); // This regression specifically observes the S-to-fresh-body boundary.
   let injected = false, failedProducerFreshRead = false;
   const value = afterScanReads([fallback, target, producer], ({ file, postScan, when }) => {
     if (postScan && when === "before" && sameFile(file, target.file) && !injected) {
@@ -293,6 +330,7 @@ test("R3: a late proof-only body promotion drift removes its old qualifier once 
 test("single S: an unobserved post-scan change to a non-body incoming producer remains only the historical S observation", t => {
   const f = fixture(t), target = saveAt(f, { summary: "Displayed historical target", pending: ["X"], executionObservation: { state: "running" } }, 100);
   const producer = saveAt(f, { executionObservation: { state: "ended", target: exact(target) } }, 0);
+  prepareLegacyFullScan(f); // Preserve the legacy single-S observation contract; B known incoming is tested separately.
   let injected = false, producerReadAfterS = false;
   const value = afterScanReads([target, producer], ({ file, postScan, when }) => {
     if (!postScan || when !== "before") return;
@@ -318,6 +356,7 @@ test("single S: an initially invalid discovered endpoint cannot reactivate when 
   const f = fixture(t), root = saveAt(f, { summary: "Initially failed exact root" }, 0);
   const source = saveAt(f, { summary: "Intact selected source", pending: ["X"], workLink: link(root) }, 100);
   const originalBytes = fs.readFileSync(root.file); fs.writeFileSync(root.file, "{}");
+  prepareLegacyFullScan(f);
   let restored = false;
   const value = afterScanReads([root, source], ({ file, postScan, when }) => {
     if (postScan && when === "before" && sameFile(file, source.file) && !restored) {
@@ -339,6 +378,7 @@ test("single S: a bare-impossible seed does not prepare its root or cited body b
   const reason = saveAt(f, { summary: "Reason not needed by fitting source" }, 2);
   const small = saveAt(f, { summary: "SMALL FITTING evidence", pending: ["X"] }, 20);
   const giant = saveAt(f, { summary: "g".repeat(5000), workLink: link(root), references: [citation(f, reason)] }, 100);
+  prepareLegacyFullScan(f); // Mandatory S-only reads in this legacy fixture are deliberately retained.
   const before = snapshot(f.base), read = fs.readFileSync, counts = { root: 0, reason: 0 };
   fs.readFileSync = (file, ...args) => {
     if (sameFile(file, root.file)) counts.root++;
@@ -360,6 +400,7 @@ test("single S: late predecessor proof-to-body failure grows an exact-bound over
   const predecessor = saveAt(f, { summary: "Intermediate predecessor", workLink: link(root) }, 50);
   const fallback = saveAt(f, { summary: "SMALL FALLBACK retains an unresolved X", pending: ["Fallback X"] }, 10);
   const seed = saveAt(f, { summary: "Initially fitting selected source", workLink: link(root, predecessor) }, 100);
+  prepareLegacyFullScan(f);
   const calibration = f.read({ maxRecords: 1 });
   assert.deepEqual(ids(calibration), [seed.evidence.evidenceId]);
   const maxCharacters = JSON.stringify(calibration.records).length;
@@ -437,6 +478,7 @@ test("R1/R3: later failed work proof overrides an earlier successful reference o
   const fitting = saveAt(f, { summary: "Independent fitting result" }, 90);
   const source = saveAt(f, { summary: "Latest intact source", pending: ["X"], workLink: link(root),
     references: [a, b, c, target].map(saved => citation(f, saved)) }, 100);
+  prepareLegacyFullScan(f); // Retain the accepted full-S late typed-proof override timing.
   let injected = false, laterTargetRead = false;
   const value = afterScanReads([root, a, b, c, target, fitting, source], ({ file, postScan, when }) => {
     if (!postScan || !sameFile(file, target.file)) return;
@@ -477,6 +519,7 @@ test("R3/R2: one default canonical scan crosses 511/512/513/514 lexical boundari
     const saved = saveAt(f, inputs[index].input, index);
     assert.equal(saved.evidence.evidenceId, inputs[index].evidenceId);
     if (index < 510) continue;
+    prepareLegacyFullScan(f); // Explicit no-hint full-D boundary, not a requirement on normal B hints.
     const value = f.read();
     assert.deepEqual(ids(value), inputs.slice(index - 7, index + 1).reverse().map(item => item.evidenceId));
     assert.equal(value.coverage.originals, index + 1);
@@ -494,4 +537,277 @@ test("R3/R2: one default canonical scan crosses 511/512/513/514 lexical boundari
   assert.equal(last.coverage.originals, 514); assert.equal(last.coverage.inspected, 1);
   assert.equal(last.nextAfterEvidenceId, null); assert.deepEqual(ids(last), [inputs[513].evidenceId]);
   account(last, { page: true }); assert.deepEqual(snapshot(f.base), before);
+});
+
+test("B hints: public writer rows are header-only and a normal 40-record default reports only its eight current body inspections", t => {
+  const f = fixture(t), saved = [];
+  for (let i = 0; i < 40; i++) saved.push(f.save({ summary: "Hinted independent history " + i, pending: ["X-" + i] }));
+  const index = navigation(f);
+  for (const row of index.sessionWorkNavigation.rows) {
+    assert.deepEqual(Object.keys(row).sort(), ["observationTargetId", "ownerSessionId", "path", "rawDigest", "recordedAt"]);
+    assert.equal(row.ownerSessionId, f.session.sessionId); assert.equal(row.observationTargetId, null);
+    assert.equal(index.entries.find(entry => entry.path === row.path)?.sha256, row.rawDigest);
+    const original = saved.find(item => path.relative(f.root, item.file).replaceAll("\\", "/") === row.path);
+    assert.ok(original); assert.equal(row.rawDigest, sha(fs.readFileSync(original.file))); assert.equal(row.recordedAt, original.evidence.recordedAt);
+  }
+  assert.equal(index.sessionWorkNavigation.rows.length, 40);
+  const value = immutableRead(f);
+  assert.deepEqual(ids(value), saved.slice(-8).reverse().map(item => item.evidence.evidenceId));
+  assert.equal(value.coverage.originals, 40); assert.equal(value.coverage.inspected, 8); assert.equal(value.coverage.valid, 8);
+  assert.equal(value.coverage.unavailable, 0); assert.equal(value.coverage.included, 8);
+  assert.equal(value.omissions.uninspected, 32); assert.equal(value.omissions.byBudget, 0);
+  assert.deepEqual(value.omissions.evidenceIds, []); assert.equal(value.status, "work_context_partial"); account(value);
+});
+
+for (const mode of ["absent", "old", "legacy-version", "legacy-target", "duplicate-row"]) test(`B legacy ${mode}: prepare full-D input before snapshots; no read-side repair`, t => {
+  const f = fixture(t), saved = Array.from({ length: 10 }, (_, i) => f.save({ summary: "Legacy original " + i }));
+  if (mode === "absent") fs.unlinkSync(indexFile(f));
+  else if (mode === "old") prepareLegacyFullScan(f);
+  else editNavigation(f, index => {
+    if (mode === "legacy-version") index.sessionWorkNavigation.version = 0;
+    if (mode === "legacy-target") for (const row of index.sessionWorkNavigation.rows) delete row.observationTargetId;
+    if (mode === "duplicate-row") index.sessionWorkNavigation.rows.push({ ...index.sessionWorkNavigation.rows[0] });
+  });
+  const value = immutableRead(f);
+  assert.deepEqual(ids(value), saved.slice(-8).reverse().map(item => item.evidence.evidenceId));
+  assert.equal(value.coverage.originals, 10); assert.equal(value.coverage.inspected, 10); assert.equal(value.coverage.valid, 10);
+  assert.equal(value.omissions.uninspected, 0); assert.equal(value.omissions.byBudget, 0); account(value, { fullScan: true });
+});
+
+for (const field of ["missing-row", "missing-target"]) test(`B U ${field}: a latest unknown joins old hints in this same read`, t => {
+  const f = fixture(t);
+  for (let i = 0; i < 12; i++) f.save({ summary: "Known historical prefix " + i });
+  const latest = f.save({ summary: "New useful result", pending: ["NEW X must join now"] }), latestPath = path.relative(f.root, latest.file).replaceAll("\\", "/");
+  editNavigation(f, index => {
+    if (field === "missing-row") index.sessionWorkNavigation.rows = index.sessionWorkNavigation.rows.filter(row => row.path !== latestPath);
+    else delete index.sessionWorkNavigation.rows.find(row => row.path === latestPath).observationTargetId;
+  });
+  const value = immutableRead(f);
+  assert.equal(value.records[0].evidenceId, latest.evidence.evidenceId); assert.deepEqual(value.records[0].content.pending, ["NEW X must join now"]);
+  assert.equal(value.coverage.originals, 13); assert.equal(value.coverage.inspected, 8); assert.equal(value.coverage.valid, 8);
+  assert.equal(value.omissions.uninspected, 5); assert.equal(value.omissions.byBudget, 0); account(value);
+});
+
+test("B deferred publication: primary survives, exact retry does not repair hints, and the unindexed latest original joins immediately", t => {
+  const f = fixture(t);
+  for (let i = 0; i < 12; i++) f.save({ summary: "Indexed prefix " + i });
+  const input = { summary: "Primary success before derived index failure", pending: ["UNINDEXED X"] }, rename = fs.renameSync;
+  fs.renameSync = (source, target) => {
+    if (sameFile(target, indexFile(f))) throw Object.assign(new Error("Synthetic index publication failure"), { code: "EIO" });
+    return rename(source, target);
+  };
+  let latest; try { latest = f.save(input); } finally { fs.renameSync = rename; }
+  assert.equal(latest.writes, 1); assert.equal(latest.graphIndex.status, "deferred"); assert.equal(latest.graphIndex.ordinaryWorkBlocked, false);
+  const before = snapshot(f.base), read = fs.readFileSync; let indexReads = 0;
+  fs.readFileSync = (file, ...args) => {
+    if (sameFile(file, indexFile(f))) { indexReads++; throw new Error("Exact retry must not inspect/repair the index"); }
+    return read(file, ...args);
+  };
+  let retry; try { retry = f.save(input); } finally { fs.readFileSync = read; }
+  assert.equal(retry.writes, 0); assert.equal(indexReads, 0); assert.deepEqual(retry.evidence, latest.evidence); assert.deepEqual(snapshot(f.base), before);
+  const value = immutableRead(f);
+  assert.equal(value.records[0].evidenceId, latest.evidence.evidenceId); assert.deepEqual(value.records[0].content.pending, ["UNINDEXED X"]);
+  assert.equal(value.coverage.originals, 13); assert.equal(value.coverage.inspected, 8); assert.equal(value.omissions.uninspected, 5); account(value);
+});
+
+test("B linked history restores a fitting 6073-character reason/root and recent X without an unrelated predecessor-lineage audit", t => {
+  const f = fixture(t), reasonText = "R".repeat(6073);
+  const root = saveAt(f, { judgments: [{ assessment: "Retain exact provenance", reason: reasonText, alternatives: ["Rebuild"] }] }, 0), middle = [];
+  let predecessor = root;
+  for (let i = 1; i <= 10; i++) { predecessor = saveAt(f, { summary: "Intermediate linked observation " + i, workLink: link(root, predecessor) }, i); middle.push(predecessor); }
+  const latest = saveAt(f, { summary: "Recent actual result", pending: ["X remains"], unknowns: ["External effect unverified"], workLink: link(root, predecessor), references: [citation(f, root)] }, 100);
+  const read = fs.readFileSync, unwanted = new Set(middle.slice(0, -1).map(saved => path.resolve(saved.file))); let ancestorReads = 0;
+  const value = immutableRead(f, { maxRecords: 2 }, () => {
+    fs.readFileSync = (file, ...args) => { if (typeof file === "string" && unwanted.has(path.resolve(file))) ancestorReads++; return read(file, ...args); };
+    try { return f.read({ maxRecords: 2 }); } finally { fs.readFileSync = read; }
+  });
+  assert.equal(ancestorReads, 0, "Unobserved ancestors are not traversed just to audit a normal public-writer chain");
+  assert.deepEqual(ids(value), [latest.evidence.evidenceId, root.evidence.evidenceId]);
+  assert.equal(found(value, root).content.judgments[0].reason, reasonText); assert.deepEqual(found(value, latest).content.pending, ["X remains"]);
+  assert.deepEqual(found(value, latest).content.unknowns, ["External effect unverified"]); assert.equal(found(value, latest).references[0].status, "intact-retained-original");
+  assert.equal(value.coverage.inspected, 3); assert.equal(value.coverage.valid, 3); assert.equal(value.omissions.uninspected, 9);
+  assert.equal(value.omissions.byBudget, 0); assert.equal(found(value, latest).savedActivity.coverage, "not-inspected"); account(value);
+});
+
+test("B all 65 known incoming observations are current proofs, with bounded details but no unrelated producer recursion", t => {
+  const f = fixture(t), root = saveAt(f, { summary: "Unrelated producer root" }, -1000), file = path.join(f.root, "unrelated-incoming.txt");
+  fs.writeFileSync(file, "Unrelated producer reference");
+  const target = saveAt(f, { summary: "Latest selected target", pending: ["X"], executionObservation: { state: "running" } }, 1000), producers = [];
+  for (let i = 0; i < 65; i++) producers.push(saveAt(f, { occurrenceKey: "known-incoming-" + i,
+    executionObservation: { state: ["running", "paused", "ended", "unknown"][i % 4], target: exact(target) },
+    ...(i === 0 ? { workLink: link(root), references: [{ path: "unrelated-incoming.txt", digest: sha(fs.readFileSync(file)), kind: "source" }] } : {}) }, i));
+  const recursive = saveAt(f, { executionObservation: { state: "unknown", target: exact(producers[0]) } }, -500);
+  for (let i = 0; i < 10; i++) saveAt(f, { summary: "Untouched unrelated archive " + i }, -200 - i);
+  fs.unlinkSync(root.file); fs.unlinkSync(file);
+  const read = fs.readFileSync, counts = { root: 0, reference: 0, recursive: 0 };
+  const value = immutableRead(f, { maxRecords: 1 }, () => {
+    fs.readFileSync = (candidate, ...args) => {
+      if (sameFile(candidate, root.file)) counts.root++; if (sameFile(candidate, file)) counts.reference++;
+      if (sameFile(candidate, recursive.file)) counts.recursive++; return read(candidate, ...args);
+    };
+    try { return f.read({ maxRecords: 1 }); } finally { fs.readFileSync = read; }
+  });
+  const activity = found(value, target).savedActivity;
+  assert.deepEqual(activity.states, ["running", "paused", "ended", "unknown"]);
+  assert.equal(activity.qualifierCount, 65); assert.equal(activity.qualifiers.length, 1); assert.equal(activity.omittedQualifierCount, 64);
+  assert.equal(activity.unavailableQualifierCount, 0); assert.equal(activity.coverage, "not-inspected");
+  assert.equal(activity.currentState, undefined); assert.equal(activity.conflict, undefined); assert.equal(value.organization.liveState, "not-observed");
+  assert.deepEqual(counts, { root: 0, reference: 0, recursive: 0 }); assert.equal(value.organization.roots, 0);
+  assert.equal(value.coverage.originals, 77); assert.equal(value.coverage.inspected, 66); assert.equal(value.coverage.valid, 66);
+  assert.equal(value.omissions.uninspected, 11); assert.equal(value.omissions.byBudget, 0); assert.deepEqual(ids(value), [target.evidence.evidenceId]); account(value);
+});
+
+for (const contradiction of ["recordedAt", "rawBytes", "observationTargetId"]) test(`B observed ${contradiction} hint mismatch falls back within fixed D without rejecting a healthy original`, t => {
+  const f = fixture(t), target = saveAt(f, { summary: "Exact observation target" }, 0), history = [];
+  for (let i = 1; i <= 8; i++) history.push(saveAt(f, { summary: "Other healthy result " + i }, i));
+  const candidate = saveAt(f, { summary: "Historically newest candidate", pending: ["X"], executionObservation: { state: "ended", target: exact(target) } }, 100);
+  if (contradiction === "rawBytes") {
+    // Synthetic external envelope replacement: same valid content-bound ID,
+    // current payload digest, but a different actual rank from the old hint.
+    const { evidenceDigest, ...payload } = candidate.evidence; payload.recordedAt = "2025-12-31T23:59:00.000Z";
+    candidate.evidence = { ...payload, evidenceDigest: sha(encoded(payload)) };
+    assert.notEqual(candidate.evidence.evidenceDigest, evidenceDigest);
+    fs.writeFileSync(candidate.file, JSON.stringify(candidate.evidence, null, 2) + "\n");
+  } else editNavigation(f, index => {
+    const row = index.sessionWorkNavigation.rows.find(row => row.path.endsWith(candidate.evidence.evidenceId + ".json"));
+    if (contradiction === "recordedAt") row.recordedAt = "2026-01-01T00:02:00.000Z";
+    else row.observationTargetId = null;
+  });
+  const value = immutableRead(f, { maxRecords: 1 });
+  assert.deepEqual(ids(value), [(contradiction === "rawBytes" ? history.at(-1) : candidate).evidence.evidenceId]);
+  assert.equal(value.coverage.originals, 10); assert.equal(value.coverage.inspected, 10); assert.equal(value.coverage.valid, 10);
+  assert.equal(value.coverage.unavailable, 0); assert.deepEqual(value.unavailable, []); assert.equal(value.omissions.byBudget, 0);
+  account(value, { fullScan: true });
+});
+
+for (const repaired of ["invalid-original", "unowned-originals"]) test(`B unknown ${repaired} is revalidated after same-path repair, not cached as a permanent negative`, t => {
+  const f = fixture(t);
+  for (let i = 0; i < 9; i++) saveAt(f, { summary: "Known older result " + i }, i);
+  const latest = saveAt(f, { summary: "Repaired latest original", pending: ["REPAIRED X"] }, 100);
+  const ownerFile = path.join(f.root, ".head/sessions/by-id", f.session.sessionId, "current.json");
+  const repairedFile = repaired === "invalid-original" ? latest.file : ownerFile, originalBytes = fs.readFileSync(repairedFile);
+  if (repaired === "invalid-original") fs.writeFileSync(repairedFile, "{}");
+  else { const state = JSON.parse(originalBytes); state.projectId = "head-" + "0".repeat(20); fs.writeFileSync(repairedFile, JSON.stringify(state)); }
+  // Full-Project publication does not select this deliberately damaged Session.
+  // Keep the normal request route/identity gate intact for the repaired read.
+  refreshProjectGraphIndex({ root: f.root }); // Legitimate setup publication, not a reader repair.
+  const published = JSON.parse(fs.readFileSync(indexFile(f)));
+  assert.ok(!(published.sessionWorkNavigation?.rows || []).some(row => row.path.endsWith(latest.evidence.evidenceId + ".json")));
+  fs.writeFileSync(repairedFile, originalBytes);
+  const value = immutableRead(f);
+  assert.equal(value.records[0].evidenceId, latest.evidence.evidenceId); assert.deepEqual(value.records[0].content.pending, ["REPAIRED X"]);
+  assert.equal(value.sessionId, f.session.sessionId); assert.equal(value.coverage.unavailable, 0); assert.deepEqual(value.unavailable, []);
+  assert.equal(value.coverage.inspected, repaired === "invalid-original" ? 8 : 10);
+  assert.equal(value.omissions.byBudget, 0); account(value);
+});
+
+test("B fault boundary: an unobserved plausible false-null hint can hide an old producer, without claiming global current activity", t => {
+  const f = fixture(t), target = saveAt(f, { summary: "Latest target", pending: ["X"], executionObservation: { state: "running" } }, 1000);
+  const producer = saveAt(f, { executionObservation: { state: "ended", target: exact(target) } }, 0);
+  for (let i = 0; i < 10; i++) saveAt(f, { summary: "Unrelated historical record " + i }, -100 - i);
+  editNavigation(f, index => { index.sessionWorkNavigation.rows.find(row => row.path.endsWith(producer.evidence.evidenceId + ".json")).observationTargetId = null; });
+  const hinted = immutableRead(f, { maxRecords: 1 }), activity = found(hinted, target).savedActivity;
+  assert.deepEqual(ids(hinted), [target.evidence.evidenceId]); assert.deepEqual(activity.states, []); assert.equal(activity.qualifierCount, 0);
+  assert.equal(activity.coverage, "not-inspected"); assert.equal(hinted.organization.scope, "inspected-originals-only");
+  assert.equal(hinted.coverage.inspected, 1); assert.equal(hinted.omissions.uninspected, 11); assert.equal(hinted.status, "work_context_partial"); account(hinted);
+  prepareLegacyFullScan(f); // Separate same-original full-D witness, outside both immutable read snapshots.
+  const full = immutableRead(f, { maxRecords: 1 });
+  assert.deepEqual(ids(full), ids(hinted)); assert.deepEqual(found(full, target).savedActivity.states, ["ended"]);
+  assert.equal(found(full, target).savedActivity.qualifierCount, 1); account(full, { fullScan: true });
+  t.diagnostic("Deliberately false but plausible archive metadata is an accepted unobserved limitation, not hinted/full-scan semantic equivalence or live-state evidence.");
+});
+
+test("B incoming proof later failing body promotion removes its historical state once and admits a fitting fallback", t => {
+  const f = fixture(t), target = saveAt(f, { summary: "Selected target", pending: ["X"], executionObservation: { state: "running" } }, 100);
+  const producer = saveAt(f, { executionObservation: { state: "ended", target: exact(target) } }, 0);
+  const fallback = saveAt(f, { summary: "Fitting independent fallback" }, -10), read = fs.readFileSync;
+  let incomingObserved = false, lateBodyRead = false;
+  fs.readFileSync = (file, ...args) => {
+    if (sameFile(file, producer.file) && incomingObserved) lateBodyRead = true;
+    const bytes = read(file, ...args);
+    if (sameFile(file, producer.file) && !incomingObserved) { incomingObserved = true; fs.writeFileSync(producer.file, "{}"); }
+    return bytes;
+  };
+  let value; try { value = f.read({ maxRecords: 2 }); } finally { fs.readFileSync = read; }
+  assert.equal(incomingObserved, true); assert.equal(lateBodyRead, true);
+  assert.deepEqual(ids(value), [target.evidence.evidenceId, fallback.evidence.evidenceId]);
+  const activity = found(value, target).savedActivity;
+  assert.deepEqual(activity.states, []); assert.equal(activity.qualifierCount, 0); assert.equal(activity.unavailableQualifierCount, 1);
+  assert.equal(value.unavailable.filter(item => item.evidenceId === producer.evidence.evidenceId).length, 1);
+  assert.equal(value.coverage.unavailable, 1); assert.equal(value.omissions.byBudget, 0); account(value);
+});
+
+test("B selected owner drift still discards mixed work context instead of adopting hint authority", t => {
+  const f = fixture(t), selected = f.save({ summary: "Work before owner drift", pending: ["X"] });
+  const ownerFile = path.join(f.root, ".head/sessions/by-id", f.session.sessionId, "current.json"), read = fs.readFileSync;
+  let changed = false;
+  fs.readFileSync = (file, ...args) => {
+    const bytes = read(file, ...args);
+    if (sameFile(file, selected.file) && !changed) {
+      changed = true; const state = JSON.parse(read(ownerFile)); state.purpose = "Changed current purpose"; fs.writeFileSync(ownerFile, JSON.stringify(state));
+    }
+    return bytes;
+  };
+  let value; try { value = f.read(); } finally { fs.readFileSync = read; }
+  assert.equal(changed, true); assert.equal(value.status, "work_context_basis_changed");
+  assert.deepEqual(value.records, []); assert.equal(value.omissions.basisChanged, true); assert.equal(value.ordinaryWorkBlocked, false);
+});
+
+test("B changed discovery type is an unknown current failure, not an empty archive or an uninspected healthy hint", t => {
+  const f = fixture(t), bad = saveAt(f, { summary: "Now a directory, not a work file" }, 0);
+  for (let i = 1; i <= 10; i++) saveAt(f, { summary: "Untouched hinted tail " + i }, i);
+  const latest = saveAt(f, { summary: "Intact latest result", pending: ["X"] }, 100);
+  fs.unlinkSync(bad.file); fs.mkdirSync(bad.file);
+  const value = immutableRead(f, { maxRecords: 1 });
+  assert.deepEqual(ids(value), [latest.evidence.evidenceId]); assert.deepEqual(found(value, latest).content.pending, ["X"]);
+  assert.equal(value.coverage.originals, 12); assert.equal(value.coverage.inspected, 2); assert.equal(value.coverage.valid, 1);
+  assert.equal(value.coverage.unavailable, 1); assert.equal(value.omissions.uninspected, 10); assert.equal(value.omissions.byBudget, 0);
+  assert.equal(value.unavailable.filter(item => item.evidenceId === bad.evidence.evidenceId).length, 1); account(value);
+});
+
+for (const ownObservation of [true, false]) test(`B observed producer failure stays sticky across healthy-hint fallback even after the failed file is restored (target own observation ${ownObservation})`, t => {
+  const f = fixture(t), target = saveAt(f, { summary: "Selected target before fallback", pending: ["X"],
+    ...(ownObservation ? { executionObservation: { state: "running" } } : {}) }, 1000);
+  const producer = saveAt(f, { executionObservation: { state: "ended", target: exact(target) } }, 20);
+  const healthy = saveAt(f, { summary: "Healthy candidate remains usable", pending: ["Independent pending"] }, 10);
+  const producerBytes = fs.readFileSync(producer.file), { evidenceDigest, ...payload } = healthy.evidence;
+  payload.recordedAt = "2026-01-01T00:00:15.000Z";
+  healthy.evidence = { ...payload, evidenceDigest: sha(encoded(payload)) };
+  assert.notEqual(healthy.evidence.evidenceDigest, evidenceDigest);
+  fs.writeFileSync(healthy.file, JSON.stringify(healthy.evidence, null, 2) + "\n"); // Healthy external header drift contradicts only its historical hint.
+  const read = fs.readFileSync; let producerReads = 0, restored = false, healthyAfterFailure = false;
+  fs.readFileSync = (file, ...args) => {
+    const bytes = read(file, ...args);
+    if (sameFile(file, producer.file)) {
+      producerReads++;
+      if (producerReads === 1) {
+        // Incoming self/owner/exact-target verification consumes these intact
+        // returned bytes. The later body role must perform its own fresh read.
+        assert.deepEqual(bytes, producerBytes); fs.writeFileSync(producer.file, "{}");
+      } else if (producerReads === 2) {
+        assert.equal(bytes.toString("utf8"), "{}");
+        fs.writeFileSync(producer.file, producerBytes); restored = true;
+        // Return the actually failed observation, not the newly restored bytes.
+      }
+    }
+    if (sameFile(file, healthy.file) && producerReads === 2 && restored) healthyAfterFailure = true;
+    return bytes;
+  };
+  let value; try { value = f.read({ maxRecords: 3 }); } finally { fs.readFileSync = read; }
+  assert.equal(restored, true); assert.equal(healthyAfterFailure, true, "Healthy hint contradiction is observed after the producer's failed body observation");
+  assert.equal(producerReads, 2, "The fixed-D fallback cannot reread and rehabilitate an already failed producer");
+  assert.deepEqual(fs.readFileSync(producer.file), producerBytes);
+  assert.deepEqual(ids(value), [target.evidence.evidenceId, healthy.evidence.evidenceId]); assert.equal(found(value, producer), undefined);
+  assert.equal(found(value, healthy).evidenceDigest, healthy.evidence.evidenceDigest);
+  const activity = found(value, target).savedActivity;
+  assert.ok(activity, "Authenticated incoming qualifier loss must retain an overlay even on a plain target");
+  assert.deepEqual(activity.states, []); assert.equal(activity.qualifierCount, 0); assert.equal(activity.qualifiers.length, 0);
+  assert.equal(activity.unavailableQualifierCount, 1); assert.equal(activity.coverage, "partial");
+  assert.deepEqual(found(value, target).content.pending, ["X"]);
+  assert.equal(found(value, target).content.executionObservation?.state, ownObservation ? "running" : undefined);
+  assert.equal(value.coverage.originals, 3); assert.equal(value.coverage.inspected, 3); assert.equal(value.coverage.valid, 2);
+  assert.equal(value.coverage.unavailable, 1); assert.equal(value.coverage.included, 2);
+  assert.equal(value.unavailable.filter(item => item.evidenceId === producer.evidence.evidenceId).length, 1);
+  assert.equal(value.unavailable.length, 1); assert.equal(value.omissions.uninspected, 0); assert.equal(value.omissions.byBudget, 0);
+  account(value, { fullScan: true });
 });

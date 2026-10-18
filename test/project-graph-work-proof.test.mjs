@@ -7,7 +7,7 @@ import test from "node:test";
 import { createHeadSession, withSessionRoute, sessionStatePath } from "../scripts/lib/session-routing.mjs";
 import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
 import { queryProjectGraph, indexProjectGraph } from "../scripts/lib/project-graph.mjs";
-import { PROJECT_GRAPH_INDEX_PATH } from "../scripts/lib/discovery-index.mjs";
+import { PROJECT_GRAPH_INDEX_PATH, collectProjectGraphInventory } from "../scripts/lib/discovery-index.mjs";
 import { createSessionWorkReadContext } from "../scripts/lib/session-work-evidence-original.mjs";
 import { createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { fixture, exact, link, citation, snapshot, sha, encoded } from "./helpers/session-work-linkage-fixture.mjs";
@@ -703,4 +703,43 @@ for (const kind of ["selected", "reference"]) test(`A1 ${kind} file-to-directory
   if (kind === "selected") assert.equal(nodeFor(result, selected), undefined);
   else { assertWork(result, selected); assert.equal(nodeFor(result, selected).referenceEvidence[0].status, "unavailable"); }
   await compareWithCold(request, result); assert.deepEqual(snapshot(f.base), before);
+});
+
+test("B navigation publication leaves graph inventory identity unchanged and cold collection adds no header-verification pass", async t => {
+  const f = fixture(t), root = f.save({ summary: "Original graph root" });
+  const latest = f.save({ pending: ["Original graph pending X"], workLink: link(root) });
+  indexProjectGraph({ root: f.root });
+  const published = JSON.parse(fs.readFileSync(indexFile(f))), legacy = { ...published };
+  assert.equal(published.sessionWorkNavigation.rows.length, 2);
+  delete legacy.sessionWorkNavigation;
+  fs.writeFileSync(indexFile(f), JSON.stringify(legacy)); // Pre-read legacy fixture, not a reader repair.
+  const before = snapshot(f.base), parse = JSON.parse; let workParses = 0;
+  JSON.parse = function (...args) {
+    const value = parse.apply(this, args);
+    if (value?.kind === "Evidence" && value.subtype === "SessionWorkEvidence") workParses++;
+    return value;
+  };
+  let collected; try { collected = collectProjectGraphInventory(f.root); } finally { JSON.parse = parse; }
+  assert.equal(workParses, 2, "Existing dependency normalization only; navigation production must not run in collection");
+  for (const field of ["entries", "unavailable", "complete", "readerDependencies", "recordsDigest"]) assert.deepEqual(collected[field], published[field]);
+  const query = await queryProjectGraph(q(f, latest)); assertWork(query, latest);
+  assert.deepEqual(snapshot(f.base), before);
+  indexProjectGraph({ root: f.root }); // Legitimate publication outside the read snapshot.
+  const restored = JSON.parse(fs.readFileSync(indexFile(f)));
+  for (const field of ["entries", "unavailable", "complete", "readerDependencies", "recordsDigest"]) assert.deepEqual(restored[field], legacy[field]);
+  assert.deepEqual(restored.sessionWorkNavigation, published.sessionWorkNavigation);
+});
+
+test("B navigation-only index replacement conservatively invalidates A1 raw-index reuse without changing original graph output", async t => {
+  const f = fixture(t), saved = f.save({ summary: "Stable graph contents through optional header change" });
+  indexProjectGraph({ root: f.root });
+  const request = q(f, saved), first = await queryProjectGraph(request), warmResult = await queryProjectGraph(request);
+  assert.equal(warmResult.reuse.status, "scoped-originals-reused");
+  const index = JSON.parse(fs.readFileSync(indexFile(f))); delete index.sessionWorkNavigation;
+  fs.writeFileSync(indexFile(f), JSON.stringify(index));
+  const before = snapshot(f.base), observed = await queryProjectGraph(request);
+  assert.notEqual(observed.reuse.status, "scoped-originals-reused");
+  assert.deepEqual(selectedProjection(observed), selectedProjection(first));
+  assert.deepEqual(snapshot(f.base), before);
+  t.diagnostic("Actual metadata-invalidation reuse state: " + observed.reuse.status + "; not relabelled as a fresh read or reseed");
 });

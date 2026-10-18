@@ -8,6 +8,7 @@ import {
   formatChangeSetStatus,
   formatConformanceFinding,
   formatConformanceQueue,
+  formatConversationRecovery,
   formatFeatureMappingStatus,
   formatMcpToolContent,
   formatOnboardingGuide,
@@ -16,6 +17,7 @@ import {
   formatProjectStatus,
   formatReviewOutcome,
   formatSessionRestore,
+  formatSessionWorkContext,
 } from "../scripts/lib/cli-presentation.mjs";
 
 test("unresolved Session cards preserve current cancellation without claiming recovery or diagnostics", () => {
@@ -308,4 +310,266 @@ test("Run and conformance projections never promote evidence into approval or a 
   });
   assert.match(outcome, /Product Canon changed: yes, through the scoped ReviewDecision/u);
   assert.match(outcome, /semantic correctness remains subject to the user's decision/u);
+});
+
+function conversationContextFixture({ restored = false, mode = "quiet" } = {}) {
+  const currentProjectDirection = { input: {
+    goal: "Inspect the generation comparison reason, local write position and remaining cancellation boundary.",
+    constraints: ["Local synthetic investigation only; do not publish or change a service."],
+    decisions: ["Keep the investigation local, despite the earlier deployment plan."],
+    cancelledActions: ["Publish or deploy this synthetic local result"],
+  } };
+  const checkpoint = {
+    checkpointId: "checkpoint-private-id",
+    purpose: "Retained purpose " + "p".repeat(270) + "; local rewrite cancelled; inspect only.",
+    approvedDecisions: ["Retained decision " + "d".repeat(270) + "; do not contact the network."],
+    currentPosition: "Retained position " + "c".repeat(270) + "; prior upload cancelled.",
+    nextExpectedResult: "Retained next plan " + "n".repeat(270) + "; explanation only, not permission to deploy.",
+    openReviewIds: ["review-private-id"],
+  };
+  const contents = [
+    { summary: "Generation comparison", judgments: [{ reason: "An earlier request can arrive later; elapsed TTL alone does not order responses." }] },
+    { summary: "Clock alternative", judgments: [{ alternatives: ["Client-clock order is unreliable if clocks move or disagree."] }] },
+    { summary: "Local change", observedWork: ["Enabled the generation check immediately before the synthetic cache write; TTL remains 60. No service was changed."] },
+    { summary: "Remaining boundary", pending: ["Cancellation racing with a write still needs local investigation."], unknowns: ["Actual Host/model behavior is unverified."] },
+  ];
+  return {
+    status: restored ? "conversation_direction_restored" : "conversation_ready",
+    presentation: { mode }, attention: { items: [] },
+    projectStatus: { currentProjectDirection },
+    ...(restored ? { restore: { status: "session_restored_from_artifacts", checkpoint,
+      projection: { currentProjectDirection, checkpoint,
+        currentExecution: { status: "verified", sessionPointer: {} } } } } : {}),
+    workContext: { status: "work_context_available", sessionId: "selected-session",
+      sessionPurpose: "Current selected Session purpose: investigate locally without deployment.",
+      records: contents.map((content, i) => ({ evidenceId: `retained-${i}`, evidenceDigest: `digest-${i}`, recordedAt: "2026-10-18T00:00:00Z",
+        selectionRole: "recent", content, references: [{ path: "src/cache-policy.json", digest: `source-${i}`,
+          status: i < 2 ? "changed" : "matching-current-bytes" }] })),
+      coverage: { originals: 4, included: 4 }, omissions: { uninspected: 0 }, nextAfterEvidenceId: null },
+  };
+}
+
+function assertConversationLiterals(text, entry) {
+  const input = entry.projectStatus.currentProjectDirection.input;
+  for (const literal of [input.goal, ...input.constraints, ...input.decisions, ...input.cancelledActions,
+    entry.workContext.sessionPurpose]) assert(text.includes(literal), literal);
+  if (entry.restore) {
+    const checkpoint = entry.restore.checkpoint;
+    for (const literal of [checkpoint.purpose, ...checkpoint.approvedDecisions, checkpoint.currentPosition, checkpoint.nextExpectedResult]) {
+      assert(text.includes(literal), literal);
+    }
+    assert.match(text, /historical context, not current execution or permission/u);
+    assert.match(text, /Historical approval and next plans grant no current effect or replay permission/u);
+  }
+  assert(text.endsWith(formatSessionWorkContext(entry.workContext)), "Existing full P3 body/coverage/diagnosis remains unchanged");
+  assert(text.indexOf(input.cancelledActions[0]) < text.indexOf("Selected Session work evidence"));
+}
+
+test("conversation context keeps current meaning and full fitting historical bodies in quiet, notice and normal text", () => {
+  for (const restored of [false, true]) for (const mode of ["quiet", "notice", "exception"]) {
+    const entry = conversationContextFixture({ restored, mode });
+    const before = JSON.stringify(entry);
+    const cli = formatCliResult("conversation-enter", entry);
+    assert.equal(cli, formatMcpToolContent("head_conversation_enter", entry));
+    assertConversationLiterals(cli, entry);
+    assert.equal(JSON.stringify(entry), before, "Formatting must not change structured input");
+    assert.doesNotMatch(cli, /Please approve|Which Session|Run this command|content omitted/u);
+  }
+});
+
+test("conversation context preserves lifecycle wrapper outcomes without losing supplied context", () => {
+  for (const [status, diagnostic] of [
+    ["host_lifecycle_unavailable", "Host compaction hooks are unavailable"],
+    ["compaction_lifecycle_prepared", "one-time continuation internally"],
+    ["provider_compaction_outcome_uncertain", "will not be replayed automatically"],
+    ["conversation_direction_restored_without_transport_continuation", "Transport continuation was unavailable"],
+    ["compaction_lifecycle_continued", "duplicate Host delivery cannot apply it twice"],
+    ["compaction_lifecycle_already_continued", "duplicate Host delivery cannot apply it twice"],
+    ["provider_compaction_failed", "only that epoch was closed"],
+    ["provider_compaction_failure_already_recorded", "only that epoch was closed"],
+    ["compaction_lifecycle_superseded", "newer real user turn superseded"],
+    ["head_direction_required", "user is not asked to fill a schema"],
+  ]) {
+    const entry = conversationContextFixture({ restored: true });
+    const wrapper = { status, conversationEntry: entry };
+    const before = JSON.stringify(wrapper);
+    const text = formatCliResult("compaction-lifecycle-step", wrapper);
+    assert.equal(text, formatMcpToolContent("head_compaction_lifecycle_step", wrapper));
+    assert(text.includes(diagnostic), status);
+    assertConversationLiterals(text, entry);
+    assert.equal(JSON.stringify(wrapper), before);
+  }
+});
+
+test("conversation context distinguishes unavailable, never recorded, explicit empty and uninspected direction", () => {
+  const unavailable = conversationContextFixture({ restored: true });
+  unavailable.projectStatus = { currentProjectDirection: null, currentProjectDirectionAvailability: { status: "unavailable" } };
+  const unavailableText = formatConversationRecovery(unavailable);
+  assert.match(unavailableText, /unavailable, not empty/u);
+  assert.match(unavailableText, /only direction-dependent effects/u);
+  assert(!unavailableText.includes(unavailable.restore.projection.currentProjectDirection.input.goal), "Diagnosed null must not fall back to another view's stale content");
+  assert(unavailableText.includes(unavailable.restore.checkpoint.currentPosition), "Valid selected checkpoint is independent of unavailable common direction");
+  assert(unavailableText.endsWith(formatSessionWorkContext(unavailable.workContext)));
+
+  const base = { status: "conversation_ready", presentation: { mode: "quiet" } };
+  assert.match(formatConversationRecovery({ ...base, projectStatus: { currentProjectDirection: null } }), /not recorded \(not an approved empty direction\)/u);
+  assert.match(formatConversationRecovery({ ...base, projectStatus: { currentProjectDirection: {
+    input: { goal: "", constraints: [], decisions: [], cancelledActions: [] },
+  } } }), /explicitly recorded empty goal and lists/u);
+  assert.equal(formatConversationRecovery(base), "HEAD is ready — continue the task.\n", "No-content entry stays one line with no empty forms or new follow-up");
+  for (const metadata of [undefined, null, [], "unavailable"]) {
+    const value = conversationContextFixture();
+    value.projectStatus.currentProjectDirectionAvailability = metadata;
+    assertConversationLiterals(formatConversationRecovery(value), value);
+  }
+  const explicitNull = conversationContextFixture({ restored: true });
+  explicitNull.restore.projection.currentProjectDirection = null;
+  assert.match(formatConversationRecovery(explicitNull), /not recorded \(not an approved empty direction\)/u);
+  assert(!formatConversationRecovery(explicitNull).includes(explicitNull.projectStatus.currentProjectDirection.input.goal));
+});
+
+test("conversation context keeps a valid zero-P3 Session purpose but never backfills excluded context", () => {
+  for (const status of ["work_context_not_recorded", "work_context_partial", "work_context_available"]) {
+    const entry = { status: "conversation_ready", presentation: { mode: "quiet" },
+      workContext: { status, sessionId: "selected", sessionPurpose: "Local inspection only; no checkpoint exists.", records: [], coverage: { originals: 0 } } };
+    const text = formatConversationRecovery(entry);
+    assert(text.includes(entry.workContext.sessionPurpose));
+    if (status === "work_context_not_recorded") assert.doesNotMatch(text, /Selected Session work evidence/u);
+    assert.doesNotMatch(text, /Latest retained Session checkpoint|Historical next/u);
+  }
+  for (const status of ["work_context_basis_changed", "work_context_unavailable"]) {
+    const entry = { status: "recovery_attention_required", reasonCode: "CONVERSATION_ENTRY_BASIS_CHANGED",
+      workContext: { status, sessionPurpose: "STALE SELECTED PURPOSE", records: [] },
+      projectStatus: { state: { purpose: "DEFAULT PURPOSE MUST NOT LEAK" } } };
+    // The existing P3 formatter contract is unchanged; only the new selected
+    // purpose block must not mislabel an excluded shell as current P2.
+    assert.doesNotMatch(formatConversationRecovery(entry), /Selected Session purpose: STALE|DEFAULT PURPOSE MUST NOT LEAK/u);
+  }
+  const changed = { status: "recovery_attention_required", reasonCode: "CONVERSATION_ENTRY_BASIS_CHANGED",
+    currentProjectDirection: { input: { goal: "New current goal", constraints: [], decisions: [], cancelledActions: ["deploy"] } },
+    sessionId: null, workContext: { status: "work_context_basis_changed", records: [] } };
+  assert.match(formatConversationRecovery(changed), /New current goal/u);
+  assert.match(formatConversationRecovery(changed), /Cancelled action: deploy/u);
+  assert.doesNotMatch(formatConversationRecovery(changed), /Selected Session purpose:|Latest retained Session checkpoint/u);
+});
+
+test("conversation context keeps actual explicit-null empty Core quiet to one line without hiding meaningful siblings", () => {
+  // Source-grounded default initialization: the direction property exists and
+  // is null, unlike the separate uninspected/missing-property fixture above.
+  const entry = { status: "conversation_ready", recoveryState: "no-current-checkpoint",
+    presentation: { mode: "quiet" }, projectStatus: { currentProjectDirection: null },
+    workContext: { status: "work_context_not_recorded", sessionId: "default-session", sessionPurpose: null,
+      records: [], coverage: { originals: 0, inspected: 0, valid: 0, unavailable: 0, included: 0 },
+      omissions: { byBudget: 0, uninspected: 0 } } };
+  const before = JSON.stringify(entry);
+  assert.equal(formatConversationRecovery(entry), "HEAD is ready — continue the task.\n");
+  assert.equal(formatCliResult("conversation-enter", entry), formatMcpToolContent("head_conversation_enter", entry));
+  assert.equal(JSON.stringify(entry), before);
+
+  const named = structuredClone(entry);
+  named.workContext.sessionPurpose = "Current local inspection purpose";
+  assert.match(formatConversationRecovery(named), /not recorded \(not an approved empty direction\)/u);
+  assert.match(formatConversationRecovery(named), /Selected Session purpose: Current local inspection purpose/u);
+  assert.doesNotMatch(formatConversationRecovery(named), /Selected Session work evidence/u);
+
+  const recordedEmpty = structuredClone(entry);
+  recordedEmpty.projectStatus.currentProjectDirection = { input: { goal: "", constraints: [], decisions: [], cancelledActions: [] } };
+  assert.match(formatConversationRecovery(recordedEmpty), /explicitly recorded empty goal and lists/u);
+  const unavailable = structuredClone(entry);
+  unavailable.projectStatus.currentProjectDirectionAvailability = { status: "unavailable" };
+  assert.match(formatConversationRecovery(unavailable), /unavailable, not empty/u);
+
+  const notice = structuredClone(entry);
+  notice.presentation.mode = "notice";
+  assert.match(formatConversationRecovery(notice), /not recorded \(not an approved empty direction\)/u);
+  const withP3 = structuredClone(entry);
+  withP3.workContext.status = "work_context_available";
+  withP3.workContext.records = [{ evidenceId: "past-work", content: { summary: "Historical work, not permission" } }];
+  withP3.workContext.coverage.originals = 1;
+  assert.match(formatConversationRecovery(withP3), /not recorded \(not an approved empty direction\)/u);
+  assert.match(formatConversationRecovery(withP3), /Historical work, not permission/u);
+});
+
+test("conversation context leaves genuine execution conflicts distinct from historical checkpoint meaning", () => {
+  for (const status of ["verified", "incomplete", "conflict"]) {
+    const entry = conversationContextFixture({ restored: true });
+    entry.restore.projection.currentExecution = { status, sessionPointer: { activeRunId: "active-run",
+      pendingReview: { runId: "pending-run", wholePlanId: "whole-plan", resultPacketId: "result" },
+      requiredPlanAction: { kind: "revise", disposition: "revise", wholePlanId: "whole-plan", reviewDecisionId: "review" } } };
+    const text = formatConversationRecovery(entry);
+    assertConversationLiterals(text, entry);
+    assert(text.includes(`Canonical execution observation (${status})`));
+    assert.match(text, /active-run|pending-run/u);
+    assert.match(text, /requiredPlanAction/u);
+  }
+  const corrupt = { status: "recovery_attention_required", reasonCode: "INVALID_RECOVERY_CHECKPOINT",
+    restore: { status: "restore_failed", checkpoint: { purpose: "UNVERIFIED CHECKPOINT BODY" } } };
+  assert.doesNotMatch(formatConversationRecovery(corrupt), /UNVERIFIED CHECKPOINT BODY|Latest retained Session checkpoint/u);
+  assert.match(formatConversationRecovery(corrupt), /Ordinary independent work remains available/u);
+});
+
+test("conversation context direct restore shares full meaning without exposing private IDs", () => {
+  const entry = conversationContextFixture({ restored: true });
+  const before = JSON.stringify(entry.restore);
+  const text = formatSessionRestore(entry.restore);
+  assert.equal(text, formatCliResult("session-restore", entry.restore));
+  assert.equal(text, formatMcpToolContent("head_session_restore", entry.restore));
+  const checkpoint = entry.restore.checkpoint;
+  for (const field of [checkpoint.purpose, ...checkpoint.approvedDecisions, checkpoint.currentPosition, checkpoint.nextExpectedResult]) assert(text.includes(field));
+  assert(text.includes(entry.restore.projection.currentProjectDirection.input.cancelledActions[0]));
+  assert.match(text, /Historical approval and next plans grant no current effect/u);
+  assert.doesNotMatch(text, /checkpoint-private-id|review-private-id/u);
+  assert.equal(JSON.stringify(entry.restore), before);
+
+  const unavailable = { ...entry.restore, currentProjectDirection: null,
+    currentProjectDirectionAvailability: { status: "unavailable" } };
+  const unavailableText = formatSessionRestore(unavailable);
+  assert.match(unavailableText, /unavailable, not empty/u);
+  assert(unavailableText.includes(checkpoint.currentPosition));
+  assert(!unavailableText.includes(entry.restore.projection.currentProjectDirection.input.goal));
+
+  const failedText = formatSessionRestore({ status: "restore_failed", checkpoint });
+  assert.match(failedText, /No verified Session checkpoint was supplied/u);
+  assert.doesNotMatch(failedText, /HEAD recovered|HEAD verified|Open reviews:|Latest retained Session checkpoint/u);
+  assert(!failedText.includes(checkpoint.purpose));
+});
+
+test("conversation context preserves long multilingual content and whitespace without inventing a text cap", () => {
+  const entry = conversationContextFixture({ restored: true });
+  const goal = "로컬 검토 근거\n  들여쓰기와   공백을 유지한다.\n".repeat(1200) + "끝의 취소: 배포하지 않는다.";
+  entry.projectStatus.currentProjectDirection.input.goal = goal;
+  const text = formatConversationRecovery(entry);
+  assert(text.includes(goal));
+  assertConversationLiterals(text, entry);
+});
+
+test("work bodies preserve exact literals and object-local unknown residuals without payload duplication", () => {
+  const content = { summary: "BODY_ONLY_ONCE", judgments: [{ assessment: "Inspect only", reason: "A reason\n  ```code```\nwith spaces  ",
+    alternatives: ["Other choice", null, false, 0, []], future: { reason: null, summary: false, values: [0, [], {}] } }],
+    observedWork: ["Local change only"], pending: ["Pending cancellation/write ordering"], unknowns: ["Unverified external result"],
+    suggestedFollowUp: [], future: { judgments: null, pending: false } };
+  const value = { status: "work_context_partial", projectId: "project", sessionId: "session-A",
+    records: [{ evidenceId: "a", sessionId: "session-A", content, future: { content: 0 }, savedActivity: {}, workContentCoverage: {} },
+      { evidenceId: "b", sessionId: "session-B", content: { summary: "Second owner body", unknowns: false }, future: null }],
+    coverage: { originals: 2, included: 2 }, omissions: { uninspected: 0 }, nextAfterEvidenceId: null, future: { records: [] } };
+  const before = JSON.stringify(value), text = formatSessionWorkContext(value);
+  assert.equal(JSON.stringify(value), before);
+  assert.equal(text.split("BODY_ONLY_ONCE").length - 1, 1);
+  const first = text.slice(text.indexOf("Record[0]:"), text.indexOf("Record[1]:"));
+  const second = text.slice(text.indexOf("Record[1]:"), text.indexOf("Additional original fields at workContext:"));
+  assert(first.includes(content.judgments[0].reason));
+  assert(first.indexOf("Inspect only") < first.indexOf(content.judgments[0].reason));
+  assert(first.indexOf(content.judgments[0].reason) < first.indexOf("Other choice"));
+  assert(first.includes("savedActivity: {}")); assert(first.includes("workContentCoverage: {}"));
+  assert(first.includes('"reason": null')); assert(first.includes('"summary": false'));
+  assert(first.includes('"content": 0')); assert(second.includes('"future": null'));
+  assert(second.includes('"unknowns": false'));
+  assert(!first.includes("Second owner body")); assert(!second.includes("BODY_ONLY_ONCE"));
+  assert(text.includes('"nextAfterEvidenceId": null')); assert(text.includes('"records": []'));
+  for (const raw of [null, false, 0, "", [], {}]) {
+    const mixed = { status: "work_context_partial", records: [{ content: raw }] };
+    const output = formatSessionWorkContext(mixed);
+    assert(output.includes(JSON.stringify(raw)), `Unexpected body shape must survive: ${JSON.stringify(raw)}`);
+  }
+  for (const raw of [false, 0, "", [], {}]) assert(formatSessionWorkContext(raw).includes(JSON.stringify(raw)));
 });

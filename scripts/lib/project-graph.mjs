@@ -351,6 +351,14 @@ function sourceFacts(root, sources, nodes) {
 
 const foldSearch = value => value.normalize("NFKC").toLowerCase();
 const nodePaths = node => [node.path, node.sourceCurrentness?.path, node.sourceReference?.path].filter(value => typeof value === "string");
+function matchesExplicitPaths(node, paths) {
+  if (nodePaths(node).some(relative => paths.includes(relative.replaceAll("\\", "/")))) return true;
+  // Canonical work-layer facts authenticate a historical logical name, not
+  // today's target safety, current bytes or effect authority. Keep this name
+  // association out of provenance, search text and the exact-path bonus.
+  return isWorkNode(node) && node.origin?.layer === "sessionWork" && Array.isArray(node.referenceEvidence)
+    && node.referenceEvidence.some(ref => ref.kind === "source" && ref.reasonCode !== "SESSION_PATH_ESCAPE" && paths.includes(ref.path));
+}
 function searchTerms(value) {
   // Identifier and punctuation normalization only, not product/task inference.
   // Preserve originals; Korean particle stripping adds an alias, never a gate.
@@ -384,7 +392,7 @@ function searchText(node) {
   return values.join("\n");
 }
 function rankedMatches(visible, options) {
-  const candidates = visible.filter(node => !options.paths.length || nodePaths(node).some(relative => options.paths.includes(relative.replaceAll("\\", "/"))));
+  const candidates = visible.filter(node => !options.paths.length || matchesExplicitPaths(node, options.paths));
   if (!options.query) return candidates;
   // Fold the query before alias generation: the spelling/case of a question
   // must not add several votes for one camel-case identifier.

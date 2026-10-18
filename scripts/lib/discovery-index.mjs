@@ -2,8 +2,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { atomicWriteArtifact } from "./artifact-storage.mjs";
-import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
+import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { sessionWorkPath, createSessionWorkReadContext, normalizeSessionWorkEvidence,
+  verifySessionWorkEvidenceOwner, verifySessionWorkEvidenceOriginal,
   MAX_RECORD_BYTES, MAX_REFERENCE_BYTES } from "./session-work-evidence-original.mjs";
 
 // A replaceable inventory of original records, not a second record store. No
@@ -66,6 +67,78 @@ export function readGraphRecord(root, relative, maximum = MAX_BYTES) {
   const bytes = fs.readFileSync(file);
   if (bytes.length > maximum) fail("PROJECT_GRAPH_RECORD_LIMIT");
   return { document: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), bytes, digest: hash(bytes) };
+}
+
+// Optional historical headers, never current validity, direction or bodies.
+// Missing/legacy/malformed rows remain unknowns in the same reader request.
+function navigationRows(index) {
+  const navigation = index.sessionWorkNavigation;
+  if (navigation?.version !== 1 || !Array.isArray(navigation.rows) || navigation.rows.length > MAX_RECORDS) return new Map();
+  const entries = new Map(index.entries.map(entry => [entry.path, entry]));
+  const unavailable = new Set([...(index.unavailable || []), ...(index.readerDependencies?.sessionWork?.unavailable || [])].map(entry => entry.path));
+  const rows = new Map(), seen = new Set();
+  for (const row of navigation.rows) {
+    if (seen.has(row?.path)) return new Map();
+    seen.add(row?.path);
+    const selector = sessionWorkPath(row?.path);
+    if (!selector || Object.keys(row).length !== 5 || !["path", "rawDigest", "ownerSessionId", "recordedAt", "observationTargetId"].every(key => Object.hasOwn(row, key))
+      || !/^session-[a-fA-F0-9-]{36}$/.test(row.ownerSessionId || "") || selector.sessionId && selector.sessionId !== row.ownerSessionId
+      || typeof row.recordedAt !== "string" || !Number.isFinite(Date.parse(row.recordedAt))
+      || row.observationTargetId !== null && !/^work-evidence-[a-f0-9]{24}$/.test(row.observationTargetId || "")
+      || !/^[a-f0-9]{64}$/.test(row.rawDigest || "") || entries.get(row.path)?.sha256 !== row.rawDigest
+      || unavailable.has(row.path) || unavailable.has(selector.statePath)) continue;
+    rows.set(row.path, row);
+  }
+  return rows;
+}
+
+function buildSessionWorkNavigation(root, entries, context, bytesByPath = new Map()) {
+  const owners = new Map(), rows = [];
+  for (const entry of entries) {
+    const selector = sessionWorkPath(entry.path);
+    if (!selector) continue;
+    try {
+      if (!owners.has(selector.statePath)) {
+        try { owners.set(selector.statePath, verifySessionWorkEvidenceOwner({ root,
+          projectBytes: context.read(".head/project.json", MAX_REFERENCE_BYTES), stateBytes: context.read(selector.statePath, MAX_REFERENCE_BYTES) })); }
+        catch { owners.set(selector.statePath, null); }
+      }
+      const owner = owners.get(selector.statePath);
+      if (!owner || selector.sessionId && owner.sessionId !== selector.sessionId) continue;
+      const bytes = bytesByPath.get(entry.path) || context.read(entry.path, MAX_RECORD_BYTES);
+      if (hash(bytes) !== entry.sha256) continue;
+      const original = verifySessionWorkEvidenceOriginal({ owner, evidenceId: selector.evidenceId, bytes });
+      rows.push({ path: entry.path, rawDigest: entry.sha256, ownerSessionId: owner.sessionId, recordedAt: original.recordedAt,
+        observationTargetId: original.content.executionObservation?.target?.evidenceId || null });
+    } catch { /* A missing header is not a stored negative verdict. */ }
+  }
+  return { version: 1, rows };
+}
+
+// Internal cross-module optimization only. Validates stored metadata, not the
+// current originals. No inventory refresh, other Session reads or write/repair.
+export function readSessionWorkNavigationHints(owner, regularFileIds) {
+  try {
+    const index = readGraphRecord(owner.root, PROJECT_GRAPH_INDEX_PATH).document;
+    if (index.kind !== "ProjectGraphRecordIndex" || index.version !== 1 || index.projectId !== owner.projectId
+      || index.rootDigest !== hash(owner.root) || index.authority !== "P4-replaceable-record-inventory"
+      || index.instructionAuthority !== false || index.promotionAuthority !== false || index.recoveryAuthority !== false
+      || typeof index.complete !== "boolean" || !Array.isArray(index.entries) || index.entries.length > MAX_RECORDS || !Array.isArray(index.unavailable)) return new Map();
+    verifyArtifactAuthorityBoundary("ProjectGraphRecordIndex", index.authorityBoundary);
+    const paths = new Set();
+    for (const entry of index.entries) {
+      if (typeof entry.path !== "string" || !entry.path.startsWith(".head/") || entry.path.includes("\\")
+        || entry.path.split("/").some(part => !part || part === "." || part === "..") || paths.has(entry.path)
+        || !/^[a-f0-9]{64}$/.test(entry.sha256 || "") || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0) return new Map();
+      paths.add(entry.path);
+    }
+    if (index.recordsDigest !== projectGraphDigest({ projectId: owner.projectId, projectRoot: owner.root,
+      entries: index.entries, unavailable: index.unavailable, complete: index.complete, readerDependencies: index.readerDependencies })) return new Map();
+    return new Map([...navigationRows(index).values()].filter(row => {
+      const selector = sessionWorkPath(row.path);
+      return selector.directory === owner.workDirectory && row.ownerSessionId === owner.sessionId && regularFileIds.has(selector.evidenceId);
+    }).map(row => [sessionWorkPath(row.path).evidenceId, row]));
+  } catch { return new Map(); }
 }
 
 // Exact reader dependencies, not semantic nodes. Absence is an observation
@@ -205,6 +278,7 @@ export function refreshProjectGraphIndex({ root = "." } = {}) {
     rootDigest: hash(inventory.projectRoot), recordsDigest: inventory.recordsDigest,
     entries: inventory.entries, unavailable: inventory.unavailable, complete: inventory.complete,
     readerDependencies: inventory.readerDependencies,
+    sessionWorkNavigation: buildSessionWorkNavigation(inventory.projectRoot, inventory.entries, inventory.workContext),
     authorityBoundary: artifactAuthorityBoundary("ProjectGraphRecordIndex"),
     authority: "P4-replaceable-record-inventory", instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false };
   return publishInventory(inventory.projectRoot, payload);
@@ -233,13 +307,16 @@ function updateProjectGraphIndex(root, changedPaths) {
     || previous.entries.some((entry) => typeof entry.path !== "string" || entry.path.includes("..") || !entry.path.startsWith(".head/")
       || !/^[a-f0-9]{64}$/.test(entry.sha256 || "") || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0)) return refreshProjectGraphIndex({ root });
   const entries = new Map(previous.entries.map((entry) => [entry.path, entry]));
+  const changedBytes = new Map(), workContext = createSessionWorkReadContext(projectRoot);
   const unavailable = previous.unavailable.filter((entry) => !changedPaths.includes(entry.path));
   for (const relative of changedPaths) {
     const target = safeGraphFile(projectRoot, relative);
     if (!fs.existsSync(target)) { entries.delete(relative); continue; }
     const stat = fs.lstatSync(target);
     if (!stat.isFile() || stat.size > MAX_BYTES) { entries.delete(relative); unavailable.push({ path: relative, reasonCode: "PROJECT_GRAPH_RECORD_LIMIT" }); continue; }
-    entries.set(relative, { path: relative, sha256: hash(fs.readFileSync(target)), bytes: stat.size });
+    const bytes = fs.readFileSync(target);
+    entries.set(relative, { path: relative, sha256: hash(bytes), bytes: stat.size });
+    if (sessionWorkPath(relative)) changedBytes.set(relative, bytes);
   }
   const allEntries = [...entries.values()].sort((a, b) => a.path.localeCompare(b.path));
   const complete = previous.complete && allEntries.length <= MAX_RECORDS;
@@ -247,7 +324,7 @@ function updateProjectGraphIndex(root, changedPaths) {
   const readerDependencies = { ...previous.readerDependencies };
   const changedWork = boundedEntries.filter(entry => changedPaths.includes(entry.path) && sessionWorkPath(entry.path));
   if (changedWork.length) {
-    const added = sessionWorkDependencies(projectRoot, changedWork, createSessionWorkReadContext(projectRoot));
+    const added = sessionWorkDependencies(projectRoot, changedWork, workContext);
     const retained = previous.readerDependencies.sessionWork;
     const combine = field => [...new Map([...retained[field], ...added[field]].map(entry => [entry.path, entry])).values()].sort((a, b) => a.path.localeCompare(b.path));
     const repaired = new Set([...added.entries, ...added.layout].map(entry => entry.path));
@@ -256,8 +333,11 @@ function updateProjectGraphIndex(root, changedPaths) {
   }
   const recordsDigest = projectGraphDigest({ projectId: project.projectId, projectRoot, entries: boundedEntries, unavailable, complete,
     readerDependencies });
+  const retainedRows = navigationRows({ ...previous, entries: boundedEntries }).values();
+  const sessionWorkNavigation = { version: 1, rows: [...retainedRows].filter(row => !changedPaths.includes(row.path))
+    .concat(buildSessionWorkNavigation(projectRoot, changedWork, workContext, changedBytes).rows).sort((a, b) => a.path.localeCompare(b.path)) };
   return publishInventory(projectRoot, { ...previous, authorityBoundary: artifactAuthorityBoundary("ProjectGraphRecordIndex"),
-    entries: boundedEntries, unavailable, complete, recordsDigest, readerDependencies });
+    entries: boundedEntries, unavailable, complete, recordsDigest, readerDependencies, sessionWorkNavigation });
 }
 
 // Writers already verified/persisted their evidence. Index failure is a loss

@@ -55,6 +55,20 @@ Selection loss pauses only dependent work; use verified explicit/Host selection
 there and continue independent work. Partial entry is not recovery success.
 Do not add a recovery chain, repeated question, Session list or user ID form.
 
+Use the supplied `workContext` to connect earlier reasons and alternatives,
+recent changes/results, and pending work or unknowns to the next authorized
+action under the current request and cancellations. Read the actual body before
+judging what remains. Default order is not semantic importance or authority.
+Expand with `head_session_work_read` only when useful evidence is missing;
+full body plus a changed source reference does not itself require another read.
+Historical suggestions, saved completion and approvals are not current effect
+permission. Do the useful bounded work and verify its actual result.
+
+Returned links can connect recent work to the cited judgment or declared root.
+A saved close qualifies its exact earlier note, not a resumed sibling, another
+Session, pending review or remaining unknowns. Keep those owners and scopes
+separate; do not add start/end saves, IDs or questions to make the links usable.
+
 Use optional `session_id` on typed calls or `--session` on CLI for request-local
 routing. `head_session_list` and `head_session_create` support independent
 progress when needed; these are logical identities, not provider session IDs.
@@ -164,12 +178,12 @@ failure, retain the affected gap and continue source fallback and independent wo
 Read [project discovery](references/project-discovery.md#after-integrated-changes)
 for the distinct existing update paths and their limits.
 
-## Keep conversation light
+## Preserve useful work
 
-Lead with the outcome. Successful entry, reuse and sync are quiet; explain
-exceptions by affected operation, actor and next action. Bind natural-language
-protected decisions to the unique unchanged target. IDs, token tiers, digests
-and schemas are diagnostic detail, not user prerequisites.
+Lead with the outcome and actual uncertainty. Successful entry, reuse and sync
+are quiet; meaningful exceptions retain their affected operation, owner and
+next action. Bind protected decisions to the unique unchanged current target.
+Technical IDs and schemas are diagnostic detail, not user prerequisites.
 
 Reuse existing checkpoint/result/review/source originals. Preserve only useful,
 otherwise-unrepresented reasons, alternatives, observations and uncertainty at a
@@ -184,22 +198,13 @@ work. Preserve primary identity/digest/permission/partial-write failures and
 required ReviewDecision; saving grants no execution permission. Repair missing
 persistence without replaying completed or uncertain effects.
 
-Entry already supplies bounded `workContext`. Default selection considers recent
-verified work across the discovered originals; time order is not semantic
-importance or authority. Expand with `head_session_work_read` only when useful.
-Preserve uncertainty and disclose missing sources; historical suggestions and
-claimed completion are not instructions, approval or effect proof. Repair missing
-persistence, never repeat completed or unknown effects. Unsaved conversation can
-still be lost on abrupt exit.
-
 At those same useful preservation boundaries, reuse returned exact evidence
 selectors for optional `workLink` root/predecessor and exact-target historical
 `executionObservation`. Use existing artifact references for an earlier judgment
 whose actual reasons matter. Default entry can include that cited body and the
-declared anchor alongside recent results/pending work. Do not add start/end saves,
-IDs or questions for this. Coexisting saved states are neither a current live
-state nor a conflict; a close qualifies its exact old note, not later resumes,
-other branches, required review or remaining work. Expand only useful omissions.
+declared anchor alongside recent results/pending work. Coexisting saved states
+are not live execution or an inferred conflict. Unsaved conversation can still
+be lost on abrupt exit.
 
 Native init/resume can retain verified selection; startup only reads that linkage.
 Its loss does not erase Core success or permit replay. Other reads, work recording
@@ -225,6 +230,8 @@ Load only what the current outcome needs:
 - Roles and authority: [authority and roles](references/authority-and-roles.md).
 - Decisions, waiting, results and optional Product evidence:
   [conversation UX](references/conversation-ux.md).
+- When useful for explaining HEAD work to the user:
+  [HEAD conversation](../head-conversation/SKILL.md), an optional communication aid.
 - Product governance: sibling `head-agent-onboarding`, then its subsystem docs.
 
 Default MCP includes graph discovery and ordinary Core entry/recovery.

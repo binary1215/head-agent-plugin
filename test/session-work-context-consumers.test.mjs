@@ -27,11 +27,38 @@ async function call(f, name, args = {}, routed = false) {
   assert.equal(response.result?.isError, undefined, JSON.stringify(response));
   return response.result;
 }
-function presentedWork(text) {
-  const heading = "Selected Session work evidence (P3, not current direction or permission):\n";
-  const start = text.indexOf(heading);
-  assert.ok(start >= 0, text);
-  return JSON.parse(text.slice(start + heading.length).split("\n")[0]);
+function assertJsonMember(text, name, value) {
+  if (value === undefined) return;
+  const member = JSON.stringify({ [name]: value }, null, 2).slice(2, -2);
+  assert.ok(text.includes(member), `Missing original ${name}: ${member}`);
+}
+function assertLiteralValues(text, value) {
+  if (typeof value === "string") assert.ok(text.includes(value) || text.includes(JSON.stringify(value)), `Missing original literal: ${value}`);
+  else if (Array.isArray(value)) for (const item of value) assertLiteralValues(text, item);
+  else if (value && typeof value === "object") for (const item of Object.values(value)) assertLiteralValues(text, item);
+}
+function assertPresentedWork(text, expected) {
+  assert.match(text, /Selected Session work evidence \(P3/u);
+  for (const name of ["status", "projectId", "sessionId"]) {
+    if (expected[name] !== undefined) assert.ok(text.includes(`${name}: ${JSON.stringify(expected[name])}`), name);
+  }
+  for (const name of ["organization", "coverage", "omissions", "nextAfterEvidenceId"]) assertJsonMember(text, name, expected[name]);
+  for (const [index, record] of expected.records.entries()) {
+    const start = text.indexOf(`Record[${index}]:\n`), next = text.indexOf(`Record[${index + 1}]:\n`, start);
+    assert.ok(start >= 0, `Missing Record[${index}]`);
+    const section = text.slice(start, next < 0 ? undefined : next);
+    for (const name of ["evidenceId", "projectId", "sessionId", "selectionRole"]) {
+      if (record[name] !== undefined) assert.ok(section.includes(`${name}: ${JSON.stringify(record[name])}`), name);
+    }
+    assertLiteralValues(section, record.content);
+    for (const name of ["evidenceDigest", "references"]) assertJsonMember(section, name, record[name]);
+    if (record.savedActivity) {
+      const { states, ...residual } = record.savedActivity;
+      assert.ok(section.includes(`records[${index}].savedActivity.states: ${JSON.stringify(states)}`));
+      for (const [name, value] of Object.entries(residual)) assertJsonMember(section, name, value);
+    }
+  }
+  assert.equal(text.includes(`Record[${expected.records.length}]:\n`), false, "No invented record body");
 }
 function withoutSyncWrites(action) {
   const names = ["writeFileSync", "appendFileSync", "writeSync", "mkdirSync", "renameSync", "unlinkSync", "rmSync", "rmdirSync", "truncateSync", "ftruncateSync", "chmodSync", "fchmodSync", "utimesSync", "linkSync", "symlinkSync"];
@@ -60,6 +87,40 @@ function assertHookWorkScope(value, work) {
     assert.equal(value.workCoverage.sourceIncluded, work.coverage.included);
   }
   if (value.workOrganization) assert.equal(value.workOrganization.scope, work.organization.scope);
+  if (work.omissions.uninspected > 0) {
+    assert.match(value.scope, /historical|hint/i); assert.match(value.scope, /inspected/i);
+  }
+}
+function navigationCases(root) {
+  const file = path.join(root, ".head/graph-discovery/index.json"), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
+  assert.equal(legacy.sessionWorkNavigation?.version, 1); delete legacy.sessionWorkNavigation;
+  return ["hinted", "legacy", "missing"].map(mode => ({ mode, prepare() {
+    if (mode === "missing") fs.unlinkSync(file); else fs.writeFileSync(file, mode === "hinted" ? raw : JSON.stringify(legacy));
+  } }));
+}
+function assertDefaultInspection(work, mode, originals, hintedInspected) {
+  assert.equal(work.coverage.originals, originals);
+  if (mode === "hinted") {
+    if (hintedInspected !== undefined) assert.equal(work.coverage.inspected, hintedInspected);
+    else assert.ok(work.coverage.inspected >= work.coverage.included && work.coverage.inspected < originals);
+    assert.match(work.coverage.selection, /historical|hint/i); assert.match(work.coverage.selection, /inspected/i);
+  } else {
+    assert.equal(work.coverage.inspected, originals);
+    assert.match(work.coverage.selection, /all discovered originals canonically inspected once/u);
+  }
+  assert.equal(work.coverage.unavailable, 0); assert.equal(work.coverage.valid, work.coverage.inspected);
+  assert.equal(work.omissions.uninspected, originals - work.coverage.inspected);
+}
+function defaultAccounting(value) {
+  assert.equal(value.coverage.originals, value.coverage.inspected + value.omissions.uninspected);
+  assert.equal(value.coverage.valid, value.coverage.inspected - value.coverage.unavailable);
+  assert.equal(value.coverage.included, value.records.length);
+  assert.ok(value.coverage.included <= value.coverage.valid);
+  assert.ok(value.omissions.byBudget <= value.coverage.valid - value.coverage.included);
+  assert.ok(value.records.length <= value.coverage.maxRecords);
+  assert.equal(value.coverage.usedCharacters, JSON.stringify(value.records).length);
+  assert.ok(value.coverage.usedCharacters <= value.coverage.maxCharacters);
+  assert.equal(new Set(value.records.map(record => record.evidenceId)).size, value.records.length);
 }
 function checkpoint(f) {
   return f.route(() => syncRecoveryCheckpoint({ root: f.root,
@@ -99,35 +160,39 @@ test("shared optional schema travels through direct record, CLI JSON and checkpo
   assert.equal(read.coverage.originals, 3); assert.deepEqual(recordFor(read, running).savedActivity.states, ["ended"]);
   const retry = await call(f, "head_session_work_record", { evidence: input }, true);
   assert.equal(retry.structuredContent.writes, 0); assert.equal(retry.structuredContent.executionReplayAllowed, false);
-  assert.deepEqual(snapshot(f.base), before); accounting(read);
+  assert.deepEqual(snapshot(f.base), before); defaultAccounting(read);
 });
 
 test("organized originals and overlays reach CLI, direct/router MCP and entry with zero writes", async t => {
-  const f = fixture(t), saved = representative(f), expected = f.read(), before = snapshot(f.base);
-  const cli = runCommand(["session-work-read", f.root, "--session", f.session.sessionId]);
+  const f = fixture(t), saved = representative(f);
+  let selectedBodies;
+  for (const variant of navigationCases(f.root)) {
+  variant.prepare(); const before = snapshot(f.base), expected = withoutSyncWrites(() => f.read());
+  assertDefaultInspection(expected, variant.mode, 14);
+  if (variant.mode === "hinted") defaultAccounting(expected); else accounting(expected);
+  const bodies = expected.records.map(({ evidenceId, evidenceDigest, content, selectionRole }) => ({ evidenceId, evidenceDigest, content, selectionRole }));
+  if (selectedBodies) assert.deepEqual(bodies, selectedBodies); else selectedBodies = bodies;
+  const cli = withoutSyncWrites(() => runCommand(["session-work-read", f.root, "--session", f.session.sessionId]));
   assert.deepEqual(cli, expected);
-  const presented = presentedWork(formatCliResult("session-work-read", cli));
-  for (const name of ["organization", "coverage", "omissions"]) assert.deepEqual(presented[name], expected[name]);
-  for (const record of presented.records) {
-    const original = expected.records.find(item => item.evidenceId === record.evidenceId);
-    assert.deepEqual(record.savedActivity, original.savedActivity); assert.equal(record.selectionRole, original.selectionRole);
-    assert.deepEqual(record.content, original.content);
-  }
-  assert.ok(JSON.stringify(presented).includes("EXACT REASON: A loses retained provenance"));
-  assert.ok(JSON.stringify(presented).includes("X remains"));
+  const presentation = formatCliResult("session-work-read", cli);
+  assertPresentedWork(presentation, expected);
+  assert.ok(presentation.includes("EXACT REASON: A loses retained provenance"));
+  assert.ok(presentation.includes("X remains"));
+  assert.ok(presentation.includes("External effect remains unverified"));
   for (const routed of [false, true]) {
-    const read = await call(f, "head_session_work_read", {}, routed);
+    const read = await withoutSyncWrites(() => call(f, "head_session_work_read", {}, routed));
     assert.deepEqual(read.structuredContent, expected);
     assert.equal(read.content[0].text, formatMcpToolContent("head_session_work_read", expected));
-    assert.deepEqual(presentedWork(read.content[0].text).organization, expected.organization);
-    const entry = await call(f, "head_conversation_enter", {}, routed);
+    assertPresentedWork(read.content[0].text, expected);
+    const entry = await withoutSyncWrites(() => call(f, "head_conversation_enter", {}, routed));
     assert.deepEqual(entry.structuredContent.workContext, expected);
     assert.ok(JSON.stringify(entry.content).includes("EXACT REASON: A loses retained provenance"));
     assert.equal(entry.structuredContent.ordinaryWorkBlocked, false);
   }
-  assert.deepEqual(f.route(() => enterConversationRecovery({ root: f.root })).workContext, expected);
+  assert.deepEqual(withoutSyncWrites(() => f.route(() => enterConversationRecovery({ root: f.root }))).workContext, expected);
   assert.deepEqual(snapshot(f.base), before);
   assert.deepEqual(recordFor(expected, saved.running).savedActivity.states, ["ended"]);
+  }
 });
 
 test("empty exact IDs and an exhausted lexical page retain their scope in CLI and direct/router MCP text", async t => {
@@ -149,16 +214,16 @@ test("empty exact IDs and an exhausted lexical page retain their scope in CLI an
       assert.equal(expected.coverage.originals, item.originals); assert.equal(expected.coverage.inspected, 0);
       assert.equal(expected.coverage.selection, item.selection);
       assert.equal(expected.omissions.uninspected, item.uninspected); assert.equal(expected.nextAfterEvidenceId, null);
+      accounting(expected); // Existing scoped exact/page accounting is unchanged.
       const cli = runCommand(["session-work-read", f.root, "--session", f.session.sessionId, "--input", item.input]);
       assert.deepEqual(cli, expected);
-      const cliText = formatCliResult("session-work-read", cli), presented = presentedWork(cliText);
-      assert.deepEqual(presented.coverage, expected.coverage); assert.deepEqual(presented.omissions, expected.omissions);
+      const cliText = formatCliResult("session-work-read", cli);
+      assertPresentedWork(cliText, expected);
       assert.doesNotMatch(cliText, /No selected Session work evidence is recorded/u);
       for (const routed of [false, true]) {
         const read = await call(f, "head_session_work_read", item.args, routed);
         assert.deepEqual(read.structuredContent, expected);
-        assert.deepEqual(presentedWork(read.content[0].text).coverage, expected.coverage);
-        assert.deepEqual(presentedWork(read.content[0].text).omissions, expected.omissions);
+        assertPresentedWork(read.content[0].text, expected);
         assert.doesNotMatch(read.content[0].text, /No selected Session work evidence is recorded/u);
       }
     }
@@ -185,27 +250,28 @@ test("only observed numeric zero originals keeps default no-history entry quiet"
     // zero. This does not broaden the reader's public count schema.
     for (const originals of [null, undefined, "0"]) {
       const scoped = { ...empty, coverage: { ...empty.coverage, originals } };
-      assert.deepEqual(presentedWork(formatCliResult("session-work-read", scoped)).records, []);
-      assert.deepEqual(presentedWork(formatMcpToolContent("head_session_work_read", scoped)).records, []);
+      assertPresentedWork(formatCliResult("session-work-read", scoped), scoped);
+      assertPresentedWork(formatMcpToolContent("head_session_work_read", scoped), scoped);
     }
   });
   assert.deepEqual(snapshot(f.base), before);
 });
 
-test("default canonical scan counts all originals while partial body delivery does not invent budget omissions", async t => {
+test("hinted and canonical-fallback counts disclose actual inspection without inventing budget omissions", async t => {
   const f = fixture(t), target = f.save({ summary: "Older exact target", executionObservation: { state: "running" } });
   for (let i = 0; i < 12; i += 1) f.save({ summary: `Unrelated discovery-only original ${i}` });
   const latest = f.save({ summary: "Latest bounded result", executionObservation: { state: "ended", target: exact(target) },
     pending: ["X remains; no repeated effect"], unknowns: ["External outcome is unknown"] });
   const options = { maxRecords: 1 }, input = path.join(f.base, "one-body.json"); fs.writeFileSync(input, JSON.stringify(options));
+  for (const variant of navigationCases(f.root)) {
+  variant.prepare();
   const before = snapshot(f.base);
   await withoutSyncWrites(async () => {
     const expected = f.read(options);
     assert.deepEqual(expected.records.map(record => record.evidenceId), [latest.evidence.evidenceId]);
-    assert.equal(expected.coverage.originals, 14); assert.equal(expected.coverage.inspected, 14);
-    assert.equal(expected.coverage.valid, 14); assert.equal(expected.coverage.unavailable, 0);
+    assertDefaultInspection(expected, variant.mode, 14, 2);
+    if (variant.mode === "hinted") defaultAccounting(expected); else accounting(expected);
     assert.equal(expected.coverage.inspected, expected.coverage.valid + expected.coverage.unavailable);
-    assert.equal(expected.omissions.uninspected, 0);
     assert.equal(expected.status, "work_context_partial"); assert.equal(expected.ordinaryWorkBlocked, false);
     assert.ok(expected.coverage.valid > expected.coverage.included); assert.equal(expected.omissions.byBudget, 0);
     assert.deepEqual(expected.omissions.evidenceIds, []); assert.equal(expected.omissions.omittedIdCount, 0);
@@ -214,31 +280,30 @@ test("default canonical scan counts all originals while partial body delivery do
     assert.deepEqual(record.content.pending, ["X remains; no repeated effect"]);
     assert.deepEqual(record.content.unknowns, ["External outcome is unknown"]);
     assert.ok(record.savedActivity.relations.some(relation => relation.role === "target" && relation.status === "verified"));
-    // A scan-qualified historical observation is not a fresh read of every
-    // non-body producer or a live-state/returned-at-integrity guarantee.
-    assert.match(expected.coverage.selection, /all discovered originals canonically inspected once/u);
+    // Neither current inspected proof nor historical hints imply a live-state
+    // or returned-at-integrity guarantee for the unselected archive.
     const cli = runCommand(["session-work-read", f.root, "--session", f.session.sessionId, "--input", input]);
-    assert.deepEqual(cli, expected); assert.deepEqual(presentedWork(formatCliResult("session-work-read", cli)).coverage, expected.coverage);
+    assert.deepEqual(cli, expected); assertPresentedWork(formatCliResult("session-work-read", cli), expected);
     for (const routed of [false, true]) {
       const read = await call(f, "head_session_work_read", { max_records: 1 }, routed);
       assert.deepEqual(read.structuredContent, expected);
-      const text = presentedWork(read.content[0].text);
-      assert.deepEqual(text.coverage, expected.coverage); assert.deepEqual(text.organization, expected.organization);
-      assert.deepEqual(text.records[0].content, record.content);
+      assertPresentedWork(read.content[0].text, expected);
     }
   });
   assert.deepEqual(snapshot(f.base), before);
+  }
 });
 
 for (const runtime of ["codex", "claude"]) test(`${runtime} public synthetic Hook carries saved activity with its body and current P2/common priority`, t => {
   const f = fixture(t, "CURRENT SELECTED PURPOSE: investigate locally"), saved = representative(f);
   const direction = updateProjectDirection({ root: f.root, input: { goal: "CURRENT COMMON GOAL: explain only", constraints: ["No external effects"], cancelledActions: ["deployment"] } }).direction;
-  const synced = checkpoint(f), caller = hostFixture(f, runtime), before = snapshot(f.base);
+  const synced = checkpoint(f), caller = hostFixture(f, runtime);
+  for (const variant of navigationCases(f.root)) {
+  variant.prepare(); const before = snapshot(f.base);
   const entry = withoutSyncWrites(() => caller.host.enter({ root: f.root })), { value, text } = withoutSyncWrites(() => caller.read());
   assertHookWorkScope(value, entry.workContext);
-  assert.equal(entry.workContext.coverage.inspected, entry.workContext.coverage.originals);
-  assert.equal(entry.workContext.omissions.uninspected, 0);
-  assert.ok(entry.workContext.coverage.valid > entry.workContext.coverage.included);
+  assertDefaultInspection(entry.workContext, variant.mode, 14);
+  if (variant.mode !== "hinted") assert.ok(entry.workContext.coverage.valid > entry.workContext.coverage.included);
   assert.equal(entry.workContext.status, "work_context_partial");
   assert.deepEqual(value.currentProjectDirection, directionView(direction)); assert.equal(value.sessionPurpose, entry.workContext.sessionPurpose);
   assert.equal(value.sessionRecovery.checkpointId, synced.checkpoint.checkpointId);
@@ -248,6 +313,7 @@ for (const runtime of ["codex", "claude"]) test(`${runtime} public synthetic Hoo
   assert.deepEqual(value.route, { session_id: f.session.sessionId });
   assert.equal(value.savedObservationScope, "Saved historical observations coexist; no current live state, success or authority is inferred.");
   assert.ok(text.includes("X remains")); assert.ok(text.includes("EXACT REASON: A loses retained provenance"));
+  assert.ok(text.includes("External effect remains unverified"));
   assert.ok(value.records.some(record => record.evidenceId === saved.ended.evidence.evidenceId));
   for (const record of value.records) {
     const original = entry.workContext.records.find(item => item.evidenceId === record.evidenceId);
@@ -258,6 +324,7 @@ for (const runtime of ["codex", "claude"]) test(`${runtime} public synthetic Hoo
   for (const flag of ["persisted", "userDecisionRequired", "ordinaryWorkBlocked"]) assert.equal(value[flag], false);
   assert.deepEqual(snapshot(f.base), before);
   t.diagnostic(JSON.stringify({ scope: "synthetic-public-adapter-and-hook-only", runtime, length: text.length, modelAndNativeHostVerified: false }));
+  }
 });
 
 for (const runtime of ["codex", "claude"]) test(`${runtime} optional organized bodies cannot evict a fitting long current purpose or leave an overlayless note`, t => {
@@ -305,7 +372,7 @@ test("P3 ended never clears canonical pending review, and CLI/Hook expose the se
   assert.deepEqual(snapshot(f.base), before);
 });
 
-test("private startup serializer retains record-overlay tuples at exact 9999 and 10000 and omits them whole beyond capacity", t => {
+for (const uninspected of [0, 32]) test(`private startup serializer retains record-overlay tuples at exact 9999 and 10000 (${uninspected} uninspected) and omits them whole beyond capacity`, t => {
   // Serializer-only capacity evidence complements the public Hook fixtures.
   const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
   const formatter = new Function("path", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"), source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path);
@@ -319,7 +386,7 @@ test("private startup serializer retains record-overlay tuples at exact 9999 and
       unavailableRelations: 0, uninspectedRelations: 0, relatedReadAttempts: 0, relatedExpansionDeferred: 0,
     },
     records: [{ evidenceId: id, evidenceDigest: digest, selectionRole: "recent", content: { summary: "" }, references: [], savedActivity: activity }],
-    coverage: { originals: 40, inspected: 40, valid: 40, included: 1 }, omissions: { byBudget: 0, uninspected: 0, evidenceIds: [] }, nextAfterEvidenceId: null,
+    coverage: { originals: 40, inspected: 40 - uninspected, valid: 40 - uninspected, included: 1 }, omissions: { byBudget: 0, uninspected, evidenceIds: [] }, nextAfterEvidenceId: null,
   } };
   const boundaries = new Map();
   // Output overhead can change when optional coverage is omitted. Search the

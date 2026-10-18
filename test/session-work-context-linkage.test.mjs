@@ -5,7 +5,29 @@ import test from "node:test";
 import { inspectProject } from "../scripts/lib/head-core.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { normalizeSessionWorkEvidence, recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
-import { fixture, exact, link, citation, representative, snapshot, sha, encoded, accounting, recordFor } from "./helpers/session-work-linkage-fixture.mjs";
+import { fixture, exact, link, citation, representative, snapshot, sha, encoded, recordFor } from "./helpers/session-work-linkage-fixture.mjs";
+
+// Numeric scopes, not selection wording, distinguish hinted default from
+// explicit exact/page delivery. Untouched archive hints are not current proofs.
+function accounting(value, maxRecords = value.coverage.maxRecords, maxCharacters = value.coverage.maxCharacters, scoped = false) {
+  assert.ok(value.records.length <= maxRecords);
+  assert.ok(JSON.stringify(value.records).length <= maxCharacters);
+  assert.equal(value.coverage.usedCharacters, JSON.stringify(value.records).length);
+  assert.equal(value.coverage.inspected, value.coverage.valid + value.coverage.unavailable);
+  assert.ok(value.coverage.included <= value.coverage.valid);
+  assert.equal(value.coverage.included, value.records.length);
+  assert.equal(new Set(value.records.map(record => record.evidenceId)).size, value.records.length);
+  if (scoped) assert.equal(value.coverage.valid, value.coverage.included + value.omissions.byBudget);
+  else {
+    assert.equal(value.omissions.uninspected, value.coverage.originals - value.coverage.inspected);
+    assert.ok(value.omissions.byBudget <= value.coverage.valid - value.coverage.included);
+  }
+}
+function legacyFullScan(f) {
+  const file = path.join(f.root, ".head/graph-discovery/index.json"), index = JSON.parse(fs.readFileSync(file));
+  delete index.sessionWorkNavigation;
+  fs.writeFileSync(file, JSON.stringify(index)); // Explicit legacy fixture preparation, never a read-side repair.
+}
 
 test("legacy optional-absent normalized bytes, identity, protocol and exact retry remain unchanged", t => {
   const f = fixture(t), input = { summary: "  Legacy selected work  ", judgments: [{ assessment: "Keep", reason: "Original reason" }] };
@@ -112,7 +134,7 @@ test("same-target running paused ended unknown observations coexist without a cu
   assert.equal(activity.qualifierCount, 4); assert.equal(activity.unavailableQualifierCount, 0);
   assert.equal(activity.qualifiers.length + activity.omittedQualifierCount, 4);
   assert.ok(activity.qualifiers.every(q => qualifiers.some(saved => q.evidenceId === saved.evidence.evidenceId && q.evidenceDigest === saved.evidence.evidenceDigest)));
-  assert.equal(activity.coverage, "verified-scan");
+  assert.equal(activity.coverage, "not-inspected", "Hinted saved activity describes current inspected originals, not a full archive scan");
   assert.equal(activity.state, undefined); assert.equal(activity.currentState, undefined); assert.equal(activity.conflict, undefined);
   assert.equal(note.content.executionObservation.state, "running"); assert.deepEqual(note.content.pending, ["X"]);
   assert.deepEqual(note.content.unknowns, ["Worker effect unknown"]); accounting(read);
@@ -149,6 +171,7 @@ test("default interleaves recent result, cited reason and root, with M1/M2 caps 
 test("shared root and citations reuse a single fresh proof and related attempts remain bounded", t => {
   const f = fixture(t), root = f.save({ summary: "Shared root" }), cited = f.save({ summary: "Shared cited original" });
   for (let i = 0; i < 10; i += 1) f.save({ summary: `Seed ${i}`, workLink: link(root), references: [citation(f, cited)] });
+  legacyFullScan(f); // Preserve the single-S proof-reuse observation separately from hinted reads.
   const before = snapshot(f.base), readFile = fs.readFileSync, reads = new Map();
   fs.readFileSync = (file, ...args) => {
     if (/work-evidence-[a-f0-9]{24}\.json$/.test(String(file))) reads.set(String(file), (reads.get(String(file)) || 0) + 1);
@@ -165,14 +188,33 @@ test("shared root and citations reuse a single fresh proof and related attempts 
 });
 
 test("qualifier detail is bounded independently of full incoming state/count evidence", t => {
-  const f = fixture(t), target = f.save({ summary: "Target root" });
-  for (let i = 0; i < 18; i += 1) f.save({ occurrenceKey: `qualifier-${i}`, workLink: link(target),
-    executionObservation: { state: ["running", "paused", "ended", "unknown"][i % 4], target: exact(target) } });
-  const value = f.read({ maxRecords: 2 }), activity = recordFor(value, target).savedActivity;
-  assert.deepEqual([...activity.states].sort(), ["ended", "paused", "running", "unknown"]);
-  assert.equal(activity.qualifierCount, 18); assert.ok(activity.qualifiers.length <= 2);
-  assert.equal(activity.qualifiers.length + activity.omittedQualifierCount, 18);
-  assert.equal(activity.unavailableQualifierCount, 0); accounting(value, 2);
+  const f = fixture(t), target = f.save({ summary: "Target root" }), qualifiers = [], RealDate = globalThis.Date;
+  for (let i = 0; i < 18; i += 1) {
+    // Public no-clobber writes under a synthetic clock: three distinct notes
+    // share each timestamp, so the displayed prefix must also use the ID tie-break.
+    const time = Date.parse("2026-01-01T00:00:01Z") + Math.floor(i / 3) * 1000;
+    globalThis.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [time])); }
+      static now() { return time; }
+    };
+    try { qualifiers.push(f.route(() => recordSessionWorkEvidence({ root: f.root, input: {
+      occurrenceKey: `qualifier-${i}`, workLink: link(target),
+      executionObservation: { state: ["running", "paused", "ended", "unknown"][i % 4], target: exact(target) },
+    } }))); } finally { globalThis.Date = RealDate; }
+  }
+  const ordered = [...qualifiers].sort((a, b) => b.evidence.recordedAt.localeCompare(a.evidence.recordedAt)
+    || a.evidence.evidenceId.localeCompare(b.evidence.evidenceId));
+  assert.equal(new Set(ordered.slice(0, 3).map(saved => saved.evidence.recordedAt)).size, 1);
+  const expectedPrefix = ordered.slice(0, 2).map(saved => ({ ...exact(saved), state: saved.evidence.content.executionObservation.state }));
+  for (const mode of ["hinted", "legacy-full-D"]) {
+    if (mode === "legacy-full-D") legacyFullScan(f); // Deliberate setup before this path's read snapshot.
+    const before = snapshot(f.base), value = f.read({ maxRecords: 2 }), activity = recordFor(value, target).savedActivity;
+    assert.deepEqual([...activity.states].sort(), ["ended", "paused", "running", "unknown"]);
+    assert.equal(activity.qualifierCount, 18); assert.equal(activity.qualifiers.length, 2);
+    assert.deepEqual(activity.qualifiers, expectedPrefix, `${mode}: recordedAt descending, evidence ID ascending on ties`);
+    assert.equal(activity.qualifiers.length + activity.omittedQualifierCount, 18);
+    assert.equal(activity.unavailableQualifierCount, 0); accounting(value, 2); assert.deepEqual(snapshot(f.base), before);
+  }
 });
 
 test("related-load attempt exhaustion is disclosed without making the latest result ineligible", t => {
@@ -215,17 +257,18 @@ test("exact and lexical page reads keep only requested bodies and disclose unins
   const value = f.read({ evidenceIds: [saved.ended.evidence.evidenceId, saved.ended.evidence.evidenceId], maxRecords: 8 });
   assert.deepEqual(value.records.map(r => r.evidenceId), [saved.ended.evidence.evidenceId]);
   assert.equal(value.records[0].savedActivity.coverage, "not-inspected");
-  assert.equal(value.coverage.inspected, 1); assert.equal(value.omissions.uninspected, null); accounting(value);
+  assert.equal(value.coverage.inspected, 1); assert.equal(value.omissions.uninspected, null); accounting(value, undefined, undefined, true);
   const names = fs.readdirSync(path.dirname(saved.root.file)).filter(name => /^work-evidence-.*\.json$/.test(name)).sort();
   const anchor = names.at(-2).slice(0, -5), page = f.read({ afterEvidenceId: anchor, maxRecords: 8 });
   assert.deepEqual(page.records.map(r => r.evidenceId), [names.at(-1).slice(0, -5)]);
-  assert.equal(page.nextAfterEvidenceId, null); accounting(page);
+  assert.equal(page.nextAfterEvidenceId, null); accounting(page, undefined, undefined, true);
   assert.deepEqual(snapshot(f.base), before);
 });
 
 test("a valid S qualifier whose later fresh body fails is removed once from historical activity", t => {
   const f = fixture(t), target = f.save({ summary: "Target", executionObservation: { state: "running" } });
   const qualifier = f.save({ workLink: link(target), executionObservation: { state: "ended", target: exact(target) } });
+  legacyFullScan(f); // This fault intentionally occurs between S observation and fresh admission.
   const originalRead = fs.readFileSync; let changed = false;
   fs.readFileSync = (file, ...args) => {
     const bytes = originalRead(file, ...args);
@@ -244,6 +287,7 @@ test("a valid S qualifier whose later fresh body fails is removed once from hist
 test("a selected target changed after scan cannot leave its qualifier relation verified or suppress the intact latest note", t => {
   const f = fixture(t), target = f.save({ summary: "Target root" });
   const qualifier = f.save({ pending: ["X survives missing anchor"], workLink: link(target), executionObservation: { state: "ended", target: exact(target) } });
+  legacyFullScan(f); // Retain the accepted full-S late failure boundary.
   const originalRead = fs.readFileSync; let changed = false;
   fs.readFileSync = (file, ...args) => {
     const bytes = originalRead(file, ...args);

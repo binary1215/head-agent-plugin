@@ -42,6 +42,25 @@ Session or evidence neighbors return the same typed work node and its actual
 owner. No new save, native binding, Run, index refresh or user-supplied selector is
 required merely to discover an existing original.
 
+An explicit `paths` filter can also find verified historical work whose
+`kind: "source"` reference names that exact logical Project path. The association
+survives changed, missing, oversized, non-file, permission-denied or otherwise
+unavailable targets; an observed `SESSION_PATH_ESCAPE` contributes no new match.
+An artifact-kind reference alone adds no such eligibility. Original provenance,
+retained/current digests and per-reference diagnostics remain distinct: this is
+name association, not current target safety, ownership, body reconstruction or
+effect permission. It adds no reference-path search text or exact-score bonus.
+
+Reuse complete returned `workContent`. When useful, follow an actually returned
+root, verified typed endpoint or boundary selector with a bounded neighbor query
+using `anchor_ids` and `depth > 0`, keeping compact bounds and dropping unrelated
+search filters. A `detail` request at depth zero expands that original, not its
+siblings. Expand only actual partial content through a supported returned detail
+or `originalExpansion`; a selector's existence is not a reason to reread full
+bodies. Bounds can still hide an alternative or follow-up body: retain unresolved
+coverage rather than treating nonempty results as completion. No additional save,
+approval, index, binding or World tool chain is required.
+
 The node's `workContent` contains original values, not a generated explanation.
 `workContentCoverage.partial` distinguishes complete content from display
 omission. Small fitting reasons remain complete in short output, including a
@@ -49,6 +68,16 @@ bundle of small reasons whose total exceeds the ordinary work reader's default
 32768 characters. One selected work original can retain its complete near-64KiB
 body when it fits the existing maximum, even with Session or file navigation
 nodes beside it; a short question result does not require an extra detail read.
+
+Default CLI/MCP text puts returned literal bodies and grouped judgments ahead of
+their detailed metadata, with a short actual-owner and historical/partial-scope
+notice first. A judgment's assessment, reason and alternatives stay together and
+retain their original values and order. Additional original fields, including
+unknown keys and empty values, stay at their own object location; identity,
+reference diagnostics and residual detail follow the corresponding node or edge.
+Coverage, excerpt ranges, omissions and supported expansion remain with the
+enclosing result. This rendering adds no summary, field cap or read: Core values,
+MCP `structuredContent`, CLI `--json`, Hooks, selection and proof are unchanged.
 
 For a large multi-original result, `workContentExcerpts` identifies actual source
 field/index/subfield ranges and their total length. It does not put a shortened
@@ -74,10 +103,15 @@ current cancellations. A file citation preserves its retained revision and
 current byte status; a changed or unavailable reference does not erase an intact
 work original or claim that historical file contents were recovered.
 
+A full body alongside a changed reference or `sourceFallback` does not itself
+require rereading that body. Expand missing content or check affected current
+source when the next decision actually needs it; neither the fallback nor the
+readable historical body supplies current effect permission.
+
 Queries remain read-only and Project-scoped. Exact repeat proof still observes
 all admitted work producer bytes, owner and relationship dependencies; it is not
 constant-time or constant-byte lookup. Cold discovery, reference checks, output
-shells and JSON text/structured duplication retain costs. Bounded displayed
+shells and text/structured content duplication retain costs. Bounded displayed
 content and existing cache eviction do not prove low memory use, Host delivery,
 model adherence or a performance improvement.
 

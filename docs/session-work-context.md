@@ -57,6 +57,30 @@ owner and the size needed by its enriched record. Verify returned identity and
 digest after expansion; changes since graph discovery remain possible. No extra
 save, approval, tool chain or user-authored ID is required for this discovery.
 
+Default CLI/MCP text makes the returned context readable without changing it.
+Entry keeps current common direction, the selected Session's valid purpose and
+verified checkpoint context ahead of historical work. A short status, actual
+owner and historical/partial scope precede each work body; each judgment keeps
+its assessment, reason and alternatives together. Original values are not
+summarized or cut again by the formatter. Additional fields, including unknown
+keys and empty values, retain their own object location. Identity, reference
+diagnostics and other residual detail follow the corresponding body; coverage,
+omissions and supported expansion remain with the enclosing context.
+
+This only changes default text presentation. Core values, MCP
+`structuredContent`, CLI `--json`, Hooks, selection and proof checks are unchanged.
+A complete returned body remains usable even alongside a changed reference or
+`sourceFallback`; their presence does not require an automatic reread. Missing
+content or a decision depending on current source can still need the disclosed
+exact expansion or affected-source check. Historical content grants no current
+effect permission, and a truly empty ready entry stays quiet.
+
+The self-contained [head-conversation Skill](../skills/head-conversation/SKILL.md)
+helps explain HEAD work, choices, progress and results in the user's language.
+It participates in normal implicit Skill discovery, but is not a prerequisite
+for Core execution, recovery or authority protections. Local package validation
+checks its bundled bytes, not installation or actual Host selection.
+
 Known generated instruction, role and provider-configuration differences remain
 visible without blocking intact selected-Session recovery or work-context reads.
 Edited or missing projections are never repaired by entry. Their update/mutation
@@ -132,12 +156,15 @@ sets, bounded exact qualifier selectors/counts and relation availability. Its
 own observation remains in original `content`. The separate `organization`
 notice explains historical—not live—scope once. `organization.scope` labels counts
 of the actually returned source originals, not a whole-history organization census.
-Incoming qualifier counts have the separately verified scan scope. Missing/changed relations affect
+Incoming qualifier counts cover the known producers actually verified in the request. Missing/changed relations affect
 only that view; a failure actually detected on selected reread also qualifies
 dependent overlays, endpoint diagnoses and typed references in the same response.
-Incoming producers are canonically verified during the single scan S. A non-body
-producer changed after S is not necessarily read again; its unchanged projection
-is a historical observation at S, not proof that its bytes remain intact at return.
+All known incoming producers for a displayed target receive canonical self/owner
+and exact-target checks, not merely a prefix bounded by the returned record count.
+An incoming-only producer does not recursively require its unrelated links,
+generic references or its own incoming producers. A non-body producer changed after
+its check is not necessarily read again; the retained projection is a historical
+observation at that check, not proof that its bytes remain intact at return.
 Actual bodies and directly used declared endpoints still receive fresh checks.
 Observed later failures take precedence; unobserved changes and ABA remain outside
 the guarantee. Exact-ID/page reads add no hidden ancestors or qualifier search;
@@ -154,7 +181,7 @@ the original's `evidenceDigest`. Citation content is the actual saved judgment,
 not a generated summary or a path presented as recovered reasons.
 
 Extra related body-expansion attempts are bounded by `maxRecords`, including failed
-or oversized attempts. That bound does not cap the initial canonical scan or
+or oversized attempts. That bound does not cap unknown-original verification or
 necessary direct endpoint checks. Incoming producers are not all reread before
 each displayed target. Proof metadata is retained for deduplication; unselected
 oversized bodies are discarded. Selected/related bodies have bounded retention,
@@ -165,27 +192,39 @@ switch the slot policy. Plain history fills unused slots newest-first. Explicit
 page/cursor behavior is unchanged.
 
 Work originals live in the selected Session's `work-evidence/` directory.
-There is no indispensable index or cache. Default entry/read fixes the set of matching
-names in the selected Session, then safely reads and canonically verifies each
-original once in scan S. Only compact verified metadata is retained; original
-bytes and full bodies are discarded after the scan. Actual body candidates and
-directly used declared root/predecessor/observation endpoints receive separate
-fresh checks. A single scan does not eliminate those rereads. Candidates are
-considered newest-recorded first, with
+There is no indispensable index or cache. Default entry/read fixes the matching
+names/types in that directory. Optional navigation in the existing graph index
+can supply historical order and observation-target hints; it contains no work
+body or current-validity verdict. Names without usable hints are canonically
+checked and merged in the same request before selection. Missing, legacy or
+unusable index data falls back to canonical inspection of the discovered set,
+without repairing the index, requiring a refresh or interrupting ordinary work.
+Actual body candidates and directly used declared root/predecessor/observation
+endpoints still receive fresh checks. A valid original contradicting an observed
+historical hint causes one canonical fallback over that fixed discovered set,
+not rejection as corrupt; later failures between current checks remain failures.
+Candidates are considered newest-recorded first, with
 evidence ID breaking equal-time ties. The default returns at most eight records
 without judging semantic relevance, sufficiency or current authority. Corrupt or
 oversized candidates do not prevent later fitting work from being considered.
 There is no automatic pruning, silent deletion or mandatory whole-history audit.
 
-Default `coverage.originals` and `coverage.inspected` both count the fixed discovered
-ID set, including conclusive read/JSON/verification failures. Successful scan
-verification is not mere JSON parsing. `omissions.uninspected` is zero for that
-scan, not proof of full body delivery, semantic sufficiency or latest-at-return
+Default `coverage.originals` counts the fixed discovered ID set, whereas
+`coverage.inspected` counts its unique originals actually attempted by canonical
+verification in this request, including conclusive read/JSON/verification failures.
+Historical hint-only originals are not current `coverage.valid` originals.
+`omissions.uninspected` is their difference, not a body-budget rejection. For
+example, forty independent fitting originals with normal hints can return eight
+bodies with eight inspected/valid and thirty-two uninspected; the same originals
+with no/legacy index are forty inspected/valid with zero uninspected. Both have
+zero `omissions.byBudget` when no actual body admission was rejected.
+Neither result proves full body delivery, semantic sufficiency or latest-at-return
 state. A later observed failure reclassifies the same ID once. An endpoint first
-appearing after S may be verified as an exact proof-only dependency, but it is not
+appearing after directory discovery may be verified as an exact proof-only dependency, but it is not
 added to this response's discovered/body set or counts. The next request can
 discover it normally. `nextAfterEvidenceId: null` means no default ID-page cursor.
-When valid originals outnumber included bodies, existing `work_context_partial`
+When originals remain uninspected, or valid originals outnumber included bodies,
+existing `work_context_partial`
 reports partial delivery, not recovery failure, an error or a user-action gate.
 Useful exact expansion remains optional; no automatic full audit is required.
 Known `evidenceIds` still expand exact originals without enumerating the Session
@@ -201,11 +240,23 @@ describes that page, not absence of Session history. Text stays quiet only for
 observed numeric `coverage.originals` equal to `0`, not unknown inventory.
 Bounded omission samples do not expose every omitted ID.
 
-Default discovery still reads bounded JSON bytes for all matching names:
-I/O remains O(total bounded original bytes), compact metadata O(N), and sorting
-O(N log N). All N discovered originals receive canonical verification in S;
-the optimization removes a second contributor-validation pass, not that scan.
-Bounded selected/related
+Historical hints are replaceable P4 metadata, not a current archive census.
+An unselected same-name external restoration, a plausible incorrect rank or an
+unobserved false-null observation target can remain unseen. Known incoming states
+are not all possible states, and verified direct relations do not prove a globally
+acyclic archive. Current purpose, common constraints/cancellation, P2 and effect
+authority remain separate. No automatic audit or new user mode is required.
+
+Directory discovery still examines all matching names/types. Compact metadata
+remains O(N) and ordering O(N log N); reading/decoding/parsing the whole existing
+Project index adds cost proportional to its bytes, entries, dependencies and
+navigation rows, including other Sessions/layers. With usable hints, original I/O
+depends on unknowns, actual body attempts, direct endpoints, known incoming
+producers and generic references. Missing hints, fan-in, oversized fallback or
+observed hint contradictions can still require all N originals. This is not a
+universal latency improvement or freshness guarantee. Normal writes maintain
+optional hints through existing index publication; full refresh and index growth
+retain their own verification/serialization costs. Bounded selected/related
 bodies and compact proof metadata are retained, not the entire original body set.
 Reference checks can skip bodies already known not to fit. Each generic reference
 may still temporarily read up to 16MiB.
@@ -219,12 +270,14 @@ valid reference falls back to the existing bounded read. No verdict or parsed-JS
 cache is added. Fresh selected-original rereads and the final owner/direction
 basis check remain separate observations, and later detected failures take
 precedence over earlier success. A new request observes the files again.
-For the scan/body/direct-endpoint path, `N+B+E` describes N scan reads, B fresh
-body-read attempts (including prepared but unreturned bodies), and E necessary
-direct-endpoint reads not shared with those prepared bodies. It is not an upper
-bound on all file I/O: generic reference enrichment may read work-original paths
-again as G. Fitting fallback can make B approach N. The related body-expansion
-bound does not cap generic reference reads or the initial scan. This is a sequential view of
+Unknown inspection, fresh body attempts (including prepared but unreturned bodies),
+direct endpoints and incoming producers can overlap on the same original; these
+roles are not a simple sum or an upper bound on file I/O. Generic reference
+enrichment may read work-original paths again. Fitting fallback can approach N.
+The related body-expansion bound does not cap those proof/reference reads.
+Normal hinted reads do not traverse every unobserved predecessor merely to audit
+lineage; existing cycle defenses apply to actually observed metadata, and no/legacy
+index fallback retains its full-discovered-set defense. This is a sequential view of
 the discovered set, not atomic latest-at-return: records added after enumeration
 may be absent. No mandatory index, lock, write or service is added.
 
@@ -238,7 +291,7 @@ Large records are disclosed as omitted and remain available by exact read.
 Default unavailable details are sampled up to 32 entries. `coverage.unavailable`
 counts unavailable originals within the inspected set, and
 `omissions.unavailableDetailCount` is that total minus the displayed sample.
-`coverage.valid` includes successful scanned originals that were never offered
+`coverage.valid` includes successfully inspected originals that were never offered
 as bodies, proof-only relation/qualifier originals and returned bodies, less
 observed later failures. `omissions.byBudget` counts only canonical-valid originals
 actually offered body admission and rejected by record or enriched character
@@ -318,6 +371,11 @@ requires a checkpoint, save, approval or extra routine user step.
 For organized history, startup fits the historical-scope notice and first record
 together, and always fits each body with its saved-activity overlay. Optional
 organization detail cannot leave an old running body presented as live state.
+When discovered originals remain uninspected, the existing `scope` also says
+that archive hints are historical and only inspected originals were checked,
+even if optional detailed coverage must yield to current purpose/P2. Full
+coverage or compact source counts retain their actual inspected/included basis;
+the shorter notice does not claim a fresh archive scan or require expansion.
 Where existing restore supplies `currentExecution`, a separate small axis keeps
 its exact status and canonical active/pending-review/required-plan facts. Incomplete
 or conflict stays so; a raw pointer is not verified execution. No checkpoint means

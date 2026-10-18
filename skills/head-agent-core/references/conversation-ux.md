@@ -183,24 +183,14 @@ new decision card unless HEAD proposes a separate exact revision.
 
 ## Outcome presentation
 
-Lead with the work outcome and use only the sections that add information:
+Use the returned reasons, changes and remaining uncertainty to judge the next
+authorized work and check its actual outcome. Expand missing evidence when useful,
+not to repeat a full body just because its source reference changed. User-facing
+explanation can use the optional [HEAD conversation](../../head-conversation/SKILL.md)
+Skill; the operational boundaries here apply without loading it.
 
-- completed work;
-- verification actually performed;
-- remaining uncertainty or failed coverage;
-- a user decision or useful next action.
-
-When a usable deliverable exists, link it near the outcome and distinguish what
-changed, what was verified and what remains uncertain. Do not create an artifact,
-upload local content or add empty report sections merely to satisfy this format.
-
-For review work, distinguish completion of the review from the verdict on its
-subject. A completed review may request changes or report insufficient evidence.
-Identify the reviewed scope, consequential findings and the next useful action.
-Do not imply implementation acceptance, whole-task completion or user approval.
-
-Context coverage is not semantic
-sufficiency; worker or wave success is not whole-task completion; a ResultPacket
+Review completion is distinct from acceptance of its subject. Context coverage
+is not semantic sufficiency; worker or wave success is not whole-task completion; a ResultPacket
 is not acceptance; a commit is not a push; and a deployment observation is not
 product success. For a durable Run, completion follows Fresh HEAD review and the
 existing explicit review/integration boundaries. Keep technical IDs and JSON

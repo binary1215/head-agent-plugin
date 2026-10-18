@@ -10,6 +10,7 @@ import { createSessionHostAdapter } from "./lib/session-host-adapter.mjs";
 // is conservative for scalar/grapheme counting. Installed Host support is separate.
 const MAX_CONTEXT_CHARACTERS = { codex: 32768, claude: 10000 };
 const COMPACT_SCOPE = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. IDs/digests select originals; reference freshness not inferred. Check current authority for effects.";
+const HINT_SCOPE = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. Hints; inspected only. IDs/digests: originals, not freshness. Check current authority for effects.";
 function startupProjection(entry, root, runtime = "claude") {
   const limit = MAX_CONTEXT_CHARACTERS[runtime];
   const logicalSessionId = entry.workContext?.sessionId || entry.restore?.checkpoint?.sessionId || entry.projectStatus?.project?.sessionId || null;
@@ -23,6 +24,7 @@ function startupProjection(entry, root, runtime = "claude") {
   const availability = directionView?.currentProjectDirectionAvailability;
   const checkpoint = entry.restore?.checkpoint;
   const work = entry.workContext;
+  const compactScope = work?.omissions?.uninspected > 0 ? HINT_SCOPE : COMPACT_SCOPE;
   const execution = entry.restore?.projection?.currentExecution, pointer = execution?.sessionPointer;
   const showExecution = execution && (execution.status !== "verified" || pointer?.activeRunId || pointer?.pendingReview || pointer?.requiredPlanAction);
   const context = {
@@ -40,7 +42,7 @@ function startupProjection(entry, root, runtime = "claude") {
     workCoverage: work ? { status: work.status, reasonCode: work.reasonCode, omitted: true,
       sourceOriginals: work.coverage?.originals, sourceInspected: work.coverage?.inspected, sourceIncluded: work.coverage?.included } : null,
     route: logicalSessionId ? { session_id: logicalSessionId } : null,
-    scope: "Read-only, non-atomic orientation. Current common and selected Session P2 apply; history/P3 grant no effects. Original IDs/digests select verified sources, not this projection. Reference freshness is not inferred. Recheck current authority before an effect.",
+    scope: work?.omissions?.uninspected > 0 ? compactScope : "Read-only, non-atomic orientation. Current common and selected Session P2 apply; history/P3 grant no effects. Original IDs/digests select verified sources, not this projection. Reference freshness is not inferred. Recheck current authority before an effect.",
     hostCapability: "Verified Host/explicit route only; never guess. No extra bind/save/repeated Session ID.",
     ordinaryWorkBlocked: false, userDecisionRequired: false, persisted: false,
     ...(showExecution ? { currentExecution: { status: execution.status, contentIncluded: false, source: "restore.projection.currentExecution" } } : {}),
@@ -66,7 +68,7 @@ function startupProjection(entry, root, runtime = "claude") {
   const exceedsBound = () => serialize().length > limit;
   // Admission always uses the smallest truthful guidance envelope. Long prose
   // may return only with spare capacity after originals, never at their expense.
-  context.scope = (showExecution ? "Execution details omitted; expand entry. " : "") + COMPACT_SCOPE;
+  context.scope = (showExecution ? "Execution details omitted; expand entry. " : "") + compactScope;
   context.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
   compactExpansion = true;
   // All four latest selected checkpoint fields can carry local direction. Keep
@@ -98,7 +100,7 @@ function startupProjection(entry, root, runtime = "claude") {
   // Each optional addition is checked with its final counts and conditional
   // expansion. It can never evict a protected original that already fitted.
   if (showExecution) {
-    context.scope = COMPACT_SCOPE;
+    context.scope = compactScope;
     context.currentExecution = { status: execution.status,
       sessionPointer: { activeRunId: pointer?.activeRunId ?? null,
         pendingReview: pointer?.pendingReview ? { runId: pointer.pendingReview.runId, wholePlanId: pointer.pendingReview.wholePlanId, resultPacketId: pointer.pendingReview.resultPacketId } : null,
@@ -108,7 +110,7 @@ function startupProjection(entry, root, runtime = "claude") {
     if (exceedsBound()) {
       context.currentExecution = { status: execution.status, contentIncluded: false, source: "restore.projection.currentExecution" };
       executionDetailsOmitted = true;
-      context.scope = "Execution details omitted; expand entry. " + COMPACT_SCOPE;
+      context.scope = "Execution details omitted; expand entry. " + compactScope;
     }
   }
   for (const record of work?.records || []) {
@@ -155,7 +157,7 @@ function startupProjection(entry, root, runtime = "claude") {
     }
   }
   context.scope = executionDetailsOmitted ? "Execution details omitted; expand entry. " + normalScope : normalScope;
-  if (exceedsBound()) context.scope = (executionDetailsOmitted ? "Execution details omitted; expand entry. " : "") + COMPACT_SCOPE;
+  if (exceedsBound()) context.scope = (executionDetailsOmitted ? "Execution details omitted; expand entry. " : "") + compactScope;
   context.hostCapability = normalHostCapability;
   if (exceedsBound()) context.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
   if (compactExpansion) {

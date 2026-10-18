@@ -88,17 +88,31 @@ function checkpointView(raw) {
     historicalPosition: c.currentPosition, historicalNextExpectedResult: c.nextExpectedResult,
     historicalApprovalGrantsCurrentEffect: false } : null;
 }
+function navigationCases(root) {
+  const file = path.join(root, ".head/graph-discovery/index.json"), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
+  assert.equal(legacy.sessionWorkNavigation?.version, 1); delete legacy.sessionWorkNavigation;
+  return ["hinted", "legacy", "missing"].map(mode => ({ mode, prepare() {
+    if (mode === "missing") fs.unlinkSync(file); else fs.writeFileSync(file, mode === "hinted" ? raw : JSON.stringify(legacy));
+  } }));
+}
 
-function assertOptionalWorkExpansion(f, raw, value, runtime) {
+function assertOptionalWorkExpansion(f, raw, value, runtime, mode) {
   assert.equal(value.projectRoot, f.root); assert.deepEqual(value.route, { session_id: f.session.sessionId });
   const work = raw.workContext;
   assert.equal(work.status, "work_context_partial");
-  for (const key of ["originals", "inspected", "valid"]) assert.equal(work.coverage[key], 40);
+  const inspected = mode === "hinted" ? 8 : 40;
+  assert.equal(work.coverage.originals, 40);
+  for (const key of ["inspected", "valid"]) assert.equal(work.coverage[key], inspected);
+  assert.equal(work.coverage.unavailable, 0); assert.equal(work.omissions.uninspected, 40 - inspected);
+  if (mode === "hinted") {
+    assert.match(work.coverage.selection, /historical|hint/i); assert.match(work.coverage.selection, /inspected/i);
+    assert.match(value.scope, /historical|hint/i); assert.match(value.scope, /inspected/i);
+  } else assert.match(work.coverage.selection, /all discovered originals canonically inspected once.*partial body delivery.*not live state or semantic sufficiency/);
   assert.equal(work.coverage.included, 8); assert.equal(work.records.length, 8);
   assert.equal(work.omissions.byBudget, 0); assert.deepEqual(work.omissions.evidenceIds, []);
   assert.equal(value.workCoverage.status, work.status);
   if (value.workCoverage.omitted) {
-    assert.equal(value.workCoverage.sourceOriginals, 40); assert.equal(value.workCoverage.sourceInspected, 40);
+    assert.equal(value.workCoverage.sourceOriginals, 40); assert.equal(value.workCoverage.sourceInspected, inspected);
     assert.equal(value.workCoverage.sourceIncluded, 8);
   } else {
     assert.deepEqual(value.workCoverage.coverage, work.coverage); assert.deepEqual(value.workCoverage.omissions, work.omissions);
@@ -125,12 +139,14 @@ function assertOptionalWorkExpansion(f, raw, value, runtime) {
 
 test("public Hook: current common cancellation and 4200-character selected purpose precede P3/metadata in both runtimes", (t) => {
   const f = fixture(t, "Current selected purpose: " + "p".repeat(4200));
+  for (const variant of navigationCases(f.root)) {
+  variant.prepare();
   const before = snapshot(f.base);
   for (const caller of f.callers) {
     const raw = caller.host.enter({ root: f.root }), { text, value } = caller.read();
     assert.equal(raw.workContext.omissions.byBudget, 0);
-    assert.equal(raw.workContext.omissions.uninspected, 0);
-    assert.equal(raw.workContext.coverage.valid, 40);
+    assert.equal(raw.workContext.omissions.uninspected, variant.mode === "hinted" ? 32 : 0);
+    assert.equal(raw.workContext.coverage.valid, variant.mode === "hinted" ? 8 : 40);
     assert.equal(raw.workContext.status, "work_context_partial");
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.deepEqual(value.currentProjectDirection, directionView(f.direction));
@@ -138,15 +154,19 @@ test("public Hook: current common cancellation and 4200-character selected purpo
     assert.equal(Object.hasOwn(value, "sessionPurposeCoverage"), false);
     assert.equal(value.omittedEvidenceCount, raw.workContext.records.length - value.records.length);
     assert.equal(value.sessionRecovery, null);
-    assertOptionalWorkExpansion(f, raw, value, caller.runtime);
+    assertOptionalWorkExpansion(f, raw, value, caller.runtime, variant.mode);
     t.diagnostic(JSON.stringify({ runtime: caller.runtime, length: text.length, currentPurposeExact: true, currentCommonExact: true,
       omittedEvidenceCount: value.omittedEvidenceCount, omittedIdSample: value.omittedEvidenceIds.length }));
   }
   assert.deepEqual(snapshot(f.base), before);
+  }
 });
 
 test("public Hook: all four latest selected checkpoint direction fields survive alongside current common and Session purpose", (t) => {
   const f = fixture(t, "Current Session local scope: no external effects. " + "p".repeat(2300), { checkpoint: true });
+  const variants = navigationCases(f.root);
+  for (const variant of variants) {
+  variant.prepare();
   let before = snapshot(f.base);
   for (const caller of f.callers) {
     const raw = caller.host.enter({ root: f.root }), { value, text } = caller.read();
@@ -154,21 +174,24 @@ test("public Hook: all four latest selected checkpoint direction fields survive 
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.deepEqual(value.sessionRecovery, checkpointView(raw));
     assert.equal(Object.hasOwn(value, "requiredSourceExpansion"), false);
-    assertOptionalWorkExpansion(f, raw, value, caller.runtime);
+    assertOptionalWorkExpansion(f, raw, value, caller.runtime, variant.mode);
     t.diagnostic(JSON.stringify({ runtime: caller.runtime, length: text.length, latestSelectedP2FieldsExact: true }));
   }
   assert.deepEqual(snapshot(f.base), before);
+  }
   fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
-  before = snapshot(f.base);
+  for (const variant of variants) {
+  variant.prepare();const before = snapshot(f.base);
   for (const caller of f.callers) {
     const raw = caller.host.enter({ root: f.root }), { value } = caller.read();
     assert.equal(value.currentProjectDirection, null);
     assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
     assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
     assert.deepEqual(value.sessionRecovery, checkpointView(raw));
-    assertOptionalWorkExpansion(f, raw, value, caller.runtime);
+    assertOptionalWorkExpansion(f, raw, value, caller.runtime, variant.mode);
   }
   assert.deepEqual(snapshot(f.base), before);
+  }
 });
 
 test("public Hook: normal complete context adds no omission-specific query instruction", (t) => {

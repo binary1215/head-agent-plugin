@@ -16,6 +16,22 @@ import {formatCliResult,formatMcpToolContent} from '../scripts/lib/cli-presentat
 
 const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
 
+function assertWorkPresentation(text,value){
+ assert.match(text,/Selected Session work evidence \(P3/u);
+ for(const key of ['status','projectId','sessionId'])if(value[key]!==undefined)assert.ok(text.includes(`${key}: ${JSON.stringify(value[key])}`),key);
+ for(const key of ['coverage','omissions','nextAfterEvidenceId']){
+  if(value[key]!==undefined)assert.ok(text.includes(JSON.stringify({[key]:value[key]},null,2).slice(2,-2)),`Missing original ${key}`);
+ }
+ for(const [index,record]of value.records.entries()){
+  const start=text.indexOf(`Record[${index}]:\n`),next=text.indexOf(`Record[${index+1}]:\n`,start);
+  assert.ok(start>=0,`Missing Record[${index}]`);const section=text.slice(start,next<0?undefined:next);
+  assert.ok(section.includes(`evidenceId: ${JSON.stringify(record.evidenceId)}`));
+  if(record.sessionId!==undefined)assert.ok(section.includes(`sessionId: ${JSON.stringify(record.sessionId)}`));
+  assert.ok(section.includes(record.content.summary),`Missing original summary for ${record.evidenceId}`);
+ }
+ assert.equal(text.includes(`Record[${value.records.length}]:\n`),false);
+}
+
 const pluginRoot=path.resolve(import.meta.dirname,'..');
 function fixture(t){
  const parent=process.env.HEAD_AGENT_TEST_TMP||os.tmpdir();fs.mkdirSync(parent,{recursive:true});
@@ -36,16 +52,21 @@ async function call(root,name,args={},routed=false){
   arguments:routed?{name,arguments:{project_root:root,...args}}:{project_root:root,...args}}});
  assert.equal(response.error,undefined,JSON.stringify(response));assert.equal(response.result?.isError,undefined,JSON.stringify(response));
  const value=response.result.structuredContent;
- // Preserve the existing readable heading + selected JSON presentation, not
- // a newly invented raw-JSON-only text contract.
+ // The human-readable body is not a JSON transport; Core/structured remain
+ // the unchanged machine contract and returned scope stays visible in text.
  if(name==='head_session_work_read'){
   const text=response.result.content[0].text;assert.equal(text,formatMcpToolContent(name,value));
-  const presented=JSON.parse(text.slice(text.indexOf('\n')+1));
-  assert.deepEqual(presented.coverage,value.coverage);assert.deepEqual(presented.omissions,value.omissions);
-  assert.equal(presented.nextAfterEvidenceId,value.nextAfterEvidenceId);
-  assert.deepEqual(presented.records.map(r=>r.evidenceId),value.records.map(r=>r.evidenceId));
+  assertWorkPresentation(text,value);
  }
  return value;
+}
+// Fixture-only compatibility variants; reads must never repair either index.
+function navigationCases(root){
+ const file=path.join(root,'.head/graph-discovery/index.json'),raw=fs.readFileSync(file,'utf8'),legacy=JSON.parse(raw);
+ assert.equal(legacy.sessionWorkNavigation?.version,1);delete legacy.sessionWorkNavigation;
+ return ['hinted','legacy','missing'].map(mode=>({mode,prepare(){
+  if(mode==='missing')fs.unlinkSync(file);else fs.writeFileSync(file,mode==='hinted'?raw:JSON.stringify(legacy));
+ }}));
 }
 test('generated instructions lead with the original outcome and preserve only necessary working boundaries',t=>{
  const f=fixture(t),text=fs.readFileSync(path.join(f.root,'.head/generated/head-instructions.md'),'utf8');
@@ -63,26 +84,33 @@ test('generated instructions lead with the original outcome and preserve only ne
 });
 test('default selected work coverage crosses CLI and direct/router MCP without extra calls or writes',async t=>{
  const f=fixture(t);for(let i=0;i<10;i++)f.route(()=>recordSessionWorkEvidence({root:f.root,input:{summary:`Synthetic observation ${i}`,occurrenceKey:`useful-${i}`}}));
- const expected=f.route(()=>readSessionWorkContext({root:f.root})),before=snapshot(f.base);
+ let selectedBodies;
+ for(const variant of navigationCases(f.root)){
+ variant.prepare();const before=snapshot(f.base),expected=f.route(()=>readSessionWorkContext({root:f.root}));
+ const inspected=variant.mode==='hinted'?8:10;
  assert.equal(expected.status,'work_context_partial');assert.equal(expected.coverage.originals,10);
- assert.equal(expected.nextAfterEvidenceId,null);assert.equal(expected.coverage.inspected,10);
- assert.equal(expected.coverage.valid,10);assert.equal(expected.coverage.unavailable,0);
+ assert.equal(expected.nextAfterEvidenceId,null);assert.equal(expected.coverage.inspected,inspected);
+ assert.equal(expected.coverage.valid,inspected);assert.equal(expected.coverage.unavailable,0);
  assert.equal(expected.coverage.included,8);assert.equal(expected.records.length,8);
- // Unattempted valid tails are not failed body admissions or full delivery.
- assert.equal(expected.omissions.uninspected,0);assert.equal(expected.omissions.byBudget,0);
+ // Historical hints are not current valid originals or failed body admissions.
+ assert.equal(expected.omissions.uninspected,10-inspected);assert.equal(expected.omissions.byBudget,0);
  assert.deepEqual(expected.omissions.evidenceIds,[]);assert.equal(expected.omissions.omittedIdCount,0);
  assert.equal(expected.omissions.unavailableDetailCount,0);
- assert.match(expected.coverage.selection,/all discovered originals canonically inspected once.*partial body delivery.*not live state or semantic sufficiency/);
+ if(variant.mode==='hinted'){
+  assert.match(expected.coverage.selection,/historical|hint/i);assert.match(expected.coverage.selection,/inspected/i);
+ }else assert.match(expected.coverage.selection,/all discovered originals canonically inspected once.*partial body delivery.*not live state or semantic sufficiency/);
+ const bodies=expected.records.map(record=>({evidenceId:record.evidenceId,evidenceDigest:record.evidenceDigest,content:record.content}));
+ if(selectedBodies)assert.deepEqual(bodies,selectedBodies);else selectedBodies=bodies;
  assert.match(expected.expansion,/Read exact evidenceIds.*when useful.*does not require a full audit or repeating default entry/);
  const cli=await runCommand(['session-work-read',f.root,'--session',f.selected.sessionId]);assert.deepEqual(cli,expected);
- const presentation=formatCliResult('session-work-read',cli);assert.match(presentation,/"nextAfterEvidenceId":null/);
- assert.match(presentation,/"unavailableDetailCount":0/);
+ const presentation=formatCliResult('session-work-read',cli);assertWorkPresentation(presentation,expected);
  for(const routed of[false,true]){
   const actual=await call(f.root,'head_session_work_read',{session_id:f.selected.sessionId},routed);assert.deepEqual(actual,expected);
   const entry=await call(f.root,'head_conversation_enter',{session_id:f.selected.sessionId},routed);
   assert.deepEqual(entry.workContext,expected);assert.equal(entry.ordinaryWorkBlocked,false);
  }
  assert.deepEqual(snapshot(f.base),before);
+ }
 });
 for(const runtime of['codex','claude'])test(`${runtime} healthy startup is useful without a mandatory follow-up or selection write`,t=>{
  const f=fixture(t),environment={HEAD_AGENT_OPERATIONAL_STATE_ROOT:f.operational};
