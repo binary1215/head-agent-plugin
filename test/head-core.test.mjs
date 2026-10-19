@@ -345,6 +345,9 @@ test("defaults to the constitutional core without activating Product or Graph go
     },
   });
   assert.equal(first.nextAction.id, "work_directly");
+  assert.equal(first.nextAction.entrypoint.cli, null);
+  assert.equal(first.nextAction.entrypoint.mcpTool, null);
+  assert.equal(Object.hasOwn(first.nextAction.entrypoint, "alternative"), false);
   assert.equal(first.capabilities.find((item) => item.id === "product-governance").availability, "available-not-activated");
   assert.equal(first.capabilities.find((item) => item.id === "context-compiler").availability, "requires-explicit-product-world");
   assert.equal(first.runtime.activePackageVersion, pluginVersion);
@@ -385,6 +388,7 @@ test("defaults to the constitutional core without activating Product or Graph go
   });
   assert.equal(mcpStatus.result.structuredContent.status, "core_ready");
   assert.deepEqual(mcpStatus.result.structuredContent.readiness, projected.readiness);
+  assert.deepEqual(mcpStatus.result.structuredContent.nextAction.entrypoint, first.nextAction.entrypoint);
   assert.equal(Buffer.byteLength(JSON.stringify(mcpStatus.result.structuredContent), "utf8") < 64 * 1024, true);
   assert.match(mcpStatus.result.content[0].text, /HEAD is ready — continue the task/u);
   assert.equal(mcpStatus.result.content[0].text.trimStart().startsWith("{"), false);
@@ -409,7 +413,8 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(humanDoctor.stdout.includes(`Loaded package: ${pluginVersion}`), true);
   assert.equal(humanDoctor.stdout.includes(`Configured package: ${pluginVersion}`), true);
   assert.match(humanDoctor.stdout, /Host restart: not required/u);
-  assert.match(humanDoctor.stdout, /Command:|MCP:/u);
+  assert.match(humanDoctor.stdout, /Next: Continue the user's original task\./u);
+  assert.doesNotMatch(humanDoctor.stdout, /^(?:Command|MCP):/mu);
 
   const jsonStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root, "--json"], { encoding: "utf8" });
   assert.equal(jsonStatus.status, 0, jsonStatus.stderr);
@@ -446,6 +451,7 @@ test("reports loaded versus configured package state without blocking ordinary w
   const manifestFile = path.join(root, ".head", "generated", "manifest.json");
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
   const generatedInstructionsFile = path.join(root, ".head", "generated", "head-instructions.md");
+  const currentInstructions = fs.readFileSync(generatedInstructionsFile, "utf8");
   const oldInstructions = "# Old managed instructions\n";
   fs.writeFileSync(generatedInstructionsFile, oldInstructions);
   const oldInstructionDigest = crypto.createHash("sha256").update(oldInstructions).digest("hex");
@@ -468,7 +474,7 @@ test("reports loaded versus configured package state without blocking ordinary w
   assert.equal(converged.installationAction, "converged");
   assert.equal(converged.runtime.state, "current");
   assert.equal(converged.runtime.restartRequired, false);
-  assert.match(fs.readFileSync(generatedInstructionsFile, "utf8"), /do not repeat status unless state changed/u);
+  assert.equal(fs.readFileSync(generatedInstructionsFile, "utf8"), currentInstructions);
 });
 
 test("requires an explicit product profile before applying onboarding input", async (t) => {
