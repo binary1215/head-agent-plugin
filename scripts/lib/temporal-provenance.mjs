@@ -3,7 +3,7 @@ import { onboardingCandidateProducerReviewDecisionId, verifyOnboardingGraphProje
 import { verifyFeatureMappingProjectionInput } from "./feature-mapping-projection.mjs";
 import { verifyChangeSetProjectionInput } from "./change-set-projection.mjs";
 import { verifyDocumentChangeProjectionInput } from "./document-change-projection.mjs";
-import { verifyProductOperatingProjectionInput } from "./product-operating-loop.mjs";
+import { verifyProductOperatingProjectionInput } from "./product-operating-projection.mjs";
 import { verifyReleaseObservationProjectionInput } from "./release-observation.mjs";
 import { verifyObservationProjection } from "./observation-projection.mjs";
 import { emptyProductModelDocument, normalizeProductModelDocument } from "./product-model.mjs";

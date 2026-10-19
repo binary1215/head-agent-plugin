@@ -2,6 +2,9 @@ node_modules/
 .agent-work/
 /dist/
 test/*
+!test/native-session-observations.test.mjs
+!test/native-session-process.test.mjs
+!test/opencode-native-observations.test.mjs
 !test/session-work-body-organization.test.mjs
 !test/project-graph-work-context.test.mjs
 !test/project-graph-work-proof.test.mjs
@@ -118,3 +121,5 @@ Thumbs.db
 !test/helpers/arcadedb-fetch-fault-fixture.mjs
 !test/session-work-restoration-reader.test.mjs
 !test/project-graph-source-reference.test.mjs
+!test/project-graph-work-admission.test.mjs
+!test/product-operating-projection.test.mjs

@@ -69,6 +69,12 @@ A saved close qualifies its exact earlier note, not a resumed sibling, another
 Session, pending review or remaining unknowns. Keep those owners and scopes
 separate; do not add start/end saves, IDs or questions to make the links usable.
 
+Optional native observations describe the caller, not logical Session execution.
+Related ancestry context contains verified historical P3, never inherited P2
+direction. Use current Host activity only when it answers a material uncertainty;
+see [runtime composition](references/runtime-composition.md#native-observations-and-current-host-activity).
+Missing observations never require a bind/save, ID question or extra lookup chain.
+
 Use optional `session_id` on typed calls or `--session` on CLI for request-local
 routing. `head_session_list` and `head_session_create` support independent
 progress when needed; these are logical identities, not provider session IDs.

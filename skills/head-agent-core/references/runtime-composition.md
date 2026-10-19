@@ -60,6 +60,44 @@ An update failure leaves a scoped evidence gap, not a new user approval, worker
 authorization or barrier to independent work. These handoff facts can use the
 existing report/ordinary brief; no new mandatory artifact or field schema is added.
 
+## Native observations and current Host activity
+
+Packaged Codex/Claude lifecycle Hooks keep small optional Host-local P5
+observations. Existing native `head_project_status` may include `nativeContext`;
+its caller can differ from the requested logical Session. Receipt order is not
+source causality or a complete activity census. `Stop`/`SubagentStop` means a
+response-end was observed, not terminal success. A caller-level `SessionEnd`
+does not finish its tasks. Claude's supported local exact PID/birth check means
+only hosting-process presence/absence at check, never child-agent activity.
+
+For supported exact Codex own metadata, native entry can include related source
+P3 bodies from the logical mapping captured when a direct edge was observed.
+They are historical reasons/results/pending work, not copied fork-cutoff history
+or parent P2 direction. Current child/common constraints and cancellations win.
+Absent mapping remains absent even if the parent later selects a Session.
+
+In Codex app contexts exposing `wait_threads`, an actual ready `threadId` from
+an existing authorized launch/fork/known target, or the trusted caller
+`nativeContext.hostTarget.threadId`, can answer a material current-state question.
+Use one immediate `wait_threads` (`timeoutMs: 0`) for that target when useful.
+Pass `hostId` only if genuinely supplied; do not infer it from a local path or
+require another status first. `clientThreadId`, collaboration IDs and private
+managed handles are not app thread IDs without an actual mapping.
+
+Use the returned exact target/current turn. `timedOut: true` may accompany a
+valid active/in-progress poll; it is not target failure. `afterCursor` tracks
+new information, not an execution identity. An older completed result cannot
+close a newer turn or logical HEAD work. If the snapshot answers the question,
+do not read the full conversation. A narrow `read_thread` is optional only for
+a material missing result/failure detail. No automatic status/wait/read chain,
+self-poll loop, list-all, socket/CLI fallback or user ID form is needed.
+Core does not call peer MCP tools or persist these live Host snapshots.
+
+The optional OpenCode V1 entry uses the supplied Host client and proven local
+HEAD MCP alias. A returned busy/retry/idle observation is at-check only; an
+absent status-map entry means no non-idle entry, not ended. Unsupported or
+unavailable observations leave ordinary work and existing recovery usable.
+
 ## Follow-up handoffs
 
 For a continuing contribution, lead with what changed, what is already usable,

@@ -1,4 +1,5 @@
 import { organizeSelectedWorkBodies, workBodyTuples } from "./session-work-body-organization.mjs";
+import { isDeepStrictEqual } from "node:util";
 
 const PRODUCT_LABELS = {
   unavailable: "unavailable until Core initialization",
@@ -287,7 +288,7 @@ export function formatConversationRecovery(value) {
     const work = entry.workContext;
     const emptyQuiet = value.presentation.mode === "quiet" && value.status === "conversation_ready" && context.onlyUnrecordedDirection
       && work?.status === "work_context_not_recorded" && work.coverage?.originals === 0 && work.records?.length === 0 && !executionText;
-    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified Session checkpoint — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n${emptyQuiet ? "" : context.text}${executionText}${formatSessionWorkContext(entry.workContext)}`;
+    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified Session checkpoint — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n${emptyQuiet ? "" : context.text}${executionText}${formatSessionWorkContext(entry.workContext)}${formatRelatedNativeWork(entry.relatedNativeWorkContext)}`;
   }
   for (const attention of entry?.attention?.items || []) {
     if (attention.actionability === "immediate") lines.push(`${attention.owner} follow-up: ${compactText(attention.summary, 300)}`);
@@ -310,7 +311,14 @@ export function formatConversationRecovery(value) {
     lines.push("Provider HEAD must author the current bounded recovery direction internally; the user is not asked to fill a schema.");
   }
   lines.push("", "No provider summary, provider session identity, review result, or Product Canon was promoted by this projection.", "Technical details: use the structured result or --json");
-  return `${lines.join("\n")}\n${context.text}${executionText}${formatSessionWorkContext(entry.workContext)}`;
+  return `${lines.join("\n")}\n${context.text}${executionText}${formatSessionWorkContext(entry.workContext)}${formatRelatedNativeWork(entry.relatedNativeWorkContext)}`;
+}
+
+function formatRelatedNativeWork(value) {
+  if (!value?.sources?.length) return "";
+  return "\nRelated historical P3 from observed native ancestry — not this child's direction, approval or copied fork-cutoff history:\n"
+    + value.sources.map(source => `Related source ${JSON.stringify(source.workContext.sessionId)} (${source.relation}; selected when observed):\n`
+      + formatSessionWorkContext(source.workContext)).join("\n");
 }
 
 const originalObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -405,9 +413,29 @@ function commonStoredWorkFields(entries, label, bodyKey) {
   return result();
 }
 
-function originalWorkRecord(value, location, bodyKey, commonKeys = []) {
+function markKnownNeutralFields(value, handled, expected) {
+  // Closed, producer-specific exact values only. This is display factoring,
+  // never a validator; unexpected values and new fields keep their old residual.
+  for (const [key, neutral] of Object.entries(expected)) if (Object.hasOwn(value, key) && value[key] === neutral) handled.add(key);
+}
+
+function markRenderedBodyGroups(value, handled, entries, bodyKey, owner) {
+  if (!Object.hasOwn(value, "selectedBodyGroups")) return;
+  try {
+    const tuples = workBodyTuples(entries.map(entry => entry.value), { ...owner, bodyKey })
+      .map((tuple, index) => ({ ...tuple, index: entries[index].index }));
+    const organized = organizeSelectedWorkBodies(tuples);
+    if (isDeepStrictEqual(value.selectedBodyGroups, { ...organized, omittedGroups: 0 })) handled.add("selectedBodyGroups");
+  } catch { /* Optional display comparison failure keeps the original residual. */ }
+}
+
+function originalWorkRecord(value, location, bodyKey, commonKeys = [], compact = false) {
   if (!originalObject(value) || !Object.keys(value).length) return originalField(location, value);
   const handled = new Set(commonKeys);
+  if (compact && bodyKey === "workContent" && value.kind === "Evidence" && value.subtype === "SessionWorkEvidence") {
+    markKnownNeutralFields(value, handled, { instructionAuthority: false, promotionAuthority: false,
+      recoveryAuthority: false, executionAuthority: false, ordinaryWorkBlocked: false });
+  }
   let text = originalFacts(value, ["evidenceId", "nodeId", "projectId", "sessionId", "ownerSessionId", "owner", "kind", "subtype",
     "selectionRole", "reviewState", "freshness", "contentScope", "contentPartial"], "", handled);
   const activity = value.savedActivity, coverage = value.workContentCoverage;
@@ -436,7 +464,7 @@ function originalWorkRecord(value, location, bodyKey, commonKeys = []) {
   return text + originalRemainder(value, handled, bodyKey === "content" ? "record" : "node");
 }
 
-function groupedWorkBodies(entries, bodyKey, owner, commonKeys) {
+function groupedWorkBodies(entries, bodyKey, owner, commonKeys, compact = false) {
   const label = bodyKey === "content" ? "Record" : "Node", array = bodyKey === "content" ? "records" : "nodes";
   const tuples = workBodyTuples(entries.map(entry => entry.value), { ...owner, bodyKey })
     .map((tuple, index) => ({ ...tuple, index: entries[index].index }));
@@ -448,7 +476,7 @@ function groupedWorkBodies(entries, bodyKey, owner, commonKeys) {
     if (group.rootBodyIndex === null) text += "Root body not in returned selection; absence is not inferred.\n";
     else if (!group.recordIndices.includes(group.rootBodyIndex)) text += `Root body: ${label}[${group.rootBodyIndex}], displayed in its own declared group, not repeated.\n`;
     for (const index of group.recordIndices) {
-      text += `${label}[${index}]:\n${originalWorkRecord(byIndex.get(index), `${array}[${index}]`, bodyKey, commonKeys)}`;
+      text += `${label}[${index}]:\n${originalWorkRecord(byIndex.get(index), `${array}[${index}]`, bodyKey, commonKeys, compact)}`;
     }
   }
   return text;
@@ -460,6 +488,14 @@ export function formatSessionWorkContext(value) {
   if (!originalObject(value) || !Array.isArray(value.records)) return heading + originalField("workContext", value);
   const handled = new Set(["records"]);
   let text = heading + originalFacts(value, ["status", "projectId", "sessionId"], "workContext", handled);
+  if (value.kind === "SessionWorkContextProjection") {
+    text += "Read-only historical display; current Project constraints and selected Session P2 take precedence."
+      + (value.ordinaryWorkBlocked === false ? " Ordinary work remains available.\n" : "\n");
+    markKnownNeutralFields(value, handled, { persisted: false, recoveryAuthority: false, instructionAuthority: false,
+      promotionAuthority: false, executionReplayAllowed: false, ordinaryWorkBlocked: false,
+      interpretation: "P3 HEAD-authored historical evidence, not current direction, approval, or proof of an external effect. Current Project constraints and selected Session P2 take precedence." });
+    markRenderedBodyGroups(value, handled, value.records.map((record, index) => ({ index, value: record })), "content", value);
+  }
   if (!value.records.length) text += originalField("workContext.records", value.records);
   const common = commonStoredWorkFields(value.records.map((record, index) => ({ index, value: record })), "Record", "content");
   text += common.text;
@@ -473,7 +509,8 @@ function formatProjectGraph(value) {
   let text = "Project graph evidence (P4 navigation, not current direction or effect permission):\n"
     + "Returned nodes/edges only; empty or partial results do not prove absence.\n"
     + originalFacts(value, ["status", "query"], "graph", handled);
-  if (originalObject(value.coverage) && Object.hasOwn(value.coverage, "state")) text += `graph.coverage.state: ${JSON.stringify(value.coverage.state)}\n`;
+  const compact = value.query?.details !== true;
+  if (!compact && originalObject(value.coverage) && Object.hasOwn(value.coverage, "state")) text += `graph.coverage.state: ${JSON.stringify(value.coverage.state)}\n`;
   if (!value.nodes.length) text += originalField("graph.nodes", value.nodes);
   const work = value.nodes.map((node, index) => ({ index, value: node }))
     .filter(({ value: node }) => originalObject(node) && Object.hasOwn(node, "workContent"));
@@ -492,7 +529,8 @@ function formatProjectGraph(value) {
   }
   // Graph work nodes carry their exact Session; Project identity is verified
   // in the query basis, not a top-level projectId or current caller Session.
-  text += groupedWorkBodies(work, "workContent", { projectId: value.basis?.projectId }, common.keys);
+  text += groupedWorkBodies(work, "workContent", { projectId: value.basis?.projectId }, common.keys, compact);
+  if (compact) markRenderedBodyGroups(value, handled, work, "workContent", { projectId: value.basis?.projectId });
   if (!value.edges.length) text += originalField("graph.edges", value.edges);
   for (const [index, edge] of value.edges.entries()) {
     text += `Edge[${index}]:\n`;

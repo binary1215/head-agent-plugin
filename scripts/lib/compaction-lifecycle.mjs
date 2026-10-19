@@ -148,7 +148,7 @@ function conversationProjection(root, recovery) {
   };
 }
 
-export function enterConversationRecovery({ root = "." } = {}) {
+export function enterConversationRecovery({ root = ".", readRelatedNativeContext = null } = {}) {
   const inspected = inspectProject(root);
   const readable = isProjectRecoveryReadable(inspected);
   const entryDirection = readable ? readProjectDirectionView({ root }) : null;
@@ -165,6 +165,12 @@ export function enterConversationRecovery({ root = "." } = {}) {
         status: "work_context_unavailable", reasonCode: error.code || "SESSION_WORK_EVIDENCE_READ_ERROR",
         records: [], persisted: false, recoveryAuthority: false, instructionAuthority: false,
         ordinaryWorkBlocked: false, executionReplayAllowed: false };
+    }
+    if (typeof readRelatedNativeContext === "function") {
+      try {
+        const related = readRelatedNativeContext({ childSessionId: inspected.state.sessionId });
+        if (related && typeof related.then !== "function") composed.relatedNativeWorkContext = related;
+      } catch { /* Historical related P3 is optional, not recovery authority. */ }
     }
   }
   const finish = (result) => {

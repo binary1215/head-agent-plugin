@@ -178,9 +178,8 @@ function startupProjection(entry, root, runtime = "claude") {
   if (exceedsBound()) delete context.selectedBodyGroups;
   return serialize();
 }
-// A read-only command Hook. It neither parses transcript bytes nor registers
-// bindings. Verified Host selection (explicit API or native init/resume bridge)
-// is the only creator of the P5 lookup record.
+// A read-only command Hook renderer. The outer command also records optional P5
+// observations, but never creates selection bindings or changes this rendering.
 export function sessionStartContext({ runtime, event, environment = process.env } = {}) {
   if (!["codex", "claude"].includes(runtime) || event?.hook_event_name !== "SessionStart"
     || !["startup", "resume", "clear", "compact", "fork"].includes(event.source)
@@ -203,15 +202,24 @@ export function sessionStartContext({ runtime, event, environment = process.env 
   return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: startupProjection(entry, event.cwd, runtime) } };
 }
 
+export async function runSessionHostHook({ runtime, event, environment = process.env, observeOnly = false } = {}) {
+  try {
+    const { observeNativeHook } = await import("./lib/native-session-observations.mjs");
+    await observeNativeHook({ runtime, event, environment });
+  } catch { /* Observations cannot block native flow or existing recovery. */ }
+  return observeOnly ? {} : sessionStartContext({ runtime, event, environment });
+}
+
 async function main() {
   const args = process.argv.slice(2), index = args.indexOf("--runtime");
-  let bytes = 0, input = "";
+  let bytes = 0; const chunks = [];
   for await (const chunk of process.stdin) {
     bytes += chunk.length;
     if (bytes > 64 * 1024) { process.stdout.write("{}\n"); return; }
-    input += chunk.toString("utf8");
+    chunks.push(chunk);
   }
-  try { process.stdout.write(JSON.stringify(sessionStartContext({ runtime: args[index + 1], event: JSON.parse(input) })) + "\n"); }
+  try { process.stdout.write(JSON.stringify(await runSessionHostHook({ runtime: args[index + 1],
+    event: JSON.parse(Buffer.concat(chunks).toString("utf8")), observeOnly: args.includes("--observe-only") })) + "\n"); }
   catch { process.stdout.write("{}\n"); }
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) await main();

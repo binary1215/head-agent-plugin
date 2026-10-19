@@ -42,6 +42,16 @@ Session or evidence neighbors return the same typed work node and its actual
 owner. No new save, native binding, Run, index refresh or user-supplied selector is
 required merely to discover an existing original.
 
+For a text query without explicit anchors or paths, bounded selection admits a
+matching work original first, then its verified direct declared root and explicit
+work citations before later matches. Shared endpoints cost one node; each unique
+connecting edge still costs its own slot. If a companion cannot fit, the matching
+original stays usable. The same node/edge/depth bounds apply, and omitted matches
+are counted from the actual returned set. A companion is depth one, not a new
+depth-zero seed. Explicit selectors, depth zero and zero-edge queries keep their
+existing meanings. This is navigation over recorded relationships, not semantic
+sufficiency, inferred task identity or a new Feature registry.
+
 An explicit `paths` filter can also find verified historical work whose
 `kind: "source"` reference names that exact logical Project path. The association
 survives changed, missing, oversized, non-file, permission-denied or otherwise
@@ -78,6 +88,15 @@ reference diagnostics and residual detail follow the corresponding node or edge.
 Coverage, excerpt ranges, omissions and supported expansion remain with the
 enclosing result. This rendering adds no summary, field cap or read: Core values,
 MCP `structuredContent`, CLI `--json`, Hooks, selection and proof are unchanged.
+
+Default text factors exact known false work-projection authority flags into the
+historical scope notice and does not print `coverage.state` twice. Complete
+`selectedBodyGroups` metadata is omitted only when it exactly duplicates the
+rendered groups, including original indices and owners. Partial/unknown metadata,
+new values, actual bodies, diagnostics and expansions remain visible. This
+text-only factoring leaves `details: true` graph text unchanged; structured values
+and JSON remain intact in both modes. Smaller text is not a claim of lower reader
+I/O, heap usage or model tokens.
 
 For a large multi-original result, `workContentExcerpts` identifies actual source
 field/index/subfield ranges and their total length. It does not put a shortened

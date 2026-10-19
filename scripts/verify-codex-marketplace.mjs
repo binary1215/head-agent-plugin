@@ -69,9 +69,13 @@ if (providedRoot) {
     assert.equal(JSON.parse(pluginManifestBytes).license, "MIT");
     assert.equal(JSON.parse(pluginManifestBytes).hooks, "./hooks/codex.json");
     const startupHooks = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "hooks", "codex.json"), "utf8"));
-    assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart"]);
+    assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"]);
     assert.match(startupHooks.hooks.SessionStart[0].hooks[0].command, /session-host-hook\.mjs/);
     assert.ok(runtimeManifest.files.some((file) => file.path === "scripts/lib/session-host-adapter.mjs"));
+    for (const file of ["scripts/lib/native-session-observations.mjs", "scripts/lib/native-session-process.mjs", "scripts/opencode-plugin.mjs"]) {
+      assert.ok(runtimeManifest.files.some(entry => entry.path === file), `Native observer dependency must be packaged: ${file}`);
+      assert.deepEqual(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, file)), fs.readFileSync(path.resolve(file)));
+    }
 
     const legacySnapshotRoot = path.join(temporaryRoot, "legacy-interface-snapshot");
     fs.cpSync(snapshotRoot, legacySnapshotRoot, { recursive: true, errorOnExist: true });

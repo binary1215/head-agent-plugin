@@ -75,6 +75,15 @@ content or a decision depending on current source can still need the disclosed
 exact expansion or affected-source check. Historical content grants no current
 effect permission, and a truly empty ready entry stays quiet.
 
+Known normal projection flags and their exact historical-scope explanation are
+shown once instead of repeated in residual metadata. A complete
+`selectedBodyGroups` envelope is not repeated when it exactly matches the groups
+already rendered from the returned records. Partial groups, unexpected values,
+new fields, owners, original text, reference checks, coverage and exact expansion
+remain visible in their own scope. This is text factoring only: neither the
+structured/JSON result nor the startup serializer changes, and an unknown
+inventory (`originals: null`) is not treated as no history.
+
 ### Session, declared work root and authored topics
 
 At meaningful completion, handoff or changed conditions, HEAD can retain actual

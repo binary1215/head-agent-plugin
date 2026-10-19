@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { formatMcpToolContent, formatCliResult } from "../scripts/lib/cli-presentation.mjs";
+import { formatMcpToolContent, formatCliResult, formatSessionWorkContext } from "../scripts/lib/cli-presentation.mjs";
+import { organizeSelectedWorkBodies, workBodyTuples } from "../scripts/lib/session-work-body-organization.mjs";
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { prepareSourceContext } from "../scripts/lib/source-context-workflow.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
@@ -95,4 +96,52 @@ test("MCP unavailable-source text keeps fallback and authority boundaries withou
   assert.equal(value.authority.ordinaryWorkBlocked, false);
   assert.equal(value.coverage.emptyResultProvesAbsence, false);
   assert.deepEqual(bytes(root), before);
+});
+
+test("default text factors only exact healthy projection metadata, not unexpected values or authored fields", () => {
+  const node = { kind: "Evidence", subtype: "SessionWorkEvidence", nodeId: "work-one", projectId: "project-one", sessionId: "owner-one",
+    evidenceDigest: "exact-digest", workContent: { summary: "Do not apply cancelled work", pending: ["X remains"], unknowns: ["Unknown condition"],
+      executionAuthority: false }, instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false,
+    executionAuthority: false, ordinaryWorkBlocked: false, authorityBoundary: { unknownPolicy: false } };
+  const value = { kind: "ProjectGraphDiscoveryProjection", nodes: [node], edges: [], query: { details: false }, coverage: { state: "partial", unknown: null } };
+  const before = structuredClone(value), text = render(value);
+  assert.deepEqual(value, before);
+  assert.equal(text.includes("graph.coverage.state:"), false); jsonMember(text, "coverage", value.coverage);
+  assert.ok(text.includes("Do not apply cancelled work")); assert.ok(text.includes("X remains")); assert.ok(text.includes("Unknown condition"));
+  jsonMember(text, "executionAuthority", false); // authored body field, not the outer projection
+  jsonMember(text, "authorityBoundary", node.authorityBoundary);
+  assert.equal(text.split('"executionAuthority": false').length - 1, 1);
+  for (const unexpected of [true, null, 0, "false", [], {}]) {
+    const changed = structuredClone(value); changed.nodes[0].promotionAuthority = unexpected;
+    jsonMember(render(changed), "promotionAuthority", unexpected);
+  }
+  const detailed = structuredClone(value); detailed.query.details = true;
+  assert.ok(render(detailed).includes("graph.coverage.state:"));
+  assert.equal(render(detailed).split('"executionAuthority": false').length - 1, 2);
+});
+
+test("only complete exact rendered body-group metadata is factored; unknown, partial and owner differences stay visible", () => {
+  const record = { kind: "Evidence", subtype: "SessionWorkEvidence", evidenceId: "work-one", evidenceDigest: "digest-one", projectId: "project-one", sessionId: "owner-one",
+    content: { summary: "Original reason", workTopics: ["Topic one"], pending: ["X remains"], unknowns: [] } };
+  const value = { kind: "SessionWorkContextProjection", status: "work_context_available", projectId: "project-one", sessionId: "owner-one", records: [record],
+    coverage: { originals: 1 }, persisted: false, recoveryAuthority: false, instructionAuthority: false, promotionAuthority: false, executionReplayAllowed: false, ordinaryWorkBlocked: false };
+  value.selectedBodyGroups = { ...organizeSelectedWorkBodies(workBodyTuples(value.records, value)), omittedGroups: 0 };
+  const before = structuredClone(value), text = formatSessionWorkContext(value);
+  assert.deepEqual(value, before); assert.equal(text.includes('"selectedBodyGroups"'), false);
+  assert.ok(text.includes("owner-one")); assert.ok(text.includes("Topic one")); assert.ok(text.includes("X remains"));
+  for (const change of [group => { group.omittedGroups = 1; }, group => { group.futureCondition = false; }, group => { delete group.scope; },
+    group => { group.groups[0].sessionId = "other-owner"; }, group => { group.groups[0].rootBodyIndex = null; }]) {
+    const altered = structuredClone(value); change(altered.selectedBodyGroups);
+    jsonMember(formatSessionWorkContext(altered), "selectedBodyGroups", altered.selectedBodyGroups);
+  }
+  for (const groups of [null, false, [], {}]) {
+    const altered = { ...value, selectedBodyGroups: groups }; jsonMember(formatSessionWorkContext(altered), "selectedBodyGroups", groups);
+  }
+  for (const unexpected of [true, null, 0, "false"]) {
+    const altered = { ...value, ordinaryWorkBlocked: unexpected, interpretation: "Changed condition, not normal prose", future: { qualifier: null } };
+    const changedText = formatSessionWorkContext(altered);
+    jsonMember(changedText, "ordinaryWorkBlocked", unexpected); jsonMember(changedText, "interpretation", altered.interpretation); jsonMember(changedText, "future", altered.future);
+    assert.equal(changedText.includes("Ordinary work remains available."), false);
+  }
+  assert.notEqual(formatSessionWorkContext({ ...value, status: "work_context_not_recorded", coverage: { originals: null }, records: [] }), "");
 });

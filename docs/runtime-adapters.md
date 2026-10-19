@@ -18,6 +18,57 @@ results are evidence, not Canon approval or P2 recovery direction. Ordinary
 results need no additional review click; protected transitions and active Run
 contracts keep their existing rules.
 
+## Optional native observations
+
+Codex/Claude packaged lifecycle Hooks now write a bounded Host-local P5
+`native-observations` snapshot, separate from selection bindings and canonical
+`.head` records. Existing trusted native `head_project_status` reads it without
+writes and adds one optional `nativeContext` in text and structured output.
+The caller is not the queried logical Session's execution. A response-end or
+caller-end observation cannot close work, grant approval or authorize replay.
+Missing/corrupt/busy optional state is omitted, not a new recovery gate.
+
+Snapshots retain at most 64 slots/64 actual replay IDs in 128 KiB, including at
+most two first-observed typed ancestry rows; older events are evicted first so
+a missing original mapping cannot silently become a later parent mapping. A per-caller
+200 ms bounded writer lock covers merge and atomic publication. Status adds at
+most 16 KiB of serialized response increment, including duplicated/escaped text
+and structured data; omitted rows are counted. These bounds limit operational
+cost, not semantic sufficiency or the existing Capsule/P3 expansion contracts.
+No daemon, whole-caller registry, transcript scan or process census is added.
+
+Supported Codex own first metadata (source-shaped against upstream commit
+`8c076942cb70fba8e5c4732c23f1faabc4aed484`) can supply explicit fork/parent edges.
+Shared-root child membership is not a direct-parent edge. The mapping captured
+when an edge is first retained, including no mapping, is not replaced by a later
+parent selection. Native `head_conversation_enter` may show fresh verified
+historical source P3 bodies before its final child basis check; parent P2 never
+becomes the child's purpose or direction. This unstable format adapter is not a
+universal native-history parser or proof of copied fork-cutoff membership.
+
+Claude local Windows/Linux association follows at most eight actual ancestors,
+checks exact `<pid>.json` registry entries and OS birth, and probes at most 16
+known witnessed instances per status in one bounded batch. Missing registry,
+permission, unsupported platform or foreign environment is unknown. Definitive
+absence/birth change qualifies only the old hosting instance, not a task or
+agent's activity. No witnessed engine is terminated. The Windows helper is
+hidden, finite and task-owned; macOS/remote attestation is not implemented.
+
+`scripts/opencode-plugin.mjs` is a dependency-free OpenCode v1.19.0-shaped V1
+default `{id, server}` entry. A local `.opencode/plugins/head-agent.js` shim can
+re-export that default; it is not auto-installed or added to user config.
+Only a config-proven local command for this packaged `scripts/mcp-server.mjs`
+and unambiguous sanitized alias is recognized. Actual event callbacks feed the
+same store; actual raw MCP `tool.execute.after` adds the optional status section
+to the same output object. It uses the supplied exact-session lookup and at most
+one bounded status map (O(A), not an exact-ID API), never a new SDK/client/auth.
+Experimental code-mode and OpenCode ancestry/P3 entry remain outside this path.
+
+Local source-shaped tests and owned OS helper tests do not establish installed
+Host event delivery, model tool choice, native long-compaction behavior or full
+activity coverage. Codex live conversation/turn state uses already exposed Host
+tools only when useful; see [runtime composition](../skills/head-agent-core/references/runtime-composition.md#native-observations-and-current-host-activity).
+
 ## Retained one-shot worker contracts
 
 Managed worker mutations use `node scripts/head.mjs managed <command> ...`

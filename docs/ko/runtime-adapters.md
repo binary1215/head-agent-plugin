@@ -1,5 +1,7 @@
 # 런타임 어댑터 계약
 
+[영어 원문](../runtime-adapters.md)
+
 ## 일반 Host 위임과 관리형 런타임
 
 전체 기본은 HEAD 직접 작업입니다. 일반 위임은 현재 Host가 이미 제공하는 도구와
@@ -15,6 +17,52 @@ fresh/직접/순차 경로로 계속합니다. 포크 입력은 사용자 범위
 선택하지는 않습니다. Host 결과는 증거이지 Canon 승인이나 P2 복구 방향이 아닙니다.
 일반 결과에 추가 검토 클릭은 필요하지 않으며, 보호 전환과 활성 Run의 기존 계약은
 그대로 유지합니다.
+
+## 선택적 native 관측
+
+Codex/Claude 패키지 lifecycle Hook은 선택 binding·정본 `.head`와 별도의
+Host-local P5 `native-observations` snapshot만 기록합니다. 기존 native
+`head_project_status`는 이를 쓰기 없이 읽어 text/structured의 선택적
+`nativeContext`로 제공합니다. 호출 대화와 조회한 논리 Session은 다를 수 있습니다.
+응답 종료·caller 종료 관측은 작업 완료·승인·재실행 권한이 아닙니다.
+선택 정보가 없거나 손상·잠금 경합이 있어도 새 복구 gate를 만들지 않습니다.
+
+Snapshot은 128 KiB 안에 최대 64 slot과 실제 replay ID 64개를 보존합니다.
+최초 typed 계보 row 최대 2개를 포함하며, 오래된 event부터 제외해 최초에 없던
+매핑을 나중 부모 매핑으로 바꾸지 않습니다. 이 범위에서
+caller별 최대 200 ms 쓰기 잠금 안에서 병합·원자 교체합니다. 상태 응답의 추가분은
+text/structured 중복과 JSON escaping을 합쳐 최대 16 KiB이고 누락 수를 표시합니다.
+이는 운영 비용 제한이며 의미적 충분성이나 기존 Capsule·P3 확대 계약을 바꾸지 않습니다.
+Daemon·전체 caller registry·transcript 탐색·프로세스 전체 열거는 없습니다.
+
+Codex own 첫 metadata의 명시적 fork/parent를 지원하는 형식에 한해 직접 계보로
+사용합니다(upstream `8c076942cb70fba8e5c4732c23f1faabc4aed484` 소스형 검증).
+공유 root의 child 소속은 직계 부모가 아닙니다. 최초 edge 보존 시의 논리 매핑은
+없었던 경우까지 보존하고 나중 부모 선택으로 덮지 않습니다. `head_conversation_enter` 진입은 child의
+최종 기저 재검사 전에 부모의 검증된 과거 P3 본문을 선택적으로 제공합니다.
+부모 P2가 child 방향으로 승격되거나 native fork 당시 복사 이력으로 간주되지 않습니다.
+불안정한 metadata 형식 어댑터이지 범용 대화 이력 parser가 아닙니다.
+
+Claude Windows/Linux 관측은 실제 조상 최대 8단계의 exact `<pid>.json`·OS birth로
+관계를 확인하고, status에서 기존에 검증된 instance 최대 16개만 한 번 batch 조회합니다.
+Registry 부재·권한·미지원·다른 환경은 unknown이며, 확정된 PID 부재/birth 변경도
+과거 hosting instance만 한정합니다. 생존은 작업/child agent 활동이 아니고 실제
+engine은 종료하지 않습니다. Windows helper만 숨김·유한 실행·소유 정리하며
+macOS·remote attestation은 구현하지 않습니다.
+
+`scripts/opencode-plugin.mjs`는 OpenCode v1.19.0 소스형 V1 default `{id, server}`
+진입점입니다. 로컬 `.opencode/plugins/head-agent.js` shim에서 default를 재노출할 수
+있지만 설치·사용자 config를 자동 변경하지 않습니다. 이 패키지의
+`scripts/mcp-server.mjs`를 실행하는 local config와 충돌 없는 실제 alias만 인식합니다.
+실제 event가 공통 P5 writer로 연결되고 raw MCP `tool.execute.after`는 원래 객체에
+선택적 status 정보를 더합니다. 공급된 client의 exact Session 조회와 최대 한 번의
+bounded status map(O(A))만 사용하며 새 SDK·인증을 만들지 않습니다. Map에 없는
+항목은 non-idle 항목 부재이지 종료가 아닙니다. Code-mode와 OpenCode 계보/P3 진입은
+이 경로에 포함되지 않습니다.
+
+로컬 소스형·소유 OS helper 검증은 실제 설치 Host의 event 전달·모델 도구 선택·긴
+compaction UX·전체 활동 파악의 증거가 아닙니다. Codex 현재 대화/turn 상태는 필요할
+때 이미 노출된 Host 도구로 확인합니다. [runtime composition](../../skills/head-agent-core/references/runtime-composition.md#native-observations-and-current-host-activity)을 참조하세요.
 
 ## 보존된 일회성 worker 계약
 
@@ -42,8 +90,6 @@ HEAD는 결과를 증거로 소비하며 `worker-apply`와 Wave는 Run 전용입
 요청된 admission, 소유권·범위 검증, 일회성 lease와 정리 증명은 생략하지 않습니다.
 과거 read/wait는 동일 계보와 무결성을 검증하되 현재 active Run을 강제하지 않습니다.
 생성·실행에는 여전히 최신 범위가 필요하며 구버전 Run dispatch 재시도는 원본을 보존합니다.
-
-[영어 원문](../runtime-adapters.md)
 
 런타임 어댑터 계약 `0.1.0`은 v0.6 공급자 중립 경계를 확립합니다. Runtime-machine-discovery 프로토콜 `0.1.0`은 현재 호스트에서 읽기 전용 실행 파일 탐색을 추가하고, runtime-version-evidence 프로토콜 `0.1.0`은 세션을 만들지 않는 제한된 직접 버전 호출을 추가하며, runtime-protocol-evidence 프로토콜 `0.2.0`은 고정된 공급자별 도움말 표면과 정확한 일회성 옵션 집합을 관찰하고, runtime-project-binding 프로토콜 `0.1.0`은 이러한 관찰 결과를 정식 HEAD 프로젝트 및 Session ID에 결속합니다. Execution-authorization 프로토콜 `0.3.0`은 `scope.kind: session | run`과 선택적인 정확한 `provider/model` 선택을 담는 하나의 봉투를 추가합니다. execution-lease 프로토콜 `0.3.0`은 내구성 있는 소비/해제 증거를 운영 소유자 상태와 분리합니다. process-supervisor 프로토콜 `0.1.0`과 매니페스트 `0.3.0`(schema `2`), event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, ResultPacket-draft `0.5.0`은 공통 수명 주기 경계를 통과해 범위를 전달합니다. Claude Code, Codex, OpenCode 일회성 어댑터는 동일한 네이티브 하위 프로세스 트리 감독자와 호출 기록 코어를 공유합니다. 세 어댑터 모두 결정론적 Session/Run 권한 부여, 수명 주기, 이벤트, 결과 및 공급자별 프로토콜 fixture 적합성을 통과합니다. Codex와 OpenCode는 완료된 실제 Session/Run 증거도 보존합니다. Claude Code 실제 모델 호출 적합성은 동일한 opt-in 검증기를 통해 확인할 수 있지만, 실행되기 전에는 충족되었다고 주장하지 않습니다. 새 프로세스를 통한 Codex에서 OpenCode로의 아티팩트 복구도 통과합니다. HEAD는 정확히 권한이 부여된 모델과 임시 권한/프라이버시 오버레이만 제공합니다. 공급자 인증과 라우팅은 계속 공급자가 소유합니다. HEAD는 공급자 패키지를 합성하지도, 구성된 endpoint를 다시 쓰지도 않습니다. 일반 위임은 Host가 소유하며 선택적 endpoint 연결은 현재 Host snapshot으로 확인합니다. 자체 역할 mail과 전달 bridge는 제거되었습니다. 공급자별 실행 codec은 Host adapter 경계 뒤에 두며 실효 OS·도구 권한 강제에는 신뢰된 연결 backend가 필요합니다. Herdr 특화 socket·pane·TUI 통합은 Core 밖에 둡니다. 공급자 resume과 일반 런타임 제어는 계속 비활성화되어 있습니다.
 

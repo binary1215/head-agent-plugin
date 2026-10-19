@@ -2324,7 +2324,7 @@ async function dispatchSessionRequest(request, options = {}) {
   return dispatchRouted(request, options);
 }
 
-async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null } = {}) {
+async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null, readRelatedNativeContext = null } = {}) {
   requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
@@ -2731,7 +2731,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                           : name === "head_compact_abort"
                             ? (await import("./lib/compaction-recovery.mjs")).abortCompaction({ root: args.project_root, epochId: args.epoch_id, reason: args.reason })
                           : name === "head_conversation_enter"
-                            ? (await import("./lib/compaction-lifecycle.mjs")).enterConversationRecovery({ root: args.project_root })
+                            ? (await import("./lib/compaction-lifecycle.mjs")).enterConversationRecovery({ root: args.project_root, readRelatedNativeContext })
                           : name === "head_compaction_lifecycle_step"
                             ? (await import("./lib/compaction-lifecycle.mjs")).processCompactionLifecycle({
                               root: args.project_root,

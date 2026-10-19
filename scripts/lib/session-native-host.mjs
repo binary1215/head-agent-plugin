@@ -112,12 +112,31 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
         catch (error) { preparationFailure = error.code || "HOST_BINDING_STORAGE_ERROR"; }
       } : null;
       let response;
-      try { response = await handler(request, { resolveSessionContext, onValidatedSessionSelection }); }
+      const readRelatedNativeContext = name === "head_conversation_enter" ? ({ childSessionId }) => {
+        // Internal trusted caller only; not a model-native-ID argument. Entry
+        // invokes this synchronously before its final child basis recheck.
+        return nativeRelatedReader?.({ root: args.project_root, caller, childSessionId, environment });
+      } : null;
+      let nativeRelatedReader = null;
+      if (readRelatedNativeContext) {
+        try { nativeRelatedReader = (await import("./native-session-observations.mjs")).readRelatedNativeWorkContext; }
+        catch { /* Optional context cannot replace primary Core errors. */ }
+      }
+      try { response = await handler(request, { resolveSessionContext, onValidatedSessionSelection, readRelatedNativeContext }); }
       catch (error) {
         if (prepared) adapter.settleSelection({ ticket: prepared.ticket, outcome: "uncertain" });
         throw error;
       }
-      if (!selecting) return response;
+      if (!selecting) {
+        if (name === "head_project_status" && response?.result && !response.error && !response.result.isError) {
+          try {
+            const { projectNativeObservations, appendNativeStatus } = await import("./native-session-observations.mjs");
+            const projection = await projectNativeObservations({ root: args.project_root, caller, environment });
+            return { ...response, result: appendNativeStatus(response.result, projection) };
+          } catch { /* Preserve exactly the successful primary response. */ }
+        }
+        return response;
+      }
       const value = response?.result?.structuredContent;
       const confirmed = !response?.result?.isError && !response?.error
         && ["initialized", "resumed"].includes(value?.projectAction) && validCaller(value?.project?.projectId)

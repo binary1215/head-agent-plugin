@@ -43,6 +43,15 @@ anchor, Session 또는 근거의 이웃 조회도 같은 typed 작업 노드와 
 반환합니다. 기존 원본을 찾기 위해 새 저장, native 연결, Run, 색인 갱신이나
 사용자 작성 selector를 요구하지 않습니다.
 
+명시적 anchor나 paths가 없는 text 질의에서는 matching 작업 원본을 먼저 담고,
+검증된 직접 declared root와 명시적 작업 인용을 다음 matching 기록보다 먼저
+담습니다. 공유 endpoint는 node 한 개지만 고유 연결 edge는 각각 한도를 사용합니다.
+동반 원본이 못 들어가도 matching 원본은 남으며 기존 node·edge·depth 한도는
+늘리지 않습니다. 생략한 matching 수는 실제 반환 집합으로 계산합니다. companion은
+깊이1이지 새 깊이0 seed가 아닙니다. 명시적 selector·깊이0·edge0의 의미는 그대로입니다.
+이는 기록된 관계의 탐색이지 의미적 충분성·추론된 작업 identity나 새 Feature 색인이
+아닙니다.
+
 명시적 `paths` 필터는 `kind: "source"` 참조가 정확한 논리 Project 경로를 선언한
 검증된 과거 작업도 찾을 수 있습니다. 대상이 변경·소실·크기 초과·비파일·권한 거절·
 기타 확인 불가여도 이름 연관성은 남으며, 관측된 `SESSION_PATH_ESCAPE`는 새 일치에
@@ -74,6 +83,13 @@ World 도구 체인을 요구하지 않습니다.
 node나 edge 뒤에 둡니다. coverage·발췌 구간·생략·지원되는 확대 안내는 이를 담은
 결과에 함께 유지합니다. 이 표시는 요약·필드 상한·조회를 추가하지 않으며 Core 값,
 MCP `structuredContent`, CLI `--json`, Hook, 선택과 proof는 그대로입니다.
+
+기본 text는 작업 projection의 정확히 알려진 false 권한 flag를 역사적 범위 안내에
+흡수하고 `coverage.state`를 두 번 찍지 않습니다. `selectedBodyGroups`는 원래 index와
+소유자까지 실제 표시한 그룹과 완전히 같고 생략이 없을 때만 중복 표시를 뺍니다.
+부분·미지 metadata, 새로운 값, 실제 본문·진단·확대는 남깁니다. 이 text 전용 정리는
+`details: true` 그래프 text에는 적용하지 않으며 두 모드의 structured 값과 JSON은
+그대로입니다. text 감소가 reader I/O·heap·모델 token 감소를 뜻하지는 않습니다.
 
 큰 다중 원본 결과의 `workContentExcerpts`는 실제 원문의 field/index/subfield
 범위와 전체 길이를 표시합니다. 축약한 이유를 완전한 원문 값인 것처럼 넣지

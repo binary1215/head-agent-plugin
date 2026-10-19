@@ -85,6 +85,13 @@ startup은 실제로 출력에 담은 record의 index로 group을 만들고 Host
 identity와 digest를 확인하며 그래프 탐색 이후 변경 가능성을 유지합니다. 이를 위해
 새 저장·승인·도구 순서나 사용자 작성 ID를 요구하지 않습니다.
 
+기본 text에서 정확히 알려진 정상 projection flag와 역사적 범위 설명은 한 번만
+보여줍니다. `selectedBodyGroups` 전체가 실제 반환 record로 표시한 그룹과 정확히
+같고 생략이 없을 때만 중복 envelope 표시를 뺍니다. 부분 그룹·예상 외 값·새 필드·
+소유자·원문·참조 검사·coverage·정확 확대는 각 범위에 남깁니다. 이는 text 표시
+정리이며 structured/JSON 결과와 startup serializer는 바꾸지 않습니다.
+미열거 inventory(`originals: null`)를 이력 없음으로 취급하지 않습니다.
+
 기본 CLI/MCP text는 반환된 맥락을 바꾸지 않고 읽기 쉽게 배치합니다. 진입에서는
 현재 공통 방향, 선택된 Session의 유효한 목적과 검증된 checkpoint 맥락을 과거 작업보다
 먼저 보여줍니다. 작업 본문 앞에는 실제 상태·소유자와 과거/부분 범위를 짧게 알리고,

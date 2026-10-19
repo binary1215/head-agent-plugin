@@ -421,18 +421,43 @@ function viewTraversal(nodes, edges, options) {
     && (options.includeCandidates || !["candidate", "rejected", "historical-opaque"].includes(node.reviewState)));
   const byId = new Map(visible.map((node) => [node.nodeId, node]));
   const matches = options.anchorIds.length ? options.anchorIds.map((anchor) => byId.get(anchor)).filter(Boolean) : rankedMatches(visible, options);
-  const selected = new Set(matches.slice(0, options.maxNodes).map((node) => node.nodeId));
-  const inclusion = new Map([...selected].map((nodeId) => [nodeId, options.anchorIds.length ? "exact-anchor" : "discovery-match"]));
-  const selectedEdges = [], boundary = []; let frontier = new Set(selected);
   const eligibleEdges = edges.filter((edge) => byId.has(edge.from) && byId.has(edge.to));
+  const selected = new Set(), inclusion = new Map(), admissionEdges = new Map();
+  const naturalWorkQuery = options.query && !options.anchorIds.length && !options.paths.length && options.depth > 0 && options.maxEdges > 0;
+  const outgoingWork = new Map();
+  if (naturalWorkQuery) for (const edge of eligibleEdges) {
+    if (!["DECLARES_WORK_ROOT", "CITES_WORK_EVIDENCE"].includes(edge.type)
+      || !isWorkNode(byId.get(edge.from)) || !isWorkNode(byId.get(edge.to))) continue;
+    if (!outgoingWork.has(edge.from)) outgoingWork.set(edge.from, []);
+    outgoingWork.get(edge.from).push(edge);
+  }
+  for (const node of matches) {
+    if (!selected.has(node.nodeId) && selected.size >= options.maxNodes) continue;
+    selected.add(node.nodeId); inclusion.set(node.nodeId, options.anchorIds.length ? "exact-anchor" : "discovery-match");
+    // Admit the seed first, then its verified direct root/citations. No bundle
+    // gate, new ranking, recursive ancestry or additional graph read is needed.
+    const outgoing = outgoingWork.get(node.nodeId) || [];
+    for (const type of ["DECLARES_WORK_ROOT", "CITES_WORK_EVIDENCE"]) for (const edge of outgoing) {
+      if (edge.type !== type || admissionEdges.has(edge.edgeId) || admissionEdges.size >= options.maxEdges) continue;
+      if (!selected.has(edge.to) && selected.size >= options.maxNodes) continue;
+      if (!selected.has(edge.to)) { selected.add(edge.to); inclusion.set(edge.to, "relation-depth-1"); }
+      admissionEdges.set(edge.edgeId, edge);
+    }
+  }
+  const selectedEdges = [], boundary = [];
+  // A preadmitted companion is depth one, not another depth-zero seed. If it
+  // independently matches and was admitted, its normal seed meaning still holds.
+  let frontier = new Set(matches.filter(node => selected.has(node.nodeId)).map(node => node.nodeId));
+  const traversalEdges = admissionEdges.size ? [...admissionEdges.values(), ...eligibleEdges.filter(edge => !admissionEdges.has(edge.edgeId))] : eligibleEdges;
   const edgeIds = new Set();
   for (let depth = 0; depth < options.depth && frontier.size; depth += 1) {
     const next = new Set();
-    for (const edge of eligibleEdges) {
+    for (const edge of traversalEdges) {
       if (edgeIds.has(edge.edgeId) || !frontier.has(edge.from) && !frontier.has(edge.to)) continue;
       const missing = [edge.from, edge.to].filter((nodeId) => !selected.has(nodeId));
       if (selected.size + missing.length > options.maxNodes || selectedEdges.length >= options.maxEdges) { boundary.push({ edgeId: edge.edgeId, nextAnchorIds: missing, reason: "result-bound" }); continue; }
       for (const nodeId of missing) { selected.add(nodeId); next.add(nodeId); inclusion.set(nodeId, `relation-depth-${depth + 1}`); }
+      for (const nodeId of [edge.from, edge.to]) if (inclusion.get(nodeId) === `relation-depth-${depth + 1}`) next.add(nodeId);
       selectedEdges.push(edge); edgeIds.add(edge.edgeId);
     }
     frontier = next;
@@ -448,8 +473,8 @@ function viewTraversal(nodes, edges, options) {
     ...navigationState(byId.get(nodeId)) })) }));
   return { nodes: selectedNodes, edges: enrichedEdges, inclusion: selectedNodes.map((node) => ({ nodeId: node.nodeId, reason: inclusion.get(node.nodeId) })),
     boundary: { items: boundary.slice(0, 100), omittedCount: Math.max(0, boundary.length - 100), nextAnchorIds: [...new Set(boundary.flatMap((item) => item.nextAnchorIds))].slice(0, 100) },
-    unmatchedAnchorIds: options.anchorIds.filter((anchor) => !byId.has(anchor)), omittedMatchCount: Math.max(0, matches.length - Math.min(matches.length, options.maxNodes)),
-    truncated: boundary.length > 0 || matches.length > options.maxNodes };
+    unmatchedAnchorIds: options.anchorIds.filter((anchor) => !byId.has(anchor)), omittedMatchCount: matches.filter(node => !selected.has(node.nodeId)).length,
+    truncated: boundary.length > 0 || matches.some(node => !selected.has(node.nodeId)) };
 }
 
 function navigationState(node) {
