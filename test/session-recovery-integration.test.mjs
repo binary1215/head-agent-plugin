@@ -388,7 +388,7 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
     id: 701,
     method: "tools/call",
     params: {
-      name: "head_run_integrate_checkpoint",
+      name: "lode_run_integrate_checkpoint",
       arguments: {
         project_root: root,
         run_id: input.runId,
@@ -406,7 +406,7 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
     jsonrpc: "2.0",
     id: 702,
     method: "tools/call",
-    params: { name: "head_session_restore", arguments: { project_root: root } },
+    params: { name: "lode_session_restore", arguments: { project_root: root } },
   });
   assert.equal(restored.result.structuredContent.status, "session_restored_from_artifacts");
   assert.equal(restored.result.structuredContent.projection.providerBoundary.resumeEnabled, false);
@@ -416,7 +416,7 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
     jsonrpc: "2.0",
     id: 703,
     method: "tools/call",
-    params: { name: "head_session_continue", arguments: { project_root: root, runtime: "codex" } },
+    params: { name: "lode_session_continue", arguments: { project_root: root, runtime: "codex" } },
   });
   assert.equal(continued.result.structuredContent.status, "session_continued_with_fresh_logical_head");
   assert.equal(continued.result.structuredContent.continuationOutcome.p2RestoredBeforeAttachment, true);

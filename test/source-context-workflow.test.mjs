@@ -38,7 +38,7 @@ test("actual isolated Python collection reaches helper and Context, reuses bytes
   assert.equal(first.context.capsule.observationEvidence.length, 1);
   assert.match(first.context.capsule.observationEvidence[0].payload.details, /target/);
   assert.deepEqual(first.context.capsule.evidenceGaps, []);
-  assert.equal(first.context.capsule.semanticSufficiencyOwner, "HEAD");
+  assert.equal(first.context.capsule.semanticSufficiencyOwner, "Lode");
   const second = await prepareSourceContext(args);
   assert.equal(second.results[0].reused, true);
   assert.equal(second.results[0].observationId, first.results[0].observationId);
@@ -292,6 +292,7 @@ test("packaged Python is subject to existing development-context exclusion", (t)
   fs.copyFileSync(path.join(pluginRoot, "package.json"), path.join(candidate, "package.json"));
   fs.copyFileSync(path.join(pluginRoot, "LICENSE"), path.join(candidate, "LICENSE"));
   fs.writeFileSync(path.join(candidate, "scripts/lode.mjs"), "export const example = true;\n");
+  fs.writeFileSync(path.join(candidate, "scripts/head.mjs"), 'export * from "./lode.mjs";\n');
   fs.writeFileSync(path.join(candidate, "scripts/worker.py"), `# ${["ultimate", "goal"].join("_")}\n`);
   assert.throws(() => stageDistributionRelease({ sourceRoot: candidate, destinationRoot: path.join(parent, "release") }), { code: "HEAD_DISTRIBUTION_DEVELOPMENT_CONTEXT_LEAK" });
 });

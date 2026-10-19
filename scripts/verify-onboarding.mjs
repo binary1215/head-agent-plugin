@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { initializeProject } from "./lib/head-core.mjs";
+import { initializeProject as initializeCoreProject } from "./lib/head-core.mjs";
 import { compileContext } from "./lib/context-compiler.mjs";
 import { onboardingCanonicalJson, onboardingDigest, verifyOnboardingState } from "./lib/onboarding-contract.mjs";
 import { inspectOnboarding, readOnboardingCandidateSet, reviewOnboarding, startOnboarding } from "./lib/onboarding.mjs";
@@ -14,9 +14,32 @@ import { verifyTemporalProvenanceGraph } from "./lib/temporal-provenance.mjs";
 import { inspectWorldModel, queryWorldTemporalGraph } from "./lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "./mcp-server.mjs";
 import { runCommand } from "./head.mjs";
+import { publicToolName } from "./lib/lode-artifact-composition.mjs";
+import { formatForVerifiedOwner } from "./lib/project-storage-format.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const roots = [];
+
+// Retain the actual layout returned by successful fixture initialization. Later
+// corruption tests must inspect that same storage, not rediscover or repair it.
+const fixtureDirectories = new Map();
+const fixtureStorages = new Map();
+function initializeProject(options) {
+  const initialized = initializeCoreProject(options);
+  fixtureDirectories.set(initialized.storage.projectRoot, initialized.storage.directory);
+  fixtureStorages.set(initialized.storage.projectRoot, initialized.storage);
+  return initialized;
+}
+function fixtureStorage(root) {
+  const storage = fixtureStorages.get(fs.realpathSync(root));
+  assert(storage, "Verification fixture has not been initialized.");
+  return storage;
+}
+function fixtureDirectory(root) {
+  const directory = fixtureDirectories.get(fs.realpathSync(root));
+  assert(directory, "Verification fixture has not been initialized.");
+  return directory;
+}
 
 function temporaryProject(label) {
   const root = fs.mkdtempSync(path.join(pluginRoot, `.qa-onboarding-${label}-`));
@@ -108,7 +131,7 @@ async function verifyExistingProjectPromotion() {
   initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
   const initial = inspectOnboarding({ root });
   assert.equal(initial.status, "initialized");
-  assert.equal(initial.sessionRecord.identityBoundary, "project-scoped-head-session-not-provider-conversation");
+  assert.equal(initial.sessionRecord.identityBoundary, "project-scoped-lode-session-not-provider-conversation");
 
   const discovery = await startOnboarding({ root, mode: "existing", sourceScope: { excludeRoots: [".generated-evidence"] } });
   assert.equal(discovery.status, "awaiting_onboarding_evidence");
@@ -131,7 +154,7 @@ async function verifyExistingProjectPromotion() {
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Feature"), true);
   assert.equal(started.candidateSet.candidates.some((candidate) => candidate.productKind === "Capability" && candidate.proposedEntity.name === "Serve"), true);
   assert.equal(started.candidateSet.candidates.filter((candidate) => candidate.productKind === "Feature").every((candidate) => candidate.proposedEntity.featureGroupKeys.length === 1), true);
-  assert.equal(started.candidateSet.candidates.every((candidate) => candidate.origin === "fresh-head-semantic-proposal"), true);
+  assert.equal(started.candidateSet.candidates.every((candidate) => candidate.origin === formatForVerifiedOwner(fixtureStorage(root)).value("fresh-head-semantic-proposal")), true);
   assert.equal(started.candidateSet.evidence.every((record) => record.contentDigest && record.path === "src/service.mjs"), true);
   assert.equal(started.candidateSet.candidates.every((candidate) => candidate.instructionAuthority === false && candidate.promotionAuthority === false), true);
   assert.equal(normalizeProductModelDocument().features.length, 0);
@@ -170,7 +193,7 @@ async function verifyExistingProjectPromotion() {
     id: 7,
     method: "tools/call",
     params: {
-      name: "head_temporal_graph",
+      name: publicToolName("head_temporal_graph"),
       arguments: {
         project_root: root,
         query: candidateId,
@@ -254,7 +277,7 @@ async function verifyExistingProjectPromotion() {
   assert.equal(includedKeys.has("capability:serve") && includedKeys.has("feature:serve"), true);
   const previousRevision = JSON.parse(fs.readFileSync(path.join(
     root,
-    ".head",
+    fixtureDirectory(root),
     "onboarding",
     "product-model-revisions",
     `${started.state.productModelId}.json`,
@@ -271,7 +294,7 @@ async function verifyExistingProjectPromotion() {
   assert.equal(inspectOnboarding({ root }).status, "ready");
   const revisionFile = path.join(
     root,
-    ".head",
+    fixtureDirectory(root),
     "onboarding",
     "product-model-revisions",
     `${accepted.productModel.productModelId}.json`,
@@ -341,7 +364,7 @@ async function verifyNewProjectBriefAndRevision() {
   legacyState.pointerHash = onboardingDigest(onboardingCanonicalJson(legacyState));
   const legacyInputBefore = structuredClone(legacyState);
   const fixtureBytesBefore = Object.fromEntries(filesUnder(root).map((file) => [path.relative(root, file), fs.readFileSync(file).toString("base64")]));
-  assert.throws(() => verifyOnboardingState(legacyState), { code: "ONBOARDING_LEGACY_STATE_REQUIRES_MIGRATOR" });
+  assert.throws(() => verifyOnboardingState(legacyState, { storage: fixtureStorage(root) }), { code: "ONBOARDING_LEGACY_STATE_REQUIRES_MIGRATOR" });
   assert.deepEqual(legacyState, legacyInputBefore);
   assert.deepEqual(Object.fromEntries(filesUnder(root).map((file) => [path.relative(root, file), fs.readFileSync(file).toString("base64")])),
     fixtureBytesBefore, "legacy state verification is read-only and writes no files");
@@ -353,10 +376,10 @@ async function verifyNewProjectBriefAndRevision() {
     jsonrpc: "2.0",
     id: 8,
     method: "tools/call",
-    params: { name: "head_onboarding_guide", arguments: { project_root: root } },
+    params: { name: publicToolName("head_onboarding_guide"), arguments: { project_root: root } },
   });
   assert.equal(guide.result.structuredContent.status, "ready");
-  const producerFile = path.join(root, ".head", "onboarding", "review-decisions", `${revised.reviewDecision.reviewDecisionId}.json`);
+  const producerFile = path.join(root, fixtureDirectory(root), "onboarding", "review-decisions", `${revised.reviewDecision.reviewDecisionId}.json`);
   const producerBytes = fs.readFileSync(producerFile, "utf8");
   fs.rmSync(producerFile);
   assert.throws(() => inspectOnboarding({ root }), { code: "ONBOARDING_REVIEW_NOT_FOUND" });
@@ -430,7 +453,7 @@ async function verifySemanticNeutralityAndRetiredCandidateProtocols() {
   retired.candidateSetHash = onboardingDigest(onboardingCanonicalJson(retired));
   retired.candidateSetId = `onboarding-candidates-${retired.candidateSetHash.slice(0, 24)}`;
   assert.throws(
-    () => verifyOnboardingCandidateSetForProjection(retired, retired.projectId),
+    () => verifyOnboardingCandidateSetForProjection(retired, retired.projectId, fixtureStorage(root)),
     { code: "INVALID_ONBOARDING_PROJECTION_CANDIDATE_SET" },
   );
 }
@@ -531,7 +554,7 @@ async function verifyRejection() {
 async function verifyExistingCanonSkip() {
   const root = temporaryProject("canon");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  write(root, ".head/context/product-model.json", `${JSON.stringify(productDocument({ suffix: "-existing" }), null, 2)}\n`);
+  write(root, `${fixtureDirectory(root)}/context/product-model.json`, `${JSON.stringify(productDocument({ suffix: "-existing" }), null, 2)}\n`);
   const started = await startOnboarding({ root });
   assert.equal(started.status, "ready_existing_product_canon");
   assert.equal(started.state.candidateSetId, null);
@@ -604,20 +627,20 @@ async function verifyLegacyMigrationAndReadOnlyMcp() {
   write(root, "src/legacy.mjs", "export function legacyFeature() {}\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
   const initial = inspectOnboarding({ root });
-  const managedManifestFile = path.join(root, ".head", "generated", "manifest.json");
+  const managedManifestFile = path.join(root, fixtureDirectory(root), "generated", "manifest.json");
   const manifest = JSON.parse(fs.readFileSync(managedManifestFile, "utf8"));
   manifest.managed = manifest.managed.filter((item) => (
-    item.path !== ".head/onboarding/current.json"
-    && !item.path.startsWith(".head/onboarding/storage-selections/")
-    && !item.path.startsWith(".head/sessions/records/")
+    item.path !== `${fixtureDirectory(root)}/onboarding/current.json`
+    && !item.path.startsWith(`${fixtureDirectory(root)}/onboarding/storage-selections/`)
+    && !item.path.startsWith(`${fixtureDirectory(root)}/sessions/records/`)
   ));
   fs.writeFileSync(managedManifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
-  fs.rmSync(path.join(root, ".head", "onboarding"), { recursive: true, force: true });
-  fs.rmSync(path.join(root, ".head", "sessions", "records"), { recursive: true, force: true });
-  fs.rmSync(path.join(root, ".head", "context", "product-model.json"), { force: true });
+  fs.rmSync(path.join(root, fixtureDirectory(root), "onboarding"), { recursive: true, force: true });
+  fs.rmSync(path.join(root, fixtureDirectory(root), "sessions", "records"), { recursive: true, force: true });
+  fs.rmSync(path.join(root, fixtureDirectory(root), "context", "product-model.json"), { force: true });
   const migration = inspectOnboarding({ root });
   assert.equal(migration.status, "migration_required");
-  assert.equal(fs.existsSync(path.join(root, ".head", "onboarding")), false);
+  assert.equal(fs.existsSync(path.join(root, fixtureDirectory(root), "onboarding")), false);
   const started = await runCommand(["onboarding-start", root]);
   assert.equal(started.state.migration, "legacy-missing-state-v1");
   assert.equal(started.state.sessionId, initial.state.sessionId);
@@ -627,7 +650,7 @@ async function verifyLegacyMigrationAndReadOnlyMcp() {
     jsonrpc: "2.0",
     id: 1,
     method: "tools/call",
-    params: { name: "head_onboarding_status", arguments: { project_root: root } },
+    params: { name: publicToolName("head_onboarding_status"), arguments: { project_root: root } },
   });
   assert.equal(mcp.result.structuredContent.state.candidateSetId, proposed.candidateSet.candidateSetId);
   assert.equal(mcp.result.structuredContent.authority.candidates, "non-authoritative-until-review");
@@ -638,7 +661,7 @@ async function verifyLegacyMigrationAndReadOnlyMcp() {
     rationale: "Create Product Canon from the reviewed legacy-migration batch.",
   });
   assert.equal(accepted.status, "onboarding_ready");
-  assert.equal(fs.existsSync(path.join(root, ".head", "context", "product-model.json")), true);
+  assert.equal(fs.existsSync(path.join(root, fixtureDirectory(root), "context", "product-model.json")), true);
 }
 
 try {

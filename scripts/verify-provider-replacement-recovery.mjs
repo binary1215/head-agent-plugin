@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { initializeProject, inspectProject } from "./lib/head-core.mjs";
+import { formatForVerifiedOwner } from "./lib/project-storage-format.mjs";
 import { buildRuntimeVersionEvidence } from "./lib/runtime-machine-execution.mjs";
 import {
   buildRuntimeProjectBinding,
@@ -155,6 +156,7 @@ async function buildFreshRuntimeBoundary(root, fixtureBin) {
     inspected,
     protocolEvidence,
     projectBinding: buildRuntimeProjectBinding({
+      storage: inspected.storage,
       projectId: inspected.project.projectId,
       headSessionId: inspected.state.sessionId,
       projectRoot: root,
@@ -197,21 +199,23 @@ async function executeCodexBeforeLoss({ root, fixtureBin, supervisorSelection })
     evidenceMode: "protocol-fixture",
     onProcessEvent: recordProcess,
   });
-  const persisted = readRuntimeInvocationResult({ root, authorizationId: authorization.authorizationId });
+  const persisted = readRuntimeInvocationResult({ root, storage: boundary.inspected.storage, authorizationId: authorization.authorizationId });
   assert(persisted.draft.draftHash === execution.draft.draftHash, "Codex pre-loss result did not round-trip through project artifacts.");
   assertProviderSessionIdentityAbsent(persisted, "Codex pre-loss record");
   return { boundary, authorization, execution };
 }
 
 async function replacementChild(root, previousAuthorizationId, fixtureBin) {
-  const previous = readRuntimeInvocationResult({ root, authorizationId: previousAuthorizationId });
+  const storage = inspectProject(root).storage;
+  const previous = readRuntimeInvocationResult({ root, storage, authorizationId: previousAuthorizationId });
   const previousAuthorization = readRuntimeInvocationAuthorization({ root, authorizationId: previousAuthorizationId }).authorization;
   assert(previousAuthorization.runtime === "codex", "Replacement input did not identify a completed Codex artifact.");
   assert(previous.receipt.status === "completed", "Replacement input Codex artifact was not completed.");
   assertProviderSessionIdentityAbsent(previous, "Recovered Codex record");
 
   const boundary = await buildFreshRuntimeBoundary(root, fixtureBin);
-  assert(boundary.inspected.state.sessionId === previousAuthorization.headSessionId,
+  const format = formatForVerifiedOwner(boundary.inspected.storage);
+  assert(boundary.inspected.state.sessionId === previousAuthorization[format.sessionIdField],
     "Fresh replacement process did not recover the original canonical HEAD Session.");
   const request = "Continue from canonical HEAD artifacts using OpenCode after Codex provider loss.";
   const authorization = buildRuntimeInvocationAuthorization({
@@ -225,7 +229,7 @@ async function replacementChild(root, previousAuthorizationId, fixtureBin) {
     persist: true,
   }).authorization;
   const observation = boundary.protocolEvidence.observations.find((item) => item.runtime === "opencode");
-  const supervisorRoot = path.resolve(process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
+  const supervisorRoot = path.resolve(process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
   const execution = await executeOpenCodeRuntimeInvocation({
     root,
     authorization,
@@ -238,13 +242,13 @@ async function replacementChild(root, previousAuthorizationId, fixtureBin) {
     evidenceMode: "protocol-fixture",
     onProcessEvent: recordProcess,
   });
-  const persisted = readRuntimeInvocationResult({ root, authorizationId: authorization.authorizationId });
+  const persisted = readRuntimeInvocationResult({ root, storage: boundary.inspected.storage, authorizationId: authorization.authorizationId });
   assert(persisted.draft.draftHash === execution.draft.draftHash, "OpenCode replacement result did not round-trip through project artifacts.");
   assertProviderSessionIdentityAbsent(persisted, "OpenCode replacement record");
   process.stdout.write(`${JSON.stringify({
     kind: "ProviderReplacementChildResult",
     projectId: boundary.inspected.project.projectId,
-    headSessionId: boundary.inspected.state.sessionId,
+    [format.sessionIdField]: boundary.inspected.state.sessionId,
     previousAuthorizationId,
     replacementAuthorizationId: authorization.authorizationId,
     replacementDraftHash: execution.draft.draftHash,
@@ -265,7 +269,7 @@ function runReplacementProcess({ root, previousAuthorizationId, fixtureBin, oper
       env: {
         ...process.env,
         [RUNTIME_OPERATIONAL_STATE_ENV]: operationalRoot,
-        HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT: supervisorRoot,
+        LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT: supervisorRoot,
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -314,10 +318,11 @@ async function parentMain() {
   try {
     fs.writeFileSync(path.join(resolvedRoot, "example.mjs"), "export const answer = 42;\n", "utf8");
     const initialized = initializeProject({ root: resolvedRoot, pluginRoot, runtimes: ["codex", "opencode"] });
+    const format = formatForVerifiedOwner(initialized.storage);
     assert(initialized.status === "ready", "Provider replacement fixture project initialization failed.");
     assert(!fs.existsSync(path.join(resolvedRoot, ".git")), "Provider replacement fixture unexpectedly required Git.");
     const fixtureBin = createRuntimeFixtureBin(resolvedOperationalRoot);
-    const supervisorRoot = path.resolve(process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
+    const supervisorRoot = path.resolve(process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
     const codex = await executeCodexBeforeLoss({
       root: resolvedRoot,
       fixtureBin,
@@ -331,12 +336,13 @@ async function parentMain() {
       supervisorRoot,
     });
     assert(replacement.projectId === initialized.project.projectId, "Provider replacement changed canonical project identity.");
-    assert(replacement.headSessionId === codex.authorization.headSessionId, "Provider replacement changed canonical HEAD Session identity.");
+    assert(replacement[format.sessionIdField] === codex.authorization[format.sessionIdField], "Provider replacement changed canonical HEAD Session identity.");
     assert(replacement.replacementRuntime === "opencode", "Provider replacement did not select OpenCode.");
     assert(replacement.replacementAuthorizationId !== codex.authorization.authorizationId,
       "Provider replacement reused the consumed Codex authorization.");
     const recoveredReplacement = readRuntimeInvocationResult({
       root: resolvedRoot,
+      storage: initialized.storage,
       authorizationId: replacement.replacementAuthorizationId,
     });
     assert(recoveredReplacement.draft.draftHash === replacement.replacementDraftHash,
@@ -345,7 +351,7 @@ async function parentMain() {
     process.stdout.write(`${JSON.stringify({
       status: "provider_replacement_recovery_verified",
       projectId: initialized.project.projectId,
-      headSessionId: codex.authorization.headSessionId,
+      [format.sessionIdField]: codex.authorization[format.sessionIdField],
       firstRuntime: "codex",
       replacementRuntime: replacement.replacementRuntime,
       firstAuthorizationId: codex.authorization.authorizationId,

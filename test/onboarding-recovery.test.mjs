@@ -252,13 +252,13 @@ test("onboarding crash recovery follows durable approval at every publication bo
 });
 
 test("failed optional projection preserves approval and resumes without a second decision", async () => {
-  const { root, layout, canonPath, statePath, reviewDirectory, request } = await fixture();
+  const { root, storage, layout, canonPath, statePath, reviewDirectory, request } = await fixture();
   try {
     const result = interruptedReview(request, "world", { layout, throwInstead: true });
     assert.equal(result.status, "onboarding_approved_projection_pending");
     assert.equal(result.projection.ordinaryWorkBlocked, false);
     assert.equal(result.projection.userReviewRequired, false);
-    assert.equal(readProductModelCanon({ projectRoot: root }).model.capabilities.length, 1);
+    assert.equal(readProductModelCanon({ projectRoot: root, storage }).model.capabilities.length, 1);
     assert.equal(inspectOnboarding({ root }).status, "promotion_recovery_pending");
     await initializeOrResumeProject({ root, pluginRoot, profile: "product" });
     assert.equal(inspectOnboarding({ root }).status, "ready");

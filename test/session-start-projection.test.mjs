@@ -10,6 +10,7 @@ import { createHeadSession, withSessionRoute } from "../scripts/lib/session-rout
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
 import { fitSelectedBodyGroups, workBodyTuples } from "../scripts/lib/session-work-body-organization.mjs";
+import { publicToolName } from "../scripts/lib/lode-artifact-composition.mjs";
 import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
 import { recordSessionWorkEvidence, readSessionWorkContext } from "../scripts/lib/session-work-context.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
@@ -277,7 +278,7 @@ for (const runtime of ["codex", "claude"]) {
 // capability is claimed by these extracted-function cases. No production export.
 const hookSource = fs.readFileSync(path.join(pluginRoot, "scripts", "session-host-hook.mjs"), "utf8");
 const formatterSource = hookSource.slice(hookSource.indexOf("const MAX_CONTEXT_CHARACTERS"), hookSource.indexOf("// A read-only command Hook"));
-const projectStartup = new Function("path", "fitSelectedBodyGroups", "workBodyTuples", formatterSource + "\nreturn startupProjection;")(path, fitSelectedBodyGroups, workBodyTuples);
+const projectStartup = new Function("path", "fitSelectedBodyGroups", "workBodyTuples", "publicToolName", formatterSource + "\nreturn startupProjection;")(path, fitSelectedBodyGroups, workBodyTuples, publicToolName);
 const sessionId = "session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
 const entry = () => ({ status: "synthetic-formatter-only", workContext: { sessionId, sessionPurpose: "Exact selected purpose", records: [] } });
 

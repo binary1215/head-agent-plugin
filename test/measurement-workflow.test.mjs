@@ -264,9 +264,9 @@ test("metric comparison remains available while disclosing unequal collection co
 
 test("CLI and typed MCP expose the same nonblocking metric status", async (t) => {
   const { root, layout } = fixture(t);
-  assert.ok(tools.some((tool) => tool.name === "head_metric_define"));
-  assert.ok(tools.some((tool) => tool.name === "head_metric_status"));
-  assert.ok(tools.some((tool) => tool.name === "head_metric_trace"));
+  assert.ok(tools.some((tool) => tool.name === "lode_metric_define"));
+  assert.ok(tools.some((tool) => tool.name === "lode_metric_status"));
+  assert.ok(tools.some((tool) => tool.name === "lode_metric_trace"));
   const defined = await dispatch({ jsonrpc: "2.0", id: "metric-define", method: "tools/call", params: { name: "head_metric_define", arguments: {
     project_root: root, metric_key: "request-latency", unit: "milliseconds", direction: "decrease",
   } } });

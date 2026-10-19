@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { publicToolName } from "../scripts/lib/lode-artifact-composition.mjs";
 
 test("Session list presents existing purpose and stored pointers without live-state inference", () => {
   const value = { projectId: "project-A", defaultSessionId: "session-A", sessions: [
@@ -148,7 +149,7 @@ test("unresolved Session cards preserve current cancellation without claiming re
     assert.match(text, /independent work can continue/u);
     assert.match(text, /Constraint: Do not publish/u);
     assert.match(text, /Cancelled action: deploy/u);
-    assert.doesNotMatch(text, /HEAD is ready|recovered the current direction|unverified checkpoint|Open reviews: 0|drift: 0|restart: not required/u);
+    assert.doesNotMatch(text, /Lode is ready|recovered the current direction|unverified checkpoint|Open reviews: 0|drift: 0|restart: not required/u);
   }
   assert.equal(formatMcpToolContent("head_run_start", value), JSON.stringify(value), "unformatted MCP tools retain their JSON contract");
   assert.match(formatSessionRestore(value), /unavailable \(not inspected\)/u);
@@ -177,14 +178,14 @@ test("real CLI help renders direct default and state-aware ordinary Host delegat
   for (const command of ["help", "help-all"]) {
     const output = invoke([command]);
     assert.match(output, /Work directly by default/u);
-    assert.match(output, /available Host tools.*HEAD integrate/u);
+    assert.match(output, /available Host tools.*Lode integrate/u);
     assert.match(output, /continue directly or sequentially/u);
     assert.doesNotMatch(output, /optional managed operations|worker-prepare|worker-wave-create/u);
     assert.match(output, /inspect uncertain work before replacement/u);
     assert.doesNotMatch(output, /Choose (?:A|B|C)|Enter (?:an? )?(?:authorization|registry|job) ID/u);
   }
   const machine = JSON.parse(invoke(["help", "--json"]));
-  assert.equal(machine.executionMeans.default, "head-direct");
+  assert.equal(machine.executionMeans.default, "lode-direct");
   assert.equal(machine.executionMeans.requiresUserSelection, false);
   assert.equal(machine.laneRecommendationRequired, false);
 });
@@ -192,14 +193,14 @@ test("real CLI help renders direct default and state-aware ordinary Host delegat
 test("MCP discovery discloses every operation effect without granting approval", async () => {
   for (const tool of tools) assert.equal(typeof tool.annotations?.readOnlyHint, "boolean", tool.name);
   for (const name of ["head_graph_lineage_status", "head_graph_lineage_trace", "head_graph_lineage_diff", "head_conversation_enter"]) {
-    assert.equal(tools.find((tool) => tool.name === name).annotations.readOnlyHint, true);
+    assert.equal(tools.find((tool) => tool.name === publicToolName(name)).annotations.readOnlyHint, true);
   }
   for (const name of ["head_onboarding_review", "head_compact_prepare", "head_compact_verify", "head_compact_continue"]) {
-    assert.equal(tools.find((tool) => tool.name === name).annotations.readOnlyHint, false);
+    assert.equal(tools.find((tool) => tool.name === publicToolName(name)).annotations.readOnlyHint, false);
   }
   const response = await dispatch({ jsonrpc: "2.0", id: "effects", method: "tools/list" });
   assert(response.result.tools.length < tools.length);
-  assert(response.result.tools.some(tool => tool.name === "head_tools_discover"));
+  assert(response.result.tools.some(tool => tool.name === "lode_tools_discover"));
 });
 
 function projectExperience({ recoveryState = "no-current-checkpoint", recoveryAttention = false, productState = "not_activated" } = {}) {
@@ -254,7 +255,7 @@ test("optional Product work is a notice rather than an immediate conversation ga
 
 test("ordinary project status leads with the task and hides implementation details", () => {
   const output = formatProjectStatus(projectExperience());
-  assert.match(output, /HEAD is ready — continue the task/u);
+  assert.match(output, /Lode is ready — continue the task/u);
   assert.doesNotMatch(output, /Recovery:|Product knowledge:|fixture-version|Command:|MCP:/u);
 
   const doctor = formatProjectStatus(projectExperience(), { doctor: true });
@@ -535,7 +536,7 @@ test("conversation context distinguishes unavailable, never recorded, explicit e
   assert.match(formatConversationRecovery({ ...base, projectStatus: { currentProjectDirection: {
     input: { goal: "", constraints: [], decisions: [], cancelledActions: [] },
   } } }), /explicitly recorded empty goal and lists/u);
-  assert.equal(formatConversationRecovery(base), "HEAD is ready — continue the task.\n", "No-content entry stays one line with no empty forms or new follow-up");
+  assert.equal(formatConversationRecovery(base), "Lode is ready — continue the task.\n", "No-content entry stays one line with no empty forms or new follow-up");
   for (const metadata of [undefined, null, [], "unavailable"]) {
     const value = conversationContextFixture();
     value.projectStatus.currentProjectDirectionAvailability = metadata;
@@ -581,7 +582,7 @@ test("conversation context keeps actual explicit-null empty Core quiet to one li
       records: [], coverage: { originals: 0, inspected: 0, valid: 0, unavailable: 0, included: 0 },
       omissions: { byBudget: 0, uninspected: 0 } } };
   const before = JSON.stringify(entry);
-  assert.equal(formatConversationRecovery(entry), "HEAD is ready — continue the task.\n");
+  assert.equal(formatConversationRecovery(entry), "Lode is ready — continue the task.\n");
   assert.equal(formatCliResult("conversation-enter", entry), formatMcpToolContent("head_conversation_enter", entry));
   assert.equal(JSON.stringify(entry), before);
 
@@ -649,7 +650,7 @@ test("conversation context direct restore shares full meaning without exposing p
 
   const failedText = formatSessionRestore({ status: "restore_failed", checkpoint });
   assert.match(failedText, /No verified Session checkpoint was supplied/u);
-  assert.doesNotMatch(failedText, /HEAD recovered|HEAD verified|Open reviews:|Latest retained Session checkpoint/u);
+  assert.doesNotMatch(failedText, /Lode recovered|Lode verified|Open reviews:|Latest retained Session checkpoint/u);
   assert(!failedText.includes(checkpoint.purpose));
 });
 

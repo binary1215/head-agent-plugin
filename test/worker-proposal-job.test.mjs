@@ -102,11 +102,11 @@ async function fixture(t, nativePrefix = false) {
       sourcePaths: ["selected.txt"], proposalPaths: ["selected.txt"], executionBoundary: boundary } }).authorization;
   input = { root, authorizationId: authorization.authorizationId, role: "coder" };
   directory = path.join(operational, "worker-jobs", authorization.projectId, authorization.authorizationId);
-  const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
+  const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId, storage });
   return { root, storage, container, codexHome, operational, policy, authorization, workspaceBinding, input, directory, lease,
     sessionFile: path.join(root, relativeProjectArtifact(storage, "sessions", "current.json")),
     async start() {
-      const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
+      const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
       const host = createBoundedWorkerJobHost({ policy, workspaceBinding });
       started = true;
       let state = await startBoundedWorkerJob(input, { host, supervisorSelection, onProcess });

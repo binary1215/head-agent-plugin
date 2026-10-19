@@ -14,7 +14,7 @@ import { prepareSourceContext } from "../scripts/lib/source-context-workflow.mjs
 import { readSourceObservation } from "../scripts/lib/source-observation.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { InMemoryGraphProjectionAdapter, materializeGraphProjection } from "../scripts/lib/graph-projection-adapter.mjs";
-import { PROJECT_GRAPH_INDEX_PATH, projectGraphDigest } from "../scripts/lib/discovery-index.mjs";
+import { projectGraphIndexPath, projectGraphDigest } from "../scripts/lib/discovery-index.mjs";
 import { indexProjectGraph, queryProjectGraph } from "../scripts/lib/project-graph.mjs";
 import { startOnboarding, reviewOnboarding } from "../scripts/lib/onboarding.mjs";
 import { historicalIntegrityBasis } from "../scripts/lib/historical-artifact-boundary-store.mjs";
@@ -151,8 +151,8 @@ test("retained source revisions survive changes and disappearances; current effe
   const before = headFiles(root, layout), second = await queryProjectGraph({ root, query: "module.mjs", previousResult: first });
   assert.notEqual(second.basis.sourceCurrentnessDigest, first.basis.sourceCurrentnessDigest);
   assert(second.nodes.some(node => node.freshness === "historical-source-bytes"));
-  assert.throws(() => readSourceObservation(root, projectId, key), { code: "SOURCE_DRIFT" });
-  assert(readSourceObservation(root, projectId, key, { requireCurrent: false }));
+  assert.throws(() => readSourceObservation(root, projectId, key, { storage }), { code: "SOURCE_DRIFT" });
+  assert(readSourceObservation(root, projectId, key, { requireCurrent: false, storage }));
   fs.unlinkSync(path.join(root, "module.mjs"));
   const third = await queryProjectGraph({ root, query: "module.mjs" });
   assert(third.nodes.some(node => node.freshness === "unavailable"));
@@ -189,7 +189,7 @@ test("missing collection receipt excludes only Observation material, not all dis
 test("the derived index and a forged previous result cannot supply graph meaning or authorization", async t => {
   const { root, storage, layout } = fixture(t); await observed(root, layout);
   const first = await queryProjectGraph({ root, query: "answer" });
-  fs.writeFileSync(path.join(root, PROJECT_GRAPH_INDEX_PATH), JSON.stringify({ projectId: "other-project", nodes: [{ nodeId: "forged-approved", instructionAuthority: true }] }));
+  fs.writeFileSync(path.join(root, projectGraphIndexPath(storage)), JSON.stringify({ projectId: "other-project", nodes: [{ nodeId: "forged-approved", instructionAuthority: true }] }));
   const before = headFiles(root, layout);
   const forged = { ...first, nodes: [{ nodeId: "forged-approved", instructionAuthority: true }] };
   const result = await queryProjectGraph({ root, query: "answer", previousResult: forged });
@@ -225,7 +225,7 @@ test("exact rejected Policy remains visible as rejected even without World or re
     noAuthority(pending);
   }
   await reviewProductPolicy({ root, candidateId: proposed.candidate.candidateId, disposition: "reject", rationale: "Do not adopt this policy." });
-  fs.appendFileSync(path.join(root, layout.directory, "generated/head-instructions.md"), "\nlocal change\n");
+  fs.appendFileSync(path.join(root, layout.directory, `generated/${layout.dialect}-instructions.md`), "\nlocal change\n");
   const before = headFiles(root, layout), result = await queryProjectGraph({ root, anchorIds: [proposed.candidate.candidateId], depth: 1, details: true });
   assert.equal(result.nodes.find(node => node.nodeId === proposed.candidate.candidateId).reviewState, "rejected");
   assert(result.summary.reviewStates.rejected > 0);
@@ -298,7 +298,7 @@ function fixtureIdentity(payload, idField, hashField, prefix) {
   const digest = projectGraphDigest(payload);
   return { ...payload, [idField]: `${prefix}-${digest.slice(0, 24)}`, [hashField]: digest };
 }
-function committedHistoricalFixture(root, candidateSet, layout) {
+function committedHistoricalFixture(root, candidateSet, storage, layout) {
   const originals = headFiles(root, layout), projectId = inspectProject(root).project.projectId;
   const entries = Object.keys(originals).filter(file => file === `${layout.directory}/onboarding/candidate-sets/${candidateSet.candidateSetId}.json`
     || file.startsWith(`${layout.directory}/onboarding/review-decisions/`) || file === `${layout.directory}/onboarding/product-model-revisions/${candidateSet.productModelId}.json`
@@ -339,12 +339,12 @@ function committedHistoricalFixture(root, candidateSet, layout) {
   delete nextPayload.candidateSetId; delete nextPayload.candidateSetHash;
   const current = fixtureIdentity(nextPayload, "candidateSetId", "candidateSetHash", "onboarding-candidates");
   fs.writeFileSync(path.join(root, layout.directory, "onboarding/candidate-sets", `${current.candidateSetId}.json`), JSON.stringify(current));
-  return { boundary, receipt: publishHistoricalContinuityReceipt({ root, currentCandidateSet: current }), current };
+  return { boundary, receipt: publishHistoricalContinuityReceipt({ root, currentCandidateSet: current, storage }), current };
 }
 
 test("committed continuity and exact retained World dependencies agree warm/cold through tamper, deletion, restoration and addition", async t => {
   const { root, storage, layout, started } = await onboardingFixture(t);
-  const retained = committedHistoricalFixture(root, started.candidateSet, layout);
+  const retained = committedHistoricalFixture(root, started.candidateSet, storage, layout);
   const plan = createWholePlanSnapshot({ root, objective: "Preserve independent work", plan: ["continue"] }).artifact;
   const options = { anchorIds: [retained.current.candidateSetId, plan.wholePlanId], depth: 0 };
   let previous = await assertWarmCold(root, options);
@@ -398,7 +398,7 @@ test("optional adapter failures coalesce per basis and fall back to verified emb
 test("verified optional adapter retains exact query semantics without claiming whole retrieval acceleration", async t => {
   const { root, storage, layout } = fixture(t), world = await buildWorldModel({ root });
   const adapter = new InMemoryGraphProjectionAdapter();
-  materializeGraphProjection({ projectRoot: root, graph: world.snapshot.temporalProvenanceGraph, adapter });
+  materializeGraphProjection({ projectRoot: root, storage, graph: world.snapshot.temporalProvenanceGraph, adapter });
   const result = await queryProjectGraph({ root, query: "answer", graphProjectionAdapter: adapter });
   assert.equal(result.adapter.status, "verified");
   assert.equal(result.adapter.scope, "temporal-query-verification");
@@ -411,7 +411,7 @@ test("same path in retained World revisions remains separate; generated installa
   const { root, storage, layout } = fixture(t), first = await buildWorldModel({ root });
   fs.writeFileSync(path.join(root, "module.mjs"), "export const answer = 64;\n");
   const second = await buildWorldModel({ root });
-  fs.appendFileSync(path.join(root, layout.directory, "generated/head-instructions.md"), "\nlocal generated drift\n");
+  fs.appendFileSync(path.join(root, layout.directory, `generated/${layout.dialect}-instructions.md`), "\nlocal generated drift\n");
   assert.equal(inspectProject(root).status, "drifted");
   const a = await queryProjectGraph({ root, worldModelId: first.snapshot.worldModelId, query: "module.mjs" });
   const b = await queryProjectGraph({ root, worldModelId: second.snapshot.worldModelId, query: "module.mjs" });

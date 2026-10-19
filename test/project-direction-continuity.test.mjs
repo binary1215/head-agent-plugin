@@ -190,7 +190,7 @@ test("real authorization builder and prepared execution fail closed for new and 
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: capabilityFixture });
   const inspected = inspectProject(root);
   const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
-    projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
+    projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence, storage: inspected.storage });
   const options = { root, runtime: "codex", scope: { kind: "session", request: "Read synthetic source" }, protocolEvidence, projectBinding, persist: false };
   const nullBasis = buildRuntimeInvocationAuthorization(options).authorization;
   assert.equal(Object.hasOwn(nullBasis, "currentProjectDirectionId"), false);

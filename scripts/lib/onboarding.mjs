@@ -1763,11 +1763,11 @@ export function inspectOptionalOnboardingForEntry({ root = "." } = {}) {
 }
 
 function inspectOptionalOnboardingRecords(root, inspectWorld) {
-  readyProject(root, "optional Product inspection", "selected");
+  const inspected = readyProject(root, "optional Product inspection", "selected");
   try { return inspectOnboardingRecords(root, inspectWorld); }
   catch (error) {
-    const unrelatedDefaultFailure = error.headSessionRecordPath === defaultSessionStatePath(root)
-      && sessionStatePath(root) !== defaultSessionStatePath(root);
+    const unrelatedDefaultFailure = error.headSessionRecordPath === defaultSessionStatePath(root, inspected.storage)
+      && sessionStatePath(root, inspected.storage) !== defaultSessionStatePath(root, inspected.storage);
     if (!/^(?:INVALID_)?(?:ONBOARDING|WORLD_MODEL|GRAPH_|TEMPORAL_|PRODUCT_MODEL|PRODUCT_CANON|DOCUMENT_|ARCADEDB|HISTORICAL_|STORAGE_SELECTION|SESSION_RECORD)/.test(error.code || "")
       && !new Set(["ENOENT", "EACCES", "EPERM", "EISDIR"]).has(error.code)
       && !unrelatedDefaultFailure) throw error;

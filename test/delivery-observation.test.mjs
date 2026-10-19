@@ -157,7 +157,7 @@ test("independent artifacts on one target keep independent order and do not manu
 
 test("declared revisions remain disclosed while invalid exact bindings fail before persistence", async (t) => {
   const { root, layout, initialWorld, v1 } = await fixture(t);
-  const before = loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId }).observations.length;
+  const before = loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId, storage: layout }).observations.length;
   await assert.rejects(() => recordDeliveryObservation({ root, ...input({
     targetKey: "invalid", revision: v1, revisionKey: "v1", suffix: "invalid", worldModelId: initialWorld.worldModelId,
     revisionReference: undefined,
@@ -167,7 +167,7 @@ test("declared revisions remain disclosed while invalid exact bindings fail befo
     sourcePath: v1.path,
     digest: sha("not-the-revision"),
   } }), { code: "DELIVERY_REVISION_REFERENCE_INVALID" });
-  assert.equal(loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId }).observations.length, before);
+  assert.equal(loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId, storage: layout }).observations.length, before);
 
   const declared = await recordDeliveryObservation({ root, ...input({ targetKey: "declared", revision: v1, revisionKey: "v1", suffix: "declared", worldModelId: initialWorld.worldModelId, exact: false }) });
   assert.equal(declared.observation.payload.revision_binding, "declared");
@@ -179,8 +179,8 @@ test("declared revisions remain disclosed while invalid exact bindings fail befo
 
 test("generic Observation ingest cannot self-assert Core delivery revision proof", async (t) => {
   const { root, layout, initialWorld, v1 } = await fixture(t);
-  const before = loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId }).observations.length;
-  const descriptor = deliveryObservationDescriptor();
+  const before = loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId, storage: layout }).observations.length;
+  const descriptor = deliveryObservationDescriptor(layout);
   const genericInput = {
     subject: { type: "delivery-target", key: "delivery.unverified" },
     form: "event",
@@ -215,7 +215,7 @@ test("generic Observation ingest cannot self-assert Core delivery revision proof
     },
     sourceScopeDigest: sha("generic-delivery-scope"),
   }), { code: "RESERVED_OBSERVATION_TYPE_REQUIRES_SPECIALIZED_WRITER" });
-  assert.equal(loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId }).observations.length, before);
+  assert.equal(loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId, storage: layout }).observations.length, before);
   assert.equal(inspectDeliveryState({ root }).status, "not_started");
 
   const mcp = await dispatch({ jsonrpc: "2.0", id: "generic-delivery", method: "tools/call", params: {
@@ -223,7 +223,7 @@ test("generic Observation ingest cannot self-assert Core delivery revision proof
     arguments: {
       project_root: root,
       binding: {
-        adapter_key: "head.structured-host-observation",
+        adapter_key: "lode.structured-host-observation",
         adapter_version: "0.1.0",
         source_scope_digest: sha("generic-delivery-scope"),
         credential_reference_names: [],
@@ -269,7 +269,7 @@ test("generic Observation ingest cannot self-assert Core delivery revision proof
     },
   } });
   assert.match(mcp.error?.message || "", /dedicated delivery writer/i);
-  assert.equal(loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId }).observations.length, before);
+  assert.equal(loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId, storage: layout }).observations.length, before);
 });
 
 test("verified historical source revisions remain connected through a derived RevisionReference", async (t) => {

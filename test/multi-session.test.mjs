@@ -37,8 +37,8 @@ const direction = (suffix) => ({ purpose: `Session purpose ${suffix}`, currentPo
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 
 test("independent async routes preserve original identity, unknown execution and approval bytes", async (t) => {
-  const { root, layout } = project(t);
-  const originalFile = sessionStatePath(root);
+  const { root, storage, layout } = project(t);
+  const originalFile = sessionStatePath(root, storage);
   const existing = read(originalFile);
   existing.unknownExternalOutcome = { action: "deploy", replayAllowed: false };
   existing.lastReviewDecisionId = "review-retained";
@@ -69,7 +69,7 @@ test("independent async routes preserve original identity, unknown execution and
 });
 
 test("common current cancellation survives every Session restore without rewriting checkpoints", (t) => {
-  const { root, layout } = project(t);
+  const { root, storage, layout } = project(t);
   const a = createHeadSession({ root, purpose: "Deployment investigation" });
   const b = createHeadSession({ root, purpose: "Independent docs" });
   withSessionRoute(root, a.sessionId, () => createRecoveryCheckpoint({ root, ...direction("deployment") }));
@@ -86,7 +86,7 @@ test("common current cancellation survives every Session restore without rewriti
 });
 
 test("per-session compaction pointers and token consumption never collide", (t) => {
-  const { root, layout } = project(t);
+  const { root, storage, layout } = project(t);
   const a = createHeadSession({ root }); const b = createHeadSession({ root });
   const prepare = (id) => withSessionRoute(root, id, () => prepareCompaction({ root, runtime: "codex", userTurnIdAtPrepare: 7, ...direction(id) }));
   const aa = prepare(a.sessionId); const bb = prepare(b.sessionId);
@@ -103,19 +103,19 @@ test("per-session compaction pointers and token consumption never collide", (t) 
 });
 
 test("routing rejects escape, foreign identity and divergent create without default mutation", (t) => {
-  const { root, layout } = project(t); const { root: foreign } = project(t);
+  const { root, storage, layout } = project(t); const { root: foreign } = project(t);
   const a = createHeadSession({ root, purpose: "A" });
   assert.throws(() => withSessionRoute(root, "../../outside", () => {}), { code: "INVALID_HEAD_SESSION_ID" });
   assert.throws(() => createHeadSession({ root, sessionId: a.sessionId, purpose: "B" }), { code: "HEAD_SESSION_CREATE_CONFLICT" });
   withSessionRoute(root, a.sessionId, () => assert.throws(() => sessionDataPath(root, "../../../../../escape"), { code: "SESSION_PATH_ESCAPE" }));
   withSessionRoute(root, a.sessionId, () => assert.notEqual(inspectProject(foreign).state.sessionId, a.sessionId));
-  const file = withSessionRoute(root, a.sessionId, () => sessionStatePath(root));
+  const file = withSessionRoute(root, a.sessionId, () => sessionStatePath(root, storage));
   fs.writeFileSync(file, JSON.stringify({ ...a.state, projectId: inspectProject(foreign).project.projectId }));
   assert.throws(() => withSessionRoute(root, a.sessionId, () => {}), { code: "HEAD_SESSION_IDENTITY_MISMATCH" });
 });
 
 test("default project onboarding remains readable within a new logical Session", (t) => {
-  const { root, layout } = project(t); const before = inspectOptionalOnboarding({ root });
+  const { root, storage, layout } = project(t); const before = inspectOptionalOnboarding({ root });
   const a = createHeadSession({ root });
   const after = withSessionRoute(root, a.sessionId, () => inspectOptionalOnboarding({ root }));
   assert.equal(after.state.sessionId, before.state.sessionId);
@@ -123,7 +123,7 @@ test("default project onboarding remains readable within a new logical Session",
 });
 
 test("new common direction invalidates stale checkpoint publication basis", (t) => {
-  const { root, layout } = project(t); const basis = inspectRecoveryCheckpointBasis({ root }).basis;
+  const { root, storage, layout } = project(t); const basis = inspectRecoveryCheckpointBasis({ root }).basis;
   updateProjectDirection({ root, input: { goal: "Changed by user" } });
   const result = syncRecoveryCheckpoint({ root, expectedRecoveryBasisId: basis.basisId, ...direction("old") });
   assert.equal(result.status, "recovery_checkpoint_sync_conflict");
@@ -131,7 +131,7 @@ test("new common direction invalidates stale checkpoint publication basis", (t) 
 });
 
 test("active Runs stay Session-owned and another route cannot finish a copied pointer", (t) => {
-  const { root, layout } = project(t); const a = createHeadSession({ root }); const b = createHeadSession({ root });
+  const { root, storage, layout } = project(t); const a = createHeadSession({ root }); const b = createHeadSession({ root });
   const started = withSessionRoute(root, a.sessionId, () => {
     const capsule = compileContext({ root, task: "Synthetic source work", budget: 32768, persist: true }).capsule;
     const plan = createWholePlanSnapshot({ root, objective: "Synthetic work", plan: [{ id: "work", outcome: "Done" }] }).artifact;
@@ -139,14 +139,14 @@ test("active Runs stay Session-owned and another route cannot finish a copied po
     return startRun({ root, executionContractId: contract.executionContractId });
   });
   const aState = withSessionRoute(root, a.sessionId, () => inspectProject(root).state);
-  withSessionRoute(root, b.sessionId, () => fs.writeFileSync(sessionStatePath(root), JSON.stringify({ ...aState, sessionId: b.sessionId })));
+  withSessionRoute(root, b.sessionId, () => fs.writeFileSync(sessionStatePath(root, storage), JSON.stringify({ ...aState, sessionId: b.sessionId })));
   assert.throws(() => withSessionRoute(root, b.sessionId, () => finishRun({ root, outcome: "Copied", evidence: ["x"], verification: ["x"] })), { code: "RUN_SESSION_MISMATCH" });
   assert.equal(withSessionRoute(root, a.sessionId, () => inspectProject(root).state.activeRunId), started.run.runId);
   assert.equal(inspectProject(root).state.activeRunId, null);
 });
 
 test("lost direction response converges without another revision or approval", (t) => {
-  const { root, layout } = project(t); const input = { goal: "Current user direction" };
+  const { root, storage, layout } = project(t); const input = { goal: "Current user direction" };
   const first = updateProjectDirection({ root, expectedDirectionId: null, input });
   const retry = updateProjectDirection({ root, expectedDirectionId: null, input });
   assert.equal(retry.status, "reused");
@@ -156,7 +156,7 @@ test("lost direction response converges without another revision or approval", (
 });
 
 test("direction constraint changes invalidate old effects while unknown outcomes remain unchanged", (t) => {
-  const { root, layout } = project(t); const file = sessionStatePath(root);
+  const { root, storage, layout } = project(t); const file = sessionStatePath(root, storage);
   const original = { ...read(file), externalEffect: { status: "unknown", replayAllowed: false } };
   fs.writeFileSync(file, JSON.stringify(original));
   const before = fs.readFileSync(file);
@@ -169,16 +169,16 @@ test("direction constraint changes invalidate old effects while unknown outcomes
 });
 
 test("selected route remains bound to its original path despite default identity tamper", (t) => {
-  const { root, layout } = project(t); const defaultFile = sessionStatePath(root);
+  const { root, storage, layout } = project(t); const defaultFile = sessionStatePath(root, storage);
   const original = fs.readFileSync(defaultFile);
   const a = createHeadSession({ root });
   withSessionRoute(root, a.sessionId, () => {
-    const selectedFile = sessionStatePath(root);
+    const selectedFile = sessionStatePath(root, storage);
     fs.writeFileSync(defaultFile, JSON.stringify({ ...read(defaultFile), sessionId: a.sessionId }));
-    assert.equal(sessionStatePath(root), selectedFile);
-    assert.notEqual(sessionStatePath(root), defaultFile);
+    assert.equal(sessionStatePath(root, storage), selectedFile);
+    assert.notEqual(sessionStatePath(root, storage), defaultFile);
     fs.writeFileSync(selectedFile, JSON.stringify({ ...a.state, sessionId: "session-00000000-0000-0000-0000-000000000000" }));
-    assert.throws(() => sessionStatePath(root), { code: "HEAD_SESSION_IDENTITY_MISMATCH" });
+    assert.throws(() => sessionStatePath(root, storage), { code: "HEAD_SESSION_IDENTITY_MISMATCH" });
   });
   fs.writeFileSync(defaultFile, original);
 });
@@ -196,7 +196,7 @@ function capabilityFixture(_command, args) {
 }
 
 test("authorization and actual prepared input bind routed Session and current common constraints", async (t) => {
-  const { root, layout } = project(t); const a = createHeadSession({ root }); const b = createHeadSession({ root });
+  const { root, storage, layout } = project(t); const a = createHeadSession({ root }); const b = createHeadSession({ root });
   const bin = path.join(root, "fixture-bin"); fs.mkdirSync(bin);
   const marker = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(marker, "Fixture marker; never executed");
@@ -208,7 +208,7 @@ test("authorization and actual prepared input bind routed Session and current co
   await withSessionRoute(root, a.sessionId, async () => {
     const inspected = inspectProject(root);
     const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: a.sessionId,
-      projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
+      projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence, storage });
     const options = { root, runtime: "codex", scope: { kind: "session", request: "Read source" }, protocolEvidence, projectBinding };
     const auth = buildRuntimeInvocationAuthorization(options).authorization;
     assert.equal(auth.currentProjectDirectionId, first.directionId);
@@ -224,25 +224,25 @@ test("authorization and actual prepared input bind routed Session and current co
 });
 
 test("explicit resume initializes only a missing index and preserves existing inventory on unchanged replay", async (t) => {
-  const { root, layout } = project(t); const index = path.join(root, layout.directory, "graph-discovery/index.json");
+  const { root, storage, layout } = project(t); const index = path.join(root, layout.directory, "graph-discovery/index.json");
   const existing = fs.readFileSync(index);
-  const state = read(sessionStatePath(root));
-  fs.writeFileSync(sessionStatePath(root), JSON.stringify({ ...state, currentPosition: "An existing caller-authored update" }));
-  const sessionBytes = fs.readFileSync(sessionStatePath(root));
+  const state = read(sessionStatePath(root, storage));
+  fs.writeFileSync(sessionStatePath(root, storage), JSON.stringify({ ...state, currentPosition: "An existing caller-authored update" }));
+  const sessionBytes = fs.readFileSync(sessionStatePath(root, storage));
   await initializeOrResumeProject({ root, pluginRoot, profile: "core" });
   assert.deepEqual(fs.readFileSync(index), existing);
-  assert.deepEqual(fs.readFileSync(sessionStatePath(root)), sessionBytes);
+  assert.deepEqual(fs.readFileSync(sessionStatePath(root, storage)), sessionBytes);
   fs.unlinkSync(index);
   await initializeOrResumeProject({ root, pluginRoot, profile: "core" });
   assert.equal(fs.existsSync(index), true);
   const rebuilt = fs.readFileSync(index);
   await initializeOrResumeProject({ root, pluginRoot, profile: "core" });
   assert.deepEqual(fs.readFileSync(index), rebuilt);
-  assert.deepEqual(fs.readFileSync(sessionStatePath(root)), sessionBytes);
+  assert.deepEqual(fs.readFileSync(sessionStatePath(root, storage)), sessionBytes);
 });
 
 test("absent common direction preserves consumed prior-shape authorization and unknown outcomes without a sibling gate", async (t) => {
-  const { root, layout } = project(t);
+  const { root, storage, layout } = project(t);
   const operationalRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-multi-session-operational-"));
   const previousEnvironment = process.env[RUNTIME_OPERATIONAL_STATE_ENV];
   process.env[RUNTIME_OPERATIONAL_STATE_ENV] = operationalRoot;
@@ -263,7 +263,7 @@ test("absent common direction preserves consumed prior-shape authorization and u
     const inspected = inspectProject(root);
     return { root, runtime: "codex", scope: { kind: "session", request: "Synthetic one-time action" }, protocolEvidence,
       projectBinding: buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
-        projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence }) };
+        projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence, storage }) };
   };
   const options = optionsForCurrentSession();
   // Reconstruct a baseline authorization with no direction field, regardless of
@@ -279,7 +279,7 @@ test("absent common direction preserves consumed prior-shape authorization and u
   await assert.rejects(withRuntimeExecutionLease({ projectRoot: root, authorization: prior, ownerFenceDigest: "a".repeat(64) }, async () => {
     calls += 1; throw new Error("Synthetic unknown after dispatch");
   }), /Synthetic unknown after dispatch/);
-  const leaseInput = { projectRoot: root, projectId: prior.projectId, authorizationId: prior.authorizationId };
+  const leaseInput = { projectRoot: root, projectId: prior.projectId, authorizationId: prior.authorizationId, storage };
   const consumed = inspectRuntimeExecutionLease(leaseInput);
   assert.equal(consumed.replayAllowed, false);
   assert.equal(consumed.release.operationStatus, "threw");
@@ -301,11 +301,11 @@ test("absent common direction preserves consumed prior-shape authorization and u
 });
 
 test("historical migration separates common onboarding identity from selected recovery and active effects without writes", async (t) => {
-  const { root, layout } = project(t);
+  const { root, storage, layout } = project(t);
   const started = await startOnboarding({ root, mode: "new", brief: { schemaVersion: 1, name: "Synthetic service",
     summary: "Deliver a reviewed message.", capabilities: [{ key: "delivery", name: "Delivery", description: "Deliver a message." }] } });
   await reviewOnboarding({ root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all", rationale: "Synthetic acceptance." });
-  const defaultFile = sessionStatePath(root);
+  const defaultFile = sessionStatePath(root, storage);
   const defaultSessionId = inspectProject(root).state.sessionId;
   const beginRun = () => {
     const capsule = compileContext({ root, task: "Synthetic source work", budget: 32768, persist: true }).capsule;
@@ -321,7 +321,7 @@ test("historical migration separates common onboarding identity from selected re
     const run = beginRun();
     const checkpointResult = createRecoveryCheckpoint({ root, ...direction("historical selected") });
     const checkpoint = checkpointResult.checkpoint;
-    const selectedFile = sessionStatePath(root);
+    const selectedFile = sessionStatePath(root, storage);
     fs.writeFileSync(selectedFile, JSON.stringify({ ...read(selectedFile), unknownExternalOutcome: { replayAllowed: false, action: "publish" } }));
     const onboardingFile = path.join(root, layout.directory, "onboarding/current.json");
     const unchangedFiles = [defaultFile, selectedFile, onboardingFile, checkpointResult.file];
@@ -364,7 +364,7 @@ test("historical migration separates common onboarding identity from selected re
         sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
         interpretationMode: role === "historical-product-revision" ? "current-typed-with-historical-provenance" : "opaque-historical" };
     }).sort((a, b) => a.path.localeCompare(b.path, "en"));
-    const capability = createVerifiedHistoricalInventoryCapability({ root, projectId: basis.projectId, entries,
+    const capability = createVerifiedHistoricalInventoryCapability({ root, projectId: basis.projectId, entries, storage,
       validation: { status: "complete-ready-verified", instructionAuthority: false, promotionAuthority: false,
         supportedCandidateVersions: ["0.3.0"], historicalReadyCandidateSetId: current.candidateSetId,
         historicalReadyReviewDecisionId: current.latestReviewDecisionId, historicalResultingProductModelId: current.productModelId } });
@@ -376,8 +376,8 @@ test("historical migration separates common onboarding identity from selected re
     const applied = applyHistoricalArtifactBoundary({ root, verifiedInventory: capability, hostMode: "explicit-one-shot" });
     assert.equal(applied.status, "applied"); assert.equal(applied.writes, 3);
     assert.deepEqual(applied.boundary.appliedAtBasis.onboardingSession, basis.appliedAtBasis.onboardingSession);
-    const stored = readHistoricalBoundaryApplication({ root, projectId: basis.projectId, requireCommitted: true });
-    assert.deepEqual(verifyHistoricalArtifactBoundary(stored.boundary, { projectRoot: root, projectId: basis.projectId }), applied.boundary);
+    const stored = readHistoricalBoundaryApplication({ root, projectId: basis.projectId, requireCommitted: true, storage });
+    assert.deepEqual(verifyHistoricalArtifactBoundary(stored.boundary, { projectRoot: root, projectId: basis.projectId, storage }), applied.boundary);
     assert.equal(stored.boundary.instructionAuthority, false); assert.equal(stored.boundary.promotionAuthority, false);
     const replay = applyHistoricalArtifactBoundary({ root, verifiedInventory: capability, hostMode: "explicit-one-shot" });
     assert.equal(replay.status, "already-applied"); assert.equal(replay.writes, 0);
@@ -385,7 +385,7 @@ test("historical migration separates common onboarding identity from selected re
     const boundaryFile = path.join(stored.directory, "boundary.json"); const boundaryBytes = fs.readFileSync(boundaryFile);
     fs.writeFileSync(boundaryFile, JSON.stringify({ ...stored.boundary, appliedAtBasis: { ...stored.boundary.appliedAtBasis,
       onboardingSession: { ...stored.boundary.appliedAtBasis.onboardingSession, id: selected.sessionId } } }));
-    assert.throws(() => readHistoricalBoundaryApplication({ root, projectId: basis.projectId, requireCommitted: true }), { code: "HISTORICAL_BOUNDARY_DIGEST_MISMATCH" });
+    assert.throws(() => readHistoricalBoundaryApplication({ root, projectId: basis.projectId, requireCommitted: true, storage }), { code: "HISTORICAL_BOUNDARY_DIGEST_MISMATCH" });
     fs.writeFileSync(boundaryFile, boundaryBytes);
   });
 });

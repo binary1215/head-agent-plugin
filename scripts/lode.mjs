@@ -445,7 +445,7 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "runtime-invocation-apply-run-result") {
     const authorization = readRuntimeInvocationAuthorization({ root, authorizationId: options.authorization }).authorization;
     requireRuntimeSurface(command, surface, root, authorization);
-    return applyRuntimeRunResult({ root, authorizationId: options.authorization });
+    return applyRuntimeRunResult({ root, authorizationId: options.authorization, storage: resolveProjectStorage(root) });
   }
   if (command === "worker-dispatch") return createBoundedWorkerDispatch({ root, authorizationId: options.authorization, role: options.role });
   if (command === "worker-read") return readBoundedWorkerDispatch({ root, authorizationId: options.authorization });
@@ -507,12 +507,12 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "source-scope-set") {
     const inspected = inspectProject(root);
     if (inspected.status !== "ready") throw new Error(`Project must be ready to configure source scope; current status: ${inspected.status}.`);
-    return writeRepositorySourceScope({ projectRoot: inspected.project.projectRoot, selection: inputJson(options, "Repository source scope") });
+    return writeRepositorySourceScope({ projectRoot: inspected.project.projectRoot, selection: inputJson(options, "Repository source scope"), storage: inspected.storage });
   }
   if (command === "source-scope-status") {
     const inspected = inspectProject(root);
     if (inspected.status === "not_initialized") throw new Error("HEAD Agent Core is not initialized.");
-    return readRepositorySourceScope({ projectRoot: inspected.project.projectRoot });
+    return readRepositorySourceScope({ projectRoot: inspected.project.projectRoot, storage: inspected.storage });
   }
   if (command === "feature-mapping-start") return startFeatureMapping({ root, semanticProposal: options.input ? inputJson(options, "Feature mapping semantic proposal") : null, expectedCandidateSetId: options["expected-candidate-set"] ?? null });
   if (command === "feature-mapping-status") return inspectFeatureMapping({ root });
@@ -647,9 +647,10 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "world-refresh-trigger-status") return inspectRefreshTriggers({ root });
   if (command === "world-refresh-trigger-read") return readRefreshTriggerDelivery({ root, triggerDeliveryId: options.delivery });
   if (command === "world-graph-status") return inspectWorldGraphProjection({ root });
-  if (command === "world-graph-remote-database-status") return inspectArcadeDbDatabaseCompatibility({ root });
+  if (command === "world-graph-remote-database-status") return inspectArcadeDbDatabaseCompatibility({ root, storage: resolveProjectStorage(root) });
   if (command === "world-graph-remote-database-initialize") return initializeArcadeDbDatabase({
     root,
+    storage: resolveProjectStorage(root),
     resetIncompatible: options["reset-incompatible"] === "true",
     confirmDatabase: options["confirm-database"] || "",
   });

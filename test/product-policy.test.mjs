@@ -50,7 +50,7 @@ test("schema 1 Product Model bytes and identity remain exact", () => {
 });
 
 test("explicit Policy applications preserve review and revision genealogy without group inheritance", async (t) => {
-  const { root, layout } = await fixture(t);
+  const { root, storage, layout } = await fixture(t);
   const proposed = await proposeProductPolicy({
     root,
     operation: "create",
@@ -66,14 +66,14 @@ test("explicit Policy applications preserve review and revision genealogy withou
   assert.equal(proposed.ordinaryWorkBlocked, false);
   assert.equal(proposed.candidate.authorityBoundary.planeId, "P3");
   assert.equal(proposed.candidate.evidenceStatus, "not-supplied");
-  const before = readProductModelCanon({ projectRoot: root }).model;
+  const before = readProductModelCanon({ projectRoot: root, storage }).model;
   assert.equal(before.schemaVersion, 1);
 
   const accepted = await reviewProductPolicy({ root, candidateId: proposed.candidate.candidateId, disposition: "accept", rationale: "Approve this exact explicit group application." });
   assert.equal(accepted.status, "accepted", JSON.stringify(accepted.projectionError));
   assert.equal(accepted.review.authorityBoundary.planeId, "P1");
   assert.equal(accepted.additionalUserReviewRequired, false);
-  const canon = readProductModelCanon({ projectRoot: root }).model;
+  const canon = readProductModelCanon({ projectRoot: root, storage }).model;
   assert.equal(canon.schemaVersion, 2);
   assert.deepEqual(canon.policies[0].appliesTo, [{ kind: "FeatureGroup", key: "platform" }]);
   assert.deepEqual(canon.policies[0].governedBy, [{ kind: "Requirement", key: "review-evidence" }]);
@@ -141,7 +141,7 @@ test("Policy semantic references are optional, exact, and never inferred", async
 });
 
 test("Policy artifact identity, declared transition scope, evidence freshness, and Session fence fail closed", async (t) => {
-  const { root, layout } = await fixture(t);
+  const { root, storage, layout } = await fixture(t);
   const first = await proposeProductPolicy({ root, operation: "create", key: "first", name: "First", statement: "First exact policy." });
   const second = await proposeProductPolicy({ root, operation: "create", key: "second", name: "Second", statement: "Second exact policy." });
   const firstFile = path.join(root, layout.directory, "product-policy", "candidates", `${first.candidate.candidateId}.json`);
@@ -152,7 +152,7 @@ test("Policy artifact identity, declared transition scope, evidence freshness, a
 
   const expanded = structuredClone(first.candidate);
   expanded.resultingProductModelDocument.features[0].name = "Unrelated feature rewrite";
-  const changedResult = normalizeProductModelDocument(expanded.resultingProductModelDocument);
+  const changedResult = normalizeProductModelDocument(expanded.resultingProductModelDocument, storage);
   expanded.resultingProductModelDocument = productModelDocument(changedResult);
   expanded.resultingProductModelId = changedResult.productModelId;
   expanded.resultingProductModelHash = changedResult.productModelHash;
@@ -179,7 +179,7 @@ test("Policy artifact identity, declared transition scope, evidence freshness, a
   let fenceReady;
   const ready = new Promise((resolve) => { fenceReady = resolve; });
   const held = new Promise((resolve) => { releaseFence = resolve; });
-  const fence = withProjectMutationAsync({ root, scope: "session-recovery" }, async () => {
+  const fence = withProjectMutationAsync({ root, scope: "session-recovery", storage }, async () => {
     fenceReady();
     await held;
   });
@@ -350,7 +350,7 @@ test("unrelated Policy changes preserve current entity approval lineage and unre
 
 test("CLI and typed MCP expose the same conversational Policy workflow", async (t) => {
   const { root, layout } = await fixture(t);
-  assert.ok(tools.some((tool) => tool.name === "head_product_policy_propose"));
+  assert.ok(tools.some((tool) => tool.name === "lode_product_policy_propose"));
   const mcp = await dispatch({ jsonrpc: "2.0", id: "policy", method: "tools/call", params: { name: "head_product_policy_propose", arguments: {
     project_root: root,
     operation: "create",

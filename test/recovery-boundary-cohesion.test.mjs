@@ -140,7 +140,7 @@ test("projection drift without checkpoint still composes meaningful workContext"
 
 for (const [name,content] of [["malformed","{broken"],["null","null"],["invalid shape","{}"],["foreign owner",null],["missing",undefined]]) {
   test(`exact named Session ignores unrelated ${name} default`, async t => {
-    const f = fixture(t), file = defaultSessionStatePath(f.root);
+    const f = fixture(t), file = defaultSessionStatePath(f.root, f.storage);
     if (name === "foreign owner") { const value = JSON.parse(fs.readFileSync(file));value.projectId="head-00000000000000000000";fs.writeFileSync(file,JSON.stringify(value)); }
     else if (content === undefined) fs.unlinkSync(file); else fs.writeFileSync(file,content);
     await readAll(f);
@@ -151,13 +151,13 @@ for (const [name,content] of [["malformed","{broken"],["null","null"],["invalid 
 }
 
 test("projection drift plus damaged default preserves exact selected recovery", async t => {
-  const f=fixture(t);fs.appendFileSync(path.join(f.root,"AGENTS.md"),"\nPreference\n");fs.writeFileSync(defaultSessionStatePath(f.root),"null");
+  const f=fixture(t);fs.appendFileSync(path.join(f.root,"AGENTS.md"),"\nPreference\n");fs.writeFileSync(defaultSessionStatePath(f.root, f.storage),"null");
   await readAll(f);
 });
 
 test("Host context, retained binding and selection preflight isolate default damage", async t => {
   const f=fixture(t), host=createSessionHostAdapter({ runtime:"codex",nativeSessionId:"synthetic-cohesion-caller",environment:f.environment });
-  fs.writeFileSync(defaultSessionStatePath(f.root),"{broken");
+  fs.writeFileSync(defaultSessionStatePath(f.root, f.storage),"{broken");
   const context=createSessionCallContext();assert.equal(context.select(f.root,f.selected).sessionId,f.selected);
   assert.equal(withSessionCallContext({root:f.root,context},()=>readSessionWorkContext({root:f.root}).sessionId),f.selected);
   const attempt=host.prepareSelection({root:f.root,sessionId:f.selected});assert.equal(attempt.prepared,true);
@@ -170,7 +170,7 @@ test("Host context, retained binding and selection preflight isolate default dam
 
 test("failed selection cannot guess an unreadable absent default predecessor", t => {
   const f=fixture(t),host=createSessionHostAdapter({runtime:"codex",nativeSessionId:"synthetic-predecessor",environment:f.environment});
-  fs.unlinkSync(defaultSessionStatePath(f.root));
+  fs.unlinkSync(defaultSessionStatePath(f.root, f.storage));
   const attempt=host.prepareSelection({root:f.root,sessionId:f.selected});
   const outcome=host.settleSelection({ticket:attempt.ticket,outcome:"not-started"});
   assert.equal(outcome.reasonCode,"PRIOR_SELECTION_UNCERTAIN");
@@ -191,7 +191,7 @@ test("legacy default without projectId stays usable without migration", async t 
 });
 
 test("null or foreign default predecessor cannot block exact new Host selection", t => {
-  const f=fixture(t),file=defaultSessionStatePath(f.root),original=JSON.parse(fs.readFileSync(file));
+  const f=fixture(t),file=defaultSessionStatePath(f.root, f.storage),original=JSON.parse(fs.readFileSync(file));
   for(const [index,content] of ["null",JSON.stringify({...original,projectId:"head-00000000000000000000"})].entries()){
     fs.writeFileSync(file,content);
     const host=createSessionHostAdapter({runtime:"codex",nativeSessionId:`synthetic-default-${index}`,environment:f.environment});
@@ -212,7 +212,7 @@ for (const kind of ["project bytes","unknown managed path","manifest JSON","sele
     }
     if(kind==="selected Session")fs.writeFileSync(named,"null");
     if(kind==="selected owner"){const state=JSON.parse(fs.readFileSync(named));state.projectId="head-00000000000000000000";fs.writeFileSync(named,JSON.stringify(state));}
-    if(kind==="duplicate identity"){const state=JSON.parse(fs.readFileSync(defaultSessionStatePath(f.root)));state.sessionId=f.selected;fs.writeFileSync(defaultSessionStatePath(f.root),JSON.stringify(state));}
+    if(kind==="duplicate identity"){const state=JSON.parse(fs.readFileSync(defaultSessionStatePath(f.root, f.storage)));state.sessionId=f.selected;fs.writeFileSync(defaultSessionStatePath(f.root, f.storage),JSON.stringify(state));}
     if(kind==="checkpoint digest"){
       const state=JSON.parse(fs.readFileSync(named)),file=path.join(f.root,f.directory,"sessions/ledger",`${state.latestCheckpoint}.json`);
       const value=JSON.parse(fs.readFileSync(file));value.purpose="untrusted replacement";fs.writeFileSync(file,JSON.stringify(value));

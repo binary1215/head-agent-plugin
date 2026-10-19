@@ -90,7 +90,7 @@ async function fixture(t, { mode = "success", timeoutMs = 8000, evidenceMode = "
   const host = createCodexWorkerPolicyHost({ evidenceMode, withVerifiedPolicy: request => request.commit() });
   const bind = (extra = {}) => bindCodexWorkerPolicyCapability({ host, policy, authorization, workspaceBinding, root, target, ...extra });
   const capability = bind();
-  const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
+  const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, storage, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
   return { storage, container, root, executable, operational, policy, workspaceBinding, authorization, protocolEvidence, projectBinding,
     target, bind, capability, lease, authorize, mode, sessionFile: path.join(root, storage.directory, "sessions", "current.json") };
 }

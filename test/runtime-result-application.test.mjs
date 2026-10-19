@@ -270,7 +270,7 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
   assert.deepEqual(cancelBoundedWorkerJob({ root: f.root, authorizationId: authorization.authorizationId }), state);
   const record = readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: authorization.authorizationId });
   assert.equal(record.receipt.receiptId, state.result.receiptId);
-  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: authorization.projectId, authorizationId: authorization.authorizationId }).status, "consumed-released");
+  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: authorization.projectId, authorizationId: authorization.authorizationId }).status, "consumed-released");
   const mcp = await dispatchMcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {
     name: "head_bounded_worker_job_status", arguments: { project_root: f.root, authorization_id: authorization.authorizationId },
   } });
@@ -313,7 +313,7 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
     const wrongHost = createBoundedWorkerJobHost({ runnerFile, policy: { ...policy, mode: "wait" }, workspaceBinding });
     await assert.rejects(() => startBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId, role: "coder" }, { host: wrongHost, supervisorSelection: selection }), { code: "WORKER_JOB_CONFLICT" });
     assert.equal(fs.existsSync(directoryFor(job)), false);
-    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: job.projectId, authorizationId: job.authorizationId }).status, "available");
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: job.projectId, authorizationId: job.authorizationId }).status, "available");
     const selectedHost = createBoundedWorkerJobHost({ runnerFile, policy, workspaceBinding });
     await startBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId, role: "coder" }, { host: selectedHost, supervisorSelection: selection });
     assert.equal((await waitExit(job)).status, "completed");
@@ -368,21 +368,21 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
         assert.equal(cliPatch.applied, false);
         assert.equal(cliPatch.actualProviderInvoked, false);
         assert.equal(cliPatch.candidate.candidateId, state.workspacePatch.candidateId);
-        const prepared = prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId], maxBytes: 4096 });
+        const prepared = prepareWorkerPatchIntegration({ root: f.root, storage: f.storage, authorizationIds: [job.authorizationId], maxBytes: 4096 });
         assert.equal(prepared.status, "prepared");
         assert.equal(prepared.intent.members[0].actualProviderInvoked, false);
         assert.equal(prepared.intent.authorityBoundary.planeId, "P3");
         assert.equal(prepared.applied, false);
         const integrationId = prepared.intent.integrationId;
         // A larger caller allowance is not a new effect or evidence identity.
-        assert.equal(prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId], maxBytes: 8192 }).intent.integrationId, integrationId);
-        assert.throws(() => prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId, job.authorizationId], maxBytes: 4096 }), { code: "WORKER_PATCH_INTEGRATION_CONFLICT" });
+        assert.equal(prepareWorkerPatchIntegration({ root: f.root, storage: f.storage, authorizationIds: [job.authorizationId], maxBytes: 8192 }).intent.integrationId, integrationId);
+        assert.throws(() => prepareWorkerPatchIntegration({ root: f.root, storage: f.storage, authorizationIds: [job.authorizationId, job.authorizationId], maxBytes: 4096 }), { code: "WORKER_PATCH_INTEGRATION_CONFLICT" });
         const integrationFile = path.join(f.root, f.storage.directory, "runtime/worker-integrations", `${integrationId}.json`);
         // An unrelated corrupt P3 document cannot turn into a global gate.
         fs.writeFileSync(path.join(path.dirname(integrationFile), `worker-integration-${"0".repeat(24)}--${"0".repeat(24)}.json`), "{");
-        assert.equal(prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId], maxBytes: 8192 }).intent.integrationId, integrationId);
+        assert.equal(prepareWorkerPatchIntegration({ root: f.root, storage: f.storage, authorizationIds: [job.authorizationId], maxBytes: 8192 }).intent.integrationId, integrationId);
         const integrationBytes = fs.readFileSync(integrationFile);
-        const basis = readWorkerIntegrationBasis({ root: f.root, integrationId });
+        const basis = readWorkerIntegrationBasis({ root: f.root, storage: f.storage, integrationId });
         assert.equal(basis.lineageVerified, true);
         assert.equal(basis.headReassessmentRequired, false);
         assert.equal(basis.semanticVerification, "not-assessed");
@@ -401,37 +401,37 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
           return sibling;
         };
         const sibling = await launchSibling("write-combined-identical", "synthetic child edit");
-        const combined = prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [sibling.authorizationId, job.authorizationId], maxBytes: 4096 });
+        const combined = prepareWorkerPatchIntegration({ root: f.root, storage: f.storage, authorizationIds: [sibling.authorizationId, job.authorizationId], maxBytes: 4096 });
         assert.equal(combined.intent.members.length, 2);
         assert.equal(combined.intent.composition.patches.length, 2, "identical effects retain two member references, not duplicate writes");
         assert.deepEqual(combined.intent.composition.patches.map(item => item.memberIndices), [[0, 1], [0, 1]]);
-        assert.equal(prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId, sibling.authorizationId], maxBytes: 8192 }).intent.integrationId, combined.intent.integrationId);
+        assert.equal(prepareWorkerPatchIntegration({ root: f.root, storage: f.storage, authorizationIds: [job.authorizationId, sibling.authorizationId], maxBytes: 8192 }).intent.integrationId, combined.intent.integrationId);
         const divergent = await launchSibling("write-combined-conflict", "different synthetic child edit");
         const beforeConflict = fs.readdirSync(path.dirname(integrationFile));
-        const conflict = prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId, divergent.authorizationId], maxBytes: 4096 });
+        const conflict = prepareWorkerPatchIntegration({ root: f.root, storage: f.storage, authorizationIds: [job.authorizationId, divergent.authorizationId], maxBytes: 4096 });
         assert.equal(conflict.status, "conflict");
         assert.equal(conflict.persisted, false);
         assert.deepEqual(fs.readdirSync(path.dirname(integrationFile)), beforeConflict);
         fs.writeFileSync(integrationFile, JSON.stringify({ ...prepared.intent, recoveryAuthority: true }));
-        assert.throws(() => readWorkerPatchIntegration({ root: f.root, integrationId }), { code: "WORKER_PATCH_INTEGRATION_CONFLICT" });
+        assert.throws(() => readWorkerPatchIntegration({ root: f.root, storage: f.storage, integrationId }), { code: "WORKER_PATCH_INTEGRATION_CONFLICT" });
         fs.writeFileSync(integrationFile, integrationBytes);
         // Frozen P3 history outlives Host temporary patch storage and current
         // sources; neither absence nor a new Session grants effect authority.
         fs.renameSync(patchFile, `${patchFile}.retired`);
         fs.writeFileSync(path.join(f.root, "read-only.txt"), "new external input, not an approved integration");
         try {
-          assert.deepEqual(readWorkerPatchIntegration({ root: f.root, integrationId }).intent, prepared.intent);
-          assert.equal(prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId], maxBytes: 8192 }).intent.integrationId, integrationId);
-          const driftBasis = readWorkerIntegrationBasis({ root: f.root, integrationId });
+          assert.deepEqual(readWorkerPatchIntegration({ root: f.root, storage: f.storage, integrationId }).intent, prepared.intent);
+          assert.equal(prepareWorkerPatchIntegration({ root: f.root, storage: f.storage, authorizationIds: [job.authorizationId], maxBytes: 8192 }).intent.integrationId, integrationId);
+          const driftBasis = readWorkerIntegrationBasis({ root: f.root, storage: f.storage, integrationId });
           assert.equal(driftBasis.dependencies.find(item => item.path === "read-only.txt").status, "external-dependency-drift");
           assert.equal(driftBasis.headReassessmentRequired, true);
           assert.notEqual(driftBasis.observedBasisDigest, basis.observedBasisDigest);
           assert.equal(driftBasis.appliedByThisOperation, false);
-          assert.equal(requireCurrentWorkerPatchIntegration({ root: f.root, integrationId }).integrationId, integrationId);
+          assert.equal(requireCurrentWorkerPatchIntegration({ root: f.root, storage: f.storage, integrationId }).integrationId, integrationId);
           const session = JSON.parse(sessionBefore);
           fs.writeFileSync(sessionFile, JSON.stringify({ ...session, sessionId: `session-${crypto.randomUUID()}` }));
-          assert.deepEqual(readWorkerPatchIntegration({ root: f.root, integrationId }).intent, prepared.intent);
-          assert.throws(() => requireCurrentWorkerPatchIntegration({ root: f.root, integrationId }), { code: "RUNTIME_INVOCATION_FENCE_MISMATCH" });
+          assert.deepEqual(readWorkerPatchIntegration({ root: f.root, storage: f.storage, integrationId }).intent, prepared.intent);
+          assert.throws(() => requireCurrentWorkerPatchIntegration({ root: f.root, storage: f.storage, integrationId }), { code: "RUNTIME_INVOCATION_FENCE_MISMATCH" });
         } finally {
           fs.writeFileSync(sessionFile, sessionBefore);
           fs.writeFileSync(path.join(f.root, "read-only.txt"), "unowned canonical source");
@@ -441,8 +441,8 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
         const roleBefore = fs.readFileSync(roleFile);
         fs.appendFileSync(roleFile, "\nLocal managed projection drift\n");
         try {
-          assert.deepEqual(readWorkerPatchIntegration({ root: f.root, integrationId }).intent, prepared.intent);
-          assert.throws(() => requireCurrentWorkerPatchIntegration({ root: f.root, integrationId }), { code: "RUNTIME_INVOCATION_FENCE_MISMATCH" });
+          assert.deepEqual(readWorkerPatchIntegration({ root: f.root, storage: f.storage, integrationId }).intent, prepared.intent);
+          assert.throws(() => requireCurrentWorkerPatchIntegration({ root: f.root, storage: f.storage, integrationId }), { code: "RUNTIME_INVOCATION_FENCE_MISMATCH" });
         } finally { fs.writeFileSync(roleFile, roleBefore); }
         assert.deepEqual(fs.readFileSync(sessionFile), sessionBefore);
       }
@@ -454,8 +454,8 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
     const waitingHost = createBoundedWorkerJobHost({ runnerFile, policy: { kind: "protocol-fixture", actualProviderInvoked: false, mode: "wait" } });
     await startBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId, role: "coder" }, { host: waitingHost, supervisorSelection: selection });
     const startedBy = Date.now() + 3000;
-    while (!inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed && Date.now() < startedBy) await new Promise(resolve => setTimeout(resolve, 25));
-    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed, true);
+    while (!inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed && Date.now() < startedBy) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed, true);
     fs.writeFileSync(path.join(f.root, "cancel-basis.txt"), "new user edit, never restore to cancel");
     assert.equal(readBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId }).current, false);
     const first = cancelBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId });
@@ -571,8 +571,8 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
     const waitingHost = createBoundedWorkerJobHost({ runnerFile, policy: { kind: "protocol-fixture", actualProviderInvoked: false, mode: "wait" } });
     await startBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId, role: "coder" }, { host: waitingHost, supervisorSelection: selection });
     const startedBy = Date.now() + 3000;
-    while (!inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed && Date.now() < startedBy) await new Promise(resolve => setTimeout(resolve, 25));
-    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed, true);
+    while (!inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed && Date.now() < startedBy) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed, true);
     finishRun({ root: f.root, outcome: "Explicit synthetic transition", evidence: [{ uri: "fixture", digest: "synthetic-transition" }], verification: [{ check: "fixture-only", status: "passed" }] });
     const pointer = fs.readFileSync(path.join(f.root, f.storage.directory, "sessions/current.json"));
     assert.equal(readBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId }).current, false);
@@ -717,7 +717,7 @@ test("proven dead unconsumed owner does not trap same-member source reprepare", 
     child.kill("SIGTERM");
     await closed;
     assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
-    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: previous.projectId, authorizationId: previous.authorizationId }).singleUseConsumed, false);
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: previous.projectId, authorizationId: previous.authorizationId }).singleUseConsumed, false);
     const current = buildRuntimeInvocationAuthorization(options).authorization;
     assert.equal(current.workerInput.previousAuthorizationId, previous.authorizationId);
     assert.equal(current.workerInput.sourceBasis[0].digest, hash("changed while claimed"));
@@ -812,7 +812,7 @@ test("selected source input rejects protected paths, traversal and hardlinks bef
 
 test("selected Session request survives caller context loss and refuses changed replay", async (t) => {
   const f = await fixture(t);
-  applyRuntimeRunResult({ root: f.root, authorizationId: f.authorization.authorizationId });
+  applyRuntimeRunResult({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId });
   accept(f.root);
   const authorization = buildRuntimeInvocationAuthorization({ root: f.root, runtime: "codex", protocolEvidence: f.protocolEvidence,
     projectBinding: f.projectBinding, scope: { kind: "session", request: "Review one bounded result" },
@@ -827,7 +827,7 @@ test("selected Session request survives caller context loss and refuses changed 
 test("wave history remains readable after finish and later Run without granting a new seal", async (t) => {
   const f = await fixture(t, { withWave: true });
   const input = { root: f.root, waveId: f.wave.waveId };
-  applyRuntimeRunResult({ root: f.root, authorizationId: f.authorization.authorizationId });
+  applyRuntimeRunResult({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId });
   const finished = snapshot(f.root);
   assert.equal(readBoundedWorkerWaveStatus(input).projection.counts.succeeded, 1);
   assert.throws(() => sealBoundedWorkerWave(input), { code: "BOUNDED_WORKER_WAVE_RUN_CONFLICT" });
@@ -879,7 +879,7 @@ function missingApplicationOnce(operation) {
 
 test("runtime result receipt EIO then reviewed A and different Run B never mutates B", async (t) => {
   const f = await fixture(t);
-  const input = { root: f.root, authorizationId: f.authorization.authorizationId };
+  const input = { root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId };
   missingApplicationOnce(() => applyRuntimeRunResult(input));
   assert.equal(inspectProject(f.root).state.pendingReview.runId, f.run.runId);
   accept(f.root);
@@ -893,9 +893,39 @@ test("runtime result receipt EIO then reviewed A and different Run B never mutat
   assert.equal(inspectProject(f.root).state.activeRunId, b.runId);
 });
 
+test("public managed CLI applies the exact Lode Run result and retries without execution replay", async (t) => {
+  const f = await fixture(t);
+  const command = ["managed", "runtime-invocation-apply-run-result", f.root, "--authorization", f.authorization.authorizationId];
+  assert.equal(fs.existsSync(path.join(f.root, ".head")), false);
+  const applied = await runCommand(command);
+  assert.equal(applied.status, "runtime_run_result_applied");
+  assert.equal(applied.authorizationId, f.authorization.authorizationId);
+  assert.equal(applied.application.runId, f.run.runId);
+  assert.equal(applied.application.executionContractId, f.contract.executionContractId);
+  assert.equal(applied.application.lifecycleReceiptId, f.record.receipt.receiptId);
+  assert.equal(applied.application.draftId, f.record.draft.draftId);
+  assert.equal(applied.application.resultPacketId, applied.resultPacket.resultPacketId);
+  assert.equal(applied.resultPacket.executionContractId, f.contract.executionContractId);
+  assert.equal(applied.freshHeadReview.runId, f.run.runId);
+  assert.equal(applied.executionReplayAllowed, false);
+  const completedRun = JSON.parse(fs.readFileSync(path.join(f.root, f.storage.directory, "sessions", "runs", f.run.runId, "run.json"), "utf8"));
+  assert.equal(completedRun.resultPacketId, applied.resultPacket.resultPacketId);
+  assert.equal(inspectProject(f.root).state.pendingReview.resultPacketId, applied.resultPacket.resultPacketId);
+  assert.equal(fs.existsSync(path.join(f.root, ".head")), false);
+  const finished = snapshot(f.root);
+  const retry = await runCommand(command);
+  assert.equal(retry.status, "runtime_run_result_already_applied");
+  assert.deepEqual(retry.application, applied.application);
+  assert.deepEqual(retry.resultPacket, applied.resultPacket);
+  assert.equal(retry.freshHeadReview, null);
+  assert.equal(retry.executionReplayAllowed, false);
+  assert.deepEqual(snapshot(f.root), finished);
+  assert.equal(fs.existsSync(path.join(f.root, ".head")), false);
+});
+
 test("normal application and complete-receipt replay stay exact and read-only across a later Run", async (t) => {
   const f = await fixture(t);
-  const input = { root: f.root, authorizationId: f.authorization.authorizationId };
+  const input = { root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId };
   const canon = fs.readFileSync(path.join(f.root, f.storage.directory, "context/product-model.json"), "utf8");
   const owners = new Set();
   const stages = new Set();
@@ -950,7 +980,7 @@ test("normal application and complete-receipt replay stay exact and read-only ac
 
 test("missing application receipt recovers only the exact pending result and is retryable after partial Run completion", async (t) => {
   const f = await fixture(t);
-  const input = { root: f.root, authorizationId: f.authorization.authorizationId };
+  const input = { root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId };
   const rename = fs.renameSync;
   let injected = false;
   fs.renameSync = (source, target) => {
@@ -975,7 +1005,7 @@ test("missing application receipt recovers only the exact pending result and is 
 
 test("Run identity remains fenced when B reuses A's ExecutionContract", async (t) => {
   const f = await fixture(t);
-  const input = { root: f.root, authorizationId: f.authorization.authorizationId };
+  const input = { root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId };
   missingApplicationOnce(() => applyRuntimeRunResult(input));
   accept(f.root);
   const b = startRun({ root: f.root, executionContractId: f.contract.executionContractId }).run;
@@ -991,13 +1021,13 @@ test("delayed A result cannot complete B even when A was finished through anothe
   accept(f.root);
   startB(f);
   const before = snapshot(f.root);
-  assert.throws(() => applyRuntimeRunResult({ root: f.root, authorizationId: f.authorization.authorizationId }), { code: "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT" });
+  assert.throws(() => applyRuntimeRunResult({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId }), { code: "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT" });
   assert.deepEqual(snapshot(f.root), before);
 });
 
 test("Session drift and canonical digest tamper reject before application writes", async (t) => {
   const f = await fixture(t);
-  const input = { root: f.root, authorizationId: f.authorization.authorizationId };
+  const input = { root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId };
   const sessionFile = path.join(f.root, f.storage.directory, "sessions/current.json");
   const sessionBytes = fs.readFileSync(sessionFile, "utf8");
   fs.writeFileSync(sessionFile, JSON.stringify({ ...JSON.parse(sessionBytes), sessionId: `session-${crypto.randomUUID()}` }));
@@ -1017,7 +1047,7 @@ test("Session drift and canonical digest tamper reject before application writes
 
 test("application competes within the same Session mutation scope and rechecks drift after it releases", async (t) => {
   const f = await fixture(t);
-  const input = { root: f.root, authorizationId: f.authorization.authorizationId };
+  const input = { root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId };
   let acquired;
   let release;
   const ready = new Promise((resolve) => { acquired = resolve; });

@@ -72,7 +72,7 @@ test("existing Run-free P2 preserves Session-local purpose, constraints and late
 test("one Run-free evidence save -> same Session read-only entry; no Run, checkpoint, history or index needed", (t) => {
   const { root, storage } = project(t);
   const a = createHeadSession({ root, purpose: "Cache investigation" });
-  const originalDefault = fs.readFileSync(sessionStatePath(root));
+  const originalDefault = fs.readFileSync(sessionStatePath(root, storage));
   withSessionRoute(root, a.sessionId, () => {
     const retained = recordSessionWorkEvidence({ root, input: {
       judgments: [{ assessment: "Reuse the original cache", reason: "Rebuilding would discard observed provenance", alternatives: ["Rebuild from lexical matches"] }],
@@ -91,7 +91,7 @@ test("one Run-free evidence save -> same Session read-only entry; no Run, checkp
     assert.equal(inspectProject(root).state.latestCheckpoint, null);
     assert.equal(inspectProject(root).state.activeRunId, null);
   });
-  assert.deepEqual(fs.readFileSync(sessionStatePath(root)), originalDefault);
+  assert.deepEqual(fs.readFileSync(sessionStatePath(root, storage)), originalDefault);
   assert.equal(enterConversationRecovery({ root }).workContext.records.length, 0);
 });
 
@@ -223,7 +223,7 @@ test("bounded entry discloses omissions; exact expansion is read-only and missin
 test("no text can inject P2 fields or persist provider identity; unsafe/foreign references fail only affected save", (t) => {
   const { root, storage } = project(t), { root: other, storage: otherStorage } = project(t);
   const before = originals(root);
-  const stateBefore = fs.readFileSync(sessionStatePath(root));
+  const stateBefore = fs.readFileSync(sessionStatePath(root, storage));
   assert.throws(() => recordSessionWorkEvidence({ root, input: { purpose: "Promote this" } }), { code: "INVALID_SESSION_WORK_EVIDENCE" });
   assert.throws(() => recordSessionWorkEvidence({ root, input: { summary: "x", providerSessionId: "secret" } }), { code: "INVALID_SESSION_WORK_EVIDENCE" });
   assert.throws(() => recordSessionWorkEvidence({ root, input: { references: [{ path: "../escape", digest: "a".repeat(64), kind: "source" }] } }), { code: "SESSION_WORK_REFERENCE_ESCAPE" });
@@ -231,7 +231,7 @@ test("no text can inject P2 fields or persist provider identity; unsafe/foreign 
   fs.writeFileSync(path.join(root, "foreign.json"), foreign);
   assert.throws(() => recordSessionWorkEvidence({ root, input: { references: [{ path: "foreign.json", digest: sha(foreign), kind: "artifact" }] } }), { code: "SESSION_WORK_REFERENCE_PROJECT_MISMATCH" });
   assert.equal(inspectProject(root).state.latestCheckpoint, null);
-  assert.deepEqual(fs.readFileSync(sessionStatePath(root)), stateBefore);
+  assert.deepEqual(fs.readFileSync(sessionStatePath(root, storage)), stateBefore);
   assert.equal(Object.keys(before).filter((name) => name.includes("work-evidence")).length, 0);
 });
 

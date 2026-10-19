@@ -69,7 +69,7 @@ test("two integration tools describe exact actions and separate file effects fro
   assert.match(integration.description, /never creates ReviewDecision, Product Canon or checkpoint/);
   assert.ok(usage({ all: true, surface: "managed-maintenance" }).commands.some(line => line.startsWith("lode managed-maintenance worker-integrate ")));
   assert.equal(usage({ all: true }).commands.some(line => line.startsWith("lode worker-integrate ")), false);
-  assert.ok(usage({ all: true }).commands.some(line => line.startsWith("head worker-integration-status ")));
+  assert.ok(usage({ all: true }).commands.some(line => line.startsWith("lode worker-integration-status ")));
 });
 
 test("ordinary integration status machine guidance inspects retained work without selecting application", async t => {

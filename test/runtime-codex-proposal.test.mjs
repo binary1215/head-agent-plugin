@@ -86,7 +86,7 @@ async function fixture(t, { timeoutMs = 6000, taskKey = "fresh-proposal", native
     supervisorSelection: selection(), onProcessEvent, persist: true });
   const execute = (scenario = nativePrefix ? "prefix-normal" : "normal", overrides = {}) => (nativePrefix ? executeCodexNativePrefixProposalInvocation : executeCodexFreshProposalInvocation)({ ...options(), ...overrides },
     { protocolFixtureCapability: createCodexFreshProposalFixtureCapability({ scenario }) });
-  const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
+  const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, storage, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
   const p2 = [path.join(root, storage.directory, "project.json"), path.join(root, storage.directory, "sessions", "current.json")];
   const p2Bytes = p2.map(file => fs.readFileSync(file));
   const assertP2 = () => p2.forEach((file, i) => assert.deepEqual(fs.readFileSync(file), p2Bytes[i]));

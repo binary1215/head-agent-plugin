@@ -11,6 +11,8 @@ import { createExecutionContract, createWholePlanSnapshot } from "./lib/executio
 import { startRun } from "./lib/run-lineage.mjs";
 import { runCommand } from "./head.mjs";
 import { dispatch } from "./mcp-server.mjs";
+import { publicToolName } from "./lib/lode-artifact-composition.mjs";
+import { formatForVerifiedOwner } from "./lib/project-storage-format.mjs";
 import { buildRuntimeVersionEvidence } from "./lib/runtime-machine-execution.mjs";
 import {
   buildRuntimeProjectBinding,
@@ -446,7 +448,7 @@ async function main() {
     assert(initialized.status === "ready", "Fixture project initialization failed.");
     const initializedProject = inspectProject(resolvedRoot);
     assert(initializedProject.status === "ready", "Fixture project did not remain ready after initialization.");
-    assert(resolveRuntimeOperationalStateRoot({ projectRoot: resolvedRoot, create: false }) === fs.realpathSync(resolvedOperationalRoot), "Host-local operational root did not resolve exactly.");
+    assert(resolveRuntimeOperationalStateRoot({ projectRoot: resolvedRoot, storage: initializedProject.storage, create: false }) === fs.realpathSync(resolvedOperationalRoot), "Host-local operational root did not resolve exactly.");
     const runtimeFixtureBin = path.join(resolvedOperationalRoot, "runtime-discovery-fixture");
     fs.mkdirSync(runtimeFixtureBin, { recursive: false });
     for (const runtime of ["claude", "codex", "opencode"]) {
@@ -459,10 +461,11 @@ async function main() {
     delete evidenceEnvironment.Path;
     delete evidenceEnvironment.path;
     let projectLocalOperationalRootRejected = false;
-    const unsafeProjectLocalOperationalRoot = path.join(resolvedRoot, ".head", "unsafe-operational-state");
+    const unsafeProjectLocalOperationalRoot = path.join(resolvedRoot, initializedProject.storage.directory, "unsafe-operational-state");
     try {
       resolveRuntimeOperationalStateRoot({
         projectRoot: resolvedRoot,
+        storage: initializedProject.storage,
         environment: { ...process.env, [RUNTIME_OPERATIONAL_STATE_ENV]: unsafeProjectLocalOperationalRoot },
         create: true,
       });
@@ -508,6 +511,7 @@ async function main() {
     });
     assert(protocolEvidence.summary.allRequestedProtocolsObserved, `Protocol evidence fixture was partial: ${JSON.stringify(protocolEvidence.observations.map((item) => ({ runtime: item.runtime, negotiated: item.protocolNegotiationObserved, probes: item.probeOutcomes.map((probe) => ({ name: probe.name, status: probe.status, exitCode: probe.exitCode, stdoutBytes: probe.stdoutBytes, stderrBytes: probe.stderrBytes })), capabilities: item.capabilities })))}.`);
     const projectBinding = buildRuntimeProjectBinding({
+      storage: initializedProject.storage,
       projectId: initialized.project.projectId,
       headSessionId: initializedProject.state.sessionId,
       projectRoot: resolvedRoot,
@@ -532,6 +536,7 @@ async function main() {
       && driftedInvocationSurface?.support === "not-observed",
     "Codex invocation-surface drift fixture did not preserve generic protocol negotiation while removing one fixed option.");
     const driftedCodexProjectBinding = buildRuntimeProjectBinding({
+      storage: initializedProject.storage,
       projectId: initialized.project.projectId,
       headSessionId: initializedProject.state.sessionId,
       projectRoot: resolvedRoot,
@@ -689,7 +694,7 @@ async function main() {
       persist: true,
     }).authorization;
     const codexObservation = protocolEvidence.observations.find((item) => item.runtime === "codex");
-    const supervisorFixtureRoot = path.resolve(process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
+    const supervisorFixtureRoot = path.resolve(process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot);
     const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: supervisorFixtureRoot });
     const codexProtocolExecution = await executeCodexRuntimeInvocation({
       root: resolvedRoot,
@@ -714,12 +719,13 @@ async function main() {
     assert(codexProtocolExecution.draft.freshHeadReviewRequired === false, "Codex Session protocol fixture incorrectly required Fresh HEAD review.");
     const recordedCodexProtocolExecution = readRuntimeInvocationResult({
       root: resolvedRoot,
+      storage: initializedProject.storage,
       authorizationId: codexProtocolAuthorization.authorizationId,
     });
     assert(recordedCodexProtocolExecution.application === null, "Session protocol fixture acquired a Run result application.");
     let sessionApplicationRejected = false;
     try {
-      applyRuntimeRunResult({ root: resolvedRoot, authorizationId: codexProtocolAuthorization.authorizationId });
+      applyRuntimeRunResult({ root: resolvedRoot, storage: initializedProject.storage, authorizationId: codexProtocolAuthorization.authorizationId });
     } catch (error) {
       sessionApplicationRejected = error.code === "RUNTIME_RUN_AUTHORIZATION_REQUIRED";
     }
@@ -735,7 +741,7 @@ async function main() {
       id: "codex-protocol-result",
       method: "tools/call",
       params: {
-        name: "head_runtime_invocation_result",
+        name: publicToolName("head_runtime_invocation_result"),
         arguments: { project_root: resolvedRoot, authorization_id: codexProtocolAuthorization.authorizationId },
       },
     });
@@ -778,6 +784,7 @@ async function main() {
       "OpenCode Session protocol fixture incorrectly required Fresh HEAD review.");
     const recordedOpenCodeProtocolExecution = readRuntimeInvocationResult({
       root: resolvedRoot,
+      storage: initializedProject.storage,
       authorizationId: opencodeProtocolAuthorization.authorizationId,
     });
     assert(recordedOpenCodeProtocolExecution.application === null,
@@ -827,6 +834,7 @@ async function main() {
     "Claude structured Session result did not preserve the common result boundary.");
     const recordedClaudeProtocolExecution = readRuntimeInvocationResult({
       root: resolvedRoot,
+      storage: initializedProject.storage,
       authorizationId: claudeProtocolAuthorization.authorizationId,
     });
     assert(recordedClaudeProtocolExecution.application === null
@@ -865,6 +873,7 @@ async function main() {
     "Former 128 KiB event boundary did not reproduce the live Run failure shape.");
     const recordedLegacyEventExecution = readRuntimeInvocationResult({
       root: resolvedRoot,
+      storage: initializedProject.storage,
       authorizationId: legacyEventAuthorization.authorizationId,
     });
     assert(!JSON.stringify(recordedLegacyEventExecution).includes("aggregated_output"),
@@ -904,6 +913,7 @@ async function main() {
     "Current bounded large-event default did not preserve structured result and terminal completion.");
     const recordedDefaultEventExecution = readRuntimeInvocationResult({
       root: resolvedRoot,
+      storage: initializedProject.storage,
       authorizationId: defaultEventAuthorization.authorizationId,
     });
     assert(!JSON.stringify(recordedDefaultEventExecution).includes("aggregated_output"),
@@ -944,7 +954,7 @@ async function main() {
         jsonrpc: "2.0",
         id: runtime,
         method: "tools/call",
-        params: { name: "head_runtime_invocation_authorization", arguments: { project_root: resolvedRoot, authorization_id: authorization.authorizationId } },
+        params: { name: publicToolName("head_runtime_invocation_authorization"), arguments: { project_root: resolvedRoot, authorization_id: authorization.authorizationId } },
       });
       assert(mcpRead.result?.structuredContent?.authorization?.authorizationHash === authorization.authorizationHash, `${runtime} MCP authorization read failed.`);
       const success = await runRuntimeLifecycleConformance({
@@ -1002,7 +1012,7 @@ async function main() {
         jsonrpc: "2.0",
         id: `${runtime}-lease`,
         method: "tools/call",
-        params: { name: "head_runtime_invocation_lease_status", arguments: { project_root: resolvedRoot, authorization_id: authorization.authorizationId } },
+        params: { name: publicToolName("head_runtime_invocation_lease_status"), arguments: { project_root: resolvedRoot, authorization_id: authorization.authorizationId } },
       });
       assert(mcpLeaseStatus.result?.structuredContent?.lease?.release?.releaseId === success.executionLease.release.releaseId, `${runtime} MCP lease inspection failed.`);
       let replayRejected = false;
@@ -1090,7 +1100,7 @@ async function main() {
       && activeLease.lease.operationalState.pathExposed === false
       && activeLease.lease.operationalState.ownerLockPersistedInProject === false,
     "Execution lease inspection did not preserve the external operational-state boundary.");
-    const projectOwnerLock = path.join(resolvedRoot, ".head", "runtime", "execution-leases", cancellationPlan.authorizationId, "owner.lock");
+    const projectOwnerLock = path.join(resolvedRoot, initializedProject.storage.directory, "runtime", "execution-leases", cancellationPlan.authorizationId, "owner.lock");
     const operationalOwnerLock = path.join(resolvedOperationalRoot, "runtime-execution-leases", initialized.project.projectId, cancellationPlan.authorizationId, "owner.lock");
     assert(!fs.existsSync(projectOwnerLock), "Operational owner lock leaked into project lineage.");
     assert(fs.existsSync(operationalOwnerLock), "Operational owner lock was not created in host-local state.");
@@ -1160,7 +1170,7 @@ async function main() {
       limits: { timeoutMs: 5_000, maxEvents: 4_093 },
       persist: true,
     }).authorization;
-    const legacyProjectLock = path.join(resolvedRoot, ".head", "runtime", "execution-leases", legacyLockAuthorization.authorizationId, "owner.lock");
+    const legacyProjectLock = path.join(resolvedRoot, initializedProject.storage.directory, "runtime", "execution-leases", legacyLockAuthorization.authorizationId, "owner.lock");
     fs.mkdirSync(legacyProjectLock, { recursive: true });
     let legacyProjectLockRejected = false;
     try {
@@ -1170,7 +1180,7 @@ async function main() {
     }
     assert(legacyProjectLockRejected, "Legacy project-local owner lock was silently ignored.");
     fs.rmdirSync(legacyProjectLock);
-    const reviewDirectory = path.join(resolvedRoot, ".head", "lineage", "review-decisions");
+    const reviewDirectory = path.join(resolvedRoot, initializedProject.storage.directory, "lineage", "review-decisions");
     const reviewCount = () => fs.existsSync(reviewDirectory)
       ? fs.readdirSync(reviewDirectory).filter((name) => name.endsWith(".json")).length : 0;
     const reviewsBeforeDispatch = reviewCount();
@@ -1192,7 +1202,7 @@ async function main() {
     });
     assert(workerDispatch.status === "dispatched"
       && workerDispatch.dispatch.authorityBoundary.planeId === "P3"
-      && workerDispatch.dispatch.ownershipBoundary.wholeOutcomeOwner === "head",
+      && workerDispatch.dispatch.ownershipBoundary.wholeOutcomeOwner === formatForVerifiedOwner(initializedProject.storage).roleField,
     "Bounded worker dispatch did not preserve P3 scope/result ownership beneath HEAD.");
     const sameDispatch = createBoundedWorkerDispatch({
       root: resolvedRoot,
@@ -1238,7 +1248,7 @@ async function main() {
     assert(workerExecution.result.receipt.status === "completed"
       && workerExecution.result.descendantTreeOwnershipValidated === true,
     "Native-supervised bounded worker execution did not complete and clean up.");
-    const workerSpool = readRuntimeOutputSpool({ operationalRoot: resolveRuntimeOperationalStateRoot({ projectRoot: resolvedRoot, create: false }), authorization: workerAuthorization });
+    const workerSpool = readRuntimeOutputSpool({ operationalRoot: resolveRuntimeOperationalStateRoot({ projectRoot: resolvedRoot, storage: initializedProject.storage, create: false }), authorization: workerAuthorization });
     assert(workerSpool.status === "terminal-recorded"
       && workerSpool.terminal.result.receipt.receiptHash === workerExecution.result.receipt.receiptHash
       && workerSpool.terminal.ownerExitRequired === true
@@ -1269,8 +1279,8 @@ async function main() {
       && reviewCount() === reviewsBeforeDispatch,
     "Durable worker wait did not return the exact result evidence without creating review authority.");
 
-    const stateFile = path.join(resolvedRoot, ".head", "sessions", "current.json");
-    const productCanonFile = path.join(resolvedRoot, ".head", "context", "product-model.json");
+    const stateFile = path.join(resolvedRoot, initializedProject.storage.directory, "sessions", "current.json");
+    const productCanonFile = path.join(resolvedRoot, initializedProject.storage.directory, "context", "product-model.json");
     const stateBeforeWave = fs.readFileSync(stateFile);
     const productCanonBeforeWave = fs.readFileSync(productCanonFile);
     const latestCheckpointBeforeWave = JSON.parse(stateBeforeWave).latestCheckpoint;
@@ -1406,12 +1416,12 @@ async function main() {
       jsonrpc: "2.0",
       id: 8_801,
       method: "tools/call",
-      params: { name: "head_bounded_worker_wave_status", arguments: { project_root: resolvedRoot, wave_id: createdWave.wave.waveId } },
+      params: { name: publicToolName("head_bounded_worker_wave_status"), arguments: { project_root: resolvedRoot, wave_id: createdWave.wave.waveId } },
     });
     assert(mcpWaveStatus.result.structuredContent.projection.statusProjectionId === failedWave.statusProjectionId,
       "Typed MCP wave status did not preserve CLI/Core identity.");
 
-    const sealPath = path.join(resolvedRoot, ".head", "runtime", "worker-waves", `${createdWave.wave.waveId}.terminal.json`);
+    const sealPath = path.join(resolvedRoot, initializedProject.storage.directory, "runtime", "worker-waves", `${createdWave.wave.waveId}.terminal.json`);
     const sealBytes = fs.readFileSync(sealPath);
     const tamperedSeal = JSON.parse(sealBytes);
     tamperedSeal.sealHash = "0".repeat(64);
@@ -1421,7 +1431,7 @@ async function main() {
       "BOUNDED_WORKER_WAVE_SEAL_DIGEST_MISMATCH",
     ), "Tampered wave seal was accepted.");
     fs.writeFileSync(sealPath, sealBytes);
-    const memberPath = path.join(resolvedRoot, ".head", "runtime", "worker-dispatches", `${workerAuthorizationB.authorizationId}.json`);
+    const memberPath = path.join(resolvedRoot, initializedProject.storage.directory, "runtime", "worker-dispatches", `${workerAuthorizationB.authorizationId}.json`);
     const memberBytes = fs.readFileSync(memberPath);
     const tamperedMember = JSON.parse(memberBytes);
     tamperedMember.dispatchHash = "0".repeat(64);
@@ -1450,7 +1460,7 @@ async function main() {
     assert(readBoundedWorkerWaveStatus({ root: resolvedRoot, waveId: createdWave.wave.waveId }).projection.waveId === createdWave.wave.waveId,
       "ExecutionContract pointer drift hid historical evidence.");
     fs.writeFileSync(stateFile, currentStateBytes);
-    const capsulePath = path.join(resolvedRoot, ".head", "context", "capsules", `${createdWave.wave.contextCapsuleId}.json`);
+    const capsulePath = path.join(resolvedRoot, initializedProject.storage.directory, "context", "capsules", `${createdWave.wave.contextCapsuleId}.json`);
     const capsuleBytes = fs.readFileSync(capsulePath);
     const tamperedCapsule = JSON.parse(capsuleBytes);
     tamperedCapsule.capsuleHash = "0".repeat(64);

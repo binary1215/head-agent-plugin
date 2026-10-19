@@ -108,7 +108,7 @@ async function fixture(t, { allowWrite = true, forbidWrite = false, noOp = false
       noDescendantFixture: true, descendantTreeOwnershipValidated: true, providerMode: "conformance-fixture", structuredResult }) }));
   const receipt = leased.result.receipt;
   const draft = buildRuntimeResultPacketDraft({ authorization, receipt, leaseRelease: leased.release, providerResult: structuredResult });
-  persistRuntimeInvocationRecord({ projectRoot: root, authorization, events, receipt, draft });
+  persistRuntimeInvocationRecord({ projectRoot: root, storage, authorization, events, receipt, draft });
   const candidate = buildWorkerPatchProposalCandidate({ authorization, structuredResult });
   const member = { authorizationId: authorization.authorizationId, authorizationHash: authorization.authorizationHash,
     inputDigest: authorization.executionInput.digest, memberKey: workerMemberKey(authorization), dispatchId: dispatch.dispatchId, dispatchHash: dispatch.dispatchHash,
@@ -122,7 +122,7 @@ async function fixture(t, { allowWrite = true, forbidWrite = false, noOp = false
     lineage, members: [member], composition: composeWorkerPatchCandidates({ candidates: [candidate], maxBytes }), ...flags });
   const directory = workerIntegrationDirectory(root, true, storage);
   publishIntegrationJson(path.join(directory, `${intent.integrationId}.json`), intent);
-  return { root, storage, container, directory, authorization, candidate, intent, input: { root, integrationId: intent.integrationId },
+  return { root, storage, container, directory, authorization, candidate, intent, input: { root, integrationId: intent.integrationId, storage },
     sessionFile: path.join(root, relativeProjectArtifact(storage, "sessions", "current.json")), source: path.join(root, "sum.mjs"), contract };
 }
 
@@ -152,7 +152,7 @@ test("read-only proposal uses exact result bytes and preparation creates no file
   assert.equal(f.authorization.workerInput.writeBasis, undefined);
   assert.equal(f.authorization.requiredAllowedActions.includes("project.write"), false);
   assert.deepEqual(readWorkerPatchIntegration(f.input).intent, f.intent);
-  const prepared = prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [f.authorization.authorizationId], maxBytes });
+  const prepared = prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [f.authorization.authorizationId], maxBytes, storage: f.storage });
   assert.equal(prepared.status, "existing");
   assert.deepEqual(fs.readFileSync(f.source), source);
   assert.deepEqual(fs.readFileSync(f.sessionFile), session);
@@ -202,7 +202,7 @@ test("a rehashed different candidate cannot replace the receipt-bound proposal",
   const changed = identifyIntent({ ...payload, members: [{ ...payload.members[0], candidate }],
     composition: composeWorkerPatchCandidates({ candidates: [candidate], maxBytes }) });
   publishIntegrationJson(path.join(f.directory, `${changed.integrationId}.json`), changed);
-  assert.throws(() => readWorkerPatchIntegration({ root: f.root, integrationId: changed.integrationId }), /completed exact write-bound worker or read-only patch proposal/);
+  assert.throws(() => readWorkerPatchIntegration({ root: f.root, integrationId: changed.integrationId, storage: f.storage }), /completed exact write-bound worker or read-only patch proposal/);
 });
 
 test("a rehashed draft and candidate cannot replace a different receipt-bound result", async t => {
@@ -221,14 +221,14 @@ test("a rehashed draft and candidate cannot replace a different receipt-bound re
   const changed = identifyIntent({ ...payload, members: [{ ...payload.members[0], draftId: replacement.draftId, candidate }],
     composition: composeWorkerPatchCandidates({ candidates: [candidate], maxBytes }) });
   publishIntegrationJson(path.join(f.directory, `${changed.integrationId}.json`), changed);
-  assert.throws(() => readWorkerPatchIntegration({ root: f.root, integrationId: changed.integrationId }), { code: "RUNTIME_INVOCATION_RECORD_CONFLICT" });
+  assert.throws(() => readWorkerPatchIntegration({ root: f.root, integrationId: changed.integrationId, storage: f.storage }), { code: "RUNTIME_INVOCATION_RECORD_CONFLICT" });
   assert.deepEqual(fs.readFileSync(path.join(directory, "receipt.json")), receiptBytes);
 });
 
 test("direct Run result application cannot promote an unapplied proposal", async t => {
   const f = await fixture(t);
   const session = fs.readFileSync(f.sessionFile), source = fs.readFileSync(f.source);
-  assert.throws(() => applyRuntimeRunResult({ root: f.root, authorizationId: f.authorization.authorizationId }), { code: "RUNTIME_PATCH_PROPOSAL_INTEGRATION_REQUIRED" });
+  assert.throws(() => applyRuntimeRunResult({ root: f.root, authorizationId: f.authorization.authorizationId, storage: f.storage }), { code: "RUNTIME_PATCH_PROPOSAL_INTEGRATION_REQUIRED" });
   assert.deepEqual(fs.readFileSync(f.sessionFile), session);
   assert.deepEqual(fs.readFileSync(f.source), source);
 });

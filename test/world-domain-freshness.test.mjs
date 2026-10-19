@@ -176,7 +176,7 @@ test("SourceScope and recorded analyzer basis are genuine invalidators, not runt
   const { root, storage } = await fixture(t), snapshot = readWorldModelForDiscovery({ root }).snapshot;
   assert.equal(snapshot.analysisBasis.sourceAnalysisVersion, SOURCE_ANALYSIS_VERSION);
   assert.equal(snapshot.indexer.sourceAnalysisVersion, SOURCE_ANALYSIS_VERSION);
-  writeRepositorySourceScope({ projectRoot: root, selection: { excludeRoots: ["src"] } });
+  writeRepositorySourceScope({ projectRoot: root, selection: { excludeRoots: ["src"] }, storage });
   const before = bytes(root);
   assert.equal(inspectWorldDomainFreshness({ root, domains: ["code"] }).freshness.domains.code.status, "stale");
   assert.deepEqual(bytes(root), before);

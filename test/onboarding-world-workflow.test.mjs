@@ -150,7 +150,7 @@ test("missing World guidance executes a rebuild and converges without reapproval
     assert.equal(status.readiness.core.state, "ready");
     assert.equal(status.readiness.context.worldModelId, null);
     assert.equal(status.nextAction.entrypoint.worldOperation, "rebuild");
-    assert.equal(status.nextAction.entrypoint.cli, "head-agent world-index <project>");
+    assert.equal(status.nextAction.entrypoint.cli, "lode-agent world-index <project>");
     assert.equal(inspectConversationalOnboarding({ root }).nextAction, "refresh_or_reconcile_world");
     assert.deepEqual(bytes(root), beforeRead);
     const command = status.nextAction.entrypoint.cli.split(" ")[1];

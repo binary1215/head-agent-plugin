@@ -20,7 +20,7 @@ console.log(JSON.stringify({ event: "owned-worker-integration-result-test", pid:
 const headReport = { outcome: " HEAD verified the combined synthetic result ", evidence: [{ check: "all selected sources inspected", scope: "fixture-only" }],
   verification: [{ check: "whole result", status: "passed", actualProviderInvoked: false }], planDelta: "", impactRadius: ["fixture"],
   unknowns: ["Real provider and native file effects are not exercised by this fixture"] };
-const input = f => ({ root: f.root, integrationId: f.integrationId });
+const input = f => ({ root: f.root, integrationId: f.integrationId, storage: f.storage });
 const reportInput = (f, extra = {}) => ({ ...input(f), basisDigest: f.readBasis().basisDigest, ...headReport, ...extra });
 const receiptFile = f => path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}--result-application.json`);
 const verificationFile = (f, id) => path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}--${id}.json`);

@@ -10,6 +10,7 @@ import { continueSessionFromArtifacts } from "../scripts/lib/runtime-session-con
 import { buildRuntimeAdapterComposition } from "../scripts/lib/runtime-adapter.mjs";
 import { VerifiedWorkspaceHostAdapter, WORKSPACE_HOST_COORDINATION_VERSION } from "../scripts/lib/workspace-host-coordination.mjs";
 import { createWorkspaceHostExportDriver, publishWorkspaceHostExportSnapshot, workspaceHostExportProcessProofHash } from "../scripts/lib/workspace-host-export-driver.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 function fixture(t) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "head-host-adapter-"));
@@ -18,7 +19,8 @@ function fixture(t) {
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const inspected = inspectProject(root);
-  return { root, projectRoot: root, exportRoot, base, boundary: { projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId, role: "head", projectRoot: root } };
+  const { sessionIdField } = formatForVerifiedOwner(inspected.storage);
+  return { root, projectRoot: root, exportRoot, base, sessionIdField, boundary: { projectId: inspected.project.projectId, [sessionIdField]: inspected.state.sessionId, role: "head", projectRoot: root } };
 }
 const endpoint = fx => ({ workspaceId: "workspace", tabId: "head", endpointId: "head", terminalId: "terminal-head", cwd: fx.root, runtime: "codex" });
 function driver(fx) {
@@ -34,7 +36,7 @@ function driver(fx) {
     } };
 }
 const caller = { workspaceId: "workspace", tabId: "head", endpointId: "head" };
-const message = (fx, values = {}) => ({ projectId: fx.boundary.projectId, headSessionId: fx.boundary.headSessionId, toRole: "head", messageId: "task-1", content: "Source-linked task result", instructionAuthority: false, mutatesCanon: false, ...values });
+const message = (fx, values = {}) => ({ projectId: fx.boundary.projectId, [fx.sessionIdField]: fx.boundary[fx.sessionIdField], toRole: "head", messageId: "task-1", content: "Source-linked task result", instructionAuthority: false, mutatesCanon: false, ...values });
 function bytes(root) {
   return fs.readdirSync(root).sort().flatMap(name => { const file = path.join(root, name); return fs.statSync(file).isDirectory() ? bytes(file).map(([f,b]) => [name+"/"+f,b]) : [[name, fs.readFileSync(file).toString("base64")]]; });
 }
@@ -55,7 +57,7 @@ test("optional endpoint attachment has Project/Session identity without role tok
 test("exact scope and current endpoint prevent stale or cross-project delivery", t => {
   const fx = fixture(t), host = driver(fx), adapter = new VerifiedWorkspaceHostAdapter({ driver: host });
   const attachment = adapter.attach({ caller, boundary: fx.boundary });
-  assert.throws(() => adapter.receive({ attachment, boundary: { ...fx.boundary, headSessionId: "different-session" } }), { code: "STALE_WORKSPACE_HOST_ATTACHMENT" });
+  assert.throws(() => adapter.receive({ attachment, boundary: { ...fx.boundary, [fx.sessionIdField]: "different-session" } }), { code: "STALE_WORKSPACE_HOST_ATTACHMENT" });
   assert.throws(() => adapter.send({ attachment, boundary: fx.boundary, message: message(fx, { projectId: "other-project" }) }), { code: "INVALID_WORKSPACE_HOST_MESSAGE" });
   host.state.endpoints[0] = { ...host.state.endpoints[0], terminalId: "replacement" };
   assert.equal(adapter.send({ attachment, boundary: fx.boundary, message: message(fx) }).status, "unavailable");
@@ -83,7 +85,7 @@ test("P2 restore precedes optional endpoint continuation and fallback preserves 
   assert.equal(attached.continuationOutcome.status, "attached");
   assert.equal(attached.restore.projection.sessionRestoreHash, fresh.restore.projection.sessionRestoreHash);
   assert.throws(() => continueSessionFromArtifacts({ root: fx.root, runtime: "opencode", hostAttachment: attachment, workspaceHostAdapter: adapter }), { code: "RUNTIME_CONTINUATION_ATTACHMENT_CONFLICT" });
-  assert.throws(() => continueSessionFromArtifacts({ root: fx.root, runtime: "codex", hostAttachment: { ...attachment, headSessionId: "different-session" }, workspaceHostAdapter: adapter }), { code: "STALE_WORKSPACE_HOST_ATTACHMENT" });
+  assert.throws(() => continueSessionFromArtifacts({ root: fx.root, runtime: "codex", hostAttachment: { ...attachment, [fx.sessionIdField]: "different-session" }, workspaceHostAdapter: adapter }), { code: "STALE_WORKSPACE_HOST_ATTACHMENT" });
   host.state.endpoints = [];
   const unavailable = continueSessionFromArtifacts({ root: fx.root, runtime: "codex", hostAttachment: attachment, workspaceHostAdapter: adapter });
   assert.equal(unavailable.continuationOutcome.disclosure, "provider-attachment-unavailable");
@@ -174,7 +176,7 @@ test("endpoint child directory loss preserves direct P2 continuation and cannot 
   assert.equal(adapter.send({ attachment, boundary: fx.boundary, message: message(fx) }).status, "unavailable");
   assert.equal(host.state.deliveries.length, 0);
   assert.deepEqual(bytes(fx.root), before); assert.deepEqual(bytes(fx.exportRoot), operationalBefore);
-  for (const [key, value, code] of [["projectId", "different-project", "STALE_WORKSPACE_HOST_ATTACHMENT"], ["headSessionId", "different-session", "STALE_WORKSPACE_HOST_ATTACHMENT"], ["cwd", path.join(fx.exportRoot, "missing"), "WORKSPACE_HOST_PROJECT_MISMATCH"]]) {
+  for (const [key, value, code] of [["projectId", "different-project", "STALE_WORKSPACE_HOST_ATTACHMENT"], [fx.sessionIdField, "different-session", "STALE_WORKSPACE_HOST_ATTACHMENT"], ["cwd", path.join(fx.exportRoot, "missing"), "WORKSPACE_HOST_PROJECT_MISMATCH"]]) {
     assert.throws(() => adapter.receive({ attachment: { ...attachment, [key]: value }, boundary: fx.boundary }), { code });
   }
   assert.throws(() => continueSessionFromArtifacts({ root: fx.root, runtime: "opencode", hostAttachment: attachment, workspaceHostAdapter: adapter }), { code: "RUNTIME_CONTINUATION_ATTACHMENT_CONFLICT" });
@@ -248,7 +250,7 @@ test("public MCP rejects wrong project, current Session and runtime while Host s
   assert.match((await call()).error?.message || "", /outside the project/u);
   host.state.endpoints[0] = endpoint(fx);
   const originalAttach = adapter.attach.bind(adapter);
-  for (const [key, value] of [["projectId", "different-project"], ["headSessionId", "different-session"]]) {
+  for (const [key, value] of [["projectId", "different-project"], [fx.sessionIdField, "different-session"]]) {
     adapter.attach = args => ({ ...originalAttach(args), [key]: value });
     assert.match((await call()).error?.message || "", /another Project\/Session/u);
   }

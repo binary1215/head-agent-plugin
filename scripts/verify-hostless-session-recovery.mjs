@@ -10,6 +10,7 @@ import { compileContext } from "./lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "./lib/execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "./lib/run-lineage.mjs";
 import { integrateReviewedRunCheckpoint, restoreSessionFromArtifacts } from "./lib/session-recovery.mjs";
+import { formatForVerifiedOwner } from "./lib/project-storage-format.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const pluginRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -80,7 +81,7 @@ function fixture(name, disposition = "accept") {
   const root = path.join(fixtureRoot, name);
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, "fixture.mjs"), `export const fixture = ${JSON.stringify(name)};\n`, "utf8");
-  initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
+  const initialized = initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
   const capsule = compileContext({ root, task: `Verify ${name}`, budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({
     root,
@@ -125,21 +126,21 @@ function fixture(name, disposition = "accept") {
   const inputFile = path.join(root, "integration-input.json");
   writeJson(inputFile, input);
   assert.equal(fs.existsSync(path.join(root, ".git")), false, "The hostless fixture unexpectedly requires Git.");
-  return { root, run, finished, reviewed, input, inputFile };
+  return { root, storage: initialized.storage, run, finished, reviewed, input, inputFile };
 }
 
 function integrationPaths(value, integrated) {
   return {
-    request: path.join(value.root, ".head", "sessions", "integrations", "requests", `${value.input.reviewDecisionId}.json`),
-    receipt: path.join(value.root, ".head", "sessions", "integrations", `${value.input.reviewDecisionId}.json`),
-    checkpoint: path.join(value.root, ".head", "sessions", "ledger", `${integrated.checkpoint.checkpointId}.json`),
-    result: path.join(value.root, ".head", "lineage", "result-packets", `${value.finished.resultPacket.resultPacketId}.json`),
-    state: path.join(value.root, ".head", "sessions", "current.json"),
+    request: path.join(value.root, value.storage.directory, "sessions", "integrations", "requests", `${value.input.reviewDecisionId}.json`),
+    receipt: path.join(value.root, value.storage.directory, "sessions", "integrations", `${value.input.reviewDecisionId}.json`),
+    checkpoint: path.join(value.root, value.storage.directory, "sessions", "ledger", `${integrated.checkpoint.checkpointId}.json`),
+    result: path.join(value.root, value.storage.directory, "lineage", "result-packets", `${value.finished.resultPacket.resultPacketId}.json`),
+    state: path.join(value.root, value.storage.directory, "sessions", "current.json"),
   };
 }
 
-function checkpointCount(root, reviewDecisionId) {
-  const ledger = path.join(root, ".head", "sessions", "ledger");
+function checkpointCount(value, reviewDecisionId) {
+  const ledger = path.join(value.root, value.storage.directory, "sessions", "ledger");
   return fs.readdirSync(ledger).filter((name) => name.endsWith(".json")).map((name) => {
     try { return JSON.parse(fs.readFileSync(path.join(ledger, name), "utf8")); }
     catch { return null; }
@@ -168,9 +169,10 @@ async function consumeChild(value, runtime, inboxText) {
 
 async function integrationChildMain(root, inputFile, boundary = null) {
   const input = JSON.parse(fs.readFileSync(inputFile, "utf8"));
+  const storage = inspectProject(root).storage;
   const rename = fs.renameSync;
   if (boundary) fs.renameSync = (source, target) => {
-    if (path.dirname(path.resolve(target)) === path.join(root, ".head/sessions/ledger")) {
+    if (path.dirname(path.resolve(target)) === path.join(root, storage.directory, "sessions", "ledger")) {
       if (boundary === "after-ledger") rename(source, target);
       process.stdout.write(JSON.stringify({ status: "crashed", boundary, pid: process.pid, parentPid: process.ppid, cwd: process.cwd(), ports: [] }) + "\n");
       process.exit(23);
@@ -189,13 +191,13 @@ async function integrationChildMain(root, inputFile, boundary = null) {
 function consumerChildMain(root, expectedFile, runtime) {
   const expected = JSON.parse(fs.readFileSync(expectedFile, "utf8"));
   const restored = restoreSessionFromArtifacts({ root });
-  assert.equal(restored.projection.consumerInstruction.mode, "fresh-logical-head-from-verified-artifacts");
+  const inspected = inspectProject(root);
+  assert.equal(restored.projection.consumerInstruction.mode, formatForVerifiedOwner(inspected.storage).value("fresh-logical-head-from-verified-artifacts"));
   assert.equal(restored.projection.consumerInstruction.purpose, expected.purpose);
   assert.deepEqual(restored.projection.consumerInstruction.historicalCheckpointContext, { currentPosition: expected.currentPosition, nextExpectedResult: expected.nextExpectedResult });
   assert.equal(restored.projection.consumerInstruction.nextExpectedResult, undefined);
   assert.equal(restored.projection.currentExecution.status, "verified");
   assert.equal(expected.nextExpectedResult, expectedNextMove, "The verifier consumer received an unrecognized next move.");
-  const inspected = inspectProject(root);
   assert.equal(inspected.status, "ready", "The next read-only HEAD move did not recover a ready Project.");
   const result = {
     kind: "ResidentHeadConsumerOutcome",
@@ -237,14 +239,14 @@ async function parentMain() {
 
     const beforeLedger = fixture("crash-before-checkpoint");
     await integrateChild(beforeLedger.root, beforeLedger.inputFile, 23, "before-ledger");
-    assert.equal(checkpointCount(beforeLedger.root, beforeLedger.input.reviewDecisionId), 0);
+    assert.equal(checkpointCount(beforeLedger, beforeLedger.input.reviewDecisionId), 0);
     await integrateChild(beforeLedger.root, beforeLedger.inputFile);
-    assert.equal(checkpointCount(beforeLedger.root, beforeLedger.input.reviewDecisionId), 1);
-    assert.equal(fs.existsSync(path.join(beforeLedger.root, ".head/sessions/integrations")), false);
+    assert.equal(checkpointCount(beforeLedger, beforeLedger.input.reviewDecisionId), 1);
+    assert.equal(fs.existsSync(path.join(beforeLedger.root, beforeLedger.storage.directory, "sessions", "integrations")), false);
 
     const checkpointCrash = fixture("crash-after-checkpoint");
     await integrateChild(checkpointCrash.root, checkpointCrash.inputFile, 23, "after-ledger");
-    const ledger = path.join(checkpointCrash.root, ".head/sessions/ledger");
+    const ledger = path.join(checkpointCrash.root, checkpointCrash.storage.directory, "sessions", "ledger");
     const saved = fs.readdirSync(ledger).find((name) => /^checkpoint-[a-f0-9]{24}\.json$/.test(name));
     const originalCheckpoint = JSON.parse(fs.readFileSync(path.join(ledger, saved), "utf8"));
     const checkpointPaths = integrationPaths(checkpointCrash, { checkpoint: originalCheckpoint });
@@ -252,7 +254,7 @@ async function parentMain() {
     const checkpointRecovered = await integrateChild(checkpointCrash.root, checkpointCrash.inputFile);
     assert.equal(checkpointRecovered.checkpoint.checkpointId, originalCheckpoint.checkpointId, "Checkpoint retry changed checkpoint identity.");
     assert.equal(digest(fs.readFileSync(checkpointPaths.checkpoint)), checkpointHash, "Checkpoint retry changed immutable checkpoint bytes.");
-    assert.equal(checkpointCount(checkpointCrash.root, checkpointCrash.input.reviewDecisionId), 1, "Checkpoint retry created multiple checkpoints.");
+    assert.equal(checkpointCount(checkpointCrash, checkpointCrash.input.reviewDecisionId), 1, "Checkpoint retry created multiple checkpoints.");
 
     const missingEvidence = fixture("missing-p3-evidence");
     const evidenceIntegrated = await integrateChild(missingEvidence.root, missingEvidence.inputFile);
@@ -270,7 +272,7 @@ async function parentMain() {
       integrateChild(concurrent.root, concurrent.inputFile),
     ]);
     assert.equal(concurrentA.checkpoint.checkpointId, concurrentB.checkpoint.checkpointId, "Concurrent identical integration diverged.");
-    assert.equal(checkpointCount(concurrent.root, concurrent.input.reviewDecisionId), 1, "Concurrent integration created multiple checkpoints.");
+    assert.equal(checkpointCount(concurrent, concurrent.input.reviewDecisionId), 1, "Concurrent integration created multiple checkpoints.");
     const divergentInput = { ...concurrent.input, purpose: "Worker-authored conflicting purpose must fail" };
     const divergentFile = path.join(concurrent.root, "divergent-input.json");
     writeJson(divergentFile, divergentInput);

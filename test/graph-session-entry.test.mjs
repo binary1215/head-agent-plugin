@@ -153,7 +153,7 @@ test("managed entry is optional discoverable execution with the existing authori
   const discovered = await call("head_tools_discover", { name: "head_bounded_worker_start" });
   assert.equal(discovered.persisted, false);
   assert.equal(discovered.grantsAuthorization, false);
-  assert.equal(discovered.tools[0].invokeWith, "head_tools_call");
+  assert.equal(discovered.tools[0].invokeWith, "lode_tools_call");
   assert.equal(discovered.tools[0].executionMode, "managed");
   const denied = await dispatch(request("head_tools_call", { name: "head_bounded_worker_start", execution_mode: "managed",
     arguments: { project_root: root } }));
@@ -220,8 +220,19 @@ test("stale intact World evidence stays readable, while tampering and another ro
   const wrongRoot = await call("head_project_graph", { project_root: another });
   assert.equal(wrongRoot.status, "source-fallback");
   assert.equal(wrongRoot.nodes.length, 0);
-  assert(wrongRoot.sourceFallback.reasonCodes.includes("PROJECT_IDENTITY_MISMATCH"));
   assert.deepEqual(snapshot(another), copiedBefore);
+  // A wholly foreign canonical directory is unowned. Make the copied marker
+  // related to this root while retaining its foreign Project ID to exercise
+  // the recognized-owner identity failure rather than claiming ownership.
+  const copiedProjectFile = path.join(another, layout.directory, "project.json");
+  const copiedProject = JSON.parse(fs.readFileSync(copiedProjectFile, "utf8"));
+  fs.writeFileSync(copiedProjectFile, JSON.stringify({ ...copiedProject, projectRoot: fs.realpathSync(another) }));
+  const mismatchedBefore = snapshot(another);
+  const mismatchedOwner = await call("head_project_graph", { project_root: another });
+  assert.equal(mismatchedOwner.status, "source-fallback");
+  assert.equal(mismatchedOwner.nodes.length, 0);
+  assert(mismatchedOwner.sourceFallback.reasonCodes.includes("PROJECT_IDENTITY_MISMATCH"));
+  assert.deepEqual(snapshot(another), mismatchedBefore);
 });
 
 test("rejected Product candidates retain review and revision state through public graph expansion and summary", async t => {

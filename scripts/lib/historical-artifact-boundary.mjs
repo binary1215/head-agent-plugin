@@ -87,7 +87,7 @@ function verifyReferencedP2(projectRoot, state, storage) {
   };
 }
 
-function verifyHistoricalRevisionInterpretations(entries, projectRoot) {
+function verifyHistoricalRevisionInterpretations(entries, projectRoot, storage) {
   for (const entry of entries.filter((item) => item.role === "historical-product-revision")) {
     const file = path.join(projectRoot, ...entry.path.split("/"));
     const document = readJson(file, "Historical Product Model revision");
@@ -96,7 +96,7 @@ function verifyHistoricalRevisionInterpretations(entries, projectRoot) {
     }
     let interpretationMode = "opaque-legacy-revision";
     try {
-      verifyProductModelRevisionForProjection(document);
+      verifyProductModelRevisionForProjection(document, storage);
       interpretationMode = "current-typed-with-historical-provenance";
     } catch {
       // The external validator owns legacy semantic parsing. Current Core owns
@@ -133,7 +133,7 @@ export function captureHistoricalBoundaryApplicationBasis({ root = "." } = {}) {
   if (canon.model.productModelId !== onboardingState.productModelId) fail("Current Canon and onboarding state do not agree.", "HISTORICAL_BOUNDARY_CANON_DRIFT");
   const revisionRelative = relativeProjectArtifact(inspected.storage, "onboarding", "product-model-revisions", `${onboardingState.productModelId}.json`);
   const revisionFile = path.join(projectRoot, ...revisionRelative.split("/"));
-  const revision = verifyProductModelRevisionForProjection(readJson(revisionFile, "Current Product Model revision"));
+  const revision = verifyProductModelRevisionForProjection(readJson(revisionFile, "Current Product Model revision"), inspected.storage);
   if (revision.productModelId !== canon.model.productModelId || revision.productModelHash !== canon.model.productModelHash) {
     fail("Current Canon revision is not independently readable.", "HISTORICAL_BOUNDARY_CURRENT_CANON_REVISION_UNSUPPORTED");
   }
@@ -178,7 +178,7 @@ export function createVerifiedHistoricalInventoryCapability({ root = ".", projec
     fail("External historical validation is incomplete.", "HISTORICAL_BOUNDARY_EXTERNAL_VALIDATION_REQUIRED");
   }
   verifyHistoricalInventoryEntries(entries, { projectRoot, projectId, verifyBytes: true, storage });
-  verifyHistoricalRevisionInterpretations(entries, projectRoot);
+  verifyHistoricalRevisionInterpretations(entries, projectRoot, storage);
   const basis = captureHistoricalBoundaryApplicationBasis({ root: projectRoot });
   if (basis.projectId !== projectId) fail("Historical inventory belongs to another Project.", "HISTORICAL_BOUNDARY_PROJECT_MISMATCH");
   const capability = deepFreeze({
@@ -306,7 +306,7 @@ export function applyHistoricalArtifactBoundary({ root = ".", verifiedInventory,
       }
       return { status: "already-applied", writes: 0, boundary: existing.boundary, receipt: existing.receipt, commit: existing.commit, coverage: existing.coverage };
     }
-    verifyHistoricalRevisionInterpretations(verifiedInventory.entries, projectRoot);
+    verifyHistoricalRevisionInterpretations(verifiedInventory.entries, projectRoot, inspected.storage);
     const basis = captureHistoricalBoundaryApplicationBasis({ root });
     if (historicalBoundaryCanonicalJson(verifiedInventory.appliedAtBasis) !== historicalBoundaryCanonicalJson(basis.appliedAtBasis)) {
       fail(existing ? "Incomplete historical boundary basis drifted before final commit."

@@ -5,22 +5,23 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { withProjectMutation, withProjectMutationAsync } from "../scripts/lib/project-mutation-lock.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 
 const host = crypto.createHash("sha256").update(os.hostname()).digest("hex").slice(0, 16);
 const deadPid = 99999999;
 const nameFor = (pid, ownerHost = host) => `owner-${ownerHost}-${pid}-${"a".repeat(32)}.json`;
 
-function fixture(t) {
+function fixture(t, layout = { dialect: "head", directory: ".head" }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-lock-read-")));
-  const parent = path.join(root, ".head", ".operations");
+  const parent = path.join(root, layout.directory, ".operations");
   fs.mkdirSync(parent, { recursive: true });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { root, parent, directory: path.join(parent, "session-recovery.lock") };
 }
 
 const runners = {
-  sync: (root, operation) => withProjectMutation({ root, scope: "session-recovery" }, operation),
-  async: (root, operation) => withProjectMutationAsync({ root, scope: "session-recovery" }, operation),
+  sync: (root, operation, storage) => withProjectMutation({ root, scope: "session-recovery", storage }, operation),
+  async: (root, operation, storage) => withProjectMutationAsync({ root, scope: "session-recovery", storage }, operation),
 };
 
 // Fault injection proves the read/error contract, not an actual Windows ACL or
@@ -107,16 +108,20 @@ for (const [mode, run] of Object.entries(runners)) {
   }
 
   test(`${mode} unsafe paths and unexpected entries fail without invoking effect`, async (t) => {
-    for (const site of ["head", "parent", "lock", "entry"]) {
-      const { root, parent, directory } = fixture(t);
-      if (site === "head") { fs.rmdirSync(parent); fs.rmdirSync(path.dirname(parent)); fs.writeFileSync(path.dirname(parent), "unsafe"); }
-      if (site === "parent") { fs.rmdirSync(parent); fs.writeFileSync(parent, "unsafe"); }
-      if (site === "lock") fs.writeFileSync(directory, "unsafe");
-      if (site === "entry") { fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, "unexpected"), "must survive"); }
-      let effects = 0;
-      await assert.rejects(async () => run(root, () => ++effects), { code: "INVALID_PROJECT_MUTATION_LOCK" });
-      assert.equal(effects, 0);
-      if (site === "entry") assert.equal(fs.readFileSync(path.join(directory, "unexpected"), "utf8"), "must survive");
+    for (const layout of [{ dialect: "head", directory: ".head" }, { dialect: "lode", directory: ".lode" }]) {
+      for (const site of ["head", "parent", "lock", "entry"]) {
+        const { root, parent, directory } = fixture(t, layout);
+        if (site === "head") { fs.rmdirSync(parent); fs.rmdirSync(path.dirname(parent)); fs.writeFileSync(path.dirname(parent), "unsafe"); }
+        if (site === "parent") { fs.rmdirSync(parent); fs.writeFileSync(parent, "unsafe"); }
+        if (site === "lock") fs.writeFileSync(directory, "unsafe");
+        if (site === "entry") { fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, "unexpected"), "must survive"); }
+        let effects = 0;
+        // This lower path test already owns its format; damaged storage must not
+        // be reselected through the separate Project marker boundary.
+        await assert.rejects(async () => run(root, () => ++effects, formatForVerifiedOwner(layout)), { code: "INVALID_PROJECT_MUTATION_LOCK" });
+        assert.equal(effects, 0);
+        if (site === "entry") assert.equal(fs.readFileSync(path.join(directory, "unexpected"), "utf8"), "must survive");
+      }
     }
   });
 

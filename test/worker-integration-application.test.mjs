@@ -20,7 +20,7 @@ console.log(JSON.stringify({ event: "owned-worker-integration-application-test",
   command: process.execPath, args: process.argv.slice(1), cwd: process.cwd(), ports: [], actualProviderInvoked: false }));
 
 const bytes = (root, relative) => fs.readFileSync(path.join(root, relative), "utf8");
-const appInput = f => ({ root: f.root, integrationId: f.integrationId });
+const appInput = f => ({ root: f.root, integrationId: f.integrationId, storage: f.storage });
 const current = f => readWorkerPatchApplication(appInput(f));
 const evidenceFile = (f, suffix) => path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}${suffix}`);
 
@@ -79,7 +79,7 @@ function preparedSyntheticHost(f, { first = "not-attempted", failures = 1, after
   const target = process.platform === "win32" ? "windows-x64" : `${process.platform}-${process.arch}`;
   const directory = path.join(pluginRoot, "dist", target);
   fs.mkdirSync(directory, { recursive: true });
-  const binaryFile = path.join(directory, process.platform === "win32" ? "head-agent-supervisor.exe" : "head-agent-supervisor");
+  const binaryFile = path.join(directory, process.platform === "win32" ? "lode-agent-supervisor.exe" : "lode-agent-supervisor");
   fs.writeFileSync(binaryFile, "Synthetic verified transport binary; never executed", { flag: "wx", mode: 0o755 });
   const manifest = createProcessSupervisorManifest({ platform: process.platform, arch: process.arch, binaryFile, manifestDirectory: directory });
   fs.writeFileSync(path.join(directory, "SUPERVISOR-MANIFEST.json"), JSON.stringify(manifest), { flag: "wx" });
@@ -407,7 +407,7 @@ test("outstanding unknown paths block overlap across Run/Session changes but not
     assert.notEqual(next.runId, unknown.intent.lineage.runId);
     await withSessionRoute(f.root, next.sessionId, async () => {
     const overlapping = await f.addIntegration({ workers: [{ path: "a.txt", after: "alternative A" }] });
-    const overlapInput = { root: f.root, integrationId: overlapping.integrationId };
+    const overlapInput = { root: f.root, integrationId: overlapping.integrationId, storage: f.storage };
     const collisions = readOutstandingWorkerEffects(overlapInput);
     assert.equal(collisions.hasConflicts, true);
     assert.equal(collisions.conflicts[0].integrationId, f.integrationId);
@@ -421,7 +421,7 @@ test("outstanding unknown paths block overlap across Run/Session changes but not
     assert.equal(fs.existsSync(journal), false);
     // A dependency read by the old worker is not a claimed write path.
     const unrelated = await f.addIntegration({ workers: [{ path: "read-only.txt", after: "new independent value" }] });
-    const unrelatedInput = { root: f.root, integrationId: unrelated.integrationId };
+    const unrelatedInput = { root: f.root, integrationId: unrelated.integrationId, storage: f.storage };
     assert.equal(readOutstandingWorkerEffects(unrelatedInput).hasConflicts, false);
     assert.equal((await applyWorkerPatchIntegration(unrelatedInput, native.host)).status, "applied");
     assert.equal(current(f).effectResults[0].status, "unknown");
@@ -443,7 +443,7 @@ test("quiescent incomplete settlement permits a new inspected integration withou
     reason: "Known quiescent owner; keep unknown history and use a fresh inspected basis." });
   assert.equal(settled.outstanding, false);
   const next = await f.addIntegration({ workers: [{ path: "a.txt", after: "fresh result" }] });
-  const nextInput = { root: f.root, integrationId: next.integrationId };
+  const nextInput = { root: f.root, integrationId: next.integrationId, storage: f.storage };
   assert.notEqual(next.integrationId, f.integrationId);
   assert.equal(readOutstandingWorkerEffects(nextInput).hasConflicts, false);
   assert.equal((await applyWorkerPatchIntegration(nextInput, syntheticHost().host)).status, "applied");
@@ -463,7 +463,7 @@ test("no-op ownership makes no path reservation or native call", async t => {
   assert.equal(fs.existsSync(path.join(f.operational, "worker-integrations")), false);
   assert.deepEqual(protectedSnapshot(f), before);
   const next = await f.addIntegration({ workers: [{ path: "a.txt", after: "independent A" }] });
-  assert.equal(readOutstandingWorkerEffects({ root: f.root, integrationId: next.integrationId }).hasConflicts, false);
+  assert.equal(readOutstandingWorkerEffects({ root: f.root, integrationId: next.integrationId, storage: f.storage }).hasConflicts, false);
 });
 
 test("a damaged claim for independently verified disjoint paths does not become a whole-project gate", async t => {
@@ -478,7 +478,7 @@ test("a damaged claim for independently verified disjoint paths does not become 
   const original = fs.readFileSync(file);
   fs.writeFileSync(file, "{ malformed claim bytes retained for diagnosis");
   try {
-    const nextInput = { root: f.root, integrationId: next.integrationId };
+    const nextInput = { root: f.root, integrationId: next.integrationId, storage: f.storage };
     assert.equal(readOutstandingWorkerEffects(nextInput).hasConflicts, false);
     assert.equal((await applyWorkerPatchIntegration(nextInput, syntheticHost().host)).status, "applied");
     assert.throws(() => current(f));
@@ -881,7 +881,7 @@ test("prepared proof cannot replace an earlier unknown or survive nested proof t
   assert.equal(native.writes().length, 0);
   assert.deepEqual(fs.readFileSync(evidenceFile(f, ".effect-0.receipt.json")), original);
   const other = await f.addIntegration({ workers: [{ path: "b.txt", after: "new B" }] });
-  const otherInput = { root: f.root, integrationId: other.integrationId };
+  const otherInput = { root: f.root, integrationId: other.integrationId, storage: f.storage };
   const fresh = await applyWorkerPatchIntegration(otherInput, native.host);
   rewriteSyntheticEvidence(evidenceFile(f, ".effect-0.receipt.json"), receipt => { receipt.terminalProof = fresh.effectResults[0].receipt.terminalProof; });
   assert.throws(() => current(f), /Terminal evidence lacks its pre-dispatch binding/);

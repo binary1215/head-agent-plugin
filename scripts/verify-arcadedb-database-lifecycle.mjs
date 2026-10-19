@@ -5,8 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initializeProject } from "./lib/head-core.mjs";
 import { startOnboarding } from "./lib/onboarding.mjs";
-import { ARCADEDB_GRAPH_RESERVED_SCHEMA } from "./lib/graph-projection-adapter.mjs";
-import { ARCADEDB_REQUIRED_KEYS } from "./lib/arcadedb-schema-contract.mjs";
+import { arcadeDbGraphReservedSchemaFor } from "./lib/graph-projection-adapter.mjs";
+import { arcadeDbRequiredKeysFor } from "./lib/arcadedb-schema-contract.mjs";
+import { formatForVerifiedOwner } from "./lib/project-storage-format.mjs";
 import {
   initializeArcadeDbDatabase,
   inspectArcadeDbDatabaseCompatibility,
@@ -40,7 +41,11 @@ function write(relative, content) {
 try {
   fs.rmSync(root, { recursive: true, force: true });
   write("src/service.mjs", "export function captureImage() { return true; }\n");
-  initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  const initialized = initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  const storage = initialized.storage;
+  const format = formatForVerifiedOwner(initialized.storage);
+  const reservedSchema = arcadeDbGraphReservedSchemaFor(initialized.storage);
+  const requiredKeys = arcadeDbRequiredKeysFor(initialized.storage);
   await startOnboarding({
     root,
     mode: "existing",
@@ -53,80 +58,80 @@ try {
   });
 
   const transport = new FixtureTransport();
-  const missing = verifyArcadeDbDatabaseCompatibilityAudit(inspectArcadeDbDatabaseCompatibility({ root, transport }));
+  const missing = verifyArcadeDbDatabaseCompatibilityAudit(inspectArcadeDbDatabaseCompatibility({ root, transport, storage }));
   assert.equal(missing.status, "database-missing");
   assert.equal(missing.canActivateWithoutReset, false);
   assert.equal(JSON.stringify(missing).includes("fixturedb"), false);
   assert.equal(JSON.stringify(missing).includes("fixture.invalid"), false);
 
-  const created = initializeArcadeDbDatabase({ root, transport });
+  const created = initializeArcadeDbDatabase({ root, transport, storage });
   verifyArcadeDbDatabaseLifecycleReceipt(created.receipt);
   assert.equal(created.action, "created-missing-database");
   assert.deepEqual(transport.actions, ["create"]);
   assert.equal(created.after.status, "compatible-empty-reserved-schema");
 
   transport.types = [{ name: "UnrelatedProductData", type: "document", properties: [] }];
-  const shared = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  const shared = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   assert.equal(shared.status, "compatible-empty-reserved-schema");
   assert.equal(shared.unrelatedTypeCount, 1);
 
-  transport.types.push({ name: "HeadAgentGraphNode", type: "vertex", properties: [{ name: "projectId", type: "STRING" }], indexes: [] });
-  const partial = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  transport.types.push({ name: format.kind("HeadAgentGraphNode"), type: "vertex", properties: [{ name: "projectId", type: "STRING" }], indexes: [] });
+  const partial = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   assert.equal(partial.status, "compatible-partial-reserved-schema");
   assert.equal(partial.conflicts.length, 0);
 
-  transport.types[1] = { name: "HeadAgentGraphNode", type: "document", properties: [] };
-  const incompatible = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  transport.types[1] = { name: format.kind("HeadAgentGraphNode"), type: "document", properties: [] };
+  const incompatible = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   assert.equal(incompatible.status, "incompatible-reserved-schema");
   assert.equal(incompatible.resetEligible, true);
   assert.throws(
-    () => initializeArcadeDbDatabase({ root, transport }),
+    () => initializeArcadeDbDatabase({ root, transport, storage }),
     (error) => error.code === "ARCADEDB_DATABASE_RESET_CONFIRMATION_REQUIRED",
   );
   assert.throws(
-    () => initializeArcadeDbDatabase({ root, transport, resetIncompatible: true, confirmDatabase: "wrong" }),
+    () => initializeArcadeDbDatabase({ root, transport, storage, resetIncompatible: true, confirmDatabase: "wrong" }),
     (error) => error.code === "ARCADEDB_DATABASE_RESET_TARGET_MISMATCH",
   );
-  const reset = initializeArcadeDbDatabase({ root, transport, resetIncompatible: true, confirmDatabase: "fixturedb" });
+  const reset = initializeArcadeDbDatabase({ root, transport, storage, resetIncompatible: true, confirmDatabase: "fixturedb" });
   assert.equal(reset.action, "reset-incompatible-database");
   assert.deepEqual(transport.actions, ["create", "drop", "create"]);
   assert.equal(reset.after.status, "compatible-empty-reserved-schema");
   assert.equal(JSON.stringify(reset).includes("fixturedb"), false);
 
-  transport.types = ARCADEDB_GRAPH_RESERVED_SCHEMA.map((type) => ({ name: type.name, type: type.type,
+  transport.types = reservedSchema.map((type) => ({ name: type.name, type: type.type,
     properties: Object.entries(type.properties).map(([name, type]) => ({ name, type })), indexes: [] }));
-  const noIndexes = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  const noIndexes = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   assert.equal(noIndexes.status, "compatible-partial-reserved-schema");
   assert.equal(noIndexes.canActivateNow, false);
   assert.equal(noIndexes.missingIndexCount, 9);
-  for (const type of transport.types) type.indexes = [{ properties: [...ARCADEDB_REQUIRED_KEYS[type.name]], unique: true }];
-  const complete = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  for (const type of transport.types) type.indexes = [{ properties: [...requiredKeys[type.name]], unique: true }];
+  const complete = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   assert.equal(complete.canActivateNow, true);
   assert.notEqual(complete.auditHash, noIndexes.auditHash);
   transport.types[0].indexes.push({ properties: ["projectId"], unique: true, status: "ONLINE" });
-  const extraA = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  const extraA = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   transport.types[0].indexes[1].properties = ["graphSnapshotId"];
-  const extraB = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  const extraB = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   assert.equal(extraA.status, "incompatible-reserved-schema");
   assert.equal(extraB.status, "incompatible-reserved-schema");
   assert.notEqual(extraA.auditHash, extraB.auditHash);
   transport.types[0].indexes.reverse();
-  assert.equal(inspectArcadeDbDatabaseCompatibility({ root, transport }).auditHash, extraB.auditHash);
-  transport.types[0].indexes = [{ properties: [...ARCADEDB_REQUIRED_KEYS[transport.types[0].name]], unique: true }];
+  assert.equal(inspectArcadeDbDatabaseCompatibility({ root, transport, storage }).auditHash, extraB.auditHash);
+  transport.types[0].indexes = [{ properties: [...requiredKeys[transport.types[0].name]], unique: true }];
   transport.types[0].properties[0].min = 1;
-  const minA = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  const minA = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   transport.types[0].properties[0].min = 2;
-  assert.notEqual(inspectArcadeDbDatabaseCompatibility({ root, transport }).auditHash, minA.auditHash);
+  assert.notEqual(inspectArcadeDbDatabaseCompatibility({ root, transport, storage }).auditHash, minA.auditHash);
   delete transport.types[0].properties[0].min;
   transport.types[0].indexes[0].unique = false;
-  const nonUnique = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  const nonUnique = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   assert.equal(nonUnique.status, "incompatible-reserved-schema");
   assert.notEqual(nonUnique.auditHash, complete.auditHash);
   delete transport.types[0].indexes;
-  const unknown = inspectArcadeDbDatabaseCompatibility({ root, transport });
+  const unknown = inspectArcadeDbDatabaseCompatibility({ root, transport, storage });
   assert.equal(unknown.status, "unverifiable-reserved-schema");
   assert.equal(unknown.resetEligible, false);
-  assert.throws(() => initializeArcadeDbDatabase({ root, transport, resetIncompatible: true, confirmDatabase: "fixturedb" }), { code: "ARCADEDB_SCHEMA_UNVERIFIED" });
+  assert.throws(() => initializeArcadeDbDatabase({ root, transport, storage, resetIncompatible: true, confirmDatabase: "fixturedb" }), { code: "ARCADEDB_SCHEMA_UNVERIFIED" });
   assert.deepEqual(transport.actions, ["create", "drop", "create"], "inspection performs no DDL");
 
   process.stdout.write(`${JSON.stringify({

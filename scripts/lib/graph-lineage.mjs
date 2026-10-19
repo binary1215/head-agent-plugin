@@ -65,7 +65,7 @@ export function inspectGraphLineage({ root = ".", cursor = "", limit = 25, store
   const inspected = readyProject(root);
   const selectedLimit = normalizeLimit(limit, 25, PAGE_LIMIT_MAX, "Graph lineage page limit");
   const current = readWorldModel({ root: inspected.project.projectRoot, storeAdapter });
-  const adapter = createWorldModelStoreAdapter({ projectRoot: inspected.project.projectRoot, adapter: storeAdapter });
+  const adapter = createWorldModelStoreAdapter({ projectRoot: inspected.project.projectRoot, adapter: storeAdapter, storage: inspected.storage });
   const ids = adapter.listSnapshotIds();
   const start = cursor ? ids.findIndex((id) => id === cursor) + 1 : 0;
   if (cursor && start === 0) fail("Graph lineage cursor is not a retained World Model snapshot.", "INVALID_GRAPH_LINEAGE_CURSOR");

@@ -80,7 +80,7 @@ function recoveryChild(t, action, input, { holdLock = false, crashAfter = null, 
         ${crashRefreshStaging === "partial" ? "fs.writeFileSync(file + '/owner.json', '{\\\"pid\\\":', {flag:'wx'});" : ""}
         process.exit(29);
       } return result; };
-      await withRefreshWriterLease({projectRoot:input.root, projectId: inspectProject(input.root).project.projectId}, () => {});` : ""}
+      await withRefreshWriterLease({projectRoot:input.root, projectId: inspectProject(input.root).project.projectId, storage: inspectProject(input.root).storage}, () => {});` : ""}
     ${holdLock ? "withProjectMutation({root: input.root, scope: 'session-recovery'}, () => process.exit(29));" : `try { const result = ${action === "prepare" ? "prepareCompaction" : "continueCompaction"}(input); console.log(JSON.stringify({status: result.status, checkpointId: result.checkpoint.checkpointId, nextExpectedResult: result.checkpoint.nextExpectedResult})); }
     catch(error) { console.log(JSON.stringify({code: error.code, message: error.message, errno: error.errno, syscall: error.syscall, path: error.path, dest: error.dest, stack: error.stack})); }`}
   `;
@@ -204,8 +204,8 @@ test("mutation acquisition preserves genuine missing, unsafe and denied filesyst
     try {
       const expected = mode === "missing-head" ? { code: "NOT_INITIALIZED" }
         : mode === "unsafe-head" ? { code: "INVALID_PROJECT_MUTATION_LOCK" } : (error) => error === injected;
-      assert.throws(() => withProjectMutation({ root, scope: "session-recovery" }, () => { callbacks += 1; }), expected);
-      await assert.rejects(withProjectMutationAsync({ root, scope: "session-recovery" }, async () => { callbacks += 1; }), expected);
+      assert.throws(() => withProjectMutation({ root, storage: mode === "unsafe-head" ? formatForVerifiedOwner(layout) : undefined, scope: "session-recovery" }, () => { callbacks += 1; }), expected);
+      await assert.rejects(withProjectMutationAsync({ root, storage: mode === "unsafe-head" ? formatForVerifiedOwner(layout) : undefined, scope: "session-recovery" }, async () => { callbacks += 1; }), expected);
       assert.equal(callbacks, 0);
       assert.equal(mkdirAttempts, mode.endsWith("head") ? 0 : 2);
       if (mode === "missing-head") assert.equal(fs.existsSync(head), false);
@@ -308,12 +308,12 @@ test("refresh lease recovers an empty legacy lock and a crash before owner publi
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
   fs.mkdirSync(path.join(root, layout.directory, "refresh", "writer.lock"), { recursive: true });
-  await withRefreshWriterLease({ projectRoot: root, projectId }, () => "recovered-empty-legacy-lock");
+  await withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => "recovered-empty-legacy-lock");
   for (const crashRefreshStaging of [true, "partial"]) {
     await recoveryChild(t, "refresh-crash", { root }, { crashRefreshStaging }).done;
-    assert.equal(await withRefreshWriterLease({ projectRoot: root, projectId }, () => "recovered-staging"), "recovered-staging");
+    assert.equal(await withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => "recovered-staging"), "recovered-staging");
   }
-  assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId }).status, "idle");
+  assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId, storage: layout }).status, "idle");
   assert.equal(fs.readdirSync(path.join(root, layout.directory, "refresh")).some((name) => name.includes("writer.lock")), false);
   assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, ".operations")), []);
 });
@@ -340,14 +340,14 @@ test("refresh publication retries the same owned Windows staging without replayi
     return rename(source, target);
   };
   try {
-    assert.equal(await withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; return "once"; }), "once");
+    assert.equal(await withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; return "once"; }), "once");
   } finally { fs.renameSync = rename; }
   assert.equal(calls, 3);
   assert.equal(work, 1);
   assert.equal(new Set(staged.map(([file]) => file)).size, 1);
   assert.equal(new Set(staged.map(([, bytes]) => bytes)).size, 1);
   assert.deepEqual(projectBytes(root), before);
-  assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId }).status, "idle");
+  assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId, storage: layout }).status, "idle");
   assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, "refresh")), []);
 });
 
@@ -364,7 +364,7 @@ test("refresh publication exhausts a finite Windows retry bound without running 
     if (refreshPublication(source, target)) { attempts += 1; throw originalError; }
     return rename(source, target);
   };
-  try { await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), (error) => error === originalError); }
+  try { await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; }), (error) => error === originalError); }
   finally { fs.renameSync = rename; }
   assert.equal(attempts, 5);
   assert.equal(work, 0);
@@ -394,7 +394,7 @@ test("refresh publication never overwrites an owner appearing during publication
     }
     return rename(source, target);
   };
-  try { await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), { code: "REFRESH_WRITER_BUSY" }); }
+  try { await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; }), { code: "REFRESH_WRITER_BUSY" }); }
   finally { fs.renameSync = rename; }
   assert.equal(attempts, 1);
   assert.equal(work, 0);
@@ -420,7 +420,7 @@ test("refresh publication preserves tampered staging instead of retrying or dele
     return rename(source, target);
   };
   try {
-    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), (error) => {
+    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; }), (error) => {
       assert.equal(error.code, "UNSAFE_REFRESH_WRITER_LEASE");
       assert.equal(error.cleanupFailure.code, "UNSAFE_REFRESH_WRITER_LEASE");
       return true;
@@ -456,7 +456,7 @@ test("refresh publication preserves an invalid appearing owner and treats denied
       return rename(source, target);
     };
     try {
-      await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), { code: mode === "invalid-owner" ? "INVALID_REFRESH_WRITER_LEASE" : "EACCES" });
+      await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; }), { code: mode === "invalid-owner" ? "INVALID_REFRESH_WRITER_LEASE" : "EACCES" });
     } finally { fs.renameSync = rename; fs.lstatSync = stat; }
     assert.equal(work, 0);
     assert.equal(attempts, mode === "invalid-owner" ? 1 : 0);
@@ -481,7 +481,7 @@ test("refresh publication converges a completed rename with a reported error and
     }
     return result;
   };
-  try { await withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }); }
+  try { await withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; }); }
   finally { fs.renameSync = rename; }
   assert.equal(attempts, 1);
   assert.equal(work, 1);
@@ -515,7 +515,7 @@ test("refresh publication preserves cleanup diagnostics when a competing owner a
     return rename(source, target);
   };
   try {
-    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), (error) => {
+    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; }), (error) => {
       assert.equal(error.code, "EEXIST");
       assert.equal(error.cleanupFailure.code, "UNSAFE_REFRESH_WRITER_LEASE");
       return true;
@@ -542,7 +542,7 @@ test("refresh publication does not retry unrelated errors or a failed callback",
       return rename(source, target);
     };
     try {
-      await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; throw originalError; }), (error) => error === originalError);
+      await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; throw originalError; }), (error) => error === originalError);
     } finally { fs.renameSync = rename; }
     assert.equal(attempts, 1);
     assert.equal(work, code === "CALLBACK_FAILURE" ? 1 : 0);
@@ -569,7 +569,7 @@ test("refresh publication retains its original failure and reports an owned clea
     return unlink(file);
   };
   try {
-    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId }, () => { work += 1; }), (error) => {
+    await assert.rejects(withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, () => { work += 1; }), (error) => {
       assert.equal(error, originalError);
       assert.equal(error.cleanupFailure.code, "EACCES");
       return true;

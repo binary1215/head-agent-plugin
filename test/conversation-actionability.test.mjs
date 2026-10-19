@@ -124,7 +124,7 @@ test("default initialized Core has explicit-null direction and no history withou
   assert.equal(entry.workContext.sessionPurpose, null);
   assert.equal(entry.workContext.status, "work_context_not_recorded");
   assert.equal(entry.workContext.coverage.originals, 0);
-  assert.equal(formatCliResult("conversation-enter", entry), "HEAD is ready — continue the task.\n");
+  assert.equal(formatCliResult("conversation-enter", entry), "Lode is ready — continue the task.\n");
 });
 
 test("verified restore preserves exact checkpoint plus newer shared cancellation without rewriting either", async (t) => {
@@ -228,6 +228,6 @@ for (const hasCheckpoint of [false, true]) test(`outdated runtime aggregates HEA
   assert.equal(entry.runtime.state, "project-integration-outdated");
   assert.equal(entry.runtime.restartRequired, true);
   assert.deepEqual(entry.blockedOperations, ["new-plugin-capabilities"]);
-  assert.match(formatCliResult("conversation-enter", entry), /HEAD follow-up: Converge the project integration, then restart the Host/u);
+  assert.match(formatCliResult("conversation-enter", entry), /Lode follow-up: Converge the project integration, then restart the Host/u);
   assert.equal(entry.projectStatus.readiness.recovery.headActionRequired, false);
 });

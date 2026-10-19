@@ -60,7 +60,7 @@ function coverage(overrides = {}) {
 
 function binding() {
   return {
-    adapterKey: "head.structured-host-observation",
+    adapterKey: "lode.structured-host-observation",
     adapterVersion: "0.1.0",
     sourceScopeDigest: sha("bounded-source-scope"),
     credentialReferenceNames: ["HEAD_TEST_SOURCE_TOKEN"],
@@ -69,7 +69,7 @@ function binding() {
 
 function fileBinding(source = "bounded-ci-event-file") {
   return {
-    adapterKey: "head.json-event-file-observation",
+    adapterKey: "lode.json-event-file-observation",
     adapterVersion: "0.1.0",
     sourceScopeDigest: sha(source),
     credentialReferenceNames: ["HEAD_TEST_CI_TOKEN"],
@@ -170,7 +170,7 @@ test("collects product-shaped CI events through a process-local Host registry wi
     sourceKey: "ci-main",
     binding: fileBinding(),
     descriptor: type,
-    adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }),
+    adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }, storage),
   });
   assert.equal(registered.stateLocation, "host-local-outside-project");
   assert.equal(registered.productMeaningAssigned, false);
@@ -201,7 +201,7 @@ test("bounds Host source projection without imposing an arbitrary registration g
   const eventFile = path.join(hostRoot, "event.json");
   fs.writeFileSync(eventFile, JSON.stringify(event()));
   const type = descriptor("example.ci.build-result", [{ key: "succeeded", type: "boolean", required: true }], ["event"]);
-  const adapter = new JsonEventFileObservationAdapter({ descriptor: type, eventFile });
+  const adapter = new JsonEventFileObservationAdapter({ descriptor: type, eventFile }, storage);
   const registry = new ObservationAdapterRegistry();
   registry.register({ projectRoot: root, sourceKey: "ci-main", binding: fileBinding(), descriptor: type, adapter });
   assert.throws(() => registry.register({ projectRoot: root, sourceKey: "ci-main", binding: fileBinding(), descriptor: type, adapter }), { code: "DUPLICATE_OBSERVATION_ADAPTER_SOURCE" });
@@ -209,7 +209,7 @@ test("bounds Host source projection without imposing an arbitrary registration g
   assert.throws(() => new JsonEventFileObservationAdapter({ descriptor: type, eventFile: "relative-event.json" }), { code: "INVALID_OBSERVATION_EVENT_FILE" });
   assert.throws(() => new JsonEventFileObservationAdapter({ descriptor: type, eventFile, maxBytes: 512 * 1024 + 1 }), { code: "INVALID_OBSERVATION_EVENT_FILE_BOUND" });
   const tiny = new ObservationAdapterRegistry();
-  tiny.register({ projectRoot: root, sourceKey: "tiny", binding: fileBinding("tiny"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile, maxBytes: 1 }) });
+  tiny.register({ projectRoot: root, sourceKey: "tiny", binding: fileBinding("tiny"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile, maxBytes: 1 }, storage) });
   await assert.rejects(() => tiny.collect({ root, sourceKey: "tiny" }), (error) => error.code === "UNSAFE_OBSERVATION_EVENT_FILE");
   fs.writeFileSync(eventFile, JSON.stringify({ ...event(), unexpected: true }));
   await assert.rejects(() => registry.collect({ root, sourceKey: "ci-main" }), (error) => error.code === "INVALID_OBSERVATION_SOURCE_EVENT");
@@ -220,7 +220,7 @@ test("bounds Host source projection without imposing an arbitrary registration g
     sourceKey: `source-${index}`,
     binding: fileBinding(`scope-${index}`),
     descriptor: type,
-    adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }),
+    adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }, storage),
     availability: index % 2 ? { state: "ready", observedAt: "2026-09-01T01:00:00.000Z" } : { state: "unavailable", observedAt: "2026-09-01T01:00:00.000Z", reasonCode: "maintenance" },
   });
   const status = bounded.inspect({ root });
@@ -239,7 +239,7 @@ test("bounds Host source projection without imposing an arbitrary registration g
   const secondPage = bounded.inspect({ root, availabilityState: "ready", limit: 10, projectionId: readyPage.nextCursor.projectionId, cursor: readyPage.nextCursor.sourceId });
   assert.equal(secondPage.sources.length, 10);
   assert.notEqual(secondPage.sources[0].sourceId, readyPage.sources[0].sourceId);
-  bounded.register({ projectRoot: root, sourceKey: "source-new", binding: fileBinding("scope-new"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }), availability: { state: "ready" } });
+  bounded.register({ projectRoot: root, sourceKey: "source-new", binding: fileBinding("scope-new"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }, storage), availability: { state: "ready" } });
   const resynchronized = bounded.inspect({ root, availabilityState: "ready", limit: 10, projectionId: readyPage.nextCursor.projectionId, cursor: readyPage.nextCursor.sourceId });
   assert.equal(resynchronized.resynchronization.occurred, true);
   assert.equal(resynchronized.resynchronization.restartedAtFirstPage, true);
@@ -248,7 +248,7 @@ test("bounds Host source projection without imposing an arbitrary registration g
   assert.throws(() => bounded.inspect({ root, availabilityState: "healthy" }), { code: "INVALID_OBSERVATION_ADAPTER_INSPECTION_FILTER" });
   assert.throws(() => bounded.register({ projectRoot: root, sourceKey: "invalid-availability", binding: fileBinding("invalid-availability"), descriptor: type, adapter, availability: { state: "ready", reasonCode: "not-ready" } }), { code: "INVALID_OBSERVATION_SOURCE_AVAILABILITY" });
   const wideType = descriptor("example.wide.event", Array.from({ length: 20 }, (_, index) => ({ key: `field-${index}`, type: "boolean", required: false })), ["event"]);
-  bounded.register({ projectRoot: root, sourceKey: "wide-source", binding: fileBinding("wide-source"), descriptor: wideType, adapter: new JsonEventFileObservationAdapter({ descriptor: wideType, eventFile }) });
+  bounded.register({ projectRoot: root, sourceKey: "wide-source", binding: fileBinding("wide-source"), descriptor: wideType, adapter: new JsonEventFileObservationAdapter({ descriptor: wideType, eventFile }, storage) });
   const wide = bounded.inspect({ root, typeKey: "example.wide.event" });
   assert.equal(wide.matchingSourceCount, 1);
   assert.equal(wide.sources[0].shape.fields.length, 16);
@@ -270,7 +270,7 @@ test("exposes the JSON event-file reference adapter through the advanced Host CL
   const sources = inspectObservationSources();
   assert.equal(sources.adapters.some((adapterValue) => adapterValue.adapterKey === "head.json-event-file-observation"), true);
   assert.equal(sources.registry.persisted, false);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_observation_file_ingest"), false);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_observation_file_ingest"), false);
 
   const replay = await ingestJsonObservationEventFile({ root, sourceKey: "release-health", binding: fileBinding("release-health"), descriptor: type, eventFile });
   assert.equal(replay.status, "existing");
@@ -300,7 +300,7 @@ test("preflights the local project before a Host adapter can perform external co
 
 test("lets CLI and MCP collect a Host-injected source by opaque ID without user-authored provenance", async (t) => {
   const { root, storage, layout } = fixture();
-  const { root: otherRoot } = fixture();
+  const { root: otherRoot, storage: otherStorage } = fixture();
   const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   t.after(() => fs.rmSync(otherRoot, { recursive: true, force: true }));
@@ -309,8 +309,8 @@ test("lets CLI and MCP collect a Host-injected source by opaque ID without user-
   const type = descriptor("example.configured.health", [{ key: "healthy", type: "boolean", required: true }], ["event"]);
   fs.writeFileSync(eventFile, JSON.stringify(event({ eventKey: "configured-9", subjectType: "example.configured.target", payload: { healthy: true } })));
   const registry = new ObservationAdapterRegistry();
-  const registered = registry.register({ projectRoot: root, sourceKey: "configured-health", binding: fileBinding("configured-health"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }) });
-  const otherRegistered = registry.register({ projectRoot: otherRoot, sourceKey: "configured-health", binding: fileBinding("configured-health"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }) });
+  const registered = registry.register({ projectRoot: root, sourceKey: "configured-health", binding: fileBinding("configured-health"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }, storage) });
+  const otherRegistered = registry.register({ projectRoot: otherRoot, sourceKey: "configured-health", binding: fileBinding("configured-health"), descriptor: type, adapter: new JsonEventFileObservationAdapter({ descriptor: type, eventFile }, otherStorage) });
   assert.notEqual(otherRegistered.sourceId, registered.sourceId);
   await assert.rejects(() => registry.collect({ root: otherRoot, sourceId: registered.sourceId }), (error) => error.code === "OBSERVATION_ADAPTER_SOURCE_PROJECT_MISMATCH");
 
@@ -342,15 +342,15 @@ test("lets CLI and MCP collect a Host-injected source by opaque ID without user-
   assert.equal(mcpCollected.result.structuredContent.observation.observationId, cliCollected.observation.observationId);
   const unavailable = await dispatchMcp({ jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "head_observation_collect_source", arguments: { project_root: root, source_id: registered.sourceId } } });
   assert.match(unavailable.error.message, /No trusted Host Observation adapter registry/);
-  const sourceTool = mcpTools.find((tool) => tool.name === "head_observation_collect_source");
+  const sourceTool = mcpTools.find((tool) => tool.name === "lode_observation_collect_source");
   assert.deepEqual(Object.keys(sourceTool.inputSchema.properties).sort(), ["project_root", "session_id", "source_id"]);
   const mcpPrepared = await dispatchMcp({ jsonrpc: "2.0", id: 23, method: "tools/call", params: { name: "head_observation_prepare", arguments: { project_root: root, type_key: "example.configured.health" } } }, { observationRegistry: registry });
   assert.equal(mcpPrepared.result.structuredContent.existing.returned, 1);
   assert.equal(mcpPrepared.result.structuredContent.configuredSources.sources[0].sourceId, registered.sourceId);
-  const prepareTool = mcpTools.find((tool) => tool.name === "head_observation_prepare");
+  const prepareTool = mcpTools.find((tool) => tool.name === "lode_observation_prepare");
   assert.equal(prepareTool.annotations.readOnlyHint, true);
   assert.equal(prepareTool.inputSchema.required.includes("type_key"), true);
-  const sourcesTool = mcpTools.find((tool) => tool.name === "head_observation_sources");
+  const sourcesTool = mcpTools.find((tool) => tool.name === "lode_observation_sources");
   assert.deepEqual(["cursor", "projection_id"].every((key) => Object.hasOwn(sourcesTool.inputSchema.properties, key)), true);
   assert.equal(projectArtifactText(root, layout), artifactsBeforePrepare);
 });
@@ -386,7 +386,7 @@ test("records deterministic derivation without promoting causal or product meani
   const sourceDescriptor = descriptor("example.runtime.error-count", [{ key: "count", type: "nonnegative-integer", required: true }], ["aggregate"]);
   const first = await ingestStructuredObservation({ root, binding: binding(), descriptor: sourceDescriptor, input: input({ suffix: "before", subjectType: "example.runtime.service", payload: { count: 2 }, form: "aggregate" }) });
   const second = await ingestStructuredObservation({ root, binding: binding(), descriptor: sourceDescriptor, input: input({ suffix: "after", subjectType: "example.runtime.service", payload: { count: 5 }, form: "aggregate" }) });
-  const comparisonDescriptor = createObservationTypeDescriptor(descriptor("example.runtime.error-count-delta", [{ key: "delta", type: "integer", required: true }], ["aggregate"]));
+  const comparisonDescriptor = createObservationTypeDescriptor(descriptor("example.runtime.error-count-delta", [{ key: "delta", type: "integer", required: true }], ["aggregate"]), storage);
   const derived = recordDerivedObservation({ root, descriptor: comparisonDescriptor, input: {
     subject: { type: "example.runtime.service", key: "global" },
     temporalScope: { observedAt: "2026-09-01T00:05:00.000Z", start: "2026-08-31T23:00:00.000Z", end: "2026-09-01T00:00:00.000Z" },
@@ -439,7 +439,7 @@ test("exposes the same bounded contract through CLI and MCP while requiring Host
   assert.equal(accepted.result.structuredContent.observation.observationId, cli.observation.observationId);
   const queried = await dispatchMcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "head_observation_query", arguments: { project_root: root, type_key: type.typeKey, limit: 1 } } });
   assert.equal(queried.result.structuredContent.results[0].observationId, cli.observation.observationId);
-  const itemsType = mcpTools.find((tool) => tool.name === "head_observation_ingest").inputSchema.properties.descriptor.properties.payload_schema.properties.fields.items.properties.items_type.enum;
+  const itemsType = mcpTools.find((tool) => tool.name === "lode_observation_ingest").inputSchema.properties.descriptor.properties.payload_schema.properties.fields.items.properties.items_type.enum;
   assert.equal(itemsType.includes("enum"), false);
 });
 
@@ -566,7 +566,7 @@ test("publishes one Observation and one receipt when divergent writers collide a
   fs.linkSync = function (source, destination, ...rest) {
     if (!injected && path.dirname(path.resolve(String(destination))) === recordDirectory && String(destination).endsWith(".json")) {
       injected = true;
-      const adapter = new StructuredObservationAdapter({ descriptor: type, input: secondInput });
+      const adapter = new StructuredObservationAdapter({ descriptor: type, input: secondInput }, storage);
       try {
         secondResult = recordCollectedObservation({ root, descriptor: type, input: secondInput, adapterDescriptor: adapter.describe(), sourceScopeDigest: binding().sourceScopeDigest });
       } catch (error) { secondError = error; }

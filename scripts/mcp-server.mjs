@@ -19,7 +19,7 @@ import { sessionCallRequiresBinding } from "./lib/session-routing.mjs";
 import { createNativeSessionHostBridge } from "./lib/session-native-host.mjs";
 import { SESSION_HOST_REQUEST_HELPER } from "./lib/session-host-request.mjs";
 import fs from "node:fs";
-import { resolveProjectStorage } from "./lib/project-storage-format.mjs";
+import { resolveProjectStorage, familyFormatForOriginal } from "./lib/project-storage-format.mjs";
 
 const protocolVersion = "2024-11-05";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -2227,6 +2227,7 @@ async function initializeGraphDbFromMcp(args, transport) {
   );
   return (await import("./lib/arcadedb-database-lifecycle.mjs")).initializeArcadeDbDatabase({
     root: args.project_root,
+    storage: resolveProjectStorage(args.project_root),
     resetIncompatible: args.reset_incompatible === true,
     confirmDatabase: args.confirm_database || "",
     transport,
@@ -2252,6 +2253,7 @@ async function continueSessionFromMcp(args, coordinationWorkspaceHost) {
   const restored = (await import("./lib/session-recovery.mjs")).restoreSessionFromArtifacts({
     root: args.project_root, checkpointId: args.checkpoint_id || null,
   });
+  const restoredFormat = familyFormatForOriginal("head-agent-core-artifact-session-restore", restored.projection);
   if (coordinationWorkspaceHost.projectRoot) {
     const requested = fs.realpathSync(path.resolve(args.project_root));
     const injected = fs.realpathSync(path.resolve(coordinationWorkspaceHost.projectRoot));
@@ -2265,7 +2267,7 @@ async function continueSessionFromMcp(args, coordinationWorkspaceHost) {
   try {
     hostAttachment = coordinationWorkspaceHost.adapter.attach({
       caller: coordinationWorkspaceHost.caller,
-      boundary: { projectId: restored.projection.projectId, headSessionId: restored.projection.sessionId, role: "head", projectRoot: fs.realpathSync(path.resolve(args.project_root)) },
+      boundary: { projectId: restored.projection.projectId, [restoredFormat.sessionIdField]: restored.projection.sessionId, role: "head", projectRoot: fs.realpathSync(path.resolve(args.project_root)) },
     });
   } catch (error) {
     if (["WORKSPACE_HOST_PROJECT_MISMATCH", "STALE_WORKSPACE_HOST_ATTACHMENT", "INVALID_WORKSPACE_HOST_BOUNDARY"].includes(error?.code)) throw error;
@@ -2681,7 +2683,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                 : name === "head_graphdb_projection_status"
                   ? (await import("./lib/graphdb-projection-activation.mjs")).inspectArcadeDbGraphProjectionStatus({ root: args.project_root, transport: graphDbTransport })
                 : name === "head_graphdb_database_status"
-                  ? (await import("./lib/arcadedb-database-lifecycle.mjs")).inspectArcadeDbDatabaseCompatibility({ root: args.project_root, transport: graphDbTransport })
+                  ? (await import("./lib/arcadedb-database-lifecycle.mjs")).inspectArcadeDbDatabaseCompatibility({ root: args.project_root, transport: graphDbTransport, storage: resolveProjectStorage(args.project_root) })
                 : name === "head_graphdb_connection_preflight"
                   ? (await import("./lib/graphdb-projection-activation.mjs")).inspectArcadeDbCredentialPreflight({ root: args.project_root, transport: graphDbTransport, storage: resolveProjectStorage(args.project_root) })
                 : name === "head_graphdb_database_initialize"

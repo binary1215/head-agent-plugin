@@ -42,7 +42,7 @@ function snapshot(root) {
 }
 async function record(root, index, typeKey = "example.query.a") {
   return ingestStructuredObservation({ root, descriptor: descriptor(typeKey),
-    binding: { adapterKey: "head.structured-host-observation", adapterVersion: "0.1.0",
+    binding: { adapterKey: "lode.structured-host-observation", adapterVersion: "0.1.0",
       sourceScopeDigest: digest("fixture-scope"), credentialReferenceNames: [] },
     input: { subject: { type: "example.unit", key: "unit" }, form: "event",
       temporalScope: { observedAt: `2026-10-0${index + 1}T00:00:00.000Z`, start: null, end: null },

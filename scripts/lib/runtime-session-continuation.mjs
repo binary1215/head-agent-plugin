@@ -92,7 +92,9 @@ export function continueSessionFromArtifacts({
 } = {}) {
   const selectedRuntime = runtimeName(runtime);
   const before = restoreSessionFromArtifacts({ root, checkpointId });
-  const format = formatForVerifiedOwner(storage ?? before.storage);
+  const format = storage == null
+    ? familyFormatForOriginal("head-agent-core-artifact-session-restore", before.projection)
+    : formatForVerifiedOwner(storage);
   let attachment = null;
   let status = "fresh-logical-head";
   let disclosure = attachmentRequested ? "provider-attachment-unavailable" : "provider-attachment-not-requested";

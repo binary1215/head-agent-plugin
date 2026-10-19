@@ -132,7 +132,9 @@ test("CLI explicit kind and typed MCP match without changing legacy --symbol", a
 test("parenthesized decorators, overloads, tab header and reordered selection keys remain usable", async (t) => {
   const source = '@(\n    decorate\n)\n@other("a  b")\ndef\tf(value: str = "😀", /, *, flag=True): return value\n@overload\ndef dup(x: str): ...\n@overload\ndef dup(x: int): ...\n';
   const { root, storage } = project(t, source);
-  const outline = details(await query(root, [need("declarations")]));
+  const outlineResult = await query(root, [need("declarations")]);
+  assert.equal(outlineResult.status, "observed", JSON.stringify(outlineResult.results));
+  const outline = details(outlineResult);
   const first = outline.declarations[0];
   const reordered = Object.fromEntries(Object.entries(first.selection).reverse());
   reordered.range = { end: first.range.end, start: first.range.start };

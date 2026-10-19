@@ -133,7 +133,7 @@ test("missing evidence reports meaningful unknowns without a semantic or executi
   assert.equal(capsule.evidenceGaps[0].available, 0);
   assert.equal(capsule.evidenceGaps[0].selected, 0);
   assert.equal(capsule.evidenceGaps[0].reason, "matching-evidence-unavailable");
-  assert.equal(capsule.semanticSufficiencyOwner, "HEAD");
+  assert.equal(capsule.semanticSufficiencyOwner, "Lode");
   assert.equal(readContextCapsule({ root, capsuleId: capsule.capsuleId }).capsule.capsuleId, capsule.capsuleId);
 });
 

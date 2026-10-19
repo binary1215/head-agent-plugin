@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { ARCADEDB_GRAPH_RESERVED_SCHEMA } from "../scripts/lib/graph-projection-adapter.mjs";
-import { ARCADEDB_REQUIRED_KEYS } from "../scripts/lib/arcadedb-schema-contract.mjs";
+import { arcadeDbGraphReservedSchemaFor } from "../scripts/lib/graph-projection-adapter.mjs";
+import { arcadeDbRequiredKeysFor } from "../scripts/lib/arcadedb-schema-contract.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -642,8 +642,8 @@ test("defines deterministic provider-neutral runtime contracts while every contr
   assert.equal(first.protocolEvidence.summary.rawPathsExposed, false);
   assert.equal(first.protocolEvidence.summary.rawOutputExposed, false);
   assert.equal(first.protocolEvidence.summary.rawCommandsExposed, false);
-  assert.equal(first.projectBinding.bindingBoundary.headProjectIdentityCanonical, true);
-  assert.equal(first.projectBinding.bindingBoundary.headSessionIdentityCanonical, true);
+  assert.equal(first.projectBinding.bindingBoundary.lodeProjectIdentityCanonical, true);
+  assert.equal(first.projectBinding.bindingBoundary.lodeSessionIdentityCanonical, true);
   assert.equal(first.projectBinding.bindingBoundary.providerSessionIdentityCanonical, false);
   assert.equal(first.projectBinding.bindingBoundary.actualProviderSessionBindingValidated, false);
   assert.equal(first.projectBinding.bindingBoundary.runtimeControlEnabled, false);
@@ -713,10 +713,10 @@ test("binds a Run to an Execution Contract, Result Packet, and ReviewDecision", 
     acceptanceCriteria: ["Tests pass", "Result includes direct evidence"],
     forbiddenActions: ["Deploy without user authority"],
   });
-  assert.equal(contract.artifact.contextAcceptance.authority, "HEAD");
+  assert.equal(contract.artifact.contextAcceptance.authority, "Lode");
   assert.equal(Object.hasOwn(contract.artifact.contextAcceptance, "evidenceNeedSetDigest"), false);
   assert.equal(Object.hasOwn(contract.artifact.contextAcceptance, "coverageProofDigest"), false);
-  assert.equal(contract.artifact.contextAcceptance.semanticJudgmentSource, "HEAD-not-context-compiler");
+  assert.equal(contract.artifact.contextAcceptance.semanticJudgmentSource, "Lode-not-context-compiler");
   const started = startRun({ root, executionContractId: contract.artifact.executionContractId });
   assert.match(started.run.runId, /^run-/);
   assert.equal(started.run.executionContractId, contract.artifact.executionContractId);
@@ -1171,6 +1171,7 @@ test("adds optional source-separated AST relation evidence without replacing the
   const evidence = adapter.collect({
     projectId: indexed.snapshot.projectId,
     files: indexed.snapshot.files.map((file) => ({ path: file.path, digest: file.digest, language: file.language })),
+    storage: inspectProject(root).storage,
   });
   assert.equal(verifySourceRelationEvidenceSet(evidence).instructionAuthority, false);
   assert.throws(() => buildSourceRelationEvidenceSet({
@@ -1193,7 +1194,7 @@ test("adds optional source-separated AST relation evidence without replacing the
       evidence: { path: "src/caller.mjs", line: 2, digest: "0".repeat(64) },
       language: "javascript",
     }],
-  });
+  }, inspectProject(root).storage);
   await assert.rejects(buildWorldModel({
     root,
     persist: false,
@@ -1497,8 +1498,8 @@ test("coalesces bounded filesystem and CI triggers into serialized authority-fre
     { kind: "path-hint", operation: "change", path: ".head/internal.json", evidenceId: null },
   ];
   const projectId = inspectProject(root).project.projectId;
-  const canonicalBatch = buildRefreshTriggerBatch({ projectId, sourceKind: "ci", events, managedRootFiles: ["AGENTS.md"] });
-  const reorderedBatch = buildRefreshTriggerBatch({ projectId, sourceKind: "ci", events: [...events].reverse(), managedRootFiles: ["AGENTS.md"] });
+  const canonicalBatch = buildRefreshTriggerBatch({ projectId, sourceKind: "ci", events, managedRootFiles: ["AGENTS.md"] }, layout);
+  const reorderedBatch = buildRefreshTriggerBatch({ projectId, sourceKind: "ci", events: [...events].reverse(), managedRootFiles: ["AGENTS.md"] }, layout);
   assert.equal(canonicalBatch.triggerBatchId, reorderedBatch.triggerBatchId);
   assert.deepEqual(canonicalBatch.eventSummary, {
     inputEventCount: 4,
@@ -1527,7 +1528,7 @@ test("coalesces bounded filesystem and CI triggers into serialized authority-fre
     projectId,
     sourceKind: "ci",
     events: [{ kind: "path-hint", operation: "change", path: "../escape.mjs", evidenceId: null }],
-  }), { code: "INVALID_REFRESH_TRIGGER_PATH" });
+  }, layout), { code: "INVALID_REFRESH_TRIGGER_PATH" });
   const boundedBatch = buildRefreshTriggerBatch({
     projectId,
     sourceKind: "ci",
@@ -1536,7 +1537,7 @@ test("coalesces bounded filesystem and CI triggers into serialized authority-fre
       { kind: "project-signal", operation: "build", path: null, evidenceId: "ci-build-0003" },
       { kind: "project-signal", operation: "test", path: null, evidenceId: "ci-test-0003" },
     ],
-  });
+  }, layout);
   assert.equal(boundedBatch.events.length, 1);
   assert.deepEqual(boundedBatch.eventSummary.discardedReasons, [{ reason: "event-limit-exceeded", count: 1 }]);
   assert.equal(boundedBatch.requiresRescan, true);
@@ -1695,7 +1696,7 @@ test("coalesces bounded filesystem and CI triggers into serialized authority-fre
   const retryStatus = await retryQueue.close({ flush: false });
   assert.equal(retryStatus.consecutiveBusyRetries, 0);
 
-  await withRefreshWriterLease({ projectRoot: root, projectId }, async (writerLease) => {
+  await withRefreshWriterLease({ projectRoot: root, projectId, storage: layout }, async (writerLease) => {
     await assert.rejects(refreshWorldModel({ root }), { code: "REFRESH_WRITER_BUSY" });
     await assert.rejects(buildWorldModel({ root }), { code: "REFRESH_WRITER_BUSY" });
     const nestedWorldBuild = await buildWorldModel({ root, writerLease });
@@ -2114,7 +2115,8 @@ test("records deterministic prepared traversal cost without making latency seman
 });
 
 class MockArcadeDbTransport {
-  constructor({ failureCode = "", traversalFault = "", failCheckpointAfter = -1 } = {}) {
+  constructor({ failureCode = "", traversalFault = "", failCheckpointAfter = -1, storage = null } = {}) {
+    this.storage = storage;
     this.failureCode = failureCode;
     this.traversalFault = traversalFault;
     this.failCheckpointAfter = failCheckpointAfter;
@@ -2155,9 +2157,9 @@ class MockArcadeDbTransport {
   databaseExists() { this.check(); return true; }
   createDatabase() { this.check(); return true; }
   dropDatabase() { this.check(); return true; }
-  readSchemaTypes() { this.check(); return ARCADEDB_GRAPH_RESERVED_SCHEMA.map((type) => ({ name: type.name, type: type.type,
+  readSchemaTypes() { this.check(); return arcadeDbGraphReservedSchemaFor(this.storage).map((type) => ({ name: type.name, type: type.type,
     properties: Object.entries(type.properties).map(([name, type]) => ({ name, type })),
-    indexes: [{ properties: [...ARCADEDB_REQUIRED_KEYS[type.name]], unique: true }] })); }
+    indexes: [{ properties: [...arcadeDbRequiredKeysFor(this.storage)[type.name]], unique: true }] })); }
   readPointer(projectId) { this.check(); this.readPointerCount += 1; return this.pointers.get(projectId) ?? null; }
   readSnapshot(projectId, id) { this.check(); this.readSnapshotCount += 1; return this.snapshots.get(`${projectId}:${id}`) ?? null; }
   writePointer(projectId, pointerJson) { this.check(); this.pointers.set(projectId, pointerJson); }
@@ -2287,7 +2289,7 @@ class MockArcadeDbTransport {
     const visitedNodes = new Set(anchorIds);
     const visitedEdges = new Set();
     const records = anchorIds.map((nodeId) => ({
-      recordType: "HeadAgentGraphNode",
+      recordType: formatForVerifiedOwner(this.storage).kind("HeadAgentGraphNode"),
       nodeJson: JSON.stringify(nodesById.get(nodeId)),
       edgeJson: null,
       recordDepth: 0,
@@ -2299,7 +2301,7 @@ class MockArcadeDbTransport {
         if ((!frontier.has(edge.from) && !frontier.has(edge.to)) || visitedEdges.has(edge.edgeId)) continue;
         visitedEdges.add(edge.edgeId);
         records.push({
-          recordType: "HeadAgentGraphEdge",
+          recordType: formatForVerifiedOwner(this.storage).kind("HeadAgentGraphEdge"),
           nodeJson: null,
           edgeJson: JSON.stringify(edge),
           recordDepth: (level * 2) + 1,
@@ -2310,7 +2312,7 @@ class MockArcadeDbTransport {
         if (!next.has(node.nodeId)) continue;
         visitedNodes.add(node.nodeId);
         records.push({
-          recordType: "HeadAgentGraphNode",
+          recordType: formatForVerifiedOwner(this.storage).kind("HeadAgentGraphNode"),
           nodeJson: JSON.stringify(node),
           edgeJson: null,
           recordDepth: (level + 1) * 2,
@@ -2341,6 +2343,7 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   const onboarding = await startOnboarding({
     root,
     mode: "existing",
@@ -2352,17 +2355,17 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
     },
   });
   assert.equal(onboarding.storageSelection.graphdb.capabilityStatus, "pending-unverified-adapter");
-  assert.equal(runCommand(["help"]).commands.includes("head world-graph-remote-activate <project>"), false);
+  assert.equal(runCommand(["help"]).commands.includes("lode world-graph-remote-activate <project>"), false);
   assert.equal(runCommand(["help"]).surface, "light-default");
   assert.equal(runCommand(["help"]).laneRecommendationRequired, false);
-  assert.equal(runCommand(["help-all"]).commands.includes("head world-graph-remote-activate <project>"), true);
+  assert.equal(runCommand(["help-all"]).commands.includes("lode world-graph-remote-activate <project>"), true);
   assert.equal(runCommand(["help-all"]).surface, "ordinary-complete");
   assert.equal(mcpTools.some((tool) => tool.name === "lode_graphdb_projection_status"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "lode_graphdb_database_initialize"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "lode_graphdb_projection_activate"), true);
-  assert.equal(inspectArcadeDbGraphProjectionActivation({ projectRoot: root }).status, "pending-activation");
+  assert.equal(inspectArcadeDbGraphProjectionActivation({ projectRoot: root, storage }).status, "pending-activation");
 
-  const transport = new MockArcadeDbTransport();
+  const transport = new MockArcadeDbTransport({ storage });
   const preActivationGraph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
   transport.topologies.set(`${onboarding.storageSelection.projectId}:${preActivationGraph.graphSnapshotId}`, {
     topologyJson: null,
@@ -2433,8 +2436,8 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   assert.equal(activated.incrementalSync.localMirrorVerified, true);
   assert.equal(JSON.stringify(activated).includes("HEAD_GRAPHDB_PASSWORD"), false);
 
-  const interruptedTransport = new MockArcadeDbTransport({ failCheckpointAfter: 1 });
-  const interruptedAdapter = new ArcadeDbGraphProjectionAdapter({
+  const interruptedTransport = new MockArcadeDbTransport({ storage, failCheckpointAfter: 1 });
+  const interruptedAdapter = new ArcadeDbGraphProjectionAdapter({ storage,
     storageSelection: onboarding.storageSelection,
     transport: interruptedTransport,
     topologyRequired: true,
@@ -2445,27 +2448,27 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
     { code: "ARCADEDB_WRITE_OUTCOME_UNKNOWN" },
   );
   assert.equal(interruptedTransport.readPointer(onboarding.storageSelection.projectId), null);
-  const resumedAdapter = new ArcadeDbGraphProjectionAdapter({
+  const resumedAdapter = new ArcadeDbGraphProjectionAdapter({ storage,
     storageSelection: onboarding.storageSelection,
     transport: interruptedTransport,
     topologyRequired: true,
     incrementalSyncRequired: true,
   });
   resumedAdapter.writeSnapshot(preActivationGraph.graphSnapshotId, preActivationGraph);
-  resumedAdapter.writePointer(buildGraphProjectionPointer(preActivationGraph));
+  resumedAdapter.writePointer(buildGraphProjectionPointer(preActivationGraph, inspectProject(root).storage));
   const resumedSync = resumedAdapter.takeCompletedIncrementalSync();
   assert.equal(resumedSync.syncState.resumedBatchCount >= 1, true);
   assert.equal(resumedSync.syncState.appliedBatchCount + resumedSync.syncState.resumedBatchCount, resumedSync.manifest.batchCount);
 
-  const conflictTransport = new MockArcadeDbTransport();
-  const conflictAdapter = new ArcadeDbGraphProjectionAdapter({
+  const conflictTransport = new MockArcadeDbTransport({ storage });
+  const conflictAdapter = new ArcadeDbGraphProjectionAdapter({ storage,
     storageSelection: onboarding.storageSelection,
     transport: conflictTransport,
     topologyRequired: true,
     incrementalSyncRequired: true,
   });
   conflictAdapter.writeSnapshot(preActivationGraph.graphSnapshotId, preActivationGraph);
-  const externallyAdvancedPointer = buildGraphProjectionPointer(preActivationGraph);
+  const externallyAdvancedPointer = buildGraphProjectionPointer(preActivationGraph, inspectProject(root).storage);
   conflictTransport.pointers.set(onboarding.storageSelection.projectId, JSON.stringify(externallyAdvancedPointer));
   assert.throws(
     () => conflictAdapter.writePointer(externallyAdvancedPointer),
@@ -2473,7 +2476,7 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   );
   assert.equal(conflictTransport.readPointer(onboarding.storageSelection.projectId), JSON.stringify(externallyAdvancedPointer));
 
-  const conflictingPartialTransport = new MockArcadeDbTransport();
+  const conflictingPartialTransport = new MockArcadeDbTransport({ storage });
   const conflictingNode = JSON.parse(JSON.stringify(preActivationGraph.nodes[0]));
   conflictingNode.freshness = "stale";
   conflictingPartialTransport.topologies.set(`${onboarding.storageSelection.projectId}:${preActivationGraph.graphSnapshotId}`, {
@@ -2481,13 +2484,13 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
     nodeJsons: [JSON.stringify(conflictingNode)],
     edgeJsons: [],
   });
-  const conflictingPartialAdapter = new ArcadeDbGraphProjectionAdapter({
+  const conflictingPartialAdapter = new ArcadeDbGraphProjectionAdapter({ storage,
     storageSelection: onboarding.storageSelection,
     transport: conflictingPartialTransport,
   });
   assert.throws(() => conflictingPartialAdapter.materializeTopology(preActivationGraph), { code: "ARCADEDB_GRAPH_TOPOLOGY_CONTENT_MISMATCH" });
 
-  const configured = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, transport });
+  const configured = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, storage, transport });
   assert.ok(configured instanceof ActivatedArcadeDbGraphProjectionAdapter);
   const remoteStatus = inspectArcadeDbGraphProjectionStatus({ root, transport });
   assert.equal(remoteStatus.status, "verified-active-current");
@@ -2535,15 +2538,15 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
     ["truncated", "ARCADEDB_SERVER_TRAVERSAL_TRUNCATED"],
     ["manifest", "ARCADEDB_GRAPH_TOPOLOGY_DIGEST_MISMATCH"],
   ]) {
-    const faultyTransport = new MockArcadeDbTransport({ traversalFault });
+    const faultyTransport = new MockArcadeDbTransport({ storage, traversalFault });
     faultyTransport.snapshots = new Map(transport.snapshots);
     faultyTransport.pointers = new Map(transport.pointers);
     faultyTransport.topologies = new Map(transport.topologies);
-    const faulty = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, transport: faultyTransport });
+    const faulty = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, storage, transport: faultyTransport });
     assert.throws(() => queryWorldTemporalGraph({ root, graphProjectionAdapter: faulty, ...query }), { code });
   }
 
-  const legacyClientMode = new ArcadeDbGraphProjectionAdapter({
+  const legacyClientMode = new ArcadeDbGraphProjectionAdapter({ storage,
     storageSelection: onboarding.storageSelection,
     transport,
     topologyRequired: true,
@@ -2562,18 +2565,18 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   assert.throws(() => inspectArcadeDbGraphProjectionStatus({ root, transport }), { code: "ARCADEDB_GRAPH_TOPOLOGY_CONTENT_MISMATCH" });
   transport.topologies.set(topologyKey, exactTopology);
 
-  const topologyReceipt = inspectArcadeDbGraphTopologyActivation({ projectRoot: root, graph });
+  const topologyReceipt = inspectArcadeDbGraphTopologyActivation({ projectRoot: root, storage, graph });
   const exactTopologyActivation = JSON.parse(fs.readFileSync(topologyReceipt.activationFile, "utf8"));
   fs.writeFileSync(topologyReceipt.activationFile, JSON.stringify({ ...exactTopologyActivation, nodeCount: exactTopologyActivation.nodeCount + 1 }));
-  assert.throws(() => inspectArcadeDbGraphTopologyActivation({ projectRoot: root, graph }), { code: "ARCADEDB_TOPOLOGY_ACTIVATION_DIGEST_MISMATCH" });
+  assert.throws(() => inspectArcadeDbGraphTopologyActivation({ projectRoot: root, storage, graph }), { code: "ARCADEDB_TOPOLOGY_ACTIVATION_DIGEST_MISMATCH" });
   fs.writeFileSync(topologyReceipt.activationFile, JSON.stringify(exactTopologyActivation));
 
   const unavailable = new ActivatedArcadeDbGraphProjectionAdapter({
-    projectRoot: root,
+    projectRoot: root, storage,
     storageSelection: onboarding.storageSelection,
-    remoteAdapter: new ArcadeDbGraphProjectionAdapter({
+    remoteAdapter: new ArcadeDbGraphProjectionAdapter({ storage,
       storageSelection: onboarding.storageSelection,
-      transport: new MockArcadeDbTransport({ failureCode: "ARCADEDB_TRANSPORT_UNAVAILABLE" }),
+      transport: new MockArcadeDbTransport({ storage, failureCode: "ARCADEDB_TRANSPORT_UNAVAILABLE" }),
     }),
   });
   const fallback = queryWorldTemporalGraph({ root, graphProjectionAdapter: unavailable, ...query });
@@ -2582,42 +2585,42 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   assert.equal(fallback.graphProjection.adapter.fallbackReasonCode, "ARCADEDB_TRANSPORT_UNAVAILABLE");
 
   const rejected = new ActivatedArcadeDbGraphProjectionAdapter({
-    projectRoot: root,
+    projectRoot: root, storage,
     storageSelection: onboarding.storageSelection,
-    remoteAdapter: new ArcadeDbGraphProjectionAdapter({
+    remoteAdapter: new ArcadeDbGraphProjectionAdapter({ storage,
       storageSelection: onboarding.storageSelection,
-      transport: new MockArcadeDbTransport({ failureCode: "ARCADEDB_AUTHENTICATION_FAILED" }),
+      transport: new MockArcadeDbTransport({ storage, failureCode: "ARCADEDB_AUTHENTICATION_FAILED" }),
     }),
   });
   assert.throws(() => inspectWorldGraphProjection({ root, graphProjectionAdapter: rejected }), { code: "ARCADEDB_AUTHENTICATION_FAILED" });
 
   fs.writeFileSync(path.join(root, "src", "topology-refresh.mjs"), "export const topologyRefresh = true;\n");
-  const advancingAdapter = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, transport });
+  const advancingAdapter = createActivatedArcadeDbGraphProjectionAdapter({ projectRoot: root, storage, transport });
   const advanced = await buildWorldModel({ root, graphProjectionAdapter: advancingAdapter });
   const advancedGraph = advanced.snapshot.temporalProvenanceGraph;
-  const advancedTopology = inspectArcadeDbGraphTopologyActivation({ projectRoot: root, graph: advancedGraph });
+  const advancedTopology = inspectArcadeDbGraphTopologyActivation({ projectRoot: root, storage, graph: advancedGraph });
   assert.equal(advancedTopology.status, "verified-active");
   assert.equal(advancedTopology.activation.graphSnapshotId, advancedGraph.graphSnapshotId);
   assert.equal(transport.topologies.has(`${activated.projectId}:${advancedGraph.graphSnapshotId}`), true);
   assert.equal(inspectArcadeDbGraphProjectionStatus({ root, transport }).status, "verified-active-current");
-  const advancedSync = inspectArcadeDbIncrementalSyncReceipt({ projectRoot: root, graph: advancedGraph });
+  const advancedSync = inspectArcadeDbIncrementalSyncReceipt({ projectRoot: root, storage, graph: advancedGraph });
   assert.equal(advancedSync.status, "verified-current");
   const advancedManifest = JSON.parse(transport.syncManifests.get(`${activated.projectId}:${advancedSync.receipt.syncId}`));
   assert.equal(advancedManifest.nodeDelta.carried.count + advancedManifest.nodeDelta.rebased.count > 0, true);
   assert.equal(advancedManifest.edgeDelta.carried.count + advancedManifest.edgeDelta.rebased.count > 0, true);
   assert.equal(advancedManifest.nodeDelta.added.count + advancedManifest.nodeDelta.changed.count < advancedGraph.nodes.length, true);
 
-  const receipt = inspectArcadeDbGraphProjectionActivation({ projectRoot: root });
+  const receipt = inspectArcadeDbGraphProjectionActivation({ projectRoot: root, storage });
   const conformance = JSON.parse(fs.readFileSync(receipt.conformanceFile, "utf8"));
   const tamperedConformance = JSON.parse(JSON.stringify(conformance));
   tamperedConformance.cases[0].resultHash = "0".repeat(64);
   fs.writeFileSync(receipt.conformanceFile, JSON.stringify(tamperedConformance));
-  assert.throws(() => inspectArcadeDbGraphProjectionActivation({ projectRoot: root }), { code: "GRAPH_PROJECTION_CONFORMANCE_DIGEST_MISMATCH" });
+  assert.throws(() => inspectArcadeDbGraphProjectionActivation({ projectRoot: root, storage }), { code: "GRAPH_PROJECTION_CONFORMANCE_DIGEST_MISMATCH" });
   fs.writeFileSync(receipt.conformanceFile, JSON.stringify(conformance));
   const tampered = JSON.parse(fs.readFileSync(receipt.activationFile, "utf8"));
   tampered.activationStatus = "authority";
   fs.writeFileSync(receipt.activationFile, JSON.stringify(tampered));
-  assert.throws(() => inspectArcadeDbGraphProjectionActivation({ projectRoot: root }), { code: "ARCADEDB_ACTIVATION_DIGEST_MISMATCH" });
+  assert.throws(() => inspectArcadeDbGraphProjectionActivation({ projectRoot: root, storage }), { code: "ARCADEDB_ACTIVATION_DIGEST_MISMATCH" });
 });
 
 test("renders deterministic Markdown projections and captures edits as non-authoritative candidates", async (t) => {
@@ -3367,7 +3370,7 @@ test("verifies Go worker distribution identity and discloses safe JavaScript fal
   }
   const resolved = resolveVerifiedGoWorker({ pluginRoot: fixtureRoot });
   assert.match(resolved.manifest.manifestId, /^go-worker-manifest-[a-f0-9]{24}$/);
-  assert.equal(resolved.workerRelativePath, "dist/windows-x64/head-agent-worker.exe");
+  assert.equal(resolved.workerRelativePath, "dist/windows-x64/lode-agent-worker.exe");
 
   const absentRoot = temporaryProject();
   t.after(() => fs.rmSync(absentRoot, { recursive: true, force: true }));

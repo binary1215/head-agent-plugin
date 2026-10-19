@@ -102,7 +102,7 @@ async function fixture(t, { scenario = "native-composition", evidenceMode = "pro
   const hostConnection = buildCodexNativeForkHostConnection({ authorization, policy, workspaceBinding, protocolEvidence, projectBinding,
     supervisorSelection: selection, source, rebind, scenario });
   const options = { root, executionRoot: workspaceBinding.executionRoot, authorization, policy, workspaceBinding, hostModuleFile: moduleFile, hostConnection, onProcess: log };
-  const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
+  const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, storage, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
   const journal = () => fs.readFileSync(path.join(operational, "worker-jobs", authorization.projectId, authorization.authorizationId, "native-host-transcript.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   return { storage, options, root, operational, authorization, selection, lease, journal, detached: () => { detached = true; }, sessionFile: path.join(root, storage.directory, "sessions/current.json") };
 }

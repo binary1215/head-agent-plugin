@@ -292,7 +292,7 @@ test("unverified cleanup retains an incomplete spool and cannot publish a result
   const observed = readRuntimeOutputSpool({ operationalRoot: f.operational, authorization: f.authorization });
   assert.equal(observed.status, "incomplete"); assert.equal(observed.terminal, null); assert.equal(observed.recoveryAuthority, false);
   assert.equal(f.state.journal.at(-1).event, "cleanup-unverified");
-  const lease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: f.authorization.projectId, authorizationId: f.authorization.authorizationId });
+  const lease = inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: f.authorization.projectId, authorizationId: f.authorization.authorizationId });
   assert.equal(lease.release.operationStatus, "threw"); assert.equal(lease.release.lifecycleReceiptId, null);
 });
 
@@ -317,7 +317,7 @@ for (const mismatch of ["authorizationHash", "inputDigest", "policyDigest", "mod
       else options[mismatch] = hash("other-binding");
     } });
     await assert.rejects(f.execute());
-    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: f.authorization.projectId,
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: f.authorization.projectId,
       authorizationId: f.authorization.authorizationId }).consumption, null);
     assert.deepEqual(f.state.calls, []); assert.deepEqual(f.state.cleanups, []);
   });
@@ -485,7 +485,7 @@ for (const [code, status] of [["CODEX_RPC_CANCELLED", "cancelled"], ["CODEX_RPC_
     assert.equal(observed.draft.providerResult, null);
     assert.equal(f.state.cleanups.length, 1);
     assert.equal(f.state.cleanups[0].reason, status === "cancelled" ? "CODEX_NATIVE_FORK_CANCELLED" : "CODEX_NATIVE_FORK_DEADLINE");
-    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: f.authorization.projectId, authorizationId: f.authorization.authorizationId }).status, "consumed-released");
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: f.authorization.projectId, authorizationId: f.authorization.authorizationId }).status, "consumed-released");
   });
 }
 
@@ -496,5 +496,5 @@ test("late cancellation after native terminal settlement does not rewrite succes
   const before = JSON.stringify(observed.receipt);
   controller.abort();
   assert.equal(observed.receipt.status, "completed"); assert.equal(JSON.stringify(observed.receipt), before);
-  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: f.authorization.projectId, authorizationId: f.authorization.authorizationId }).release.operationStatus, "completed");
+  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: f.authorization.projectId, authorizationId: f.authorization.authorizationId }).release.operationStatus, "completed");
 });

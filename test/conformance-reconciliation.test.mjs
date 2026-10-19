@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { refreshWorldModel } from "../scripts/lib/incremental-refresh.mjs";
 import {
@@ -38,15 +39,15 @@ test("HEAD maintenance stays visible, preserves user authority, and rejects forg
   const input = path.join(root, "maintenance.json");
   fs.writeFileSync(input, JSON.stringify(request));
   const acknowledged = await runCommand(["conformance-disposition", root, "--input", input]);
-  assert.equal(acknowledged.disposition.authority, HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY);
+  assert.equal(acknowledged.disposition.authority, layout.value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY));
   assert.equal(recordConformanceDisposition(request).status, "existing");
   assert.match(formatReviewOutcome(acknowledged), /no user decision was claimed/);
   const deferred = await dispatchMcp({ jsonrpc: "2.0", id: "head-maintenance", method: "tools/call", params: { name: "head_conformance_disposition", arguments: { project_root: root, finding_id: finding.findingId, actor: "head", disposition: "defer", rationale: "Not needed for the present task." } } });
   assert.equal(deferred.result.isError, undefined);
   const row = inspectConformanceQueue({ root }).findings[0];
   assert.equal(row.status, "deferred");
-  assert.equal(row.latestDisposition.actor, "head");
-  assert.match(formatConformanceQueue(inspectConformanceQueue({ root })), /\(head\)/);
+  assert.equal(row.latestDisposition.actor, "lode");
+  assert.match(formatConformanceQueue(inspectConformanceQueue({ root })), /\(lode\)/);
   assert.match(formatConformanceFinding(readConformanceFinding({ root, findingId: finding.findingId })), /without a user response/);
   for (const disposition of ["dismiss", "accept-resolution", "request-code-fix", "request-canon-revision"]) assert.throws(() => recordConformanceDisposition({ ...request, disposition }), { code: "CONFORMANCE_HEAD_MAINTENANCE_ONLY" });
   assert.throws(() => recordConformanceDisposition({ ...request, confirmUserDisposition: true }), { code: "CONFORMANCE_HEAD_MAINTENANCE_ONLY" });
@@ -55,9 +56,9 @@ test("HEAD maintenance stays visible, preserves user authority, and rejects forg
   assert.throws(() => recordConformanceDisposition(request), { code: "CONFORMANCE_HEAD_MAINTENANCE_ONLY" });
   protectedPaths.forEach((p, i) => assert.deepEqual(fs.readFileSync(path.join(root, p)), before[i]));
   const exactFinding = readConformanceFinding({ root, findingId: finding.findingId }).finding;
-  const forged = createConformanceDispositionReceipt({ projectId: exactFinding.projectId, sessionId: exactFinding.sessionId, finding: exactFinding, disposition: "defer", rationale: "Forged transition", previousDisposition: user.disposition });
+  const forged = createConformanceDispositionReceipt({ projectId: exactFinding.projectId, sessionId: exactFinding.sessionId, finding: exactFinding, disposition: "defer", rationale: "Forged transition", previousDisposition: user.disposition }, layout);
   delete forged.dispositionId; delete forged.dispositionHash;
-  forged.authority = HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY;
+  forged.authority = layout.value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY);
   forged.dispositionHash = sha(conformanceCanonicalJson(forged));
   forged.dispositionId = `conformance-disposition-${forged.dispositionHash.slice(0, 24)}`;
   fs.writeFileSync(path.join(root, layout.directory, "conformance/dispositions", `${forged.dispositionId}.json`), JSON.stringify(forged));
@@ -110,7 +111,7 @@ function fixture({ constraints = 1 } = {}) {
   fs.mkdirSync(testParent, { recursive: true });
   const root = fs.mkdtempSync(path.join(testParent, "head-agent-conformance-"));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const layout = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(inspectProject(root).storage);
   const product = {
     schemaVersion: 1,
     featureGroups: [], capabilities: [], features: [], requirements: [], decisions: [],
@@ -323,7 +324,7 @@ test("keeps Host triggers optional, coalesced, Project-bound, and uncertain-safe
   assert.throws(() => registry.inspect({ root: other, sourceId: source.sourceId }), { code: "CONFORMANCE_TRIGGER_PROJECT_MISMATCH" });
   const observed = await ingestStructuredObservation({
     root,
-    binding: { adapterKey: "head.structured-host-observation", adapterVersion: "0.1.0", sourceScopeDigest: sha("trigger-source"), credentialReferenceNames: [] },
+    binding: { adapterKey: "lode.structured-host-observation", adapterVersion: "0.1.0", sourceScopeDigest: sha("trigger-source"), credentialReferenceNames: [] },
     descriptor: { typeKey: "example.trigger", typeVersion: "1.0.0", forms: ["event"], payloadSchema: { fields: [{ key: "changed", type: "boolean", required: true }], additionalFields: false } },
     input: { subject: { type: "example.target", key: "global" }, form: "event", temporalScope: { observedAt: "2026-09-02T00:00:00.000Z", start: null, end: null }, sourceEventKeyDigest: sha("trigger-event"), sourceEvidenceDigest: sha("trigger-evidence"), coverage: { state: "partial", basis: "bounded-event", queryDigest: null, examinedCount: 1, sourceReportedTotal: null, omittedCount: null, cursorStartDigest: null, cursorEndDigest: null }, payload: { changed: true } },
   });
@@ -351,7 +352,7 @@ test("retains queued triggers when preparation fails before batch commit", async
   const source = registry.register({ root, sourceKey: "atomic-prepare", triggerKinds: ["observation"], mode: "opportunistic" });
   const observed = await ingestStructuredObservation({
     root,
-    binding: { adapterKey: "head.structured-host-observation", adapterVersion: "0.1.0", sourceScopeDigest: sha("atomic-trigger-source"), credentialReferenceNames: [] },
+    binding: { adapterKey: "lode.structured-host-observation", adapterVersion: "0.1.0", sourceScopeDigest: sha("atomic-trigger-source"), credentialReferenceNames: [] },
     descriptor: { typeKey: "example.atomic-trigger", typeVersion: "1.0.0", forms: ["event"], payloadSchema: { fields: [{ key: "changed", type: "boolean", required: true }], additionalFields: false } },
     input: { subject: { type: "example.target", key: "global" }, form: "event", temporalScope: { observedAt: "2026-09-02T00:00:00.000Z", start: null, end: null }, sourceEventKeyDigest: sha("atomic-trigger-event"), sourceEvidenceDigest: sha("atomic-trigger-evidence"), coverage: { state: "partial", basis: "bounded-event", queryDigest: null, examinedCount: 1, sourceReportedTotal: null, omittedCount: null, cursorStartDigest: null, cursorEndDigest: null }, payload: { changed: true } },
   });
@@ -388,7 +389,7 @@ test("reports refresh omission counts only in the batch that owns the coalesced 
   enqueueRefresh(second.receipt);
   const observed = await ingestStructuredObservation({
     root,
-    binding: { adapterKey: "head.structured-host-observation", adapterVersion: "0.1.0", sourceScopeDigest: sha("coalescing-page-source"), credentialReferenceNames: [] },
+    binding: { adapterKey: "lode.structured-host-observation", adapterVersion: "0.1.0", sourceScopeDigest: sha("coalescing-page-source"), credentialReferenceNames: [] },
     descriptor: { typeKey: "example.coalescing-page", typeVersion: "1.0.0", forms: ["event"], payloadSchema: { fields: [{ key: "changed", type: "boolean", required: true }], additionalFields: false } },
     input: { subject: { type: "example.target", key: "global" }, form: "event", temporalScope: { observedAt: "2026-09-02T00:00:00.000Z", start: null, end: null }, sourceEventKeyDigest: sha("coalescing-page-event"), sourceEvidenceDigest: sha("coalescing-page-evidence"), coverage: { state: "partial", basis: "bounded-event", queryDigest: null, examinedCount: 1, sourceReportedTotal: null, omittedCount: null, cursorStartDigest: null, cursorEndDigest: null }, payload: { changed: true } },
   });

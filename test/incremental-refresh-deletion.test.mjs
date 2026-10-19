@@ -162,7 +162,7 @@ test("refresh handles linked symbol rename, file deletion, and source-scope excl
   assert.deepEqual(currentRevision(afterRename, "SymbolRevision", (node) => node.name === "new_name").parentRevisionIds, []);
 
   for (const mode of ["delete-file", "exclude-scope"]) {
-    const { root, layout } = createProject(t, mode);
+    const { root, layout, storage } = createProject(t, mode);
     fs.writeFileSync(path.join(root, "src", "item.py"), "def item():\n    return 1\n");
     fs.writeFileSync(path.join(root, "src", "keep.py"), "def keep():\n    return 1\n");
     await buildWorldModel({ root });
@@ -172,7 +172,7 @@ test("refresh handles linked symbol rename, file deletion, and source-scope excl
     const itemRevision = currentRevision(before, "FileRevision", (node) => node.path === "src/item.py");
     assert.ok(before.revisionParentIds[itemRevision.logicalEntityId]?.length > 0);
     if (mode === "delete-file") fs.rmSync(path.join(root, "src", "item.py"));
-    else writeRepositorySourceScope({ projectRoot: root, selection: { includeRoots: [], excludeRoots: ["src/item.py"] } });
+    else writeRepositorySourceScope({ projectRoot: root, storage, selection: { includeRoots: [], excludeRoots: ["src/item.py"] } });
     assert.equal((await refreshWorldModel({ root })).status, "refreshed");
     const after = readWorldModel({ root }).snapshot.temporalProvenanceGraph;
     assert.equal(after.nodes.some((node) => node.logicalEntityId === itemRevision.logicalEntityId), false);

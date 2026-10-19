@@ -127,7 +127,7 @@ export async function workerIntegrationFixture(t, options = {}) {
           descendantTreeOwnershipValidated: true, providerMode: "conformance-fixture" }) }));
       const receipt = leased.result.receipt;
       const draft = buildRuntimeResultPacketDraft({ authorization, receipt, leaseRelease: leased.release });
-      publicationDiagnostics.publish({ projectRoot: root, authorization, events, receipt, draft }, { generation: serial, workerIndex: index });
+      publicationDiagnostics.publish({ projectRoot: root, storage, authorization, events, receipt, draft }, { generation: serial, workerIndex: index });
       const candidate = buildWorkerPatchCandidate({ basis: writeBasis, maxBytes,
         changes: worker.remove ? [{ path: worker.path, after: null }] : worker.after === null ? []
           : [{ path: worker.path, after: { mode: worker.afterMode ?? (writeBasis[0].kind === "file" ? writeBasis[0].mode : 0o600),
@@ -151,7 +151,7 @@ export async function workerIntegrationFixture(t, options = {}) {
     const intent = verifyWorkerPatchIntegrationIntent({ ...payload, integrationId, integrationHash });
     publishIntegrationJson(path.join(workerIntegrationDirectory(root, true, storage), `${integrationId}.json`), intent);
     assert.deepEqual(readWorkerPatchIntegration({ root, integrationId, storage }).intent, intent);
-    return { intent, integrationId, members, records, readBasis: () => readWorkerIntegrationBasis({ root, integrationId }) };
+    return { intent, integrationId, members, records, readBasis: () => readWorkerIntegrationBasis({ root, integrationId, storage }) };
   }
   const integration = await addIntegration(options);
   return { root: fs.realpathSync(root), storage, layout, container, operational, run, plan, contract, capsule, ...integration, addIntegration,

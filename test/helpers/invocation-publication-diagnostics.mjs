@@ -106,7 +106,7 @@ export function createFixturePublicationDiagnostics(container, { sink = line => 
   return {
     close() { fixtures.delete(scope); },
     publish(record, { generation, workerIndex } = {}) {
-      const destination = runtimeInvocationRecordDirectory(record.projectRoot, record.authorization.authorizationId);
+      const destination = runtimeInvocationRecordDirectory(record.projectRoot, record.authorization.authorizationId, record.storage);
       // This helper cannot be used to inspect a different project or parent.
       if (record.projectRoot !== path.join(root, "project")) throw new Error("Diagnostics require the fixture's exact project");
       const operation = { sequence: ++publicationSequence, fixtureId: scope.fixtureId, generation, workerIndex,

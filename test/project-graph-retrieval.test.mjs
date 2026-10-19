@@ -147,13 +147,13 @@ test("direction excerpts disclose truncation and keep full originals accessible"
 });
 
 async function worldFixture(t) {
-  const { root, layout } = fixture(t);
+  const { root, storage, layout } = fixture(t);
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src/queue.mjs"), "export function enqueue(value) { return value; }\n");
   fs.writeFileSync(path.join(root, "src/submit.mjs"), "import { enqueue } from './queue.mjs';\nexport function submit(value) { return enqueue(value); }\n");
   fs.writeFileSync(path.join(root, "cli.mjs"), "import { submit } from './src/submit.mjs';\nexport function main(value) { return submit(value); }\n");
   fs.writeFileSync(path.join(root, "decoration.mjs"), "export const decoration = true;\n");
-  await buildWorldModel({ root }); return { root, layout };
+  await buildWorldModel({ root }); return { root, storage, layout };
 }
 
 test("paths-only adapter query binds exact verified File anchors and preserves failure reuse", async t => {
@@ -175,10 +175,10 @@ test("paths-only adapter query binds exact verified File anchors and preserves f
 });
 
 test("paths-only verified adapter and local-only selectors are correctly distinguished", async t => {
-  const { root, layout } = await worldFixture(t);
+  const { root, storage, layout } = await worldFixture(t);
   const graph = readWorldModelForDiscovery({ root }).snapshot.temporalProvenanceGraph;
   const graphProjectionAdapter = new InMemoryGraphProjectionAdapter();
-  materializeGraphProjection({ projectRoot: root, graph, adapter: graphProjectionAdapter });
+  materializeGraphProjection({ projectRoot: root, storage, graph, adapter: graphProjectionAdapter });
   const result = await queryProjectGraph({ root, paths: ["src/queue.mjs"], graphProjectionAdapter });
   assert.equal(result.adapter.status, "verified");
   safe(result);
