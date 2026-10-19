@@ -9,11 +9,16 @@ judges current action using `currentExecution` and common direction. The legacy
 project direction too: an old checkpoint cannot undo a later shared cancellation. Provider resume or live attachment is
 optional and occurs only after artifact recovery succeeds.
 
-The presence of a HEAD Project does not imply a current checkpoint. Use
-`head_conversation_enter` as the normal automatic entry path. It performs the
-same artifact-only verification as explicit Session restore without consuming a
-token, attaching a provider, or writing state, and includes the bounded status
-and Attention facts needed to continue without a second status call. Keep
+The presence of a HEAD Project does not imply a current checkpoint. Reuse
+sufficient verified current entry context already supplied for the exact Project
+and selected logical Session, with current common direction and cancellations.
+When needed content is missing, use `head_conversation_enter` as the automatic
+read-only entry path; relevant basis changes require only affected current
+originals, not a repeated setup/status chain. It performs the same artifact-only
+verification as explicit Session restore without consuming a token, attaching a
+provider, or writing state, and includes bounded status and Attention facts
+without a second status call. Detailed World inspection is explicitly unchecked
+on ordinary entry; full status/doctor diagnosis is available when needed. Keep
 `head_session_restore` as an advanced diagnostic surface. When recovery needs
 attention, fail only the affected recovery operation and assign inspection to
 HEAD; never invent missing direction or ask the user to operate the recovery

@@ -11,7 +11,7 @@ import {
   settleCompactionContinuation,
   verifyCompaction,
 } from "./compaction-recovery.mjs";
-import { inspectProjectExperience, recoveryReadiness } from "./project-bootstrap.mjs";
+import { inspectConversationProjectExperience, recoveryReadiness } from "./project-bootstrap.mjs";
 import { actionability } from "./experience-projection.mjs";
 import { readSessionWorkContext } from "./session-work-context.mjs";
 
@@ -138,7 +138,7 @@ function recoveryAttention(error, details = {}) {
 function conversationProjection(root, recovery) {
   const publicRecovery = { ...recovery };
   delete publicRecovery.restore;
-  const projectStatus = inspectProjectExperience({ root, recoveryOverride: publicRecovery });
+  const projectStatus = inspectConversationProjectExperience({ root, recoveryOverride: publicRecovery });
   return {
     ...actionability(projectStatus),
     projectStatus,

@@ -692,3 +692,130 @@ test("work bodies preserve exact literals and object-local unknown residuals wit
   }
   for (const raw of [false, 0, "", [], {}]) assert(formatSessionWorkContext(raw).includes(JSON.stringify(raw)));
 });
+
+const workRoleLabels = [
+  "Saved judgments and reasons",
+  "Alternatives considered in this saved judgment",
+  "Recorded changes and results",
+  "Recorded remaining work",
+  "Recorded uncertainty",
+  "Historical suggestions; not execution permission",
+];
+
+function explainedContent(index = 0) {
+  return {
+    summary: `Local result ${index}; not deployed.`,
+    judgments: [{ assessment: `Inspect only ${index}`, reason: `Earlier reason ${index}: TTL does not order requests.\n  취소 조건은 유지한다.`,
+      alternatives: [`Rejected clock order ${index}; clocks can move.`], future: { accepted: false } }],
+    observedWork: [`Local generation check ${index}; no service changed.`],
+    pending: [`Cancellation/write race ${index} remains unverified.`],
+    unknowns: [`Actual Host behavior ${index} is unknown.`],
+    suggestedFollowUp: [`Earlier suggestion ${index}: deploy after approval; not permission now.`],
+    future: { pending: false, values: [null, 0, [], {}] },
+  };
+}
+
+function expectedOriginalText(at, value) {
+  return `${at} (original text):\n\`\`\`text\n${value}${value.endsWith("\n") ? "" : "\n"}\`\`\`\n`;
+}
+
+function expectedExplainedBody(content, location = "content", explain = true) {
+  const label = index => explain ? `${workRoleLabels[index]}:\n` : "";
+  return expectedOriginalText(`${location}.summary`, content.summary)
+    + label(0) + expectedOriginalText(`${location}.judgments[0].assessment`, content.judgments[0].assessment)
+    + expectedOriginalText(`${location}.judgments[0].reason`, content.judgments[0].reason)
+    + label(1) + expectedOriginalText(`${location}.judgments[0].alternatives[0]`, content.judgments[0].alternatives[0])
+    + `Additional original fields at ${location}.judgments[0]:\n${JSON.stringify({ future: content.judgments[0].future }, null, 2)}\n`
+    + ["observedWork", "pending", "unknowns", "suggestedFollowUp"].map((key, index) =>
+      label(index + 2) + expectedOriginalText(`${location}.${key}[0]`, content[key][0])).join("")
+    + `Additional original fields at ${location}:\n${JSON.stringify({ future: content.future }, null, 2)}\n`;
+}
+
+test("Session-only work role labels preserve exact single and multi-record bodies, owner and uncertainty", () => {
+  for (const count of [1, 2]) {
+    const value = repeatedWorkFixture();
+    value.records = value.records.slice(0, count);
+    value.records.forEach((row, index) => { row.content = explainedContent(index); });
+    const before = structuredClone(value), serialized = Buffer.from(JSON.stringify(value));
+    const text = formatSessionWorkContext(value);
+    for (const [index, row] of value.records.entries()) {
+      const body = expectedExplainedBody(row.content), record = presentedRecord(text, index);
+      assert.ok(record.includes(body), "Every original path, literal, field order and residual stays contiguous under its record");
+      assert.equal(Buffer.byteLength(record.slice(record.indexOf(body), record.indexOf(body) + body.length)), Buffer.byteLength(body));
+      for (const label of workRoleLabels) assert.equal(record.split(`${label}:\n`).length - 1, 1, label);
+      for (const literal of [row.content.summary, row.content.judgments[0].reason, row.content.pending[0], row.content.suggestedFollowUp[0]]) {
+        assert.equal(text.split(literal).length - 1, 1, "Labels must not duplicate original bodies");
+      }
+    }
+    for (const label of workRoleLabels) assert.equal(text.split(`${label}:\n`).length - 1, count);
+    assert.equal(text, formatCliResult("session-work-read", value));
+    assert.equal(text, formatMcpToolContent("head_session_work_read", value));
+    assert.deepEqual(value, before); assert.deepEqual(Buffer.from(JSON.stringify(value)), serialized);
+    assert.match(text, /P3, not current direction or permission/u);
+    assert.doesNotMatch(text, /Task completed|currently executing|approved to deploy/u);
+  }
+});
+
+test("empty missing and unsupported role fields keep originals without explanatory placeholders", () => {
+  for (const raw of [undefined, null, false, 0, "", [], {}]) {
+    const content = { summary: "Do not infer absence from an unsupported body." };
+    for (const key of ["judgments", "observedWork", "pending", "unknowns", "suggestedFollowUp"]) {
+      if (raw !== undefined) content[key] = structuredClone(raw);
+    }
+    const value = { status: "work_context_partial", records: [{ evidenceId: "unsupported", content }] };
+    const before = structuredClone(value), text = formatSessionWorkContext(value);
+    for (const label of workRoleLabels) assert.ok(!text.includes(`${label}:\n`), `${label}: ${JSON.stringify(raw)}`);
+    if (raw !== undefined) for (const key of ["judgments", "observedWork", "pending", "unknowns", "suggestedFollowUp"]) {
+      assert.ok(text.includes(Array.isArray(raw) ? `content.${key}: []` : `"${key}": ${JSON.stringify(raw)}`));
+    }
+    assert.deepEqual(value, before);
+  }
+  for (const alternatives of [undefined, null, false, 0, "", [], {}]) {
+    const judgment = { reason: "A saved reason is not current approval." };
+    if (alternatives !== undefined) judgment.alternatives = structuredClone(alternatives);
+    const text = formatSessionWorkContext({ status: "work_context_partial", records: [{ content: { judgments: [judgment] } }] });
+    assert.match(text, /Saved judgments and reasons:\n/u);
+    assert.ok(!text.includes("Alternatives considered in this saved judgment:\n"));
+    if (alternatives !== undefined) assert.ok(text.includes(Array.isArray(alternatives)
+      ? "content.judgments[0].alternatives: []" : `"alternatives": ${JSON.stringify(alternatives)}`));
+  }
+});
+
+test("graph work text retains unlabeled originals for single and grouped bodies in compact and detailed views", () => {
+  for (const count of [1, 2]) for (const details of [false, true]) {
+    const content = Array.from({ length: count }, (_, index) => explainedContent(index));
+    const graph = { kind: "ProjectGraphDiscoveryProjection", query: { details }, basis: { projectId: "project-owner" },
+      nodes: content.map((workContent, index) => ({ nodeId: `graph-work-${index}`, projectId: "project-owner", sessionId: "session-owner",
+        kind: "Evidence", subtype: "SessionWorkEvidence", instructionAuthority: false, promotionAuthority: false,
+        recoveryAuthority: false, executionAuthority: false, ordinaryWorkBlocked: false, workContent })),
+      edges: [], coverage: { state: "partial", omitted: 7 }, future: { unknown: true } };
+    const before = structuredClone(graph), text = formatMcpToolContent("head_project_graph", graph);
+    assert.equal(text, formatCliResult("graph-query", graph));
+    for (const label of workRoleLabels) assert.ok(!text.includes(`${label}:\n`), "Session labels must not leak into graph presentation");
+    for (const body of content) assert.ok(text.includes(expectedExplainedBody(body, "workContent", false)));
+    assert.ok(text.includes('"omitted": 7')); assert.ok(text.includes('"unknown": true'));
+    assert.deepEqual(graph, before);
+  }
+});
+
+test("conversation labels keep current cancellation ahead of reasons, pending and related historical source", () => {
+  const entry = conversationContextFixture();
+  entry.workContext.records[0].content = explainedContent(0);
+  entry.relatedNativeWorkContext = { sources: [{ relation: "parent", workContext: {
+    status: "work_context_available", projectId: "project-owner", sessionId: "parent-session", sessionPurpose: "Parent purpose is historical, not selected direction.",
+    records: [{ evidenceId: "parent-evidence", projectId: "project-owner", sessionId: "parent-session", content: explainedContent(9) }],
+    coverage: { originals: 1, included: 1 }, omissions: { uninspected: 0 } } }] };
+  const before = structuredClone(entry), text = formatConversationRecovery(entry);
+  const cancellation = entry.projectStatus.currentProjectDirection.input.cancelledActions[0];
+  assert.ok(text.indexOf(cancellation) < text.indexOf("Saved judgments and reasons:\n"));
+  assert.ok(text.indexOf("Saved judgments and reasons:\n") < text.indexOf(entry.workContext.records[0].content.pending[0]));
+  const related = text.indexOf("Related historical P3 from observed native ancestry — not this child's direction, approval or copied fork-cutoff history:");
+  assert.ok(related > text.indexOf(entry.workContext.records[0].content.pending[0]));
+  assert.ok(text.indexOf('Related source "parent-session" (parent; selected when observed):', related) > related);
+  assert.ok(text.indexOf("Earlier reason 9:", related) > related);
+  assert.ok(text.indexOf("Historical suggestions; not execution permission:\n", related) > related);
+  assert.match(text, /Cancellation\/write race 9 remains unverified/u);
+  assert.equal(text, formatCliResult("conversation-enter", entry));
+  assert.equal(text, formatMcpToolContent("head_conversation_enter", entry));
+  assert.deepEqual(entry, before);
+});

@@ -38,6 +38,12 @@ function bytes(root) {
       return [path.relative(root, file).replaceAll("\\", "/"), fs.readFileSync(file, "base64")];
     }).sort(([a], [b]) => a.localeCompare(b)));
 }
+function readSnapshot(root) {
+  return fs.readdirSync(root, { recursive: true, withFileTypes: true }).filter(item => item.isFile()).map(item => {
+    const file = path.join(item.parentPath, item.name), stat = fs.statSync(file);
+    return [path.relative(root, file), fs.readFileSync(file, "base64"), stat.mtimeMs, stat.mode];
+  }).sort(([a], [b]) => a.localeCompare(b));
+}
 async function verifySurfaces(root, { headActionRequired, recoveryBlocked = false, recoveryHeadAction = false, presentation = headActionRequired ? "exception" : "quiet" }) {
   const before = bytes(root);
   const status = inspectProjectExperience({ root });
@@ -170,6 +176,32 @@ test("managed projection drift with no checkpoint never invents a checkpoint-dep
   assert.equal(entry.attention.items.some((item) => item.id === "recovery-verification"), false);
   assert.match(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), /local project change/u);
   assert.throws(() => checkpoint(root), { code: "MANAGED_DRIFT" });
+});
+
+test("entry retains its second managed-file observation instead of trusting final pointer equality", (t) => {
+  const root = fixture(t), target = path.join(root, "AGENTS.md"), originalRead = fs.readFileSync;
+  const original = originalRead(target), altered = Buffer.concat([original, Buffer.from("\nConcurrent synthetic managed drift.\n")]);
+  const before = readSnapshot(root);
+  let reads = 0, entry;
+  fs.readFileSync = function (file, ...args) {
+    if (path.resolve(String(file)) === target) {
+      reads++;
+      // Simulate a changed second observation without introducing a test-side
+      // filesystem mutation. Project/Session/direction final pointers stay equal.
+      if (reads > 1) return typeof args[0] === "string" ? altered.toString(args[0]) : Buffer.from(altered);
+    }
+    return originalRead.call(this, file, ...args);
+  };
+  try { entry = enterConversationRecovery({ root }); } finally { fs.readFileSync = originalRead; }
+  assert.ok(reads >= 2, "The later managed-file hash must still be observed");
+  assert.equal(entry.projectStatus.readiness.core.state, "drifted");
+  assert.ok(entry.projectStatus.drift.some(item => item.path === "AGENTS.md" && item.reason === "modified"));
+  assert.equal(entry.ordinaryWorkBlocked, false);
+  assert.equal(entry.userDecisionRequired, false);
+  assert.equal(entry.projectStatus.nextAction.id, "work_directly");
+  assert.equal(entry.attention.items.find(item => item.id === "managed-projection-drift").actionability,
+    "when-managed-mutation-is-in-scope");
+  assert.deepEqual(readSnapshot(root), before, "Both observations are read-only, including original mtimes/modes");
 });
 
 test("optional Product review stays conditional, not an immediate user or HEAD gate", async (t) => {

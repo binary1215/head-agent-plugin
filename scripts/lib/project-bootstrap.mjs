@@ -4,7 +4,7 @@ import { readProjectDirectionView } from "./project-direction-view.mjs";
 import { noteProjectGraphChange, PROJECT_GRAPH_INDEX_PATH } from "./discovery-index.mjs";
 import { fileURLToPath } from "node:url";
 import { convergeProjectInstallation, initializeProject, inspectProject, isProjectRecoveryReadable } from "./head-core.mjs";
-import { inspectOnboarding, inspectOptionalOnboarding, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
+import { inspectOnboarding, inspectOptionalOnboarding, inspectOptionalOnboardingForEntry, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "./recovery-checkpoint-diagnosis.mjs";
 import { actionability, withExperienceProjections } from "./experience-projection.mjs";
@@ -116,6 +116,12 @@ function productReadiness(status) {
       action: "work_with_product_context",
       summary: "Core and the reviewed Product/World path are ready for task-scoped use.",
     },
+    ready_world_unchecked: {
+      state: "reviewed_world_unchecked",
+      status: "core_ready",
+      action: "work_directly",
+      summary: "Core and reviewed Product originals are available. Detailed World freshness was not inspected for this conversation; continue the task and validate World evidence only when it is needed.",
+    },
     ready_world_changed: {
       state: "refresh_required",
       status: "product_refresh_required",
@@ -157,6 +163,12 @@ function contextReadiness({ coreState, productState, onboardingInspection = null
   if (productState === "integrity_attention") return {
     state: "curated-only", repositoryEvidence: "unverified-excluded",
     worldModelId: null, entrypoint,
+  };
+  if (onboardingInspection?.worldModel?.status === "not-inspected") return {
+    state: "world-not-inspected",
+    repositoryEvidence: "not-inspected",
+    worldModelId: null,
+    entrypoint,
   };
   if (onboardingInspection?.worldModel?.status === "current") return {
     state: "repository-ready",
@@ -312,9 +324,9 @@ function entrypoint(action, onboardingInspection = null) {
       note: "Review each reported managed-file drift before choosing an explicit repair.",
     },
     work_directly: {
-      cli: "head-agent status <project>",
-      mcpTool: "head_project_status",
-      alternative: { mcpTool: "head_project_initialize_or_resume", mcpArguments: { profile: "product" } },
+      cli: null,
+      mcpTool: null,
+      note: "Continue the current authorized task using supplied context. Inspect status only for a relevant change or diagnosis.",
     },
     provide_product_evidence: {
       cli: "head-agent resume <project> --profile product --input <onboarding.json>",
@@ -364,7 +376,9 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
     },
     {
       id: "product-governance",
-      availability: blocked || (productState === "not_activated" ? "available-not-activated" : productState === "ready" ? "active-ready" : "active-action-required"),
+      availability: blocked || (productState === "not_activated" ? "available-not-activated"
+        : productState === "reviewed_world_unchecked" ? "available-on-demand"
+          : productState === "ready" ? "active-ready" : "active-action-required"),
       useWhen: "The task needs reviewed product meaning, World/Graph evidence, or governed document projections.",
       entrypoint: "head_project_initialize_or_resume profile=product, then head_onboarding_guide",
     },
@@ -425,6 +439,7 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
   }
 
   const pendingCandidateNeedsWorld = ["awaiting_review", "revision_required"].includes(onboardingInspection?.status)
+    && onboardingInspection.worldModel?.status !== "not-inspected"
     && (onboardingInspection.worldModel?.status !== "current" || onboardingInspection.worldModel.matchesCandidateSource === false);
   const product = onboardingInspection ? productReadiness(pendingCandidateNeedsWorld ? "ready_world_changed" : onboardingInspection.status) : {
     state: "inspection_blocked",
@@ -477,6 +492,14 @@ export function inspectProjectExperience({ root = ".", recoveryOverride = null }
   const project = inspectProject(root);
   if (project.status !== "ready") return projectExperience(project, null, recoveryOverride);
   return projectExperience(project, inspectOptionalOnboarding({ root }), recoveryOverride);
+}
+
+// Fixed internal consumer boundary. Keep the later managed-file/selected-owner
+// observation; the entry's final pointer check does not rehash managed files.
+export function inspectConversationProjectExperience({ root = ".", recoveryOverride = null } = {}) {
+  const project = inspectProject(root);
+  if (project.status !== "ready") return projectExperience(project, null, recoveryOverride);
+  return projectExperience(project, inspectOptionalOnboardingForEntry({ root }), recoveryOverride);
 }
 
 function bootstrapResponse({ root, profile, before, installation, onboardingAction, inputDisposition, inspected, extra = {} }) {

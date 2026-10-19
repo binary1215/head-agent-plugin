@@ -34,11 +34,15 @@ recovery, read [the constitution](../../docs/head-constitution.md) and
 
 ## Enter and keep working
 
-When the user invokes HEAD or the exact project already has a HEAD Project,
-initialize/resume with `head_project_initialize_or_resume`, exact root and
-default `profile: "core"`, then call read-only `head_conversation_enter`.
-Continue the original task in the same turn. Carry the task once; do not ask
-for a repeat request, profile choice, JSON or recovery ritual.
+For first HEAD adoption or missing Project initialization, an explicit Session
+selection/resume, or required managed-installation convergence, use
+`head_project_initialize_or_resume` with the exact root and default
+`profile: "core"`. Otherwise reuse sufficient verified current entry context
+already supplied for that exact Project and selected logical Session. If needed
+current context is missing, obtain it once through read-only
+`head_conversation_enter`. A Skill match, existing Project or new turn alone is
+not another setup or binding trigger. Continue the original task in the same
+turn; do not ask for a repeat request, profile choice, JSON or recovery ritual.
 
 Core preserves identities and indexes eligible existing observations where
 available, without inferring Product meaning. Use `profile: "product"` and the
@@ -47,10 +51,16 @@ Do not initialize an unrelated repository merely because a coding request
 matched this Skill.
 
 Entry includes current direction, useful work context, recovery, status and
-Attention. Reuse it quietly unless its basis changes or diagnosis needs more.
-No checkpoint means ordinary work continues. After compaction/provider replacement,
-read the selected Session automatically with current common constraints; never
-invent direction from a transcript. Missing direction is not approved emptiness.
+Attention. Read and reuse sufficient supplied content quietly, including after
+compaction/provider replacement, unless its relevant basis changes or needed
+content is missing. Matching identity, digest or time alone does not prove current
+intent. Expand only the missing dependent originals; do not repeat
+init/status/list/graph merely to confirm complete unchanged material. Ordinary
+entry leaves detailed World inspection explicitly unchecked, not current, stale
+or absent; use full status/doctor diagnostics when needed, not as a follow-up
+ritual. No checkpoint means ordinary work continues. Automatically obtain missing
+selected Session direction with current common constraints; never invent it from
+a transcript. Missing direction is not approved emptiness.
 Selection loss pauses only dependent work; use verified explicit/Host selection
 there and continue independent work. Partial entry is not recovery success.
 Do not add a recovery chain, repeated question, Session list or user ID form.

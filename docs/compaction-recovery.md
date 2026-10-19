@@ -17,9 +17,13 @@ P3, P4, and P5 attempts to become P2.
 
 ## Automatic conversation UX
 
-`head_conversation_enter` is the normal read-only entry path. The Skill calls it
-on project entry, after compaction, and after provider replacement. It has three
-bounded outcomes:
+On project entry, after compaction and after provider replacement, the Skill
+reuses sufficient verified current context already supplied for the exact
+Project and selected logical Session, including current common direction and
+cancellations. If needed content is missing, it obtains it once through the
+normal read-only `head_conversation_enter` path. Relevant basis changes require
+the affected current originals, not another setup/status/list/graph chain. Entry
+has three bounded outcomes:
 
 - a current checkpoint verifies and its exact P2 direction is restored;
 - no checkpoint exists and ordinary work continues without a recovery gate; or
@@ -28,7 +32,9 @@ bounded outcomes:
 
 The same call includes the bounded project-status, Attention, loaded/configured
 package-version, and presentation projections, so normal entry does not require
-a second status call. Recovery verification failure is `headActionRequired`, not
+a second status call. Detailed World inspection is explicitly unchecked on
+ordinary entry, not current, stale or absent; full status/doctor diagnosis remains
+available when needed, without a mandatory follow-up. Recovery verification failure is `headActionRequired`, not
 a user decision. `userDecisionRequired` remains false unless an independent
 protected decision is actually pending, and `ordinaryWorkBlocked` remains false.
 

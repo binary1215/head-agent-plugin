@@ -24,10 +24,15 @@ authorized. It does not select a Session, supply recovery direction or change
 the work's current scope.
 
 Keep facts, judgments and unknowns distinct. An earlier approval or suggested
-next step does not undo a current cancellation. Natural wording must preserve
-negation, conditions and uncertainty, who owns a result, and whether it is local,
-published or installed, partial or complete. A completed review is not an
-accepted implementation, and a retrieved explanation is not a verified effect.
+next step does not undo a current cancellation. For a progress or resumption
+question, connect the supplied current purpose and conditions with the relevant
+saved reasons or alternatives, actual changes and results, and remaining work
+or uncertainty. HEAD setup readiness is not task completion; historical work
+and an observed native activity state are not current execution or approval.
+Natural wording must preserve negation, conditions and uncertainty, who owns a
+result, and whether it is local, published or installed, partial or complete.
+A completed review is not an accepted implementation, and a retrieved
+explanation is not a verified effect.
 
 Keep routine internal success quiet. Explain a meaningful change, failure or
 wait in terms of the affected work and the actual next actor or action; do not

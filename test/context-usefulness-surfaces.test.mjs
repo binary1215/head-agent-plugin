@@ -109,10 +109,43 @@ test('generated instructions lead with the original outcome and preserve only ne
  assert.match(text,/Preserve completed contributions and user edits/);
  assert.match(text,/No per-turn save or mandatory sync\/Run\/Capsule; no duplicate administrative approval ritual/);
  assert.match(text,/Never infer a disposition from keyword matching, silence, or a default/);
- assert.match(text,/do not repeat status unless state changed/);
+ assert.match(text,/reuse sufficient verified supplied context for the exact Project and selected Session/);
+ assert.match(text,/Obtain missing current context through read-only conversation-entry once/);
+ assert.match(text,/do not repeat init\/resume\/status\/list\/graph merely to confirm unchanged supplied material/);
  assert.match(text,/distinguish mechanical coverage from semantic sufficiency/);
  assert.match(text,/Use existing progressive references only when their detail is relevant/);
  assert.match(text,/Capability does not grant authorization/);
+});
+test('CLI and direct/router MCP explain supplied Session work without changing originals or writing',async t=>{
+ const f=fixture(t);
+ updateProjectDirection({root:f.root,input:{goal:'Investigate locally only',cancelledActions:['deployment']}});
+ f.route(()=>recordSessionWorkEvidence({root:f.root,input:{summary:'Local ordering check; no external effect verified.',
+  judgments:[{assessment:'Retain a generation check',reason:'A TTL alone did not exclude a late request.',alternatives:['TTL-only was rejected.']}],
+  observedWork:['The local pre-write check is implemented.'],pending:['Cancellation racing with a write still needs investigation.'],
+  unknowns:['Actual Host behavior is unverified.'],suggestedFollowUp:['Investigate the local race; this is not deployment permission.']}}));
+ const before=snapshot(f.base),expected=f.route(()=>readSessionWorkContext({root:f.root}));
+ const cli=await runCommand(['conversation-enter',f.root,'--session',f.selected.sessionId]);
+ assert.deepEqual(cli.workContext,expected);
+ const text=formatCliResult('conversation-enter',cli);
+ assertWorkPresentation(text,expected);
+ for(const label of ['Saved judgments and reasons:','Alternatives considered in this saved judgment:',
+  'Recorded changes and results:','Recorded remaining work:','Recorded uncertainty:',
+  'Historical suggestions; not execution permission:'])assert.ok(text.includes(label),label);
+ for(const literal of ['A TTL alone did not exclude a late request.','TTL-only was rejected.',
+  'The local pre-write check is implemented.','Cancellation racing with a write still needs investigation.',
+  'Actual Host behavior is unverified.','Investigate the local race; this is not deployment permission.'])
+  assert.equal(text.split(literal).length-1,1,`Original body retained once: ${literal}`);
+ assert.ok(text.indexOf('deployment')<text.indexOf('Selected Session work evidence'));
+ for(const routed of[false,true]){
+  const response=await dispatch({jsonrpc:'2.0',id:'session-explanation',method:'tools/call',params:{
+   name:routed?'head_tools_call':'head_conversation_enter',arguments:routed?
+    {name:'head_conversation_enter',arguments:{project_root:f.root,session_id:f.selected.sessionId}}:
+    {project_root:f.root,session_id:f.selected.sessionId}}});
+  assert.equal(response.result?.isError,undefined,JSON.stringify(response));
+  assert.deepEqual(response.result.structuredContent,cli);
+  assert.equal(response.result.content[0].text,text);
+ }
+ assert.deepEqual(snapshot(f.base),before,'Entry and formatting add no persistence, lock or binding writes.');
 });
 test('default selected work coverage crosses CLI and direct/router MCP without extra calls or writes',async t=>{
  const f=fixture(t);for(let i=0;i<10;i++)f.route(()=>recordSessionWorkEvidence({root:f.root,input:{summary:`Synthetic observation ${i}`,occurrenceKey:`useful-${i}`}}));

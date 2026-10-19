@@ -1795,7 +1795,7 @@ const allTools = [
   },
   {
     name: "head_conversation_enter",
-    description: "Use as the single automatic conversation entry: restore current provider-independent direction from the exact P2 checkpoint and return bounded project status, Attention, package-version, and presentation projections. This read-only composition creates no continuation, provider attachment, review, Canon change, or ordinary-work gate.",
+    description: "Obtain missing current conversation context, or reuse sufficient verified supplied entry for the exact selected Session and current common direction. This read-only entry restores verified P2 direction and returns bounded status, Attention and package facts; detailed World freshness is explicitly not inspected. No continuation, provider attachment, review, Canon change or ordinary-work gate is created. Explicit project status retains full optional diagnostics when needed.",
     inputSchema: { type: "object", properties: { project_root: { type: "string", minLength: 1 } }, required: ["project_root"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },

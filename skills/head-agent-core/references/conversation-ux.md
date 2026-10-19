@@ -10,17 +10,24 @@ Keep the user's original task available in the conversation and continue that
 same task after Core initialization or resume. Do not replace it with a setup
 summary or ask the user to repeat it.
 
-When the user explicitly asks to use HEAD, or the exact project already contains
-a HEAD Project, use this sequence:
+For first HEAD adoption or missing Project initialization, explicit Session
+selection/resume, or required installation convergence, use the existing Core
+initialization/resume path. Otherwise read sufficient verified current entry
+context already supplied for the exact Project and selected logical Session,
+including its current common direction and cancellations. If needed content is
+missing, obtain it once with read-only `head_conversation_enter` and expand only
+the dependent originals. Identity, digest or time alone cannot prove current
+intent. Do not repeat init/status/list/graph merely to confirm complete unchanged
+material; bounded graph discovery still supplies genuinely new information.
 
-1. initialize or resume the Core profile;
-2. call `head_conversation_enter` automatically;
-3. read its composed project status, recovery readiness, Attention, version,
-   and presentation policy;
-4. use verified Session recovery with current common direction when available;
-5. judge the needed persistence and risk directly, without a recommendation API;
-6. continue the original task in the same turn unless a real authority, scope,
-   integrity, or destructive-action boundary needs the user.
+Reuse the composed status, recovery, Attention, version and presentation facts
+when available. Ordinary entry intentionally leaves detailed World inspection
+unchecked, not healthy or damaged; full status/doctor diagnostics remain available
+when needed, without a compulsory follow-up. Judge useful persistence and risk
+directly, without a recommendation API, and continue the original task in the
+same turn unless a real authority, scope, integrity or destructive-action boundary
+needs the user. Relevant source, direction or cancellation changes require the
+affected current originals before dependent action, not a repeated setup chain.
 
 Do not initialize an uninitialized repository merely because an ordinary coding
 request happens to match this Skill. Product governance, governed World construction, durable Run, managed workers

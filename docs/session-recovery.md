@@ -85,10 +85,15 @@ owner/reference contradictions and required current lineage loss remain scoped
 failures. Provider identities, transcript/summary, resume/stream remain outside
 this view. See [state separation](recovery-state-separation.md).
 
-`head_conversation_enter` is the automatic conversation-facing composition of
-this same read-only restore plus existing bounded project-status facts. The
-Skill calls it without making the user request recovery, supply an identity, or
-perform a second status round trip. No current checkpoint means ordinary work
+`head_conversation_enter` composes this same read-only restore with bounded
+project-status facts when needed current entry context has not already been
+supplied. The Skill reuses sufficient verified context for the exact Project and
+selected logical Session, including current common direction and cancellations;
+relevant basis changes require only the affected current originals. It does not
+make the user request recovery, supply an identity or perform a second status
+round trip. Ordinary entry leaves detailed World inspection explicitly unchecked,
+not current, stale or absent; full status/doctor diagnosis remains available when
+needed, not as a compulsory follow-up. No current checkpoint means ordinary work
 continues; verification failure is assigned to HEAD and pauses only
 recovery-dependent work. Explicit `session-restore` remains available for
 diagnostics and adapter integration.

@@ -12,6 +12,9 @@ import { inspectConversationalOnboarding } from "../scripts/lib/onboarding-conve
 import { enterConversationRecovery } from "../scripts/lib/compaction-lifecycle.mjs";
 import { readProductModelCanon } from "../scripts/lib/product-model.mjs";
 import { inspectWorldModel } from "../scripts/lib/world-model.mjs";
+import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
+import { createRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
+import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const moduleUrl = new URL("../scripts/lib/onboarding.mjs", import.meta.url).href;
@@ -53,7 +56,9 @@ test("optional candidate damage cannot block public Core entry or resume", async
       assert.equal(status.readiness.product.state, "integrity_attention");
       assert.equal(status.attention.ordinaryWorkBlocked, false);
       assert.equal(status.attention.userDecisionRequired, false);
-      assert.equal(enterConversationRecovery({ root }).status, "conversation_ready");
+      const entry = enterConversationRecovery({ root });
+      assert.equal(entry.status, "conversation_ready");
+      assert.equal(entry.projectStatus.readiness.product.state, "integrity_attention");
       assert.equal((await initializeOrResumeProject({ root, pluginRoot, profile: "core" })).readiness.core.state, "ready");
       assert.equal(inspectConversationalOnboarding({ root }).status, "integrity_attention");
       await assert.rejects(() => reviewOnboarding(request));
@@ -350,6 +355,101 @@ function treeBytes(root) {
   return result;
 }
 
+function treeReadSnapshot(root) {
+  return fs.readdirSync(root, { recursive: true, withFileTypes: true }).filter(item => item.isFile()).map(item => {
+    const file = path.join(item.parentPath, item.name), stat = fs.statSync(file);
+    return [path.relative(root, file), crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"), stat.mtimeMs, stat.mode];
+  }).sort(([a], [b]) => a.localeCompare(b));
+}
+
+for (const worldState of ["current", "stale", "missing", "corrupt"]) test(`ordinary entry leaves ${worldState} aggregate World explicitly unchecked without weakening full diagnosis`, async () => {
+  const { root, request } = await fixture();
+  try {
+    const accepted = await reviewOnboarding(request);
+    const worldFile = path.join(root, ".head/world-model/snapshots", `${accepted.worldModel.worldModelId}.json`);
+    if (worldState === "stale") fs.appendFileSync(path.join(root, "README.md"), "\nChanged synthetic source after approval.\n");
+    if (worldState === "missing") fs.unlinkSync(worldFile);
+    if (worldState === "corrupt") fs.writeFileSync(worldFile, "{broken-derived-world");
+    const before = treeReadSnapshot(root), fullBefore = inspectProjectExperience({ root });
+    if (worldState === "corrupt") {
+      assert.throws(() => inspectOnboarding({ root }));
+      assert.equal(fullBefore.readiness.product.state, "integrity_attention");
+    } else {
+      const full = inspectOnboarding({ root });
+      assert.equal(full.worldModel.status, worldState === "missing" ? "unavailable" : worldState);
+      assert.equal(fullBefore.readiness.product.state, worldState === "current" ? "ready" : "refresh_required");
+      assert.equal(fullBefore.readiness.context.repositoryEvidence,
+        worldState === "current" ? "available-current-world" : worldState === "missing" ? "missing-excluded" : "stale-excluded");
+    }
+    const entry = enterConversationRecovery({ root }), product = entry.projectStatus.readiness.product;
+    assert.equal(entry.status, "conversation_ready");
+    assert.equal(entry.projectStatus.status, "core_ready");
+    assert.equal(product.state, "reviewed_world_unchecked");
+    assert.equal(product.onboardingStatus, "ready_world_unchecked");
+    assert.equal(product.governanceActivated, true);
+    assert.equal(entry.projectStatus.readiness.context.state, "world-not-inspected");
+    assert.equal(entry.projectStatus.readiness.context.repositoryEvidence, "not-inspected");
+    assert.equal(entry.projectStatus.readiness.context.worldModelId, null);
+    assert.equal(entry.projectStatus.capabilities.find(item => item.id === "product-governance").availability, "available-on-demand");
+    assert.equal(entry.projectStatus.nextAction.id, "work_directly");
+    assert.equal(entry.headActionRequired, false);
+    assert.equal(entry.userDecisionRequired, false);
+    assert.equal(entry.ordinaryWorkBlocked, false);
+    assert.deepEqual(entry.blockedOperations, []);
+    assert.deepEqual(inspectProjectExperience({ root }), fullBefore, "Explicit full diagnostic facts do not change after unchecked entry");
+    assert.deepEqual(treeReadSnapshot(root), before, "All entry/full diagnostic reads preserve bytes, mtime and mode");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("entry still validates ReviewDecision and Product Canon originals rather than treating unchecked World as approval", async () => {
+  const { root, request } = await fixture();
+  try {
+    const accepted = await reviewOnboarding(request);
+    const reviewFile = path.join(root, reviewDirectory, `${accepted.reviewDecision.reviewDecisionId}.json`);
+    for (const file of [reviewFile, path.join(root, canonPath)]) {
+      const original = fs.readFileSync(file), data = JSON.parse(original);
+      if (file === reviewFile) data.rationale = "Tampered synthetic approval";
+      else data.capabilities[0].name = "Tampered synthetic Canon";
+      fs.writeFileSync(file, JSON.stringify(data));
+      const before = treeReadSnapshot(root), entry = enterConversationRecovery({ root });
+      assert.equal(entry.projectStatus.readiness.product.state, "integrity_attention");
+      assert.equal(entry.projectStatus.readiness.product.governanceActivated, null);
+      assert.equal(entry.projectStatus.readiness.context.repositoryEvidence, "unverified-excluded");
+      assert.equal(entry.ordinaryWorkBlocked, false);
+      assert.equal(entry.userDecisionRequired, false);
+      assert.throws(() => inspectOnboarding({ root }));
+      assert.deepEqual(treeReadSnapshot(root), before);
+      fs.writeFileSync(file, original);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("entry keeps explicitly selected P2 when the separate default Product owner is damaged", async () => {
+  const { root, request } = await fixture();
+  try {
+    await reviewOnboarding(request);
+    const selected = createHeadSession({ root, purpose: "Inspect selected synthetic Session, not default" });
+    const checkpoint = withSessionRoute(root, selected.sessionId, () => createRecoveryCheckpoint({ root,
+      purpose: selected.state.purpose, approvedDecisions: [], currentPosition: "Selected original checkpoint",
+      nextExpectedResult: "Explain only; never deploy" }).checkpoint);
+    const latest = updateProjectDirection({ root, input: { goal: "Independent local explanation", cancelledActions: ["deploy"] } }).direction;
+    fs.writeFileSync(path.join(root, ".head/sessions/current.json"), "{broken-default-session");
+    const before = treeReadSnapshot(root);
+    const entry = withSessionRoute(root, selected.sessionId, () => enterConversationRecovery({ root }));
+    assert.equal(entry.projectStatus.project.sessionId, selected.sessionId);
+    assert.equal(entry.projectStatus.state.sessionId, selected.sessionId);
+    assert.equal(entry.restore.checkpoint.checkpointDigest, checkpoint.checkpointDigest);
+    assert.equal(entry.projectStatus.currentProjectDirection.directionId, latest.directionId);
+    assert.deepEqual(entry.projectStatus.currentProjectDirection.input.cancelledActions, ["deploy"]);
+    assert.equal(entry.projectStatus.readiness.product.state, "integrity_attention");
+    assert.equal(entry.projectStatus.nextAction.id, "work_directly");
+    assert.equal(entry.ordinaryWorkBlocked, false);
+    assert.equal(entry.recoveryDependentWorkBlocked, false);
+    assert.equal(entry.persisted, false);
+    assert.deepEqual(treeReadSnapshot(root), before);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("completed acceptance tolerates absent World across Core entry, status and both resumes without writes", async () => {
   for (const missing of ["directory", "snapshot"]) {
     const { root, request } = await fixture();
@@ -470,7 +570,13 @@ test("awaiting review refreshes missing optional World before offering the origi
       assert.deepEqual(guide.materialChoicesRequired, []);
       assert.equal(inspectProjectExperience({ root }).readiness.product.state, "refresh_required");
       assert.equal(inspectProjectExperience({ root }).readiness.context.repositoryEvidence, "missing-excluded");
-      await enterConversationRecovery({ root });
+      const entry = enterConversationRecovery({ root });
+      assert.equal(entry.projectStatus.readiness.product.state, "review_required");
+      assert.equal(entry.projectStatus.readiness.context.repositoryEvidence, "not-inspected");
+      assert.equal(entry.attention.items.find(item => item.id === "product-canon-review").actionability,
+        "when-product-governance-is-in-scope");
+      assert.equal(entry.userDecisionRequired, false);
+      assert.equal(entry.ordinaryWorkBlocked, false);
       await initializeOrResumeProject({ root, pluginRoot, profile: "core" });
       assert.deepEqual(treeBytes(root), before, "read-only entry/status and Core resume do not refresh Product views");
       const resumed = await initializeOrResumeProject({ root, pluginRoot, profile: "product" });

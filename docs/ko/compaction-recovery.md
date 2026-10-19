@@ -10,8 +10,11 @@ Checkpoint authority metadata는 복구 field가 명시적인 HEAD/사용자 방
 
 ## 자동 대화 UX
 
-`head_conversation_enter`는 일반적인 읽기 전용 진입 경로입니다. Skill은
-project 진입, compaction 후, provider 교체 후에 이를 자동 호출합니다. 결과는
+project 진입, compaction 후, provider 교체 후에는 정확한 Project와 선택된 논리
+Session에 대해 이미 제공된 검증된 현재 맥락이 충분하면 현재 공통 방향·취소 사항과
+함께 재사용합니다. 필요한 내용이 없으면 일반적인 읽기 전용
+`head_conversation_enter`로 한 번 가져옵니다. 관련 기준이 바뀌면 영향을 받는 현재
+원본을 확인하며 setup/status/list/graph 호출 전체를 반복하지 않습니다. 진입 결과는
 다음 세 가지로 제한됩니다.
 
 - 현재 checkpoint가 검증되어 정확한 P2 방향이 복원됩니다.
@@ -21,6 +24,9 @@ project 진입, compaction 후, provider 교체 후에 이를 자동 호출합�
 
 같은 호출은 범위가 한정된 프로젝트 상태, Attention, 로드된/구성된 패키지 버전과
 표시 투영도 포함하므로 일반 진입에서 별도의 status 호출이 필요하지 않습니다.
+일반 진입은 World 상세 검사를 명시적으로 미검사 상태로 두며, 이를 최신·오래됨·부재로
+해석하지 않습니다. 필요하면 전체 status/doctor 진단을 사용할 수 있지만 필수 후속
+절차는 아닙니다.
 복구 검증 실패는 사용자 결정이 아니라 `headActionRequired`입니다. 독립적인 보호
 결정이 실제로 대기 중이지 않으면 `userDecisionRequired`는 false이며,
 `ordinaryWorkBlocked`도 false로 유지됩니다.

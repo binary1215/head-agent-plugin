@@ -1743,8 +1743,18 @@ function verifyCurrentOnboardingReviewLineage({ projectRoot, state, candidateSet
 // A diagnostic boundary, never a replacement for strict promotion validation.
 // Core/P2 validation deliberately remains outside the optional capability catch.
 export function inspectOptionalOnboarding({ root = "." } = {}) {
+  return inspectOptionalOnboardingRecords(root, true);
+}
+
+// Intra-package conversation composition only; no public diagnostic selector.
+// Product originals keep their normal validation, not aggregate World freshness.
+export function inspectOptionalOnboardingForEntry({ root = "." } = {}) {
+  return inspectOptionalOnboardingRecords(root, false);
+}
+
+function inspectOptionalOnboardingRecords(root, inspectWorld) {
   readyProject(root, "optional Product inspection", "selected");
-  try { return inspectOnboarding({ root }); }
+  try { return inspectOnboardingRecords(root, inspectWorld); }
   catch (error) {
     const unrelatedDefaultFailure = error.headSessionRecordPath === defaultSessionStatePath(root)
       && sessionStatePath(root) !== defaultSessionStatePath(root);
@@ -1763,6 +1773,17 @@ export function inspectOptionalOnboarding({ root = "." } = {}) {
 }
 
 export function inspectOnboarding({ root = "." } = {}) {
+  return inspectOnboardingRecords(root, true);
+}
+
+function uninspectedWorld(state) {
+  // IDs are retained onboarding references, not proof of current World content.
+  return { status: "not-inspected", worldModelId: state.worldModelId,
+    sourceSnapshotId: state.sourceSnapshotId, graphSnapshotId: null,
+    matchesCandidateSource: null, matchesOnboardingSnapshot: null };
+}
+
+function inspectOnboardingRecords(root, inspectWorld) {
   const inspected = readyProject(root, "onboarding inspection");
   const projectRoot = inspected.project.projectRoot;
   const file = stateFile(projectRoot);
@@ -1813,7 +1834,8 @@ export function inspectOnboarding({ root = "." } = {}) {
     const currentRevision = readProductRevision(projectRoot, state.productModelId).revision;
     if (currentRevision.productModelHash !== productCanon.model.productModelHash) fail("Current Product revision does not match Canon.", "ONBOARDING_PRODUCT_CANON_DRIFT");
     let world = null;
-    if (state.worldModelId) {
+    if (state.worldModelId && !inspectWorld) world = uninspectedWorld(state);
+    else if (state.worldModelId) {
       try {
         const inspectedWorld = inspectWorldModel({ root: projectRoot });
         world = { status: inspectedWorld.status, worldModelId: inspectedWorld.snapshot.worldModelId,
@@ -1826,7 +1848,8 @@ export function inspectOnboarding({ root = "." } = {}) {
       }
     }
     return {
-      status: world?.status === "current" ? "ready" : "ready_world_changed",
+      status: world?.status === "not-inspected" ? "ready_world_unchecked"
+        : world?.status === "current" ? "ready" : "ready_world_changed",
       state,
       sessionRecord,
       storageSelection,
@@ -1844,7 +1867,7 @@ export function inspectOnboarding({ root = "." } = {}) {
       productModel: productCanon.model,
       productModelRevisions: { current: currentRevision },
       worldModel: world,
-      recovery: { nextAction: world?.status === "current" ? "continue" : "refresh_product_world", userReviewRequired: false, ordinaryWorkBlocked: false },
+      recovery: { nextAction: ["current", "not-inspected"].includes(world?.status) ? "continue" : "refresh_product_world", userReviewRequired: false, ordinaryWorkBlocked: false },
       authority: { productCanon: "user-owned-project-canon", candidates: "historical-ready-opaque", graph: "rebuildable-derived-evidence" },
     };
   }
@@ -1903,7 +1926,8 @@ export function inspectOnboarding({ root = "." } = {}) {
     resulting: readProductRevision(projectRoot, reviewDecision.resultingProductModelId).revision,
   } : null;
   let world = null;
-  if (state.worldModelId) {
+  if (state.worldModelId && !inspectWorld) world = uninspectedWorld(state);
+  else if (state.worldModelId) {
     try {
       const inspectedWorld = inspectWorldModel({ root: projectRoot });
       world = {
@@ -1926,7 +1950,8 @@ export function inspectOnboarding({ root = "." } = {}) {
   // today's Canon and complete decision projection independently; a legitimate
   // refreshed child is usable without changing that history or approving again.
   const status = state.phase === "ready"
-    ? world?.status === "current" ? "ready" : "ready_world_changed"
+    ? world?.status === "not-inspected" ? "ready_world_unchecked"
+      : world?.status === "current" ? "ready" : "ready_world_changed"
     : state.phase.replaceAll("-", "_");
   return {
     status,

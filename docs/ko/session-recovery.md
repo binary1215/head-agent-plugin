@@ -81,11 +81,16 @@ projection 0.2는 checkpoint 의미와 현재 실행 사실을 분리합니다. 
 계보 유실은 관련 작업에 표시합니다. 공급자 ID·transcript·summary를 사용하거나
 resume/streaming을 활성화하지 않습니다. [상태 분리](recovery-state-separation.md)를 참조하세요.
 
-`head_conversation_enter`는 같은 읽기 전용 restore와 기존의 범위 제한 프로젝트 상태
-사실을 대화용으로 자동 구성합니다. Skill은 사용자가 recovery를 요청하거나 identity를
-입력하거나 두 번째 status 호출을 수행하게 하지 않습니다. 현재 checkpoint가 없으면
-일반 작업을 계속하고, 검증 실패는 HEAD에 배정되어 recovery 의존 작업만 멈춥니다.
-명시적 `session-restore`는 진단 및 adapter 통합용으로 계속 제공됩니다.
+`head_conversation_enter`는 필요한 현재 진입 맥락이 아직 제공되지 않았을 때 같은
+읽기 전용 restore와 범위 제한 프로젝트 상태 사실을 구성합니다. Skill은 정확한
+Project와 선택된 논리 Session의 검증된 맥락이 충분하면 현재 공통 방향·취소 사항과
+함께 재사용하고, 관련 기준이 바뀌면 영향을 받는 현재 원본만 확인합니다. 사용자가
+recovery를 요청하거나 identity를 입력하거나 두 번째 status 호출을 수행하게 하지
+않습니다. 일반 진입의 World 상세 검사는 명시적으로 미검사이며 최신·오래됨·부재가
+아닙니다. 필요하면 전체 status/doctor 진단을 사용할 수 있지만 필수 후속 절차는
+아닙니다. 현재 checkpoint가 없으면 일반 작업을 계속하고, 검증 실패는 HEAD에
+배정되어 recovery 의존 작업만 멈춥니다. 명시적 `session-restore`는 진단 및 adapter
+통합용으로 계속 제공됩니다.
 
 checkpoint 생성 후 P3 ResultPacket 증거가 삭제되었더라도 restore는 정확한 P2 방향을
 반환하고 증거를 `missing-evidence`로 표시합니다. Fresh HEAD review context를 만들어내지

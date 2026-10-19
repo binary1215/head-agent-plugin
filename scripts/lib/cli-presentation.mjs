@@ -348,7 +348,7 @@ function originalList(value, location) {
   return value.length ? value.map((item, index) => originalField(`${location}[${index}]`, item)).join("") : originalField(location, value);
 }
 
-function originalWorkBody(value, location) {
+function originalWorkBody(value, location, explainFields = false) {
   if (!originalObject(value) || !Object.keys(value).length) return originalField(location, value);
   const handled = new Set();
   let text = "";
@@ -362,6 +362,7 @@ function originalWorkBody(value, location) {
   }
   if (Object.hasOwn(value, "summary")) { text += originalField(`${location}.summary`, value.summary); handled.add("summary"); }
   if (Array.isArray(value.judgments)) {
+    if (explainFields && value.judgments.length) text += "Saved judgments and reasons:\n";
     if (!value.judgments.length) text += originalField(`${location}.judgments`, value.judgments);
     for (const [index, judgment] of value.judgments.entries()) {
       const at = `${location}.judgments[${index}]`, keys = new Set();
@@ -369,12 +370,19 @@ function originalWorkBody(value, location) {
       for (const key of ["assessment", "reason"]) if (Object.hasOwn(judgment, key)) {
         text += originalField(`${at}.${key}`, judgment[key]); keys.add(key);
       }
-      if (Array.isArray(judgment.alternatives)) { text += originalList(judgment.alternatives, `${at}.alternatives`); keys.add("alternatives"); }
+      if (Array.isArray(judgment.alternatives)) {
+        if (explainFields && judgment.alternatives.length) text += "Alternatives considered in this saved judgment:\n";
+        text += originalList(judgment.alternatives, `${at}.alternatives`); keys.add("alternatives");
+      }
       text += originalRemainder(judgment, keys, at);
     }
     handled.add("judgments");
   }
   for (const key of ["observedWork", "pending", "unknowns", "suggestedFollowUp"]) if (Array.isArray(value[key])) {
+    if (explainFields && value[key].length) text += ({
+      observedWork: "Recorded changes and results:\n", pending: "Recorded remaining work:\n",
+      unknowns: "Recorded uncertainty:\n", suggestedFollowUp: "Historical suggestions; not execution permission:\n",
+    })[key];
     text += originalList(value[key], `${location}.${key}`); handled.add(key);
   }
   return text + originalRemainder(value, handled, location);
@@ -429,7 +437,7 @@ function markRenderedBodyGroups(value, handled, entries, bodyKey, owner) {
   } catch { /* Optional display comparison failure keeps the original residual. */ }
 }
 
-function originalWorkRecord(value, location, bodyKey, commonKeys = [], compact = false) {
+function originalWorkRecord(value, location, bodyKey, commonKeys = [], compact = false, explainFields = false) {
   if (!originalObject(value) || !Object.keys(value).length) return originalField(location, value);
   const handled = new Set(commonKeys);
   if (compact && bodyKey === "workContent" && value.kind === "Evidence" && value.subtype === "SessionWorkEvidence") {
@@ -441,7 +449,7 @@ function originalWorkRecord(value, location, bodyKey, commonKeys = [], compact =
   const activity = value.savedActivity, coverage = value.workContentCoverage;
   if (originalObject(activity)) text += originalFacts(activity, ["states"], "savedActivity", new Set());
   if (originalObject(coverage)) text += originalFacts(coverage, ["partial"], "workContentCoverage", new Set());
-  if (Object.hasOwn(value, bodyKey)) { text += originalWorkBody(value[bodyKey], bodyKey); handled.add(bodyKey); }
+  if (Object.hasOwn(value, bodyKey)) { text += originalWorkBody(value[bodyKey], bodyKey, explainFields); handled.add(bodyKey); }
   if (Array.isArray(value.workContentExcerpts)) {
     if (!value.workContentExcerpts.length) text += originalField("workContentExcerpts", []);
     for (const [index, excerpt] of value.workContentExcerpts.entries()) {
@@ -464,7 +472,7 @@ function originalWorkRecord(value, location, bodyKey, commonKeys = [], compact =
   return text + originalRemainder(value, handled, bodyKey === "content" ? "record" : "node");
 }
 
-function groupedWorkBodies(entries, bodyKey, owner, commonKeys, compact = false) {
+function groupedWorkBodies(entries, bodyKey, owner, commonKeys, compact = false, explainFields = false) {
   const label = bodyKey === "content" ? "Record" : "Node", array = bodyKey === "content" ? "records" : "nodes";
   const tuples = workBodyTuples(entries.map(entry => entry.value), { ...owner, bodyKey })
     .map((tuple, index) => ({ ...tuple, index: entries[index].index }));
@@ -476,7 +484,7 @@ function groupedWorkBodies(entries, bodyKey, owner, commonKeys, compact = false)
     if (group.rootBodyIndex === null) text += "Root body not in returned selection; absence is not inferred.\n";
     else if (!group.recordIndices.includes(group.rootBodyIndex)) text += `Root body: ${label}[${group.rootBodyIndex}], displayed in its own declared group, not repeated.\n`;
     for (const index of group.recordIndices) {
-      text += `${label}[${index}]:\n${originalWorkRecord(byIndex.get(index), `${array}[${index}]`, bodyKey, commonKeys, compact)}`;
+      text += `${label}[${index}]:\n${originalWorkRecord(byIndex.get(index), `${array}[${index}]`, bodyKey, commonKeys, compact, explainFields)}`;
     }
   }
   return text;
@@ -499,7 +507,7 @@ export function formatSessionWorkContext(value) {
   if (!value.records.length) text += originalField("workContext.records", value.records);
   const common = commonStoredWorkFields(value.records.map((record, index) => ({ index, value: record })), "Record", "content");
   text += common.text;
-  text += groupedWorkBodies(value.records.map((record, index) => ({ index, value: record })), "content", value, common.keys);
+  text += groupedWorkBodies(value.records.map((record, index) => ({ index, value: record })), "content", value, common.keys, false, true);
   return text + originalRemainder(value, handled, "workContext");
 }
 
