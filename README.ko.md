@@ -1,10 +1,10 @@
 <div align="center">
 
-# Lode
-
 <p>
-  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
+  <a href="docs/assets/branding/lode-repository-icon.png"><img src="docs/assets/branding/lode-repository-icon.png" alt="Lode 저장소 아이콘 — 원본 이미지 열기" width="104"></a>
 </p>
+
+# Lode
 
 [English](README.md) | **한국어** | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
@@ -15,6 +15,10 @@ AI 개발이 하나의 검토된 제품 방향으로 이어지게 합니다.**
 
 대화 압축 후에도 안전하게 복구하고, 작업마다 필요한 정보만 전달하며,
 승인된 변경의 이유를 함께 남깁니다.
+
+[Codex에 설치](#codex-git-마켓플레이스) ·
+[Claude Code에 설치](#claude-code-git-마켓플레이스) ·
+[OpenCode 설정](#claude-code-및-opencode-프로젝트-프로젝션)
 
 [![Build](https://github.com/binary1215/lode/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/lode/actions/workflows/go-worker-build-release.yml)
 ![Status](https://img.shields.io/badge/status-beta-blue)
@@ -33,7 +37,28 @@ AI 개발이 하나의 검토된 제품 방향으로 이어지게 합니다.**
 
 </div>
 
+<a id="first-request"></a>
+
+## 첫 요청은 이렇게 해보세요
+
+사용하는 도구에 플러그인을 설치하고 불러온 뒤, 프로젝트를 열고 실제 작업을
+요청하세요. 설정만 위한 별도 대화는 필요하지 않습니다.
+
+```text
+이 프로젝트에 Lode Agent Core를 사용해줘. 기존 상태가 있으면 이어서 재개하고,
+없으면 Core를 초기화한 뒤 이 로그인 오류의 원인을 찾아서 수정해줘.
+```
+
+기존 HEAD 사용자라면 `.head/` 기록과 호출, 선택한 Session을 그대로 사용하면
+됩니다. 수동 변환은 필요하지 않습니다. 이름 변경만으로 설치된 플러그인이
+업데이트되거나 실행 중인 Host가 다시 로드되지는 않습니다. 사용하는 도구의
+[설치 안내](#설치)를 따라주세요.
+
 ## Lode Agent Core가 하는 일
+
+<p>
+  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
+</p>
 
 Lode Agent Core는 AI와 함께 개발한 방향과 근거를 하나의 모델 대화 안에
 가두지 않고 프로젝트에 보존합니다. Claude Code, Codex, OpenCode 전반에서
@@ -197,13 +222,8 @@ Lode Agent Core는 한 번 설치한 뒤 Codex, Claude Code 또는 연동한 Ope
 프로젝트를 열고 평소처럼 자연어로 요청하면 됩니다. Lode를 별도 프로그램처럼
 조작할 필요는 없습니다.
 
-첫 요청에 실제 작업까지 함께 말하면 됩니다. 설정만 위한 별도 대화는 필요하지
-않습니다.
-
-```text
-이 프로젝트에 Lode Agent Core를 사용해줘. 기존 상태가 있으면 이어서 재개하고,
-없으면 Core를 초기화한 뒤 이 로그인 오류의 원인을 찾아서 수정해줘.
-```
+[첫 요청 예시](#first-request)의 로그인 오류 대신 원하는 작업을 넣어 요청하세요.
+설정만 위한 별도 대화는 필요하지 않습니다.
 
 Lode는 초기화, 상태 확인과 검증된 복구를 마친 뒤에도 이 원래 작업을 유지하고
 같은 대화에서 계속합니다. 그다음부터도 평소처럼 작업을 요청하면 됩니다.
@@ -295,11 +315,7 @@ codex plugin add head-agent-core@head-agent-plugin
 ```
 
 설치 후 Codex를 재시작하고, 설치된 Skill과 MCP 서버를 불러오도록 새 작업을
-시작한 뒤 다음과 같이 요청하세요.
-
-```text
-이 프로젝트의 작은 Lode Core를 초기화하거나 재개하고 준비 상태를 알려 줘.
-```
+시작한 뒤 [첫 요청 예시](#first-request)에 원하는 작업을 넣어 요청하세요.
 
 마켓플레이스 설치 자체는 프로젝트를 초기화하거나 GraphDB에 접속하거나
 모델을 선택하거나 Product Canon을 승인하지 않습니다. 이러한 전이는 여전히
@@ -314,11 +330,7 @@ claude plugin install head-agent-core@head-agent-plugin
 ```
 
 설치 후 Claude Code를 재시작해 Skill과 `head_core` MCP 서버를 불러온 뒤
-다음과 같이 요청하세요.
-
-```text
-이 프로젝트의 작은 Lode Core를 초기화하거나 재개하고 준비 상태를 알려 줘.
-```
+[첫 요청 예시](#first-request)에 원하는 작업을 넣어 요청하세요.
 
 Claude Code는 플러그인을 버전별 캐시에 복사합니다. 따라서 생성된 Claude
 배포판은 MCP 진입점을 `${CLAUDE_PLUGIN_ROOT}`를 통해 프로젝션하지만, 소스

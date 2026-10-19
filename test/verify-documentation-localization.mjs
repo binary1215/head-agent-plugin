@@ -186,8 +186,20 @@ for (const readmeName of ["README.md", "README.ko.md"]) {
   assert.match(readme, /docs\/README\.md/, `${readmeName} must link the English documentation index`);
   assert.match(readme, /docs\/ko\/README\.md/, `${readmeName} must link the Korean documentation index`);
   assertLinksExist(path.join(root, readmeName), readme);
-  const firstImage = assertHtmlImages(path.join(root, readmeName), readme)[0];
-  assert.deepEqual(firstImage, { src: "docs/assets/branding/lode-readme-wordmark.png", alt: "Lode Agent Core", width: "720" }, `${readmeName} must retain the accepted wordmark attributes`);
+  const images = assertHtmlImages(path.join(root, readmeName), readme);
+  const iconSource = "docs/assets/branding/lode-repository-icon.png";
+  const iconAlt = readmeName === "README.md"
+    ? "Lode repository icon — open full-size image"
+    : "Lode 저장소 아이콘 — 원본 이미지 열기";
+  assert.deepEqual(images[0], { src: iconSource, alt: iconAlt, width: "104" }, `${readmeName} must start with the proportional, descriptive repository icon without a fixed height`);
+  assert.equal(images.filter((image) => image.src === iconSource).length, 1, `${readmeName} must show the repository icon once`);
+  const iconLinks = [...readme.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)];
+  assert.ok(iconLinks.some(([, attributes, body]) =>
+    /\bhref\s*=\s*(["'])docs\/assets\/branding\/lode-repository-icon\.png\1/i.test(attributes)
+    && htmlImages(body).some((image) => image.src === iconSource)), `${readmeName} icon must link to the relative full-size original`);
+  const wordmarks = images.filter((image) => image.src === "docs/assets/branding/lode-readme-wordmark.png");
+  assert.equal(wordmarks.length, 1, `${readmeName} must retain exactly one accepted wordmark`);
+  assert.deepEqual(wordmarks[0], { src: "docs/assets/branding/lode-readme-wordmark.png", alt: "Lode Agent Core", width: "720" }, `${readmeName} must retain the accepted wordmark attributes independently of image order`);
 }
 
 for (const [relative, expected] of [

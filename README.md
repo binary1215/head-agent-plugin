@@ -1,10 +1,10 @@
 <div align="center">
 
-# Lode
-
 <p>
-  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
+  <a href="docs/assets/branding/lode-repository-icon.png"><img src="docs/assets/branding/lode-repository-icon.png" alt="Lode repository icon — open full-size image" width="104"></a>
 </p>
+
+# Lode
 
 [English](README.md) | [한국어](README.ko.md) | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
@@ -15,6 +15,10 @@ even when the tool, agent, or conversation changes.**
 
 Recover safely after compaction. Give each task only the context it needs.
 Keep the reason behind every accepted change.
+
+[Install for Codex](#codex-git-marketplace) ·
+[Install for Claude Code](#claude-code-git-marketplace) ·
+[Set up OpenCode](#claude-code-and-opencode-project-projections)
 
 [![Build](https://github.com/binary1215/lode/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/lode/actions/workflows/go-worker-build-release.yml)
 ![Status](https://img.shields.io/badge/status-beta-blue)
@@ -33,7 +37,28 @@ Keep the reason behind every accepted change.
 
 </div>
 
+<a id="first-request"></a>
+
+## Your first request
+
+After installing and loading the plugin in your tool, open your project and ask
+for the actual work. No separate setup conversation is needed:
+
+```text
+Use Lode Agent Core for this project. Resume its existing state if one exists;
+otherwise initialize the Core. Then find the cause of this login failure and fix it.
+```
+
+Already using HEAD? Keep your existing `.head/` records, calls and selected
+Session; no manual conversion is needed. The new name does not automatically
+update your installation or reload a running Host. Follow the
+[installation instructions](#install) for your tool.
+
 ## What Lode Agent Core does
+
+<p>
+  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
+</p>
 
 Lode Agent Core keeps the direction and evidence of AI-assisted development with
 the project instead of trapping them inside one model conversation. Across
@@ -206,13 +231,8 @@ Install Lode Agent Core once, open your project in Codex, Claude Code, or a
 configured OpenCode workspace, and describe your work in ordinary language.
 You do not have to operate Lode as a separate application.
 
-The first request can include the real task. You do not need a separate setup
-turn:
-
-```text
-Use Lode Agent Core for this project. Resume its existing state if one exists;
-otherwise initialize the Core. Then find the cause of this login failure and fix it.
-```
+Start with [the first-request example](#first-request), replacing the login
+failure with your own task. You do not need a separate setup turn.
 
 Lode keeps that original task and continues it after initialization, status, and
 any verified recovery step. After that, keep asking for work as you normally
@@ -309,11 +329,8 @@ codex plugin add head-agent-core@head-agent-plugin
 ```
 
 Restart Codex after installation, start a new task so the installed Skill and
-MCP server are loaded, then ask:
-
-```text
-Initialize or resume the small Lode Core for this project and report readiness.
-```
+MCP server are loaded, then use [the first-request example](#first-request)
+with your own task.
 
 The marketplace install does not initialize a project, contact GraphDB, choose
 a model, or approve Product Canon. Those transitions still require the typed
@@ -327,11 +344,8 @@ claude plugin install head-agent-core@head-agent-plugin
 ```
 
 Restart Claude Code after installation so the installed Skill and `head_core`
-MCP server are loaded, then ask:
-
-```text
-Initialize or resume the small Lode Core for this project and report readiness.
-```
+MCP server are loaded, then use [the first-request example](#first-request)
+with your own task.
 
 Claude Code copies the plugin into its versioned cache. The generated Claude
 distribution therefore projects its MCP entry through `${CLAUDE_PLUGIN_ROOT}`;
